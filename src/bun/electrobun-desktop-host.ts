@@ -1,0 +1,591 @@
+import { ApplicationMenu, BrowserWindow, Utils, defineElectrobunRPC } from "electrobun/bun";
+import Electrobun from "electrobun/bun";
+import type {
+  DesktopBridgeAdapter,
+  DesktopBridgeRegistration,
+  DesktopBrowserToolsUiAdapter,
+  DesktopHostAdapter,
+  DesktopMainWindowInput,
+  DesktopMenuRegistration,
+  DesktopRendererNotification,
+  DesktopWindowHandle,
+  DesktopWindowId,
+} from "@svvy/desktop";
+import type { ChatRPCSchema } from "../shared/workspace-contract";
+import {
+  buildAppMenuConfiguration,
+  routeAppMenuAction,
+  type LegacyAppMenuAction,
+} from "./app-menu";
+import { positionNativeTrafficLights } from "./native-window-controls";
+
+type RendererApiInput = Parameters<DesktopBridgeAdapter["exposeRendererApi"]>[0];
+type BunRpcFactory = typeof defineElectrobunRPC<ChatRPCSchema, "bun">;
+type BunRpcConfig = Parameters<BunRpcFactory>[1];
+type BunRpc = ReturnType<BunRpcFactory>;
+type ApplicationMenuClickEvent = { data?: { action?: unknown } };
+type BufferedRendererDelivery =
+  | { readonly kind: "notification"; readonly notification: DesktopRendererNotification }
+  | {
+      readonly kind: "legacy-message";
+      readonly messageName: keyof ChatRPCSchema["webview"]["messages"];
+      readonly payload: ChatRPCSchema["webview"]["messages"][keyof ChatRPCSchema["webview"]["messages"]];
+    };
+
+const MAX_RENDERER_HANDOFF_QUEUE_SIZE = 64;
+
+let activeApplicationMenuDispatch: ((event: ApplicationMenuClickEvent) => void) | null = null;
+let applicationMenuDispatcherInstalled = false;
+
+function ensureApplicationMenuDispatcher(): void {
+  if (applicationMenuDispatcherInstalled) {
+    return;
+  }
+  ApplicationMenu.on("application-menu-clicked", (event) => {
+    activeApplicationMenuDispatch?.(event as ApplicationMenuClickEvent);
+  });
+  applicationMenuDispatcherInstalled = true;
+}
+
+export interface CreateElectrobunDesktopHostOptions {
+  readonly buildRpcHandlers: (
+    input: RendererApiInput,
+    lifecycle: { readonly rendererReady: () => void },
+  ) => BunRpcConfig["handlers"];
+  readonly maxRequestTime?: number;
+  readonly rendererReadyTimeoutMs?: number;
+  readonly resolveMainWindowUrl: (input: DesktopMainWindowInput) => string | Promise<string>;
+  readonly prepareMainWindow?: (window: BrowserWindow<BunRpc>) => void | Promise<void>;
+  readonly onLegacyAppMenuAction: (action: LegacyAppMenuAction) => void | Promise<void>;
+  readonly includeSettingsMenuItem?: boolean;
+  readonly browserTools?: DesktopBrowserToolsUiAdapter;
+  readonly platform?: NodeJS.Platform;
+  readonly positionTrafficLights?: (window: BrowserWindow<BunRpc>) => void;
+  readonly onBeforeQuit?: () => void | Promise<void>;
+  readonly onError?: (error: unknown, context: string) => void;
+}
+
+export interface ElectrobunDesktopHostAdapter extends DesktopHostAdapter {
+  readonly lifecycle: {
+    start(): void;
+    finishQuit(): void;
+  };
+  getMainWindow(): BrowserWindow | null;
+  rejectRendererCalls(error: unknown): void;
+  sendLegacyMessage<Name extends keyof ChatRPCSchema["webview"]["messages"]>(
+    messageName: Name,
+    payload: ChatRPCSchema["webview"]["messages"][Name],
+  ): Promise<void>;
+}
+
+type MainWindowRecord = {
+  readonly window: BrowserWindow<BunRpc>;
+  readonly windowId: DesktopWindowId;
+  markClosed(): void;
+  close(): void;
+};
+
+export function createElectrobunDesktopHostAdapter(
+  options: CreateElectrobunDesktopHostOptions,
+): ElectrobunDesktopHostAdapter {
+  let rendererRpc: BunRpc | null = null;
+  let bridgeGeneration = 0;
+  let mainWindow: MainWindowRecord | null = null;
+  let mainWindowCreation: Promise<DesktopWindowHandle> | null = null;
+  let shutdownStarted = false;
+  let finalQuitStarted = false;
+  let beforeQuitListenerInstalled = false;
+  let rendererCallsRejectedWith: unknown;
+  let rendererTransportReady = false;
+  let rendererDelivery = Promise.resolve();
+  let bufferedRendererDeliveries: BufferedRendererDelivery[] = [];
+  let rendererBufferFailure: Error | null = null;
+
+  const reportError = (error: unknown, context: string): void => {
+    try {
+      options.onError?.(error, context);
+    } catch {
+      // Host cleanup and typed bridge closure remain authoritative over diagnostics.
+    }
+  };
+
+  const beforeQuitListener = (event: { response?: { allow: boolean } }): void => {
+    if (!options.onBeforeQuit) {
+      return;
+    }
+    event.response = { allow: false };
+    if (shutdownStarted) {
+      return;
+    }
+    shutdownStarted = true;
+    let shutdown: Promise<void>;
+    try {
+      shutdown = Promise.resolve(options.onBeforeQuit());
+    } catch (error) {
+      shutdown = Promise.reject(error);
+    }
+    void shutdown
+      .catch((error) => {
+        reportError(error, "electrobun-desktop-host.before-quit");
+      })
+      .finally(() => {
+        finishQuit();
+      });
+  };
+
+  const removeBeforeQuitListener = (): void => {
+    if (!beforeQuitListenerInstalled) {
+      return;
+    }
+    beforeQuitListenerInstalled = false;
+    Electrobun.events.off("before-quit", beforeQuitListener);
+  };
+
+  const startQuitGuard = (): void => {
+    if (!options.onBeforeQuit || beforeQuitListenerInstalled || finalQuitStarted) {
+      return;
+    }
+    Electrobun.events.on("before-quit", beforeQuitListener);
+    beforeQuitListenerInstalled = true;
+  };
+
+  const finishQuit = (): void => {
+    if (finalQuitStarted) {
+      return;
+    }
+    finalQuitStarted = true;
+    try {
+      removeBeforeQuitListener();
+    } catch (error) {
+      reportError(error, "electrobun-desktop-host.before-quit-listener");
+    }
+    try {
+      Utils.quit();
+    } catch (error) {
+      reportError(error, "electrobun-desktop-host.quit");
+    }
+  };
+
+  const enqueueRendererNotification = (
+    notification: DesktopRendererNotification,
+  ): Promise<void> => {
+    const rpc = rendererRpc;
+    if (!rpc) {
+      return Promise.reject(new Error("The Electrobun renderer API is not available."));
+    }
+    const delivery = rendererDelivery.then(() => {
+      if (rendererRpc !== rpc) {
+        throw new Error("The Electrobun renderer API changed before notification delivery.");
+      }
+      rpc.send.sendDesktopNotification(notification);
+    });
+    rendererDelivery = delivery.catch(() => undefined);
+    return delivery;
+  };
+
+  const enqueueLegacyRendererMessage = (
+    delivery: Extract<BufferedRendererDelivery, { readonly kind: "legacy-message" }>,
+  ): Promise<void> => {
+    const rpc = rendererRpc;
+    if (!rpc) {
+      return Promise.reject(new Error("The Electrobun renderer API is not available."));
+    }
+    const queued = rendererDelivery.then(() => {
+      if (rendererRpc !== rpc) {
+        throw new Error("The Electrobun renderer API changed before legacy message delivery.");
+      }
+      const send = rpc.sendProxy[delivery.messageName] as (
+        payload: typeof delivery.payload,
+      ) => void;
+      send(delivery.payload);
+    });
+    rendererDelivery = queued.catch(() => undefined);
+    return queued;
+  };
+
+  const bufferRendererDelivery = (delivery: BufferedRendererDelivery): void => {
+    if (rendererBufferFailure) {
+      throw rendererBufferFailure;
+    }
+    if (bufferedRendererDeliveries.length < MAX_RENDERER_HANDOFF_QUEUE_SIZE) {
+      bufferedRendererDeliveries.push(structuredClone(delivery));
+      return;
+    }
+    const legacyMessages = bufferedRendererDeliveries.filter(
+      (candidate) => candidate.kind === "legacy-message",
+    );
+    const rebaseline = {
+      kind: "notification",
+      notification: {
+        kind: "read-model-rebaseline-required",
+        reason: "slow-consumer",
+        rebaselineRequired: true,
+      },
+    } satisfies BufferedRendererDelivery;
+    bufferedRendererDeliveries = [...legacyMessages, rebaseline];
+    if (delivery.kind === "legacy-message") {
+      if (bufferedRendererDeliveries.length >= MAX_RENDERER_HANDOFF_QUEUE_SIZE) {
+        rendererBufferFailure = new Error(
+          "The renderer startup buffer overflowed with non-recoverable legacy messages.",
+        );
+        throw rendererBufferFailure;
+      }
+      bufferedRendererDeliveries.push(structuredClone(delivery));
+    }
+  };
+
+  const bridge: DesktopBridgeAdapter = {
+    async exposeRendererApi(input): Promise<DesktopBridgeRegistration> {
+      if (rendererCallsRejectedWith !== undefined) {
+        throw rendererCallsRejectedWith;
+      }
+      if (rendererRpc) {
+        throw new Error("The Electrobun renderer API is already exposed.");
+      }
+      bridgeGeneration += 1;
+      const generation = bridgeGeneration;
+      rendererTransportReady = false;
+      rendererDelivery = Promise.resolve();
+      bufferedRendererDeliveries = [];
+      rendererBufferFailure = null;
+      let rendererReadySettled = false;
+      let rendererReadySettlement: Promise<void> | null = null;
+      let rendererReadySchedule: ReturnType<typeof setTimeout> | null = null;
+      let resolveRendererReady!: () => void;
+      let rejectRendererReady!: (error: unknown) => void;
+      const rendererReady = new Promise<void>((resolve, reject) => {
+        resolveRendererReady = resolve;
+        rejectRendererReady = reject;
+      });
+      void rendererReady.catch(() => undefined);
+      const settleRendererReady = (): Promise<void> => {
+        if (rendererReadySettled || bridgeGeneration !== generation) {
+          return Promise.resolve();
+        }
+        if (rendererReadySettlement) {
+          return rendererReadySettlement;
+        }
+        clearTimeout(rendererReadyTimeout);
+        rendererReadySettlement = (async () => {
+          try {
+            if (rendererBufferFailure) {
+              throw rendererBufferFailure;
+            }
+            rendererTransportReady = true;
+            const deliveries = bufferedRendererDeliveries;
+            bufferedRendererDeliveries = [];
+            const pendingDeliveries: Promise<void>[] = [];
+            for (const delivery of deliveries) {
+              if (delivery.kind === "notification") {
+                pendingDeliveries.push(enqueueRendererNotification(delivery.notification));
+              } else {
+                pendingDeliveries.push(enqueueLegacyRendererMessage(delivery));
+              }
+            }
+            await Promise.all(pendingDeliveries);
+            rendererReadySettled = true;
+            resolveRendererReady();
+          } catch (error) {
+            rendererTransportReady = false;
+            rendererReadySettled = true;
+            rejectRendererReady(error);
+            throw error;
+          }
+        })();
+        void rendererReadySettlement.catch(() => undefined);
+        return rendererReadySettlement;
+      };
+      const scheduleRendererReady = (): void => {
+        if (
+          rendererReadySettled ||
+          rendererReadySettlement ||
+          rendererReadySchedule ||
+          bridgeGeneration !== generation
+        ) {
+          return;
+        }
+        rendererReadySchedule = setTimeout(() => {
+          rendererReadySchedule = null;
+          void settleRendererReady();
+        }, 0);
+      };
+      const rendererReadyTimeout = setTimeout(
+        () => {
+          if (rendererReadySettled || bridgeGeneration !== generation) {
+            return;
+          }
+          rendererReadySettled = true;
+          rejectRendererReady(
+            new Error("The renderer did not report readiness before the deadline."),
+          );
+        },
+        options.rendererReadyTimeoutMs ?? options.maxRequestTime ?? 120_000,
+      );
+      rendererReadyTimeout.unref?.();
+      let rpc: BunRpc;
+      try {
+        rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
+          maxRequestTime: options.maxRequestTime,
+          handlers: options.buildRpcHandlers(input, { rendererReady: scheduleRendererReady }),
+        });
+      } catch (error) {
+        rendererReadySettled = true;
+        clearTimeout(rendererReadyTimeout);
+        resolveRendererReady();
+        throw error;
+      }
+      rendererRpc = rpc;
+      let disposed = false;
+      return {
+        rendererReady,
+        async dispose() {
+          if (disposed) {
+            return;
+          }
+          disposed = true;
+          if (rendererReadySchedule) {
+            clearTimeout(rendererReadySchedule);
+            rendererReadySchedule = null;
+          }
+          if (!rendererReadySettled) {
+            rendererReadySettled = true;
+            clearTimeout(rendererReadyTimeout);
+            resolveRendererReady();
+          }
+          if (bridgeGeneration === generation) {
+            const currentRpc = rendererRpc;
+            rendererRpc = null;
+            rendererTransportReady = false;
+            bufferedRendererDeliveries = [];
+            rendererBufferFailure = null;
+            currentRpc?.setTransport({});
+          }
+        },
+      };
+    },
+    async sendToRenderer(notification: DesktopRendererNotification): Promise<void> {
+      if (rendererCallsRejectedWith !== undefined) {
+        throw rendererCallsRejectedWith;
+      }
+      const rpc = rendererRpc;
+      if (!rpc) {
+        throw new Error("The Electrobun renderer API is not available.");
+      }
+      if (!rendererTransportReady) {
+        bufferRendererDelivery({ kind: "notification", notification });
+        return;
+      }
+      try {
+        await enqueueRendererNotification(notification);
+      } catch (error) {
+        reportError(error, "electrobun-desktop-host.send-to-renderer");
+        throw error;
+      }
+    },
+  };
+
+  const windows: DesktopHostAdapter["windows"] = {
+    async createMainWindow(input): Promise<DesktopWindowHandle> {
+      if (mainWindow || mainWindowCreation) {
+        throw new Error("The Electrobun main window already exists.");
+      }
+      const rpc = rendererRpc;
+      if (!rpc) {
+        throw new Error("Expose the Electrobun renderer API before creating the main window.");
+      }
+
+      mainWindowCreation = (async () => {
+        const url = await options.resolveMainWindowUrl(input);
+        const window = new BrowserWindow<BunRpc>({
+          title: input.title,
+          frame: { x: 0, y: 0, width: 1180, height: 820 },
+          titleBarStyle:
+            (options.platform ?? process.platform) === "darwin" ? "hiddenInset" : "default",
+          hidden: (options.platform ?? process.platform) === "darwin",
+          rpc,
+        });
+        const windowId = String(window.id) as DesktopWindowId;
+        const closeEventName = `close-${window.id}`;
+        let closed = false;
+        let closeListenerInstalled = false;
+        const nativeCloseListener = (): void => {
+          record.markClosed();
+        };
+        const removeCloseListener = (): void => {
+          if (!closeListenerInstalled) {
+            return;
+          }
+          closeListenerInstalled = false;
+          Electrobun.events.off(closeEventName, nativeCloseListener);
+        };
+        const record: MainWindowRecord = {
+          window,
+          windowId,
+          markClosed() {
+            if (closed) {
+              return;
+            }
+            closed = true;
+            removeCloseListener();
+            if (mainWindow === record) {
+              mainWindow = null;
+            }
+          },
+          close() {
+            if (closed) {
+              return;
+            }
+            record.markClosed();
+            window.close();
+          },
+        };
+        mainWindow = record;
+        try {
+          Electrobun.events.on(closeEventName, nativeCloseListener);
+          closeListenerInstalled = true;
+          await options.prepareMainWindow?.(window);
+          window.webview.loadURL(url);
+          (options.positionTrafficLights ?? defaultPositionTrafficLights)(window);
+          window.show();
+        } catch (error) {
+          shutdownStarted = true;
+          record.close();
+          throw error;
+        }
+        return {
+          windowId,
+          async dispose() {
+            record.close();
+          },
+        };
+      })();
+
+      try {
+        return await mainWindowCreation;
+      } finally {
+        mainWindowCreation = null;
+      }
+    },
+    async focusWindow(input): Promise<void> {
+      const record = requireMainWindow(input.windowId);
+      record.window.focus();
+    },
+    async closeWindow(input): Promise<void> {
+      requireMainWindow(input.windowId).close();
+    },
+  };
+
+  const menus: DesktopHostAdapter["menus"] = {
+    async installAppMenu(input): Promise<DesktopMenuRegistration> {
+      let disposed = false;
+      ensureApplicationMenuDispatcher();
+      const dispatch = (event: ApplicationMenuClickEvent): void => {
+        if (disposed) {
+          return;
+        }
+        const route = routeAppMenuAction(event.data?.action);
+        if (!route) {
+          return;
+        }
+        let dispatched: void | Promise<void>;
+        try {
+          dispatched =
+            route.kind === "renderer-command"
+              ? route.command === "command-palette.open"
+                ? input.commandPalette()
+                : route.command === "quick-open.open"
+                  ? input.quickOpen()
+                  : input.openSettings()
+              : options.onLegacyAppMenuAction(route.action);
+        } catch (error) {
+          reportError(error, "electrobun-desktop-host.menu-action");
+          return;
+        }
+        void Promise.resolve(dispatched).catch((error) => {
+          reportError(error, "electrobun-desktop-host.menu-action");
+        });
+      };
+      ApplicationMenu.setApplicationMenu(
+        buildAppMenuConfiguration({ includeSettings: options.includeSettingsMenuItem }),
+      );
+      activeApplicationMenuDispatch = dispatch;
+
+      return {
+        async dispose() {
+          if (disposed) {
+            return;
+          }
+          disposed = true;
+          if (activeApplicationMenuDispatch === dispatch) {
+            activeApplicationMenuDispatch = null;
+            ApplicationMenu.setApplicationMenu([]);
+          }
+        },
+      };
+    },
+  };
+
+  function requireMainWindow(windowId: DesktopWindowId): MainWindowRecord {
+    if (!mainWindow || mainWindow.windowId !== windowId) {
+      throw new Error(`Electrobun main window ${windowId} is not available.`);
+    }
+    return mainWindow;
+  }
+
+  const sendLegacyMessage = async <Name extends keyof ChatRPCSchema["webview"]["messages"]>(
+    messageName: Name,
+    payload: ChatRPCSchema["webview"]["messages"][Name],
+  ): Promise<void> => {
+    if (rendererCallsRejectedWith !== undefined) {
+      throw rendererCallsRejectedWith;
+    }
+    const rpc = rendererRpc;
+    if (!rpc) {
+      throw new Error("The Electrobun renderer API is not available.");
+    }
+    const delivery = {
+      kind: "legacy-message",
+      messageName,
+      payload,
+    } as Extract<BufferedRendererDelivery, { readonly kind: "legacy-message" }>;
+    if (!rendererTransportReady) {
+      bufferRendererDelivery(delivery);
+      return;
+    }
+    await enqueueLegacyRendererMessage(delivery);
+  };
+
+  return {
+    bridge,
+    windows,
+    menus,
+    ...(options.browserTools ? { browserTools: options.browserTools } : {}),
+    getMainWindow: () => mainWindow?.window ?? null,
+    lifecycle: {
+      start: startQuitGuard,
+      finishQuit,
+    },
+    rejectRendererCalls(error) {
+      shutdownStarted = true;
+      rendererCallsRejectedWith = error;
+      rendererTransportReady = false;
+      bufferedRendererDeliveries = [];
+      rendererBufferFailure = null;
+      const rpc = rendererRpc;
+      rendererRpc = null;
+      try {
+        rpc?.setTransport({});
+      } catch (detachError) {
+        reportError(detachError, "electrobun-desktop-host.reject-renderer-calls");
+      }
+    },
+    sendLegacyMessage,
+  };
+}
+
+function defaultPositionTrafficLights(window: BrowserWindow): void {
+  positionNativeTrafficLights(window.ptr, { leading: 18, top: 13 });
+}
+
+export type ElectrobunRendererApiInput = RendererApiInput;
+export type ElectrobunRpcHandlers = BunRpcConfig["handlers"];

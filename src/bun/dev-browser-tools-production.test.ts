@@ -33,8 +33,13 @@ describe("dev browser tools production boundary", () => {
     expect(indexSource).not.toContain("electrobun-browser-tools/bridge");
     expect(indexSource).not.toContain("mountElectrobunToolBridge");
     expect(indexSource).not.toContain("tool-bridge");
-    expect(indexSource).toContain('if (appChannel === "dev")');
-    expect(indexSource).toContain('await import("./dev-browser-tools-bridge")');
+    const prepareStart = indexSource.indexOf("prepareMainWindow:");
+    const devOnlyReturn = indexSource.indexOf('(await appChannelPromise) !== "dev"', prepareStart);
+    const dynamicImport = indexSource.indexOf('await import("./dev-browser-tools-bridge")');
+    expect(prepareStart).toBeGreaterThanOrEqual(0);
+    expect(devOnlyReturn).toBeGreaterThan(prepareStart);
+    expect(devOnlyReturn).toBeLessThan(dynamicImport);
+    expect(dynamicImport).toBeGreaterThan(prepareStart);
   });
 
   test("stable bundle package copy list excludes browser-tools bridge runtime", () => {

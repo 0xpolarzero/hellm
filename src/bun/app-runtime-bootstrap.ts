@@ -265,7 +265,7 @@ export interface AppRuntimeBootstrap {
       unregister(workspaceId: WorkspaceId): boolean;
     };
   };
-  dispose(): Promise<void>;
+  dispose(reason?: "app-shutdown" | "startup-failure"): Promise<void>;
 }
 
 export async function createAppRuntimeBootstrap(
@@ -593,17 +593,17 @@ export async function createAppRuntimeBootstrap(
           },
         },
       },
-      dispose: () =>
+      dispose: (reason = "app-shutdown") =>
         lifecycle
           .shutdown(
-            "app-shutdown",
+            reason,
             async () => {
               closeCommittedAppLogAppendSubscriptions();
               stateCommands.close();
               state.close();
               facade.close();
             },
-            () => prepareShutdown(managedRuntime, "app-shutdown"),
+            () => prepareShutdown(managedRuntime, reason),
             () => disposeManagedRuntime(managedRuntime),
           )
           .then(() => undefined),

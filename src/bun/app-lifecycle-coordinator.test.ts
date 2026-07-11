@@ -56,4 +56,29 @@ describe("AppLifecycleCoordinator", () => {
     await expect(second).resolves.toEqual({ state: "closed", reason: "app-shutdown" });
     expect(calls).toEqual(["close-scopes", "prepare", "dispose"]);
   });
+
+  it("still prepares and disposes when scope closure fails", async () => {
+    const coordinator = new AppLifecycleCoordinator();
+    const calls: string[] = [];
+    const closeError = new Error("scope close failed");
+    coordinator.markReady();
+
+    const shutdown = coordinator.shutdown(
+      "app-shutdown",
+      async () => {
+        calls.push("close-scopes");
+        throw closeError;
+      },
+      async () => {
+        calls.push("prepare");
+      },
+      async () => {
+        calls.push("dispose");
+      },
+    );
+
+    await expect(shutdown).rejects.toBe(closeError);
+    expect(calls).toEqual(["close-scopes", "prepare", "dispose"]);
+    expect(coordinator.getState()).toBe("closed");
+  });
 });

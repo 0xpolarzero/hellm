@@ -73,7 +73,7 @@
   let observedDockviewWidth = 0;
   let observedDockviewHeight = 0;
   let unsubscribeRuntime: (() => void) | null = null;
-  let panelRenderKeys = new Map<string, string>();
+  let panelHostRefreshKeys = new Map<string, string>();
   const tabRenderers = new Set<SurfaceTabRenderer>();
   const headerRenderers = new Set<SurfaceHeaderActionsRenderer>();
 
@@ -587,7 +587,7 @@
       } finally {
         applying = false;
       }
-      panelRenderKeys = new Map();
+      panelHostRefreshKeys = new Map();
       syncDockviewPanels();
     }
     scheduleDockviewLayout();
@@ -671,12 +671,9 @@
     return surface === "orchestrator" || surface === "handler" ? "always" : "onlyWhenVisible";
   }
 
-  function getPanelRenderKey(panel: WorkspaceDockviewPanelState): string {
+  function getPanelHostRefreshKey(): string {
     return JSON.stringify({
-      binding: panel.binding,
-      title: panel.chrome?.title ?? null,
-      renderer: getPanelRenderer(panel),
-      agentSettingsReady: panel.binding?.surface === "agents" ? Boolean(agentSettings) : undefined,
+      agentSettingsReady: Boolean(agentSettings),
     });
   }
 
@@ -688,7 +685,7 @@
     try {
       for (const panel of nextPanels) {
         const existingPanel = getDockviewPanel(panel.panelId);
-        const renderKey = getPanelRenderKey(panel);
+        const hostRefreshKey = getPanelHostRefreshKey();
         if (!existingPanel) {
           const addedPanel = dockview.addPanel({
             id: panel.panelId,
@@ -704,18 +701,22 @@
           if (panel.placement?.kind === "popout") {
             void dockview.addPopoutGroup(addedPanel, { position: panel.placement.box });
           }
-          panelRenderKeys.set(panel.panelId, renderKey);
-        } else if (panelRenderKeys.get(panel.panelId) !== renderKey) {
+          panelHostRefreshKeys.set(panel.panelId, hostRefreshKey);
+        } else {
           existingPanel.setTitle(panel.chrome?.title ?? "Surface");
           existingPanel.setRenderer(getPanelRenderer(panel));
-          existingPanel.update({ params: { renderKey } });
-          panelRenderKeys.set(panel.panelId, renderKey);
+          if (panelHostRefreshKeys.get(panel.panelId) !== hostRefreshKey) {
+            existingPanel.update({ params: { hostRefreshKey } });
+            panelHostRefreshKeys.set(panel.panelId, hostRefreshKey);
+          }
         }
       }
       for (const panel of dockview.panels) {
         if (!nextPanels.some((candidate) => candidate.panelId === panel.id)) {
-          dockview.removePanel(panel);
-          panelRenderKeys.delete(panel.id);
+          const preserveFinalEmptyGroup =
+            nextPanels.length === 0 && dockview.totalPanels === 1 && dockview.groups.length === 1;
+          dockview.removePanel(panel, { removeEmptyGroup: !preserveFinalEmptyGroup });
+          panelHostRefreshKeys.delete(panel.id);
         }
       }
       const focused = nextFocusedPanelId ? getDockviewPanel(nextFocusedPanelId) : undefined;

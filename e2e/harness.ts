@@ -1,13 +1,12 @@
 import { cp, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { Page } from "electrobun-browser-tools";
+import { connect, type Driver, type Page } from "electrobun-browser-tools";
 import {
   createIsolatedHomeDir,
   createJsonBridgeMetadataParser,
   ensureElectrobunBuilt,
   launchElectrobunApp,
   resolveElectrobunWorkspaceDir,
-  withElectrobunApp,
   type LaunchedElectrobunApp,
 } from "electrobun-e2e";
 
@@ -17,6 +16,9 @@ const FALLBACK_APP_ID = "svvy";
 const FALLBACK_APP_READY_PATTERN = /^svvy desktop app started$/;
 const PREPARED_HOME_SNAPSHOT_DIRNAME = ".svvy-e2e-launch-snapshot";
 const MAX_LOCAL_LAUNCH_ATTEMPTS = 3;
+// The browser-tools connection timeout is also its per-command transport timeout.
+// Keep it above the longest explicit UI action timeout used by the e2e suite.
+const BRIDGE_COMMAND_TIMEOUT_MS = 20_000;
 
 const parseBridgeMetadata = (() => {
   const parseJsonBridgeMetadata = createJsonBridgeMetadataParser("svvy bridge:");
@@ -85,13 +87,48 @@ export async function withSvvyApp<T>(
     throw new Error("withSvvyApp requires a test callback.");
   }
 
-  const launchOptions = createLaunchOptions(options);
-  return await withLocalLaunchRetries(() => withElectrobunApp(launchOptions, fn));
+  const app = await launchSvvyApp(options);
+  try {
+    return await fn(app);
+  } finally {
+    await app.close();
+  }
 }
 
 export async function launchSvvyApp(options: SvvyAppLaunchOptions = {}): Promise<SvvyApp> {
-  const launchOptions = createLaunchOptions(options);
-  return await withLocalLaunchRetries(() => launchElectrobunApp(launchOptions));
+  const readyDriver: { current: Driver | null } = { current: null };
+  const launchOptions = createLaunchOptions(options, (driver) => {
+    readyDriver.current = driver;
+  });
+
+  return await withLocalLaunchRetries(async () => {
+    readyDriver.current = null;
+    const app = await launchElectrobunApp(launchOptions).catch(async (error) => {
+      await readyDriver.current?.close().catch(() => undefined);
+      throw error;
+    });
+    if (!readyDriver.current) {
+      await app.close();
+      throw new Error("The Electrobun app reached readiness without a browser-tools driver.");
+    }
+    return adoptReadyDriver(app, readyDriver.current);
+  });
+}
+
+function adoptReadyDriver(app: SvvyApp, driver: Driver): SvvyApp {
+  const closeLaunchedApp = app.close;
+  let closed = false;
+  return {
+    ...app,
+    driver,
+    page: driver.page("active"),
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      await driver.close().catch(() => undefined);
+      await closeLaunchedApp();
+    },
+  };
 }
 
 async function withLocalLaunchRetries<T>(action: () => Promise<T>): Promise<T> {
@@ -162,7 +199,10 @@ async function restorePreparedHomeDir(homeDir: string): Promise<void> {
   }
 }
 
-function createLaunchOptions(options: SvvyAppLaunchOptions) {
+function createLaunchOptions(
+  options: SvvyAppLaunchOptions,
+  onReadyDriver: (driver: Driver) => void,
+) {
   const workspaceDir = options.workspaceDir ?? APP_WORKSPACE_DIR;
   const preparedHomeDirs = new Set<string>();
   const env = {
@@ -186,11 +226,22 @@ function createLaunchOptions(options: SvvyAppLaunchOptions) {
       preparedHomeDirs.add(context.homeDir);
     },
     bridgeMetadata: BRIDGE_METADATA,
+    driverConnectTimeoutMs: BRIDGE_COMMAND_TIMEOUT_MS,
     env,
     homeDir: options.homeDir,
     projectRoot: PROJECT_DIR,
-    ready: async ({ page }: { page: Page }) => {
-      await waitForWorkspaceChrome(page);
+    ready: async ({ appId, bridgeUrl }: { appId: string; bridgeUrl: string | null }) => {
+      const driver = await connect({
+        ...(bridgeUrl ? { url: bridgeUrl } : { app: appId }),
+        timeout: BRIDGE_COMMAND_TIMEOUT_MS,
+      });
+      try {
+        await waitForWorkspaceChrome(driver.page("active"));
+        onReadyDriver(driver);
+      } catch (error) {
+        await driver.close().catch(() => undefined);
+        throw error;
+      }
     },
     retryLabel: "launchSvvyApp",
     workspaceDir,

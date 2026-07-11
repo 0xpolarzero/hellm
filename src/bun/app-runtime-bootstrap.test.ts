@@ -428,6 +428,33 @@ describe("app runtime bootstrap", () => {
       harness.appGlobal.store.listSessionStates = listSessionStates;
     }
   });
+
+  it("prepares an already-ready runtime with the requested startup-failure reason", async () => {
+    const harness = createBootstrapHarness();
+    const bootstrap = await createAppRuntimeBootstrap(harness.input);
+    const surface = await bootstrap.facade.surfaces.createOrchestrator({
+      workspaceId: harness.workspaceAId,
+      title: "Startup failure cleanup",
+    } satisfies CreateOrchestratorSurfaceInput);
+    const pendingApproval = bootstrap.internal.acceptedNativeTools.requestDirectToolApproval({
+      approvalMode: "user",
+      cwd: harness.workspaceA.cwd,
+      sessionId: surface.workspaceSessionId,
+      surfacePiSessionId: surface.surfacePiSessionId,
+      toolCallId: "tool_app_bootstrap_startup_failure" as ToolItemId,
+      toolName: "exec_command",
+      command: "echo pending",
+      commandFamily: "shell",
+    });
+    await waitForOpenApproval(harness.workspaceA.store, 1);
+
+    await bootstrap.dispose("startup-failure");
+
+    await expect(pendingApproval).resolves.toEqual({
+      approved: false,
+      reason: "Runtime shutdown: startup-failure.",
+    });
+  });
 });
 
 function createBootstrapHarness() {

@@ -39,11 +39,18 @@ export interface CreateRendererNotificationStoreOptions {
     patch: readonly StateReadModelResult[],
     context: ApplyReadModelPatchContext,
   ) => void;
-  readonly applyReadModelBaseline: (baseline: StateReadModelBaseline) => void;
+  readonly applyReadModelBaseline: (
+    baseline: StateReadModelBaseline,
+    scope: RendererReadModelBaselineScope,
+  ) => void;
   readonly onRendererCommand?: (command: DesktopRendererCommand) => void;
   readonly onAppShutdown?: (reason: string) => void;
   readonly onError?: (error: unknown, context: string) => void;
 }
+
+export type RendererReadModelBaselineScope =
+  | { readonly kind: "app" }
+  | { readonly kind: "workspace"; readonly workspaceId: WorkspaceId };
 
 export interface RendererNotificationStore {
   dispose(): void;
@@ -57,20 +64,38 @@ export function createRendererNotificationStore(
   let rebaselineGeneration = 0;
   let refetcher: ScheduleReadModelRefetch;
 
-  const requestRebaseline = (reason: string): void => {
+  const requestRebaseline = (
+    reason: string,
+    notificationScope?: Extract<
+      DesktopRendererNotification,
+      { readonly kind: "read-model-rebaseline-required" }
+    >["scope"],
+  ): void => {
     refetcher.reset(reason);
     rebaselineGeneration += 1;
     const requestedGeneration = rebaselineGeneration;
-    void options.rpcClient.request
-      .rebaselineStateReadModels({
-        workspaceId: options.workspaceId,
-        reason: reason === "runtime-restart" ? "runtime-restart" : "event-sequence-gap",
-      })
-      .then((baseline) => {
+    const scopes: RendererReadModelBaselineScope[] =
+      notificationScope?.kind === "app"
+        ? [{ kind: "app" }]
+        : notificationScope
+          ? [{ kind: "workspace", workspaceId: notificationScope.workspaceId }]
+          : [{ kind: "app" }, { kind: "workspace", workspaceId: options.workspaceId }];
+    void Promise.all(
+      scopes.map(async (scope) => ({
+        scope,
+        baseline: await options.rpcClient.request.rebaselineStateReadModels({
+          ...(scope.kind === "workspace" ? { workspaceId: scope.workspaceId } : {}),
+          reason: reason === "runtime-restart" ? "runtime-restart" : "event-sequence-gap",
+        }),
+      })),
+    )
+      .then((results) => {
         if (disposed || requestedGeneration !== rebaselineGeneration) {
           return;
         }
-        options.applyReadModelBaseline(baseline);
+        for (const result of results) {
+          options.applyReadModelBaseline(result.baseline, result.scope);
+        }
       })
       .catch((error) => options.onError?.(error, "renderer-notifications.rebaseline"));
   };
@@ -107,6 +132,10 @@ export function createRendererNotificationStore(
       !scopeMatchesDescriptor(notification.scope, notification.invalidation)
     ) {
       requestRebaseline("scope-descriptor-mismatch");
+      return;
+    }
+    if (notification.kind === "read-model-rebaseline-required") {
+      requestRebaseline(notification.reason, notification.scope);
       return;
     }
     refetcher.handleNotification(notification);

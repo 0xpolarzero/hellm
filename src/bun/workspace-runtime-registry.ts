@@ -11,6 +11,12 @@ import {
   symlinkSync,
 } from "node:fs";
 import * as Effect from "effect/Effect";
+import type {
+  CreateDesktopAppInput,
+  DesktopRuntimeActionsFacade,
+  RendererStateCommandsFacade,
+  RendererStateFacade,
+} from "@svvy/desktop";
 import {
   type RuntimeGeneratedPackageWorkspaceLinkFileHost,
   type RuntimeLayerCommandControlPortService,
@@ -37,6 +43,8 @@ import {
   type RuntimeGeneratedPackageStatePortService,
   type RuntimeSourceStatePortService,
   type RuntimeOwnerId,
+  type RuntimeOwnerRef,
+  type ReleaseWorkspaceResult,
   type WorkspaceId,
 } from "@svvy/core";
 import type { ExtensionSourceRoots, GeneratedPackageRoots } from "@svvy/extensions";
@@ -130,6 +138,14 @@ export type WorkspaceRuntimeOperations = Pick<
   | "sourceInvalidation"
 >;
 
+export interface DesktopAppFacades {
+  readonly runtimeActions: DesktopRuntimeActionsFacade;
+  readonly runtimeCommands: CreateDesktopAppInput["commands"]["runtime"];
+  readonly rendererState: RendererStateFacade;
+  readonly rendererStateCommands: RendererStateCommandsFacade;
+  readonly runtimeEvents: RuntimeFacade["events"];
+}
+
 const nodeGeneratedPackageWorkspaceLinkFileHost: RuntimeGeneratedPackageWorkspaceLinkFileHost = {
   pathExists: (path: string): boolean => existsSync(path),
   isDirectory: (path: string): boolean => {
@@ -210,11 +226,30 @@ export type WorkspaceRuntime = {
   dispose: () => Promise<void>;
 };
 
-type RuntimeRecord = WorkspaceRuntime & {
+type RuntimeRecord = Omit<WorkspaceRuntime, "dispose"> & {
   refCount: number;
   commandStdin: ReturnType<typeof createLiveCommandStdinRegistry>;
   sourceInvalidationCoordinator: RuntimeSourceInvalidationCoordinatorHandle;
   unsubscribeRuntimeEvents: () => void;
+  latestOwnerReleaseResult: ReleaseWorkspaceResult | null;
+  reactivate(): Promise<void>;
+  dispose(): Promise<void>;
+  releaseVisualOwner(): Promise<ReleaseWorkspaceResult | null>;
+  shutdown(appRuntime?: AppRuntimeBootstrap | null): Promise<void>;
+};
+
+type OpeningRuntimeRecord = Pick<
+  RuntimeRecord,
+  | "workspaceId"
+  | "cwd"
+  | "kind"
+  | "catalog"
+  | "agentSettingsStore"
+  | "commandStdin"
+  | "appLogs"
+  | "appLog"
+> & {
+  sourceInvalidationCoordinator: RuntimeSourceInvalidationCoordinatorHandle | null;
 };
 
 type AppGlobalHostRecord = {
@@ -224,7 +259,10 @@ type AppGlobalHostRecord = {
   agentSettingsStore: AgentSettingsStore;
   commandStdin: ReturnType<typeof createLiveCommandStdinRegistry>;
   appLogs: StateAppLogsFacade;
-  sourceStatePort: Pick<RuntimeSourceStatePortService, "recordSourceScan">;
+  sourceStatePort: Pick<
+    RuntimeSourceStatePortService,
+    "recordSourceDiagnostic" | "recordSourceScan"
+  >;
   dispose(): Promise<void>;
 };
 
@@ -344,10 +382,15 @@ function rendererStreamPatchesFromRuntimeEvent(input: {
 
 export class WorkspaceRuntimeRegistry {
   private readonly runtimes = new Map<string, RuntimeRecord>();
+  private readonly dormantRuntimes = new Map<string, RuntimeRecord>();
+  private readonly openingRuntimes = new Map<string, OpeningRuntimeRecord>();
   private readonly pendingRuntimes = new Map<string, Promise<RuntimeRecord>>();
+  private readonly closingRuntimes = new Map<string, Promise<void>>();
+  private readonly externalWorkspaceOwners = new Map<string, Map<string, RuntimeOwnerRef>>();
   private appGlobalHost: Promise<AppGlobalHostRecord> | null = null;
   private appRuntimeBootstrap: Promise<AppRuntimeBootstrap> | null = null;
   private resolvedAppRuntimeBootstrap: AppRuntimeBootstrap | null = null;
+  private desktopAppFacades: Promise<DesktopAppFacades> | null = null;
   private appRuntimeBootstrapState: "accepting" | "shutting-down" | "closed" = "accepting";
   private appRuntimeShutdownPromise: Promise<void> | null = null;
   private readonly openingWorkspaceCwds = new Map<string, string>();
@@ -387,7 +430,7 @@ export class WorkspaceRuntimeRegistry {
             scope: { kind: "app-global" },
             event,
           });
-          for (const runtime of this.runtimes.values()) {
+          for (const runtime of this.workspaceHostRecords()) {
             runtime.appLog.info("source.graph", "Source inputs changed.", {
               domains: event.domains,
               reason: event.reason,
@@ -415,6 +458,11 @@ export class WorkspaceRuntimeRegistry {
               Effect.promise(() => this.getAppGlobalHostRecord()),
               (host) => host.sourceStatePort.recordSourceScan(input),
             ),
+          recordSourceDiagnostic: (input) =>
+            Effect.flatMap(
+              Effect.promise(() => this.getAppGlobalHostRecord()),
+              (host) => host.sourceStatePort.recordSourceDiagnostic(input),
+            ),
         },
       },
       watchEnabled: this.options.sourceWatchEnabled,
@@ -424,6 +472,7 @@ export class WorkspaceRuntimeRegistry {
       if (!options.openInitialWorkspace) {
         return;
       }
+      await this.getAppRuntimeBootstrap();
       const runtime = await this.acquireWorkspace(options.initialCwd);
       this.activeWorkspaceId = runtime.workspaceId;
     });
@@ -528,7 +577,20 @@ export class WorkspaceRuntimeRegistry {
     options: OpenWorkspaceOptions = {},
   ): Promise<WorkspaceRuntime> {
     await this.appGlobalSourceReady;
+    if (this.appRuntimeBootstrapState !== "accepting") {
+      throw appRuntimeBootstrapUnavailableError(
+        "workspace-runtime-registry.acquireWorkspace",
+        this.appRuntimeBootstrapState,
+      );
+    }
     const workspaceCwd = canonicalizeWorkspaceCwd(cwd);
+    await this.awaitWorkspaceTransitions(workspaceCwd);
+    if (this.appRuntimeBootstrapState !== "accepting") {
+      throw appRuntimeBootstrapUnavailableError(
+        "workspace-runtime-registry.acquireWorkspace",
+        this.appRuntimeBootstrapState,
+      );
+    }
     const workspaceId = normalizeWorkspaceRuntimeId(workspaceCwd);
     const existing = this.getRuntimeByCwd(workspaceCwd) ?? this.runtimes.get(workspaceId);
     if (existing) {
@@ -541,18 +603,60 @@ export class WorkspaceRuntimeRegistry {
     const pending = this.pendingRuntimes.get(pendingKey);
     if (pending) {
       const runtime = await pending;
+      if (this.appRuntimeBootstrapState !== "accepting") {
+        throw appRuntimeBootstrapUnavailableError(
+          "workspace-runtime-registry.acquireWorkspace",
+          this.appRuntimeBootstrapState,
+        );
+      }
       runtime.refCount += 1;
       this.activeWorkspaceId = runtime.workspaceId;
       return runtime;
     }
 
-    const pendingRuntime = this.createRuntime(workspaceId, workspaceCwd, options.kind ?? "user");
+    let dormant =
+      this.getDormantRuntimeByCwd(workspaceCwd) ?? this.dormantRuntimes.get(workspaceId);
+    if (
+      dormant?.latestOwnerReleaseResult &&
+      dormant.latestOwnerReleaseResult.remainingOwners === 0 &&
+      !this.externalWorkspaceOwners.has(dormant.workspaceId)
+    ) {
+      const lastRelease = dormant.latestOwnerReleaseResult;
+      await this.runWorkspaceTransition(workspaceCwd, () =>
+        this.closeUnownedDormantRuntime(lastRelease),
+      );
+      if (this.appRuntimeBootstrapState !== "accepting") {
+        throw appRuntimeBootstrapUnavailableError(
+          "workspace-runtime-registry.acquireWorkspace",
+          this.appRuntimeBootstrapState,
+        );
+      }
+      dormant = this.getDormantRuntimeByCwd(workspaceCwd) ?? this.dormantRuntimes.get(workspaceId);
+    }
+    const pendingRuntime = dormant
+      ? this.runWorkspaceTransition(workspaceCwd, async () => {
+          await dormant.reactivate();
+          if (this.appRuntimeBootstrapState !== "accepting") {
+            return dormant;
+          }
+          dormant.refCount = 1;
+          this.dormantRuntimes.delete(dormant.workspaceId);
+          this.runtimes.set(dormant.workspaceId, dormant);
+          return dormant;
+        })
+      : this.createRuntime(workspaceId, workspaceCwd, options.kind ?? "user");
     this.pendingRuntimes.set(pendingKey, pendingRuntime);
     let runtime: RuntimeRecord;
     try {
       runtime = await pendingRuntime;
     } finally {
       this.pendingRuntimes.delete(pendingKey);
+    }
+    if (this.appRuntimeBootstrapState !== "accepting") {
+      throw appRuntimeBootstrapUnavailableError(
+        "workspace-runtime-registry.acquireWorkspace",
+        this.appRuntimeBootstrapState,
+      );
     }
     this.runtimes.set(runtime.workspaceId, runtime);
     this.activeWorkspaceId = runtime.workspaceId;
@@ -572,14 +676,23 @@ export class WorkspaceRuntimeRegistry {
   }
 
   getRuntimeOperations(workspaceId: string): WorkspaceRuntimeOperations {
+    const operations = this.getAppRuntimeFacadeOperations();
     this.getRuntime(workspaceId);
-    return this.getAppRuntimeFacadeOperations();
+    return operations;
   }
 
   getRuntimeEventSubscription(
     workspaceId: string,
     input?: Parameters<RuntimeFacade["events"]>[0],
   ): ReturnType<RuntimeFacade["events"]> {
+    if (this.appRuntimeBootstrapState !== "accepting") {
+      return Promise.reject(
+        appRuntimeBootstrapUnavailableError(
+          "workspace-runtime-registry.getAppRuntimeBootstrap",
+          this.appRuntimeBootstrapState,
+        ),
+      ) as ReturnType<RuntimeFacade["events"]>;
+    }
     this.getRuntime(workspaceId);
     return this.getAppRuntimeBootstrap().then((runtime) =>
       runtime.facade.events({
@@ -595,6 +708,164 @@ export class WorkspaceRuntimeRegistry {
   ): ReturnType<RuntimeFacade["events"]> {
     const runtime = await this.getAppRuntimeBootstrap();
     return runtime.facade.events(input) as ReturnType<RuntimeFacade["events"]>;
+  }
+
+  acquireDesktopAppFacades(): Promise<DesktopAppFacades> {
+    if (this.appRuntimeBootstrapState !== "accepting") {
+      return Promise.reject(
+        appRuntimeBootstrapUnavailableError(
+          "workspace-runtime-registry.acquireDesktopAppFacades",
+          this.appRuntimeBootstrapState,
+        ),
+      );
+    }
+    if (!this.desktopAppFacades) {
+      this.desktopAppFacades = this.getAppRuntimeBootstrap().then((runtime) => {
+        const workspaces: RuntimeFacade["workspaces"] = {
+          acquire: (input, options) => {
+            const authoritativeOptions = options ? { ...options, signal: undefined } : undefined;
+            return this.runWorkspaceTransitionWithCancelableWait({
+              cwd: input.cwd,
+              signal: options?.signal,
+              operation: async () => {
+                this.assertAcceptingWorkspaceFacadeCall("runtime.workspaces.acquire");
+                const predictedWorkspaceId = normalizeWorkspaceRuntimeId(
+                  canonicalizeWorkspaceCwd(input.cwd),
+                ) as WorkspaceId;
+                const host = this.getRetainedWorkspaceHostRecord(predictedWorkspaceId);
+                if (!host || host.latestOwnerReleaseResult?.remainingOwners === 0) {
+                  throw new RuntimeContractError({
+                    operation: "runtime.workspaces.acquire",
+                    reason: "target-not-found",
+                    message: `Workspace host is not available for ${predictedWorkspaceId}.`,
+                  });
+                }
+                this.trackExternalWorkspaceOwner(predictedWorkspaceId, input.owner);
+                const result = await runtime.facade.workspaces.acquire(input, authoritativeOptions);
+                if (result.workspaceId !== predictedWorkspaceId) {
+                  this.untrackExternalWorkspaceOwner(predictedWorkspaceId, input.owner);
+                  this.trackExternalWorkspaceOwner(result.workspaceId, input.owner);
+                }
+                const resultHost = this.getRetainedWorkspaceHostRecord(result.workspaceId);
+                if (!resultHost) {
+                  throw new RuntimeContractError({
+                    operation: "runtime.workspaces.acquire",
+                    reason: "state-conflict",
+                    message: `Acquired workspace host disappeared for ${result.workspaceId}.`,
+                  });
+                }
+                resultHost.latestOwnerReleaseResult = null;
+                return result;
+              },
+              abortedFacadeCall: () => {
+                const controller = new AbortController();
+                controller.abort();
+                return runtime.facade.workspaces.acquire(input, {
+                  ...options,
+                  signal: controller.signal,
+                });
+              },
+            });
+          },
+          acquireDefault: (input, options) => {
+            const defaultWorkspaceCwd = getDefaultWorkspaceCwd(this.appDataDir);
+            const authoritativeOptions = options ? { ...options, signal: undefined } : undefined;
+            return this.runWorkspaceTransitionWithCancelableWait({
+              cwd: defaultWorkspaceCwd,
+              signal: options?.signal,
+              operation: async () => {
+                this.assertAcceptingWorkspaceFacadeCall("runtime.workspaces.acquireDefault");
+                const predictedWorkspaceId = normalizeWorkspaceRuntimeId(
+                  canonicalizeWorkspaceCwd(defaultWorkspaceCwd),
+                ) as WorkspaceId;
+                const host = this.getRetainedWorkspaceHostRecord(predictedWorkspaceId);
+                if (!host || host.latestOwnerReleaseResult?.remainingOwners === 0) {
+                  throw new RuntimeContractError({
+                    operation: "runtime.workspaces.acquireDefault",
+                    reason: "target-not-found",
+                    message: `Default workspace host is not available for ${predictedWorkspaceId}.`,
+                  });
+                }
+                this.trackExternalWorkspaceOwner(predictedWorkspaceId, input.owner);
+                const result = await runtime.facade.workspaces.acquireDefault(
+                  input,
+                  authoritativeOptions,
+                );
+                if (result.workspaceId !== predictedWorkspaceId) {
+                  this.untrackExternalWorkspaceOwner(predictedWorkspaceId, input.owner);
+                  this.trackExternalWorkspaceOwner(result.workspaceId, input.owner);
+                }
+                const resultHost = this.getRetainedWorkspaceHostRecord(result.workspaceId);
+                if (!resultHost) {
+                  throw new RuntimeContractError({
+                    operation: "runtime.workspaces.acquireDefault",
+                    reason: "state-conflict",
+                    message: `Acquired default workspace host disappeared for ${result.workspaceId}.`,
+                  });
+                }
+                resultHost.latestOwnerReleaseResult = null;
+                return result;
+              },
+              abortedFacadeCall: () => {
+                const controller = new AbortController();
+                controller.abort();
+                return runtime.facade.workspaces.acquireDefault(input, {
+                  ...options,
+                  signal: controller.signal,
+                });
+              },
+            });
+          },
+          release: (input, options) => {
+            this.assertAcceptingWorkspaceFacadeCall("runtime.workspaces.release");
+            const host = this.getRetainedWorkspaceHostRecord(input.workspaceId);
+            if (!host) {
+              return runtime.facade.workspaces.release(input, options).then((result) => {
+                this.untrackExternalWorkspaceOwner(result.workspaceId, input.owner);
+                return result;
+              });
+            }
+            const authoritativeOptions = options ? { ...options, signal: undefined } : undefined;
+            return this.runWorkspaceTransitionWithCancelableWait({
+              cwd: host.cwd,
+              signal: options?.signal,
+              operation: async () => {
+                this.assertAcceptingWorkspaceFacadeCall("runtime.workspaces.release");
+                const result = await runtime.facade.workspaces.release(input, authoritativeOptions);
+                this.untrackExternalWorkspaceOwner(result.workspaceId, input.owner);
+                await this.closeUnownedDormantRuntime(result, runtime);
+                return result;
+              },
+              abortedFacadeCall: () => {
+                const controller = new AbortController();
+                controller.abort();
+                return runtime.facade.workspaces.release(input, {
+                  ...options,
+                  signal: controller.signal,
+                });
+              },
+            });
+          },
+        };
+        return {
+          runtimeActions: {
+            workspaces,
+            surfaces: runtime.facade.surfaces,
+            messages: runtime.facade.messages,
+            queues: runtime.facade.queues,
+            requestInput: runtime.facade.requestInput,
+            approvals: runtime.facade.approvals,
+            sourceEdits: runtime.facade.sourceEdits,
+            sourceInvalidation: runtime.facade.sourceInvalidation,
+          },
+          runtimeCommands: runtime.facade.commands,
+          rendererState: runtime.rendererState,
+          rendererStateCommands: runtime.rendererStateCommands,
+          runtimeEvents: runtime.facade.events,
+        };
+      });
+    }
+    return this.desktopAppFacades;
   }
 
   getActiveRuntime(): WorkspaceRuntime {
@@ -631,9 +902,29 @@ export class WorkspaceRuntimeRegistry {
   }
 
   async releaseWorkspace(workspaceId: string): Promise<boolean> {
+    if (this.appRuntimeBootstrapState !== "accepting") {
+      return false;
+    }
     const runtime = this.runtimes.get(workspaceId);
     if (!runtime) {
-      return false;
+      const dormant = this.dormantRuntimes.get(workspaceId);
+      if (!dormant) {
+        return false;
+      }
+      await this.runWorkspaceTransition(dormant.cwd, async () => {
+        if (
+          dormant.latestOwnerReleaseResult &&
+          dormant.latestOwnerReleaseResult.remainingOwners === 0
+        ) {
+          await this.closeUnownedDormantRuntime(dormant.latestOwnerReleaseResult);
+          return;
+        }
+        const result = await dormant.releaseVisualOwner();
+        if (result) {
+          await this.closeUnownedDormantRuntime(result);
+        }
+      });
+      return true;
     }
 
     runtime.refCount -= 1;
@@ -645,44 +936,129 @@ export class WorkspaceRuntimeRegistry {
     }
 
     this.runtimes.delete(workspaceId);
-    await runtime.dispose();
+    this.dormantRuntimes.set(workspaceId, runtime);
     if (this.activeWorkspaceId === workspaceId) {
       const next = this.runtimes.keys().next().value as string | undefined;
       this.activeWorkspaceId = next ?? null;
     }
+    await this.runWorkspaceTransition(runtime.cwd, async () => {
+      const result = await runtime.releaseVisualOwner();
+      if (result) {
+        await this.closeUnownedDormantRuntime(result);
+      }
+    });
     return true;
   }
 
   requestSourceInvalidationScan(reason: string): void {
     void this.appGlobalSourceInvalidationCoordinator.requestScan(reason);
-    for (const runtime of this.runtimes.values()) {
-      void runtime.sourceInvalidationCoordinator.requestScan(reason);
+    for (const runtime of this.workspaceHostRecords()) {
+      void runtime.sourceInvalidationCoordinator?.requestScan(reason);
     }
   }
 
-  async closeSourceInvalidationCoordinator(): Promise<void> {
-    if (this.appRuntimeBootstrapState === "closed") return;
-    if (this.appRuntimeShutdownPromise) return await this.appRuntimeShutdownPromise;
-    this.appRuntimeShutdownPromise = (async () => {
-      const appRuntimeBootstrap = this.appRuntimeBootstrap;
-      const appGlobalHost = this.appGlobalHost;
-      this.appRuntimeBootstrapState = "shutting-down";
-      await Promise.all([
-        this.appGlobalSourceInvalidationCoordinator.close(),
-        ...Array.from(this.runtimes.values()).map((runtime) =>
-          runtime.sourceInvalidationCoordinator.close(),
-        ),
-      ]);
+  shutdownApp(reason: "app-shutdown" | "startup-failure" = "app-shutdown"): Promise<void> {
+    if (this.appRuntimeShutdownPromise) return this.appRuntimeShutdownPromise;
+    const appRuntimeBootstrap = this.appRuntimeBootstrap;
+    const appGlobalHost = this.appGlobalHost;
+    const workspaceRuntimes = [...this.runtimes.values(), ...this.dormantRuntimes.values()];
+    const pendingWorkspaceRuntimes = Array.from(this.pendingRuntimes.values());
+    const closingWorkspaceRuntimes = Array.from(this.closingRuntimes.values());
+    this.appRuntimeBootstrapState = "shutting-down";
+    this.runtimes.clear();
+    this.dormantRuntimes.clear();
+    this.activeWorkspaceId = null;
+    let retryableWorkspaceCleanupFailure = false;
+    const shutdownPromise = (async () => {
+      const errors: unknown[] = [];
+      let resolvedBootstrap: AppRuntimeBootstrap | null = null;
+      if (appRuntimeBootstrap) {
+        try {
+          resolvedBootstrap = await appRuntimeBootstrap;
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      const settledClosingRuntimes = await Promise.allSettled(closingWorkspaceRuntimes);
+      for (const result of settledClosingRuntimes) {
+        if (result.status === "rejected") {
+          errors.push(result.reason);
+        }
+      }
+      this.closingRuntimes.clear();
+      const settledPendingRuntimes = await Promise.allSettled(pendingWorkspaceRuntimes);
+      const runtimesToDispose = new Set(workspaceRuntimes);
+      for (const result of settledPendingRuntimes) {
+        if (result.status === "fulfilled") {
+          runtimesToDispose.add(result.value);
+        }
+      }
+      this.pendingRuntimes.clear();
+      let workspaceCleanupIncomplete = false;
+      for (const runtime of runtimesToDispose) {
+        let externalOwnersReleased = true;
+        if (resolvedBootstrap) {
+          try {
+            await this.releaseExternalWorkspaceOwnersForShutdown(runtime, resolvedBootstrap);
+          } catch (error) {
+            errors.push(error);
+            externalOwnersReleased = false;
+          }
+        } else if (this.externalWorkspaceOwners.has(runtime.workspaceId)) {
+          externalOwnersReleased = false;
+        }
+        if (!externalOwnersReleased) {
+          this.dormantRuntimes.set(runtime.workspaceId, runtime);
+          workspaceCleanupIncomplete = true;
+          continue;
+        }
+        try {
+          await runtime.shutdown(resolvedBootstrap);
+        } catch (error) {
+          errors.push(error);
+          this.dormantRuntimes.set(runtime.workspaceId, runtime);
+          workspaceCleanupIncomplete = true;
+        }
+      }
+      if (workspaceCleanupIncomplete) {
+        retryableWorkspaceCleanupFailure = true;
+        throw new AggregateError(errors, "Workspace runtime resources did not shut down cleanly.");
+      }
       try {
-        await appRuntimeBootstrap?.then((runtime) => runtime.dispose());
-        await appGlobalHost?.then((host) => host.dispose());
-      } finally {
-        this.appRuntimeBootstrapState = "closed";
-        this.resolvedAppRuntimeBootstrap = null;
-        this.appGlobalHost = null;
+        await this.appGlobalSourceInvalidationCoordinator.close();
+      } catch (error) {
+        errors.push(error);
+      }
+      if (resolvedBootstrap) {
+        try {
+          await resolvedBootstrap.dispose(reason);
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (appGlobalHost) {
+        try {
+          await (await appGlobalHost).dispose();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      this.appRuntimeBootstrapState = "closed";
+      this.resolvedAppRuntimeBootstrap = null;
+      this.desktopAppFacades = null;
+      this.appGlobalHost = null;
+      this.openingRuntimes.clear();
+      if (errors.length > 0) {
+        throw new AggregateError(errors, "The app runtime registry did not shut down cleanly.");
       }
     })();
-    return await this.appRuntimeShutdownPromise;
+    this.appRuntimeShutdownPromise = shutdownPromise;
+    void shutdownPromise.catch(() => {
+      if (retryableWorkspaceCleanupFailure && this.appRuntimeShutdownPromise === shutdownPromise) {
+        this.appRuntimeShutdownPromise = null;
+      }
+    });
+    return shutdownPromise;
   }
 
   private async createRuntime(
@@ -738,188 +1114,426 @@ export class WorkspaceRuntimeRegistry {
       commandStdin,
       this.options.runtimeLayerConfig,
     );
-    const workspaceStateRegistration = catalog.workspaceStateRouterRegistration();
-    const workspaceId = workspaceStateRegistration.store.workspaceId;
-    const pathIndex = new WorkspacePathIndex(cwd);
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd,
-      agentDir: this.agentDir,
-      workflowsSourceRoot: this.options.workflowsSourceRoot,
-    });
-    const appLogs = this.acquireAppLogFacade(cwd);
-    const appLog = createAppLogger({
-      appLogs,
-      forwardBridgeLog: (level, message, source, details, error) => {
-        this.options.forwardBridgeLog?.(level, message, source, { ...details, workspaceId }, error);
-      },
-    });
-    appLog.info("app.lifecycle", "Workspace scope opened.", {
-      workspaceId,
-      kind,
-      cwd,
-    });
+    let appLogs: StateAppLogsFacade | null = null;
+    let appLog: ReturnType<typeof createAppLogger> | null = null;
+    let sourceInvalidationCoordinator: RuntimeSourceInvalidationCoordinatorHandle | null = null;
+    let appRuntime: AppRuntimeBootstrap | null = null;
+    let workspaceStateRegistered = false;
+    let desktopOwnerReleaseRequired = false;
+    let unsubscribeRuntimeEvents: (() => void) | null = null;
+    let cleanupComplete = false;
+    let runtimeEventsDetached = false;
+    let catalogListenersDetached = false;
+    let sourceCoordinatorClosed = false;
+    let workspaceStateUnregistered = false;
+    let catalogDisposed = false;
+    let appLogsReleased = false;
+    let resolvedWorkspaceId = requestedWorkspaceId;
+    let workspaceCloseRecorded = false;
 
-    catalog.setWorkspaceSyncListener((payload) => {
-      this.options.onWorkspaceSync?.(workspaceId, {
-        ...payload,
-        workspaceId,
-      });
-    });
-    catalog.setSurfaceSyncListener((payload) => {
-      this.options.onSurfaceSync?.(workspaceId, {
-        ...payload,
-        workspaceId,
-      });
-    });
-    catalog.setTitleGenerationLogListener((event) => {
-      recordTitleGenerationLog(appLog, event);
-    });
-    catalog.setWorkflowsGeneratedPackageLogListener((event) => {
-      for (const runtime of this.runtimes.values()) {
-        recordWorkflowsGeneratedPackageLog(runtime.appLog, event);
+    const detachCatalogListeners = (): void => {
+      catalog.setWorkspaceSyncListener(null);
+      catalog.setSurfaceSyncListener(null);
+      catalog.setTitleGenerationLogListener(null);
+      catalog.setWorkflowsGeneratedPackageLogListener(null);
+      catalog.setAppLogListener(null);
+    };
+
+    const releaseDesktopOwner = async (
+      suppliedRuntime: AppRuntimeBootstrap | null | undefined,
+      releaseReason: "tab-closed" | "shutdown",
+    ): Promise<ReleaseWorkspaceResult | null> => {
+      if (!desktopOwnerReleaseRequired) {
+        return null;
       }
-    });
-    catalog.setAppLogListener((event) => {
-      appendAppLoggerEvent(appLog, event);
-    });
-    const sourceInvalidationCoordinator = createRuntimeSourceInvalidationCoordinatorHandle({
-      debounceMs: this.options.runtimeLayerConfig.sourceDebounceMs,
-      host: this.sourceInvalidationHost,
-      maxCoalescingLatencyMs: this.options.runtimeLayerConfig.sourceMaxCoalescingLatencyMs,
-      readInputs: () =>
-        buildWorkspaceSourceWatchInputs({
-          cwd,
-          externalInstructions: agentSettingsStore.getState().appPreferences.externalInstructions,
-          host: this.sourceInvalidationHost,
-        }),
-      sourceScanRecorder: {
-        scope: { kind: "workspace", workspaceId: workspaceId as WorkspaceId },
-        statePort: catalog.getRuntimeSourceStatePort(),
-      },
-      onDomainsChanged: (event) =>
-        Effect.promise(async () => {
-          await this.handleSourceInvalidationEvent({
-            scope: { kind: "workspace", workspaceId: workspaceId as WorkspaceId },
-            event,
-          });
-          appLog.info("source.graph", "Source inputs changed.", {
-            domains: event.domains,
-            reason: event.reason,
-          });
-        }),
-      onWatchError: (error, path) => {
-        this.options.forwardBridgeLog?.(
-          "warn",
-          "Workspace source watcher could not watch a path.",
-          "source.graph",
-          { path, workspaceId },
-          error,
-        );
-      },
-      reconciliationIntervalMs: this.options.runtimeLayerConfig.workspaceSourceReconcileIntervalMs,
-      retryInitialDelayMs: this.options.runtimeLayerConfig.sourceRetryInitialDelayMs,
-      retryMaxAttempts: this.options.runtimeLayerConfig.sourceRetryMaxAttempts,
-      retryMaxDelayMs: this.options.runtimeLayerConfig.sourceRetryMaxDelayMs,
-      watchEnabled: this.options.sourceWatchEnabled,
-    });
-    await sourceInvalidationCoordinator.ready();
-    const appRuntime = await this.getAppRuntimeBootstrap();
-    await appRuntime.internal.workspaceStates.register(
-      kind === "default"
-        ? { ...workspaceStateRegistration, isDefaultWorkspace: true }
-        : workspaceStateRegistration,
-      appLogs,
-    );
-    let workspaceAcquired = false;
+      const runtime = suppliedRuntime ?? appRuntime ?? (await this.getAppRuntimeBootstrap());
+      const result = await runtime.facade.workspaces.release({
+        workspaceId: resolvedWorkspaceId as WorkspaceId,
+        owner: workspaceOwnerRef(resolvedWorkspaceId),
+        releaseReason,
+      });
+      desktopOwnerReleaseRequired = false;
+      return result;
+    };
+
+    const cleanupWorkspaceResources = async (
+      suppliedRuntime: AppRuntimeBootstrap | null | undefined,
+      releaseReason: "tab-closed" | "shutdown",
+    ): Promise<void> => {
+      if (cleanupComplete) {
+        return;
+      }
+      const errors: unknown[] = [];
+      if (!runtimeEventsDetached) {
+        try {
+          unsubscribeRuntimeEvents?.();
+          unsubscribeRuntimeEvents = null;
+          runtimeEventsDetached = true;
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (!catalogListenersDetached) {
+        try {
+          detachCatalogListeners();
+          catalogListenersDetached = true;
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (!sourceCoordinatorClosed) {
+        try {
+          await sourceInvalidationCoordinator?.close();
+          sourceCoordinatorClosed = true;
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      let shutdownRuntime = suppliedRuntime;
+      if (
+        shutdownRuntime === undefined &&
+        (desktopOwnerReleaseRequired || (workspaceStateRegistered && !workspaceStateUnregistered))
+      ) {
+        try {
+          shutdownRuntime = appRuntime ?? (await this.getAppRuntimeBootstrap());
+        } catch (error) {
+          errors.push(error);
+          shutdownRuntime = null;
+        }
+      }
+      if (desktopOwnerReleaseRequired && shutdownRuntime) {
+        try {
+          await releaseDesktopOwner(shutdownRuntime, releaseReason);
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (
+        workspaceStateRegistered &&
+        !workspaceStateUnregistered &&
+        shutdownRuntime &&
+        runtimeEventsDetached &&
+        catalogListenersDetached &&
+        sourceCoordinatorClosed &&
+        !desktopOwnerReleaseRequired
+      ) {
+        try {
+          shutdownRuntime.internal.workspaceStates.unregister(resolvedWorkspaceId as WorkspaceId);
+          workspaceStateUnregistered = true;
+          workspaceStateRegistered = false;
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (!workspaceStateRegistered) {
+        workspaceStateUnregistered = true;
+      }
+      if (
+        !catalogDisposed &&
+        runtimeEventsDetached &&
+        catalogListenersDetached &&
+        sourceCoordinatorClosed &&
+        workspaceStateUnregistered &&
+        !desktopOwnerReleaseRequired
+      ) {
+        try {
+          await catalog.dispose();
+          catalogDisposed = true;
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (!appLogsReleased && catalogDisposed) {
+        try {
+          if (appLogs) {
+            this.releaseAppLogFacade(cwd);
+            appLogs = null;
+          }
+          appLogsReleased = true;
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      cleanupComplete =
+        runtimeEventsDetached &&
+        catalogListenersDetached &&
+        sourceCoordinatorClosed &&
+        workspaceStateUnregistered &&
+        catalogDisposed &&
+        appLogsReleased &&
+        !desktopOwnerReleaseRequired;
+      if (errors.length > 0) {
+        throw new AggregateError(errors, "Workspace runtime resources did not close cleanly.");
+      }
+      if (!cleanupComplete) {
+        throw new Error("Workspace runtime resources did not reach a closed state.");
+      }
+    };
+
     try {
-      this.openingWorkspaceCwds.set(workspaceId, cwd);
-      if (requestedWorkspaceId !== workspaceId) {
-        this.openingWorkspaceCwds.set(requestedWorkspaceId, cwd);
-      }
-      if (kind === "default") {
-        await appRuntime.facade.workspaces.acquireDefault({
-          owner: workspaceOwnerRef(workspaceId),
-          openReason: "startup",
-        });
-      } else {
-        await appRuntime.facade.workspaces.acquire({
-          cwd: cwd as AbsolutePath,
-          owner: workspaceOwnerRef(workspaceId),
-          openReason: "user-open",
-        });
-      }
-      workspaceAcquired = true;
-      await appRuntime.internal.sourceInvalidation.refreshGeneratedPackages({
-        scope: "workspace-link-repair",
-        workspaceId: workspaceId as WorkspaceId,
-        packages: ["@svvyx/extensions", "@svvyx/workflows"],
-        reason: "startup-recovery",
+      const workspaceStateRegistration = catalog.workspaceStateRouterRegistration();
+      const workspaceId = workspaceStateRegistration.store.workspaceId;
+      resolvedWorkspaceId = workspaceId;
+      const pathIndex = new WorkspacePathIndex(cwd);
+      const agentSettingsStore = createAgentSettingsStore({
+        cwd,
+        agentDir: this.agentDir,
+        workflowsSourceRoot: this.options.workflowsSourceRoot,
       });
-      appLog.info("workflow.library", "Workflows build/link recovery refreshed package links.", {
-        reason: "startup-recovery",
+      appLogs = this.acquireAppLogFacade(cwd);
+      appLog = createAppLogger({
+        appLogs,
+        forwardBridgeLog: (level, message, source, details, error) => {
+          this.options.forwardBridgeLog?.(
+            level,
+            message,
+            source,
+            { ...details, workspaceId },
+            error,
+          );
+        },
       });
-    } catch (error) {
-      appRuntime.internal.workspaceStates.unregister(workspaceId as WorkspaceId);
-      await sourceInvalidationCoordinator.close();
-      throw error;
-    } finally {
-      this.openingWorkspaceCwds.delete(workspaceId);
-      if (requestedWorkspaceId !== workspaceId) {
-        this.openingWorkspaceCwds.delete(requestedWorkspaceId);
-      }
-    }
-    const unsubscribeRuntimeEvents = await this.startRuntimeEventForwarder({
-      workspaceId,
-      runtime: appRuntime,
-    });
-    const runtime: RuntimeRecord = {
-      workspaceId,
-      cwd,
-      label,
-      kind,
-      openedAt: new Date().toISOString(),
-      refCount: 1,
-      commandStdin,
-      catalog,
-      pathIndex,
-      agentSettingsStore,
-      appLogs,
-      appLog,
-      sourceInvalidationCoordinator,
-      unsubscribeRuntimeEvents,
-      getInfo: () => ({
+      const workspaceAppLog = appLog;
+      workspaceAppLog.info("app.lifecycle", "Workspace scope opened.", {
+        workspaceId,
+        kind,
+        cwd,
+      });
+      const openingRuntime: OpeningRuntimeRecord = {
         workspaceId,
         cwd,
-        workspaceLabel: label,
         kind,
-      }),
-      dispose: async () => {
-        appLog.info("app.lifecycle", "Workspace scope closed.", {
-          workspaceId,
-          kind,
-          cwd,
+        catalog,
+        agentSettingsStore,
+        commandStdin,
+        appLogs,
+        appLog: workspaceAppLog,
+        sourceInvalidationCoordinator: null,
+      };
+      this.openingRuntimes.set(workspaceId, openingRuntime);
+      this.openingWorkspaceCwds.set(workspaceId, cwd);
+      if (requestedWorkspaceId !== workspaceId) {
+        this.openingRuntimes.set(requestedWorkspaceId, openingRuntime);
+        this.openingWorkspaceCwds.set(requestedWorkspaceId, cwd);
+      }
+      try {
+        catalog.setWorkspaceSyncListener((payload) => {
+          this.options.onWorkspaceSync?.(workspaceId, {
+            ...payload,
+            workspaceId,
+          });
         });
-        unsubscribeRuntimeEvents();
-        catalog.setWorkspaceSyncListener(null);
-        catalog.setSurfaceSyncListener(null);
-        catalog.setTitleGenerationLogListener(null);
-        catalog.setWorkflowsGeneratedPackageLogListener(null);
-        catalog.setAppLogListener(null);
-        await sourceInvalidationCoordinator.close();
-        const shutdownRuntime = await this.getAppRuntimeBootstrap();
-        if (workspaceAcquired) {
-          await shutdownRuntime.facade.workspaces.release({
-            workspaceId: workspaceId as WorkspaceId,
+        catalog.setSurfaceSyncListener((payload) => {
+          this.options.onSurfaceSync?.(workspaceId, {
+            ...payload,
+            workspaceId,
+          });
+        });
+        catalog.setTitleGenerationLogListener((event) => {
+          recordTitleGenerationLog(workspaceAppLog, event);
+        });
+        catalog.setWorkflowsGeneratedPackageLogListener((event) => {
+          for (const runtime of this.workspaceHostRecords()) {
+            recordWorkflowsGeneratedPackageLog(runtime.appLog, event);
+          }
+        });
+        catalog.setAppLogListener((event) => {
+          appendAppLoggerEvent(workspaceAppLog, event);
+        });
+        appRuntime = await this.getAppRuntimeBootstrap();
+        workspaceStateRegistered = true;
+        await appRuntime.internal.workspaceStates.register(
+          kind === "default"
+            ? { ...workspaceStateRegistration, isDefaultWorkspace: true }
+            : workspaceStateRegistration,
+          appLogs,
+        );
+        if (kind === "default") {
+          desktopOwnerReleaseRequired = true;
+          await appRuntime.facade.workspaces.acquireDefault({
             owner: workspaceOwnerRef(workspaceId),
-            releaseReason: "tab-closed",
+            openReason: "startup",
+          });
+        } else {
+          desktopOwnerReleaseRequired = true;
+          await appRuntime.facade.workspaces.acquire({
+            cwd: cwd as AbsolutePath,
+            owner: workspaceOwnerRef(workspaceId),
+            openReason: "user-open",
           });
         }
-        shutdownRuntime.internal.workspaceStates.unregister(workspaceId as WorkspaceId);
-        await catalog.dispose();
-        this.releaseAppLogFacade(cwd);
-      },
-    };
-    return runtime;
+        await appRuntime.internal.sourceInvalidation.refreshGeneratedPackages({
+          scope: "workspace-link-repair",
+          workspaceId: workspaceId as WorkspaceId,
+          packages: ["@svvyx/extensions", "@svvyx/workflows"],
+          reason: "startup-recovery",
+        });
+        workspaceAppLog.info(
+          "workflow.library",
+          "Workflows build/link recovery refreshed package links.",
+          { reason: "startup-recovery" },
+        );
+        sourceInvalidationCoordinator = createRuntimeSourceInvalidationCoordinatorHandle({
+          debounceMs: this.options.runtimeLayerConfig.sourceDebounceMs,
+          host: this.sourceInvalidationHost,
+          maxCoalescingLatencyMs: this.options.runtimeLayerConfig.sourceMaxCoalescingLatencyMs,
+          readInputs: () =>
+            buildWorkspaceSourceWatchInputs({
+              cwd,
+              externalInstructions:
+                agentSettingsStore.getState().appPreferences.externalInstructions,
+              host: this.sourceInvalidationHost,
+            }),
+          sourceScanRecorder: {
+            scope: { kind: "workspace", workspaceId: workspaceId as WorkspaceId },
+            statePort: catalog.getRuntimeSourceStatePort(),
+          },
+          onDomainsChanged: (event) =>
+            Effect.promise(async () => {
+              await this.handleSourceInvalidationEvent({
+                scope: { kind: "workspace", workspaceId: workspaceId as WorkspaceId },
+                event,
+              });
+              workspaceAppLog.info("source.graph", "Source inputs changed.", {
+                domains: event.domains,
+                reason: event.reason,
+              });
+            }),
+          onWatchError: (error, path) => {
+            this.options.forwardBridgeLog?.(
+              "warn",
+              "Workspace source watcher could not watch a path.",
+              "source.graph",
+              { path, workspaceId },
+              error,
+            );
+          },
+          reconciliationIntervalMs:
+            this.options.runtimeLayerConfig.workspaceSourceReconcileIntervalMs,
+          retryInitialDelayMs: this.options.runtimeLayerConfig.sourceRetryInitialDelayMs,
+          retryMaxAttempts: this.options.runtimeLayerConfig.sourceRetryMaxAttempts,
+          retryMaxDelayMs: this.options.runtimeLayerConfig.sourceRetryMaxDelayMs,
+          watchEnabled: this.options.sourceWatchEnabled,
+        });
+        openingRuntime.sourceInvalidationCoordinator = sourceInvalidationCoordinator;
+        await sourceInvalidationCoordinator.ready();
+        unsubscribeRuntimeEvents = await this.startRuntimeEventForwarder({
+          workspaceId,
+          runtime: appRuntime,
+        });
+      } finally {
+        this.openingRuntimes.delete(workspaceId);
+        this.openingWorkspaceCwds.delete(workspaceId);
+        if (requestedWorkspaceId !== workspaceId) {
+          this.openingRuntimes.delete(requestedWorkspaceId);
+          this.openingWorkspaceCwds.delete(requestedWorkspaceId);
+        }
+      }
+      const recordWorkspaceClosed = (releaseReason: "tab-closed" | "shutdown"): void => {
+        if (workspaceCloseRecorded) {
+          return;
+        }
+        workspaceCloseRecorded = true;
+        try {
+          workspaceAppLog.info("app.lifecycle", "Workspace scope closed.", {
+            workspaceId,
+            kind,
+            cwd,
+            releaseReason,
+          });
+        } catch (error) {
+          this.options.forwardBridgeLog?.(
+            "warn",
+            "Workspace close lifecycle log failed.",
+            "runtime.lifecycle",
+            { workspaceId },
+            error,
+          );
+        }
+      };
+      const runtime: RuntimeRecord = {
+        workspaceId,
+        cwd,
+        label,
+        kind,
+        openedAt: new Date().toISOString(),
+        refCount: 1,
+        commandStdin,
+        catalog,
+        pathIndex,
+        agentSettingsStore,
+        appLogs,
+        appLog: workspaceAppLog,
+        sourceInvalidationCoordinator,
+        unsubscribeRuntimeEvents,
+        latestOwnerReleaseResult: null,
+        getInfo: () => ({
+          workspaceId,
+          cwd,
+          workspaceLabel: label,
+          kind,
+        }),
+        reactivate: async () => {
+          const bootstrapRuntime = appRuntime ?? (await this.getAppRuntimeBootstrap());
+          if (desktopOwnerReleaseRequired) {
+            await releaseDesktopOwner(bootstrapRuntime, "tab-closed");
+          }
+          desktopOwnerReleaseRequired = true;
+          if (kind === "default") {
+            await bootstrapRuntime.facade.workspaces.acquireDefault({
+              owner: workspaceOwnerRef(workspaceId),
+              openReason: "new-tab",
+            });
+          } else {
+            await bootstrapRuntime.facade.workspaces.acquire({
+              cwd: cwd as AbsolutePath,
+              owner: workspaceOwnerRef(workspaceId),
+              openReason: "user-open",
+            });
+          }
+          runtime.latestOwnerReleaseResult = null;
+          workspaceAppLog.info("app.lifecycle", "Workspace scope opened.", {
+            workspaceId,
+            kind,
+            cwd,
+          });
+          workspaceCloseRecorded = false;
+        },
+        dispose: async () => {
+          recordWorkspaceClosed("tab-closed");
+          const result = await releaseDesktopOwner(undefined, "tab-closed");
+          if (result) {
+            runtime.latestOwnerReleaseResult = result;
+          }
+        },
+        releaseVisualOwner: async () => {
+          recordWorkspaceClosed("tab-closed");
+          const result = await releaseDesktopOwner(undefined, "tab-closed");
+          if (result) {
+            runtime.latestOwnerReleaseResult = result;
+          }
+          return result;
+        },
+        shutdown: async (suppliedRuntime) => {
+          recordWorkspaceClosed("shutdown");
+          await cleanupWorkspaceResources(suppliedRuntime, "shutdown");
+        },
+      };
+      return runtime;
+    } catch (error) {
+      try {
+        await cleanupWorkspaceResources(appRuntime, "shutdown");
+      } catch (cleanupError) {
+        return Promise.reject(
+          new AggregateError(
+            [error, cleanupError],
+            "Workspace runtime startup failed and partial resources could not be closed.",
+            { cause: error },
+          ),
+        );
+      }
+      throw error;
+    }
   }
 
   private getAppRuntimeFacadeOperations(): WorkspaceRuntimeOperations {
@@ -946,7 +1560,217 @@ export class WorkspaceRuntimeRegistry {
     );
   }
 
+  private getDormantRuntimeByCwd(cwd: string): RuntimeRecord | null {
+    const canonicalCwd = canonicalizeWorkspaceCwd(cwd);
+    return (
+      Array.from(this.dormantRuntimes.values()).find((runtime) => runtime.cwd === canonicalCwd) ??
+      null
+    );
+  }
+
+  private async awaitWorkspaceTransitions(cwd: string): Promise<void> {
+    const canonicalCwd = canonicalizeWorkspaceCwd(cwd);
+    while (true) {
+      const transition = this.closingRuntimes.get(canonicalCwd);
+      if (!transition) {
+        return;
+      }
+      try {
+        await transition;
+      } catch {
+        // A failed close stays represented by its dormant runtime and is retried below.
+      }
+    }
+  }
+
+  private runWorkspaceTransition<A>(cwd: string, operation: () => Promise<A>): Promise<A> {
+    return this.beginWorkspaceTransition(cwd, operation);
+  }
+
+  private runWorkspaceTransitionWithCancelableWait<A>(input: {
+    cwd: string;
+    operation: () => Promise<A>;
+    signal?: AbortSignal;
+    abortedFacadeCall: () => Promise<A>;
+  }): Promise<A> {
+    if (input.signal?.aborted) {
+      return input.abortedFacadeCall();
+    }
+    const authoritativeResult = this.beginWorkspaceTransition(input.cwd, input.operation);
+    const signal = input.signal;
+    if (!signal) {
+      return authoritativeResult;
+    }
+    return new Promise<A>((resolve, reject) => {
+      let settled = false;
+      const settle = (complete: () => void) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        complete();
+      };
+      const onAbort = () => {
+        settle(() => {
+          try {
+            void input
+              .abortedFacadeCall()
+              .then(
+                () => reject(new Error("An aborted runtime facade call unexpectedly completed.")),
+                reject,
+              );
+          } catch (error) {
+            reject(error);
+          }
+        });
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) {
+        onAbort();
+      }
+      authoritativeResult.then(
+        (value) => settle(() => resolve(value)),
+        (error: unknown) => settle(() => reject(error)),
+      );
+    });
+  }
+
+  private beginWorkspaceTransition<A>(cwd: string, operation: () => Promise<A>): Promise<A> {
+    const canonicalCwd = canonicalizeWorkspaceCwd(cwd);
+    const previous = this.closingRuntimes.get(canonicalCwd);
+    const result = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(operation);
+    const completion = result.then(() => undefined);
+    this.closingRuntimes.set(canonicalCwd, completion);
+    void completion.then(
+      () => {
+        if (this.closingRuntimes.get(canonicalCwd) === completion) {
+          this.closingRuntimes.delete(canonicalCwd);
+        }
+      },
+      () => {
+        if (this.closingRuntimes.get(canonicalCwd) === completion) {
+          this.closingRuntimes.delete(canonicalCwd);
+        }
+      },
+    );
+    return result;
+  }
+
+  private assertAcceptingWorkspaceFacadeCall(operation: string): void {
+    if (this.appRuntimeBootstrapState !== "accepting") {
+      throw appRuntimeBootstrapUnavailableError(operation, this.appRuntimeBootstrapState);
+    }
+  }
+
+  private trackExternalWorkspaceOwner(workspaceId: WorkspaceId, owner: RuntimeOwnerRef): void {
+    const key = workspaceRuntimeOwnerKey(owner);
+    if (key === workspaceRuntimeOwnerKey(workspaceOwnerRef(workspaceId))) {
+      return;
+    }
+    const owners = this.externalWorkspaceOwners.get(workspaceId) ?? new Map();
+    owners.set(key, owner);
+    this.externalWorkspaceOwners.set(workspaceId, owners);
+  }
+
+  private untrackExternalWorkspaceOwner(workspaceId: WorkspaceId, owner: RuntimeOwnerRef): void {
+    const owners = this.externalWorkspaceOwners.get(workspaceId);
+    if (!owners) {
+      return;
+    }
+    owners.delete(workspaceRuntimeOwnerKey(owner));
+    if (owners.size === 0) {
+      this.externalWorkspaceOwners.delete(workspaceId);
+    }
+  }
+
+  private async closeUnownedDormantRuntime(
+    result: ReleaseWorkspaceResult,
+    appRuntime?: AppRuntimeBootstrap,
+  ): Promise<void> {
+    if (result.remainingOwners > 0 || result.lifecycle === "active") {
+      return;
+    }
+    const runtime = this.dormantRuntimes.get(result.workspaceId);
+    if (!runtime) {
+      return;
+    }
+    runtime.latestOwnerReleaseResult = result;
+    if ((this.externalWorkspaceOwners.get(result.workspaceId)?.size ?? 0) > 0) {
+      return;
+    }
+    await runtime.shutdown(appRuntime);
+    if (this.dormantRuntimes.get(result.workspaceId) === runtime) {
+      this.dormantRuntimes.delete(result.workspaceId);
+    }
+    this.externalWorkspaceOwners.delete(result.workspaceId);
+  }
+
+  private async releaseExternalWorkspaceOwnersForShutdown(
+    runtime: RuntimeRecord,
+    appRuntime: AppRuntimeBootstrap,
+  ): Promise<void> {
+    const owners = this.externalWorkspaceOwners.get(runtime.workspaceId);
+    if (!owners || owners.size === 0) {
+      return;
+    }
+    const errors: unknown[] = [];
+    for (const owner of owners.values()) {
+      try {
+        await appRuntime.facade.workspaces.release({
+          workspaceId: runtime.workspaceId as WorkspaceId,
+          owner,
+          releaseReason: "shutdown",
+        });
+        this.untrackExternalWorkspaceOwner(runtime.workspaceId as WorkspaceId, owner);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(
+        errors,
+        `External workspace owners did not release cleanly for ${runtime.workspaceId}.`,
+      );
+    }
+  }
+
+  private getWorkspaceHostRecord(workspaceId: string): RuntimeRecord | OpeningRuntimeRecord | null {
+    return (
+      this.runtimes.get(workspaceId) ??
+      this.dormantRuntimes.get(workspaceId) ??
+      this.openingRuntimes.get(workspaceId) ??
+      null
+    );
+  }
+
+  private getRetainedWorkspaceHostRecord(workspaceId: string): RuntimeRecord | null {
+    return this.runtimes.get(workspaceId) ?? this.dormantRuntimes.get(workspaceId) ?? null;
+  }
+
+  private workspaceHostRecords(): Array<RuntimeRecord | OpeningRuntimeRecord> {
+    return Array.from(
+      new Set<RuntimeRecord | OpeningRuntimeRecord>([
+        ...this.runtimes.values(),
+        ...this.dormantRuntimes.values(),
+        ...this.openingRuntimes.values(),
+      ]),
+    );
+  }
+
+  private retainedWorkspaceHostRecords(): RuntimeRecord[] {
+    return Array.from(
+      new Set<RuntimeRecord>([...this.runtimes.values(), ...this.dormantRuntimes.values()]),
+    );
+  }
+
   async getAppRuntimeOperations(workspaceId: string): Promise<WorkspaceRuntimeOperations> {
+    if (this.appRuntimeBootstrapState !== "accepting") {
+      throw appRuntimeBootstrapUnavailableError(
+        "workspace-runtime-registry.getAppRuntimeBootstrap",
+        this.appRuntimeBootstrapState,
+      );
+    }
     this.getRuntime(workspaceId);
     return (await this.getAppRuntimeBootstrap()).facade;
   }
@@ -967,7 +1791,7 @@ export class WorkspaceRuntimeRegistry {
       appGlobal.agentSettingsStore.getState().appPreferences,
     );
     appGlobal.agentSettingsStore.hydrateStateOwnedAppPreferences(preferences);
-    for (const runtime of this.runtimes.values()) {
+    for (const runtime of this.workspaceHostRecords()) {
       runtime.agentSettingsStore.hydrateStateOwnedAppPreferences(preferences);
     }
     return preferences;
@@ -1063,7 +1887,7 @@ export class WorkspaceRuntimeRegistry {
       recordTitleGenerationLog(appLog, event);
     });
     catalog.setWorkflowsGeneratedPackageLogListener((event) => {
-      for (const runtime of this.runtimes.values()) {
+      for (const runtime of this.workspaceHostRecords()) {
         recordWorkflowsGeneratedPackageLog(runtime.appLog, event);
       }
     });
@@ -1100,7 +1924,7 @@ export class WorkspaceRuntimeRegistry {
     );
     return await createAppRuntimeBootstrap({
       appGlobalState: appGlobal.catalog.workspaceStateRouterRegistration(),
-      workspaceStates: Array.from(this.runtimes.values()).map((runtime) =>
+      workspaceStates: this.retainedWorkspaceHostRecords().map((runtime) =>
         runtime.kind === "default"
           ? { ...runtime.catalog.workspaceStateRouterRegistration(), isDefaultWorkspace: true }
           : runtime.catalog.workspaceStateRouterRegistration(),
@@ -1113,7 +1937,7 @@ export class WorkspaceRuntimeRegistry {
       appLogs: appGlobal.appLogs,
       resolveWorkspaceAppLogs: async (workspaceId) => {
         const runtime =
-          this.runtimes.get(workspaceId) ??
+          this.getWorkspaceHostRecord(workspaceId) ??
           (appGlobal.workspaceId === workspaceId ? appGlobal : undefined);
         if (!runtime) {
           throw new RuntimeContractError({
@@ -1156,10 +1980,10 @@ export class WorkspaceRuntimeRegistry {
       sourceInvalidation: {
         appGlobalCoordinator: this.appGlobalSourceInvalidationCoordinator,
         listAcquiredWorkspaceIds: () =>
-          Array.from(this.runtimes.values()).map((runtime) => runtime.workspaceId as WorkspaceId),
+          this.workspaceHostRecords().map((runtime) => runtime.workspaceId as WorkspaceId),
         resolveWorkspaceCoordinator: async (workspaceId) => {
-          const runtime = this.runtimes.get(workspaceId);
-          if (!runtime) {
+          const runtime = this.getWorkspaceHostRecord(workspaceId);
+          if (!runtime?.sourceInvalidationCoordinator) {
             throw new RuntimeContractError({
               operation: "runtime.sourceInvalidation.resolveWorkspaceCoordinator",
               reason: "target-not-found",
@@ -1174,7 +1998,7 @@ export class WorkspaceRuntimeRegistry {
           const appGlobalRecord = await this.getAppGlobalHostRecord();
           const catalogs = [
             appGlobalRecord.catalog,
-            ...Array.from(this.runtimes.values(), (runtime) => runtime.catalog),
+            ...this.workspaceHostRecords().map((runtime) => runtime.catalog),
           ];
           return catalogs.some((catalog) => catalog.verifyRunTaskAgentBridgeBearerLineage(request));
         },
@@ -1210,7 +2034,8 @@ export class WorkspaceRuntimeRegistry {
   private async resolvePiRuntimePaths(workspaceId: WorkspaceId) {
     const appGlobal = await this.getAppGlobalHostRecord();
     const runtime =
-      this.runtimes.get(workspaceId) ?? (appGlobal.workspaceId === workspaceId ? appGlobal : null);
+      this.getWorkspaceHostRecord(workspaceId) ??
+      (appGlobal.workspaceId === workspaceId ? appGlobal : null);
     if (!runtime) {
       throw new RuntimeContractError({
         operation: "runtime.pi.paths.resolve",
@@ -1250,7 +2075,7 @@ export class WorkspaceRuntimeRegistry {
     appGlobalCommandStdin: ReturnType<typeof createLiveCommandStdinRegistry>,
   ): RuntimeLayerCommandStdinPortService & RuntimeLayerCommandControlPortService {
     const registries = () => [
-      ...Array.from(this.runtimes.values()).map((runtime) => runtime.commandStdin),
+      ...this.workspaceHostRecords().map((runtime) => runtime.commandStdin),
       appGlobalCommandStdin,
     ];
     return {
@@ -1289,9 +2114,9 @@ export class WorkspaceRuntimeRegistry {
     };
   }
 
-  private findRuntimeByCwd(cwd: string): RuntimeRecord | null {
+  private findRuntimeByCwd(cwd: string): RuntimeRecord | OpeningRuntimeRecord | null {
     const canonical = canonicalizeWorkspaceCwd(cwd);
-    return Array.from(this.runtimes.values()).find((runtime) => runtime.cwd === canonical) ?? null;
+    return this.workspaceHostRecords().find((runtime) => runtime.cwd === canonical) ?? null;
   }
 
   private async handleSourceInvalidationEvent(
@@ -1300,14 +2125,16 @@ export class WorkspaceRuntimeRegistry {
     const { event } = input;
     try {
       if (input.scope.kind === "workspace") {
-        this.getRuntime(input.scope.workspaceId);
+        if (!this.getWorkspaceHostRecord(input.scope.workspaceId)) {
+          throw new Error(`Workspace is not open: ${input.scope.workspaceId}`);
+        }
       }
       const { facade } = await this.getAppRuntimeBootstrap();
       const result = await facade.sourceInvalidation.applyCommittedScanEvent(input);
 
       for (const refresh of result.generatedPackageRefreshes) {
         for (const status of refresh.packages) {
-          for (const runtime of this.runtimes.values()) {
+          for (const runtime of this.workspaceHostRecords()) {
             if (status.action === "written" || status.action === "unchanged") {
               runtime.appLog.info(
                 "workflow.library",
@@ -1341,18 +2168,22 @@ export class WorkspaceRuntimeRegistry {
         { domains: event.domains, reason: event.reason, scope: input.scope.kind },
         error,
       );
+      throw error;
     }
   }
 
   private async refreshGeneratedContext(input: RefreshGeneratedContextRequest): Promise<void> {
     if (input.scope === "workspace") {
-      const runtime = this.getRuntime(input.workspaceId);
+      const runtime = this.getWorkspaceHostRecord(input.workspaceId);
+      if (!runtime) {
+        throw new Error(`Workspace is not open: ${input.workspaceId}`);
+      }
       await runtime.catalog.notifySourceInputsChanged(`runtime_refresh:${input.reason}`);
       return;
     }
 
     await Promise.all(
-      Array.from(this.runtimes.values()).map((runtime) =>
+      this.workspaceHostRecords().map((runtime) =>
         runtime.catalog.notifySourceInputsChanged(`runtime_refresh:${input.reason}`),
       ),
     );
@@ -1382,7 +2213,7 @@ export class WorkspaceRuntimeRegistry {
       extensionStatePort: catalog.getExtensionStatePort(),
       listAcquiredWorkspaceIds: () =>
         Effect.succeed(
-          Array.from(this.runtimes.values()).map((runtime) => runtime.workspaceId as WorkspaceId),
+          this.workspaceHostRecords().map((runtime) => runtime.workspaceId as WorkspaceId),
         ),
       listRecoverableWorkspaceIds: () =>
         Effect.succeed(
@@ -1396,7 +2227,8 @@ export class WorkspaceRuntimeRegistry {
         const runtimeCwd =
           workspaceId === startupWorkspace.workspaceId
             ? startupWorkspace.cwd
-            : (this.runtimes.get(workspaceId)?.cwd ?? this.openingWorkspaceCwds.get(workspaceId));
+            : (this.getWorkspaceHostRecord(workspaceId)?.cwd ??
+              this.openingWorkspaceCwds.get(workspaceId));
         if (!runtimeCwd) {
           throw new RuntimeContractError({
             operation: "runtime.generated-packages.workspace-link-path",
@@ -1623,6 +2455,10 @@ function workspaceOwnerRef(workspaceId: string) {
     kind: "desktop-tab" as const,
     ownerId: `desktop:${workspaceId}` as RuntimeOwnerId,
   };
+}
+
+function workspaceRuntimeOwnerKey(owner: RuntimeOwnerRef): string {
+  return `${owner.kind}:${owner.ownerId}`;
 }
 
 function runtimeRegistrySourceInvalidationError(

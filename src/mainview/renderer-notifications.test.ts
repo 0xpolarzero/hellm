@@ -176,7 +176,7 @@ describe("renderer notification store", () => {
       revision: 2 as never,
     };
     const requests: unknown[] = [];
-    const applied: StateReadModelBaseline[] = [];
+    const applied: Array<{ baseline: StateReadModelBaseline; scope: unknown }> = [];
     const store = createRendererNotificationStore({
       workspaceId,
       rpcClient: {
@@ -191,7 +191,7 @@ describe("renderer notification store", () => {
         removeMessageListener: () => {},
       },
       applyReadModelPatch: () => {},
-      applyReadModelBaseline: (next) => applied.push(next),
+      applyReadModelBaseline: (next, scope) => applied.push({ baseline: next, scope }),
     });
 
     store.handle({
@@ -203,7 +203,42 @@ describe("renderer notification store", () => {
     await waitFor(() => applied.length === 1);
 
     expect(requests).toEqual([{ workspaceId, reason: "runtime-restart" }]);
-    expect(applied).toEqual([baseline]);
+    expect(applied).toEqual([{ baseline, scope: { kind: "workspace", workspaceId } }]);
+    store.dispose();
+  });
+
+  it("rebaselines both app and mounted-workspace scopes when the bridge scope is unknown", async () => {
+    const requests: unknown[] = [];
+    const scopes: unknown[] = [];
+    const store = createRendererNotificationStore({
+      workspaceId,
+      rpcClient: {
+        request: {
+          refetchStateReadModelInvalidation: async () => [],
+          rebaselineStateReadModels: async (input) => {
+            requests.push(input);
+            return emptyBaseline();
+          },
+        },
+        addMessageListener: () => {},
+        removeMessageListener: () => {},
+      },
+      applyReadModelPatch: () => {},
+      applyReadModelBaseline: (_baseline, scope) => scopes.push(scope),
+    });
+
+    store.handle({
+      kind: "read-model-rebaseline-required",
+      reason: "slow-consumer",
+      rebaselineRequired: true,
+    });
+    await waitFor(() => scopes.length === 2);
+
+    expect(requests).toEqual([
+      { reason: "event-sequence-gap" },
+      { workspaceId, reason: "event-sequence-gap" },
+    ]);
+    expect(scopes).toEqual([{ kind: "app" }, { kind: "workspace", workspaceId }]);
     store.dispose();
   });
 

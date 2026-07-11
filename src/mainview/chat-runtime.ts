@@ -71,6 +71,7 @@ import {
   type ConfigureExtensionInstructionFileRequest,
   type CreateExtensionRequest,
   type DeleteExtensionRequest,
+  type DesktopRendererCommand,
   type DuplicateExtensionRequest,
   type ExtensionCliRequirementActionUpdateMessage,
   type ExtensionsInventoryReadModel,
@@ -151,7 +152,11 @@ import {
   type WorkspaceLayoutSlotSummary,
 } from "./pane-layout";
 import { mergeAppLogEntries } from "./app-logs";
-import { createRendererNotificationStore } from "./renderer-notifications";
+import {
+  createRendererNotificationStore,
+  type RendererReadModelBaselineScope,
+} from "./renderer-notifications";
+import type { ApplyReadModelPatchContext } from "./sequence-aware-refetcher";
 import { rpc } from "./rpc";
 import { buildWorkspaceSessionNavigation } from "../shared/session-navigation";
 
@@ -192,6 +197,7 @@ const ZERO_USAGE: UsageStats = {
 };
 
 type AppReadModelCache = {
+  appLogs: AppLogReadModel | null;
   agentSettings: AgentSettingsState | null;
   appPreferences: AppPreferences | null;
   workflowsGenerated: WorkspaceWorkflowsGeneratedReadModel | null;
@@ -207,6 +213,7 @@ type WorkspaceReadModelCache = {
 };
 
 const appReadModelCache: AppReadModelCache = {
+  appLogs: null,
   agentSettings: null,
   appPreferences: null,
   workflowsGenerated: null,
@@ -629,6 +636,7 @@ export type SurfaceAgent = Agent & {
 
 export interface ChatRuntimeRpcClient {
   request: {
+    rendererReady: typeof rpc.request.rendererReady;
     getDefaults: typeof rpc.request.getDefaults;
     getAgentSettings: typeof rpc.request.getAgentSettings;
     getAgentContextPreview: typeof rpc.request.getAgentContextPreview;
@@ -776,6 +784,7 @@ export interface ChatRuntime {
   branch?: string;
   kind: WorkspaceInfoResponse["kind"];
   appLogSummary: AppLogSummary;
+  appGlobalLogsSnapshot: AppLogReadModel | null;
   agentSettingsSnapshot: AgentSettingsState | null;
   appPreferencesSnapshot: AppPreferences | null;
   agentModelChoicesSnapshot: AgentModelChoicesResponse | null;
@@ -792,11 +801,13 @@ export interface ChatRuntime {
   layoutSlots: WorkspaceLayoutSlotSummary[];
   primaryPaneId: string;
   dispose: () => void;
+  markRendererReady: () => Promise<void>;
   subscribe: (listener: ChatRuntimeListener) => () => void;
   subscribeAppLogUpdate: (listener: (payload: AppLogUpdateMessage) => void) => () => void;
   subscribeExtensionCliRequirementActionUpdate: (
     listener: (payload: ExtensionCliRequirementActionUpdateMessage) => void,
   ) => () => void;
+  subscribeRendererCommand: (listener: (command: DesktopRendererCommand) => void) => () => void;
   subscribeAppMenuAction: (listener: (action: AppMenuAction) => void) => () => void;
   listSessions: () => Promise<WorkspaceSessionSummary[]>;
   getPane: (panelId: string) => ChatPaneState | undefined;
@@ -1827,6 +1838,7 @@ export async function createChatRuntime(
   const extensionCliRequirementActionUpdateListeners = new Set<
     (payload: ExtensionCliRequirementActionUpdateMessage) => void
   >();
+  const rendererCommandListeners = new Set<(command: DesktopRendererCommand) => void>();
   const surfaceControllers = new Map<string, ChatSurfaceControllerInternal>();
   let sessions: WorkspaceSessionSummary[] = [];
   let sessionNavigation: WorkspaceSessionNavigationReadModel = buildWorkspaceSessionNavigation([]);
@@ -1852,6 +1864,7 @@ export async function createChatRuntime(
   };
   let workspaceBranch = workspaceInfo.branch;
   let disposed = false;
+  let rendererReadyPromise: Promise<void> | null = null;
 
   const emit = () => {
     if (disposed) {
@@ -2024,10 +2037,19 @@ export async function createChatRuntime(
     }
   };
 
-  const applyNotificationReadModelPatch = (patch: readonly StateReadModelResult[]): void => {
+  const applyNotificationReadModelPatch = (
+    patch: readonly StateReadModelResult[],
+    context?: ApplyReadModelPatchContext,
+    baselineScope?: RendererReadModelBaselineScope,
+  ): void => {
+    const appScopedLogs = context?.descriptor.scope === "app" || baselineScope?.kind === "app";
     for (const result of patch) {
       switch (result.kind) {
         case "appLogs": {
+          if (appScopedLogs) {
+            setAppCache("appLogs", result.value);
+            break;
+          }
           backendAppLogSummary = result.value.summary;
           appLogSummary = summarizeRendererAppLogs(
             backendAppLogSummary,
@@ -2052,6 +2074,13 @@ export async function createChatRuntime(
           break;
         }
         case "appLogSummary":
+          if (appScopedLogs) {
+            setAppCache("appLogs", {
+              entries: appReadModelCache.appLogs?.entries ?? [],
+              summary: result.value,
+            });
+            break;
+          }
           backendAppLogSummary = result.value;
           appLogSummary = summarizeRendererAppLogs(
             backendAppLogSummary,
@@ -2089,18 +2118,25 @@ export async function createChatRuntime(
     emit();
   };
 
-  const applyNotificationReadModelBaseline = (baseline: StateReadModelBaseline): void => {
-    appReadModelCache.appPreferences = null;
-    appReadModelCache.providerAuths = null;
-    const workspaceCache = workspaceReadModelCache(workspaceInfo.workspaceId);
-    workspaceCache.appLogs = null;
-    backendAppLogSummary = emptyAppLogSummary();
-    appLogSummary = summarizeRendererAppLogs(
-      backendAppLogSummary,
-      rendererTelemetryEntries,
-      rendererAppLogSeenSeq,
-    );
-    applyNotificationReadModelPatch([...baseline.app, ...baseline.workspaces]);
+  const applyNotificationReadModelBaseline = (
+    baseline: StateReadModelBaseline,
+    scope: RendererReadModelBaselineScope,
+  ): void => {
+    if (scope.kind === "app") {
+      appReadModelCache.appLogs = null;
+      appReadModelCache.appPreferences = null;
+      appReadModelCache.providerAuths = null;
+    } else {
+      const workspaceCache = workspaceReadModelCache(workspaceInfo.workspaceId);
+      workspaceCache.appLogs = null;
+      backendAppLogSummary = emptyAppLogSummary();
+      appLogSummary = summarizeRendererAppLogs(
+        backendAppLogSummary,
+        rendererTelemetryEntries,
+        rendererAppLogSeenSeq,
+      );
+    }
+    applyNotificationReadModelPatch([...baseline.app, ...baseline.workspaces], undefined, scope);
   };
 
   const currentLayoutSlots = (): WorkspaceLayoutSlotSummary[] =>
@@ -2852,6 +2888,11 @@ export async function createChatRuntime(
     workspaceId: workspaceInfo.workspaceId as WorkspaceId,
     applyReadModelPatch: applyNotificationReadModelPatch,
     applyReadModelBaseline: applyNotificationReadModelBaseline,
+    onRendererCommand: (command) => {
+      for (const listener of rendererCommandListeners) {
+        listener(command);
+      }
+    },
     onError: (error, context) => console.error(`${context}:`, error),
   });
 
@@ -2962,6 +3003,9 @@ export async function createChatRuntime(
     get appLogSummary() {
       return structuredClone(appLogSummary);
     },
+    get appGlobalLogsSnapshot() {
+      return cloneOrNull(appReadModelCache.appLogs);
+    },
     get agentSettingsSnapshot() {
       return cloneOrNull(appReadModelCache.agentSettings);
     },
@@ -3015,7 +3059,28 @@ export async function createChatRuntime(
       }
       appLogUpdateListeners.clear();
       extensionCliRequirementActionUpdateListeners.clear();
+      rendererCommandListeners.clear();
       listeners.clear();
+    },
+    markRendererReady: () => {
+      if (rendererReadyPromise) {
+        return rendererReadyPromise;
+      }
+      rendererReadyPromise = (async () => {
+        const baseline = await rpcClient.request.rebaselineStateReadModels({
+          workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+          reason: "renderer-startup",
+        });
+        if (disposed) {
+          throw new Error("Cannot report renderer readiness after runtime disposal.");
+        }
+        applyNotificationReadModelBaseline(baseline, {
+          kind: "workspace",
+          workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        });
+        await rpcClient.request.rendererReady();
+      })();
+      return rendererReadyPromise;
     },
     subscribe: (listener) => {
       listeners.add(listener);
@@ -3034,6 +3099,12 @@ export async function createChatRuntime(
       extensionCliRequirementActionUpdateListeners.add(listener);
       return () => {
         extensionCliRequirementActionUpdateListeners.delete(listener);
+      };
+    },
+    subscribeRendererCommand: (listener) => {
+      rendererCommandListeners.add(listener);
+      return () => {
+        rendererCommandListeners.delete(listener);
       };
     },
     subscribeAppMenuAction: (listener) => {

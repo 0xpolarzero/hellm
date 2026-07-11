@@ -81,6 +81,25 @@ describe("default workspace renderer shell", () => {
     expect(workspaceSource).toContain('workspaceAction === "open-in-new-tab"');
   });
 
+  it("routes typed desktop menu commands through the active workspace", async () => {
+    const runtimeSource = await readFile(new URL("./chat-runtime.ts", import.meta.url), "utf8");
+    const workspaceSource = await readFile(
+      new URL("./ChatWorkspace.svelte", import.meta.url),
+      "utf8",
+    );
+
+    expect(runtimeSource).toContain("onRendererCommand: (command) => {");
+    expect(runtimeSource).toContain("subscribeRendererCommand: (listener) => {");
+    expect(workspaceSource).toContain("runtime.subscribeRendererCommand(handleRendererCommand)");
+    expect(
+      workspaceSource.indexOf("runtime.subscribeRendererCommand(handleRendererCommand)"),
+    ).toBeLessThan(workspaceSource.indexOf(".markRendererReady()"));
+    expect(workspaceSource).toContain('case "command-palette.open":');
+    expect(workspaceSource).toContain('case "quick-open.open":');
+    expect(workspaceSource).toContain('case "settings.open":');
+    expect(workspaceSource).toContain("openSettingsPane();");
+  });
+
   it("keeps Open Workspace RPC placement visual-only while Bun resolves the runtime", async () => {
     const contractSource = await readFile(
       new URL("../shared/workspace-contract.ts", import.meta.url),
@@ -251,7 +270,7 @@ describe("default workspace renderer shell", () => {
     expect(routingSource).toContain("return registry.getRuntime(input.workspaceId);");
     expect(routingSource).not.toContain("getActiveRuntime");
     expect(routingSource).not.toContain("process.cwd");
-    expect(bunIndexSource).toContain('fetchRendererStateReadModel({\n          kind: "appLogs"');
+    expect(bunIndexSource).toContain('fetchDesktopStateReadModel({\n          kind: "appLogs"');
     expect(bunIndexSource).not.toContain("workspaceRuntimeRegistry.getActiveRuntime()");
   });
 
@@ -327,13 +346,14 @@ describe("default workspace renderer shell", () => {
     expect(sessionItemSource).toContain("{:else if showUpdatedAt}");
   });
 
-  it("refreshes existing Dockview panel content when a pane changes surface", async () => {
+  it("keeps the mounted Dockview panel host stable when a pane changes surface", async () => {
     const dockviewSource = await readFile(
       new URL("./DockviewWorkspace.svelte", import.meta.url),
       "utf8",
     );
 
-    expect(dockviewSource).toContain("getPanelRenderKey");
+    expect(dockviewSource).toContain("getPanelHostRefreshKey");
+    expect(dockviewSource).not.toContain("binding: panel.binding");
     expect(dockviewSource).toContain("existingPanel.update");
     expect(dockviewSource).toContain("existingPanel.setRenderer");
   });
@@ -766,7 +786,7 @@ describe("default workspace renderer shell", () => {
     expect(directToolsSource).toContain("svvyx-workflows-build");
     expect(directToolsSource).toContain("svvyx-workflows-save");
     expect(workspaceRegistrySource).toContain("recordWorkflowsGeneratedPackageLog");
-    expect(workspaceRegistrySource).toContain("for (const runtime of this.runtimes.values())");
+    expect(workspaceRegistrySource).toContain("for (const runtime of this.workspaceHostRecords())");
     expect(workspaceRegistrySource).toContain("createGeneratedPackageRefreshBoundaryHost(");
     expect(workspaceRegistrySource).toContain("appGlobal.catalog");
     expect(workspaceRegistrySource).toContain("generatedPackageLinkPath");

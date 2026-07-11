@@ -29,4 +29,19 @@ describe("extension env secret store", () => {
     expect(calls[0]?.args.join(" ")).not.toContain("secret-token-value");
     expect(calls[0]?.input).toBe("secret-token-value\n");
   });
+
+  it("treats unavailable Keychain reads as missing without weakening writes", () => {
+    const unavailable = new Error("Keychain unavailable");
+    const store = createMacOsKeychainExtensionEnvSecretStore({
+      runSecurity: () => {
+        throw unavailable;
+      },
+    });
+    const key = { kind: "extension-env", extensionId: "example", envName: "TOKEN" } as const;
+
+    expect(store.get(key)).toBeUndefined();
+    expect(store.has(key)).toBeFalse();
+    expect(() => store.set(key, "secret")).toThrow(unavailable);
+    expect(() => store.remove(key)).toThrow(unavailable);
+  });
 });

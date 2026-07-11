@@ -108,9 +108,7 @@ test("renders seeded app logs with badges, redaction, filters, and mark-read beh
       }
       expect(await unreadLogsButton.count()).toBe(0);
       await page
-        .getByRole("button", {
-          name: "Open app logs",
-        })
+        .getByRole("button", { name: "Open app logs" })
         .waitFor({ state: "visible", timeout: UI_TIMEOUT });
     },
   );

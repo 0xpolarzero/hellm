@@ -2088,6 +2088,10 @@ export interface SurfaceMutationResponse {
 export interface ChatRPCSchema {
   bun: {
     requests: {
+      rendererReady: {
+        params: undefined;
+        response: { ok: true };
+      };
       getDefaults: {
         params: undefined;
         response: AgentDefaults;

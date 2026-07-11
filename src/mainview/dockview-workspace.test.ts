@@ -38,4 +38,21 @@ describe("Dockview workspace chrome", () => {
     expect(workspaceSource).not.toContain("scheduleDockviewLayoutPulse");
     expect(workspaceSource).not.toContain("transition: grid-template-columns");
   });
+
+  it("preserves Dockview's supported empty group when the final runtime pane closes", async () => {
+    const dockviewSource = await readFile(
+      new URL("./DockviewWorkspace.svelte", import.meta.url),
+      "utf8",
+    );
+
+    expect(dockviewSource).toContain('noPanelsOverlay: "emptyGroup"');
+    expect(dockviewSource).toContain(
+      "nextPanels.length === 0 && dockview.totalPanels === 1 && dockview.groups.length === 1",
+    );
+    expect(dockviewSource).toContain(
+      "dockview.removePanel(panel, { removeEmptyGroup: !preserveFinalEmptyGroup });",
+    );
+    expect(dockviewSource).not.toContain("flushSync");
+    expect(dockviewSource).not.toContain("runtimeShellEmpty");
+  });
 });

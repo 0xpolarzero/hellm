@@ -1,14 +1,9 @@
-import {
-  ApplicationMenu,
-  BrowserWindow,
-  Updater,
-  Utils,
-  defineElectrobunRPC,
-} from "electrobun/bun";
+import { Updater, Utils } from "electrobun/bun";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import { IsoDateTimeStringSchema } from "@svvy/core";
+import { IsoDateTimeStringSchema, normalizeDesktopBridgeErrorContract } from "@svvy/core";
+import { createDesktopApp, type DesktopApp } from "@svvy/desktop";
 import type {
   AbortPromptInput,
   AbsolutePath,
@@ -54,12 +49,6 @@ import type {
   SwitchWorkspaceBranchResponse,
 } from "../shared/workspace-contract";
 import {
-  getShortcut,
-  getShortcutAccelerator,
-  isAppMenuAction,
-  type AppMenuAction,
-} from "../shared/shortcut-registry";
-import {
   DEFAULT_AGENT_SETTINGS,
   DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
@@ -95,7 +84,6 @@ import {
 } from "./smithers-runtime/workflow-library";
 import { assertAgentModelSelection, readDefaultModelCatalog } from "./svvyx-workflows-command";
 import { resolveWorkspaceCwd } from "./workspace-context";
-import { positionNativeTrafficLights } from "./native-window-controls";
 import { WorkspaceRuntimeRegistry, type WorkspaceRuntime } from "./workspace-runtime-registry";
 import { createPackagedSandboxHostSupportServices } from "./runtime-service-adapter";
 import { RuntimeLayerConfigFromEnv } from "@svvy/runtime/bootstrap";
@@ -105,17 +93,21 @@ import {
 } from "../shared/file-backed-edit";
 import { createAppWorkspaceTabsStore } from "./app-workspace-tabs-store";
 import { createAppWorkspaceUiRestoreStore } from "./app-workspace-ui-restore-store";
-import {
-  getWorkspaceRuntimeForRequest,
-  getWorkspaceRuntimeOperationsForRequest,
-  stripWorkspaceId,
-} from "./workspace-rpc-routing";
+import { getWorkspaceRuntimeForRequest, stripWorkspaceId } from "./workspace-rpc-routing";
 import {
   normalizeDesktopBridgeHandlers,
   submitPromptFromDesktop,
   writeCommandStdinFromDesktop,
 } from "./desktop-bridge-requests";
 import { createDesktopNotificationBridge } from "./desktop-notification-bridge";
+import {
+  createElectrobunDesktopHostAdapter,
+  type ElectrobunDesktopHostAdapter,
+  type ElectrobunRendererApiInput,
+  type ElectrobunRpcHandlers,
+} from "./electrobun-desktop-host";
+import { runDesktopBootstrap } from "./desktop-bootstrap";
+import { showStartupFailureSurface } from "./startup-failure-surface";
 import {
   assertExtensionEnvOverrideTarget,
   assertExtensionEnvSecretTarget,
@@ -157,7 +149,7 @@ const PREFERRED_MODEL_FRAGMENTS = [
   "glm-4.5",
 ];
 let resolvedDefaults: AgentDefaults | null = null;
-let mainWindow: BrowserWindow | null = null;
+let desktopHost: ElectrobunDesktopHostAdapter | null = null;
 const startupWorkspaceCwd = resolveWorkspaceCwd();
 const appWorkspaceTabsStore = createAppWorkspaceTabsStore({
   agentDir: getSvvyAgentDir(),
@@ -165,11 +157,6 @@ const appWorkspaceTabsStore = createAppWorkspaceTabsStore({
 const appWorkspaceUiRestoreStore = createAppWorkspaceUiRestoreStore({
   agentDir: getSvvyAgentDir(),
 });
-
-const NATIVE_TRAFFIC_LIGHT_POSITION = {
-  leading: 18,
-  top: 13,
-} as const;
 
 function workflowsBuildFailedError(diagnostics: unknown[]): Error {
   const error = new Error("Workflows build failed.") as Error & {
@@ -179,18 +166,6 @@ function workflowsBuildFailedError(diagnostics: unknown[]): Error {
   error.code = "build_failed";
   error.diagnostics = diagnostics;
   return error;
-}
-
-function appMenuItem(action: AppMenuAction): {
-  label: string;
-  action: string;
-  accelerator: string;
-} {
-  return {
-    label: getShortcut(action).label,
-    action,
-    accelerator: getShortcutAccelerator(action) ?? "",
-  };
 }
 
 function loadEnvFile(filePath: string): void {
@@ -398,6 +373,7 @@ async function runExtensionCliRequirementCommand(
 }
 
 type DevBrowserToolsRecorder = {
+  close: () => Promise<void>;
   recordError: (
     kind: "app" | "rpc",
     message: string,
@@ -950,10 +926,12 @@ async function listProviderAuthSummaries(
 }
 
 let devBrowserToolsRecorder: DevBrowserToolsRecorder = {
+  close: async () => {},
   recordError: () => {},
   recordEvent: () => {},
   recordLog: () => {},
 };
+let devBrowserToolsMetadata: { appId: string; url?: string } | null = null;
 
 const recordDevBrowserToolsEvent: DevBrowserToolsRecorder["recordEvent"] = (...args) =>
   devBrowserToolsRecorder.recordEvent(...args);
@@ -961,6 +939,8 @@ const recordDevBrowserToolsLog: DevBrowserToolsRecorder["recordLog"] = (...args)
   devBrowserToolsRecorder.recordLog(...args);
 const recordDevBrowserToolsError: DevBrowserToolsRecorder["recordError"] = (...args) =>
   devBrowserToolsRecorder.recordError(...args);
+
+loadRuntimeEnv(startupWorkspaceCwd);
 
 const runtimeConfigEnv = Object.fromEntries(
   Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
@@ -988,33 +968,36 @@ const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
   appWorkspaceTabsStore,
   listRecoverableWorkspaces: () => appWorkspaceTabsStore.getState()?.knownWorkspaces ?? [],
   onWorkspaceSync: (_workspaceId, payload) => {
-    try {
-      rpc.send.sendWorkspaceSync(payload);
-    } catch (error) {
-      recordDevBrowserToolsError(
-        "rpc",
-        "Unable to send workspace sync to the main view.",
-        "rpc",
-        {},
-        error,
-      );
-    }
+    void sendLegacyRendererMessage(
+      "sendWorkspaceSync",
+      payload,
+      "Unable to send workspace sync to the main view.",
+    );
   },
   onSurfaceSync: (_workspaceId, payload) => {
-    try {
-      rpc.send.sendSurfaceSync(payload);
-    } catch (error) {
-      recordDevBrowserToolsError(
-        "rpc",
-        "Unable to send surface sync to the main view.",
-        "rpc",
-        {},
-        error,
-      );
-    }
+    void sendLegacyRendererMessage(
+      "sendSurfaceSync",
+      payload,
+      "Unable to send surface sync to the main view.",
+    );
   },
 });
-await workspaceRuntimeRegistry.ready();
+
+async function sendLegacyRendererMessage<Name extends keyof ChatRPCSchema["webview"]["messages"]>(
+  messageName: Name,
+  payload: ChatRPCSchema["webview"]["messages"][Name],
+  errorMessage: string,
+): Promise<void> {
+  const host = desktopHost;
+  if (!host) {
+    return;
+  }
+  try {
+    await host.sendLegacyMessage(messageName, payload);
+  } catch (error) {
+    recordDevBrowserToolsError("rpc", errorMessage, "rpc", {}, error);
+  }
+}
 
 function recordAppRuntimeLog(
   level: "info" | "warning",
@@ -1054,12 +1037,6 @@ function getWorkspaceRuntime(input: Parameters<typeof getWorkspaceRuntimeForRequ
   return getWorkspaceRuntimeForRequest(workspaceRuntimeRegistry, input);
 }
 
-function getWorkspaceRuntimeOperations(
-  input: Parameters<typeof getWorkspaceRuntimeOperationsForRequest>[1],
-) {
-  return getWorkspaceRuntimeOperationsForRequest(workspaceRuntimeRegistry, input);
-}
-
 function nowIso(): typeof IsoDateTimeStringSchema.Type {
   return new Date().toISOString() as typeof IsoDateTimeStringSchema.Type;
 }
@@ -1069,16 +1046,6 @@ function rpcClientSubmission(operation: string) {
     clientRequestId: `${operation}:${randomUUID()}` as RuntimeClientRequestId,
     source: "renderer-rpc" as RuntimeClientSubmissionSource,
   };
-}
-
-async function fetchRendererStateReadModel(
-  request: StateReadModelRequest,
-): Promise<StateReadModelResult> {
-  if (request.kind === "providerAuth") {
-    await syncProviderAuthStatusesWithState({ refreshOAuth: true, source: "startup_scan" });
-  }
-  const rendererState = await workspaceRuntimeRegistry.getRendererStateFacade();
-  return rendererState.readModels.fetch(request);
 }
 
 function requireStateReadModel<Kind extends StateReadModelResult["kind"]>(
@@ -1182,9 +1149,11 @@ function providerInfoFromStatus(
 async function syncProviderAuthStatusesWithState(input: {
   refreshOAuth: boolean;
   source: "startup_scan" | "user_action";
+  stateCommands?: ElectrobunRendererApiInput["commands"]["state"];
 }): Promise<ProviderAuthInfo[]> {
   const summaries = await listProviderAuthSummaries({ refreshOAuth: input.refreshOAuth });
-  const stateCommands = await workspaceRuntimeRegistry.getStateCommandsFacade();
+  const stateCommands =
+    input.stateCommands ?? (await workspaceRuntimeRegistry.getStateCommandsFacade());
   const observedAt = nowIso();
   await Promise.all(
     summaries.map((summary) =>
@@ -1224,10 +1193,29 @@ function addWorkspaceBranch<T extends { cwd: string }>(info: T): T & { branch?: 
   };
 }
 
-const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
-  maxRequestTime: getRpcRequestTimeoutMs(),
-  handlers: normalizeDesktopBridgeHandlers({
+function buildDesktopRpcHandlers(
+  facades: ElectrobunRendererApiInput,
+  lifecycle: { readonly rendererReady: () => void },
+): ElectrobunRpcHandlers {
+  const fetchDesktopStateReadModel = async (
+    request: StateReadModelRequest,
+  ): Promise<StateReadModelResult> => {
+    if (request.kind === "providerAuth") {
+      await syncProviderAuthStatusesWithState({
+        refreshOAuth: true,
+        source: "startup_scan",
+        stateCommands: facades.commands.state,
+      });
+    }
+    return facades.state.readModels.fetch(request);
+  };
+
+  return normalizeDesktopBridgeHandlers<ElectrobunRpcHandlers>({
     requests: {
+      rendererReady: async () => {
+        lifecycle.rendererReady();
+        return { ok: true };
+      },
       getDefaults: async () => {
         return getDefaultAgentSettings();
       },
@@ -1455,17 +1443,11 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           action: input.action,
           command,
           onUpdate: (message) => {
-            try {
-              rpc.send.sendExtensionCliRequirementActionUpdate(message);
-            } catch (error) {
-              recordDevBrowserToolsError(
-                "rpc",
-                "Unable to send extension CLI requirement update to the main view.",
-                "rpc",
-                { workspaceId: input.workspaceId, runId: input.runId },
-                error,
-              );
-            }
+            void sendLegacyRendererMessage(
+              "sendExtensionCliRequirementActionUpdate",
+              message,
+              "Unable to send extension CLI requirement update to the main view.",
+            );
           },
         });
         const status = result.exitCode === 0 ? "success" : "failed";
@@ -1780,7 +1762,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       getAppPreferences: async () => {
         const result = requireStateReadModel(
-          await fetchRendererStateReadModel({ kind: "appPreferences" }),
+          await fetchDesktopStateReadModel({ kind: "appPreferences" }),
           "appPreferences",
         );
         const fallback = (
@@ -1788,19 +1770,14 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         ).agentSettingsStore.getState().appPreferences;
         return appPreferencesFromReadModel(result.value, fallback);
       },
-      fetchStateReadModel: fetchRendererStateReadModel,
+      fetchStateReadModel: fetchDesktopStateReadModel,
       refetchStateReadModels: async (request) =>
         Promise.all(
-          request.requests.map((readModelRequest) => fetchRendererStateReadModel(readModelRequest)),
+          request.requests.map((readModelRequest) => fetchDesktopStateReadModel(readModelRequest)),
         ),
-      refetchStateReadModelInvalidation: async (request) => {
-        const rendererState = await workspaceRuntimeRegistry.getRendererStateFacade();
-        return rendererState.readModels.refetchInvalidation(request);
-      },
-      rebaselineStateReadModels: async (request) => {
-        const rendererState = await workspaceRuntimeRegistry.getRendererStateFacade();
-        return rendererState.readModels.rebaseline(request);
-      },
+      refetchStateReadModelInvalidation: (request) =>
+        facades.state.readModels.refetchInvalidation(request),
+      rebaselineStateReadModels: (request) => facades.state.readModels.rebaseline(request),
       getGeneratedAgentContext: async (input) => {
         return getWorkspaceRuntime(input).catalog.getGeneratedAgentContextState();
       },
@@ -2103,8 +2080,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           appAppearance: preferences.appAppearance,
           preferredExternalEditor: preferences.preferredExternalEditor,
         });
-        const stateCommands = await workspaceRuntimeRegistry.getStateCommandsFacade();
-        await stateCommands.appPreferences.update({
+        await facades.commands.state.appPreferences.update({
           patch: appPreferencesPatch(preferences),
           clientSubmission: rpcClientSubmission("app-preferences:update"),
         });
@@ -2216,7 +2192,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       getAppLogs: (query) => {
         getWorkspaceRuntime(query);
-        return fetchRendererStateReadModel({
+        return fetchDesktopStateReadModel({
           kind: "appLogs",
           workspaceId: query.workspaceId as WorkspaceId,
           query: stripWorkspaceId(query),
@@ -2224,21 +2200,20 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       getAppLogSummary: (input) => {
         getWorkspaceRuntime(input);
-        return fetchRendererStateReadModel({
+        return fetchDesktopStateReadModel({
           kind: "appLogSummary",
           workspaceId: input.workspaceId as WorkspaceId,
         }).then((result) => requireStateReadModel(result, "appLogSummary").value);
       },
       markAppLogsSeen: async ({ workspaceId, throughSeq }) => {
         workspaceRuntimeRegistry.getRuntime(workspaceId);
-        const stateCommands = await workspaceRuntimeRegistry.getStateCommandsFacade();
-        await stateCommands.appLogs.markRead({
+        await facades.commands.state.appLogs.markRead({
           workspaceId: workspaceId as WorkspaceId,
           entryIds: [`app-log-${throughSeq}` as AppLogEntryId],
           readAt: nowIso(),
           clientSubmission: rpcClientSubmission("app-logs:mark-seen"),
         });
-        const result = await fetchRendererStateReadModel({
+        const result = await fetchDesktopStateReadModel({
           kind: "appLogSummary",
           workspaceId: workspaceId as WorkspaceId,
         });
@@ -2360,11 +2335,10 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         });
       },
       writeCommandStdin: async (input) => {
-        const runtimeOperations = getWorkspaceRuntimeOperations(input);
         return await writeCommandStdinFromDesktop({
           operation: "desktop.writeCommandStdin",
           payload: stripWorkspaceId(input),
-          runtimeCommands: runtimeOperations.commands,
+          runtimeCommands: facades.commands.runtime,
         });
       },
       listHandlerThreads: async (input) => {
@@ -2601,13 +2575,12 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return result;
       },
       sendPrompt: async (payload): Promise<SendPromptResponse> => {
-        const runtimeOperations = getWorkspaceRuntimeOperations(payload);
         return await submitPromptFromDesktop({
           operation: "desktop.sendPrompt",
           payload: stripWorkspaceId(payload),
           workspaceId: payload.workspaceId as WorkspaceId,
-          fetchStateReadModel: fetchRendererStateReadModel,
-          runtimeMessages: runtimeOperations.messages,
+          fetchStateReadModel: fetchDesktopStateReadModel,
+          runtimeMessages: facades.runtime.messages,
         });
       },
       recordRendererTelemetry: async (payload) => {
@@ -2662,7 +2635,6 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       deleteQueuedSurfaceMessage: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const runtimeOperations = getWorkspaceRuntimeOperations(input);
         const abortInput = {
           target: input.target as AbortPromptInput["target"],
           mode: "queued",
@@ -2672,7 +2644,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           >["queuedMessageId"],
           reason: "Deleted queued surface message.",
         } satisfies AbortPromptInput;
-        await runtimeOperations.messages.abort(abortInput);
+        await facades.runtime.messages.abort(abortInput);
         runtime.appLog.info("prompt", "Queued surface message deleted.", {
           workspaceSessionId: input.target.workspaceSessionId,
           surfacePiSessionId: input.target.surfacePiSessionId,
@@ -2705,8 +2677,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return result;
       },
       steerQueuedSurfaceMessage: async (input) => {
-        const runtimeOperations = getWorkspaceRuntimeOperations(input);
-        await runtimeOperations.queues.steer({
+        await facades.runtime.queues.steer({
           target: input.target as SteerQueuedMessageInput["target"],
           queuedMessageId: input.queuedMessageId as SteerQueuedMessageInput["queuedMessageId"],
         });
@@ -2714,8 +2685,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       answerRequestUserInput: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const runtimeOperations = getWorkspaceRuntimeOperations(input);
-        const answerResult = await runtimeOperations.requestInput.answer({
+        const answerResult = await facades.runtime.requestInput.answer({
           surfacePiSessionId: input.surfacePiSessionId as SurfacePiSessionId,
           requestId: input.requestId as RequestInputRequestId,
           questionId: input.questionId as RequestInputQuestionId,
@@ -2758,8 +2728,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       answerRuntimeApprovalRequest: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const runtimeOperations = getWorkspaceRuntimeOperations(input);
-        await runtimeOperations.approvals.answer({
+        await facades.runtime.approvals.answer({
           approvalId: input.requestId as RuntimeApprovalId,
           decision: input.approved ? "approved" : "denied",
           ...(input.reason === undefined ? {} : { reason: input.reason ?? "" }),
@@ -2773,8 +2742,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
       },
       setRequestUserInputTimerPaused: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const runtimeOperations = getWorkspaceRuntimeOperations(input);
-        await runtimeOperations.requestInput.setTimerPaused({
+        await facades.runtime.requestInput.setTimerPaused({
           surfacePiSessionId: input.surfacePiSessionId as SurfacePiSessionId,
           requestId: input.requestId as RequestInputRequestId,
           paused: input.paused,
@@ -2805,8 +2773,7 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         return result;
       },
       cancelPrompt: async (input): Promise<{ ok: boolean }> => {
-        const runtimeOperations = getWorkspaceRuntimeOperations(input);
-        await runtimeOperations.messages.abort({
+        await facades.runtime.messages.abort({
           target: input.target as AbortPromptInput["target"],
           mode: "all-for-surface",
         });
@@ -2911,10 +2878,10 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         const fallbacks = await syncProviderAuthStatusesWithState({
           refreshOAuth: true,
           source: "startup_scan",
+          stateCommands: facades.commands.state,
         });
-        const rendererState = await workspaceRuntimeRegistry.getRendererStateFacade();
         const result = requireStateReadModel(
-          await rendererState.readModels.fetch({ kind: "providerAuth" }),
+          await facades.state.readModels.fetch({ kind: "providerAuth" }),
           "providerAuth",
         );
         return providerAuthInfosFromReadModel(result.value, fallbacks);
@@ -2937,7 +2904,11 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
             providerId,
             keyType: "apikey",
           });
-        await syncProviderAuthStatusesWithState({ refreshOAuth: false, source: "user_action" });
+        await syncProviderAuthStatusesWithState({
+          refreshOAuth: false,
+          source: "user_action",
+          stateCommands: facades.commands.state,
+        });
         return { ok: true };
       },
       startOAuth: async ({
@@ -2951,7 +2922,11 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
           workspaceRuntimeRegistry
             .getActiveRuntimeOrNull()
             ?.appLog.info("auth.provider", "Provider OAuth started.", { providerId });
-          await syncProviderAuthStatusesWithState({ refreshOAuth: false, source: "user_action" });
+          await syncProviderAuthStatusesWithState({
+            refreshOAuth: false,
+            source: "user_action",
+            stateCommands: facades.commands.state,
+          });
           return { ok: true };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -2975,188 +2950,229 @@ const rpc = defineElectrobunRPC<ChatRPCSchema, "bun">("bun", {
         workspaceRuntimeRegistry
           .getActiveRuntimeOrNull()
           ?.appLog.info("auth.provider", "Provider auth removed.", { providerId });
-        await syncProviderAuthStatusesWithState({ refreshOAuth: false, source: "user_action" });
+        await syncProviderAuthStatusesWithState({
+          refreshOAuth: false,
+          source: "user_action",
+          stateCommands: facades.commands.state,
+        });
         return { ok: true };
       },
     },
-  }),
-});
+  });
+}
 
-const desktopNotificationBridge = createDesktopNotificationBridge({
-  runtimeEvents: (input) => workspaceRuntimeRegistry.getAppRuntimeEventSubscription(input),
-  state: {
-    readModels: {
-      fetch: async (input) => {
-        const rendererState = await workspaceRuntimeRegistry.getRendererStateFacade();
-        return rendererState.readModels.fetch(input);
-      },
-      rebaseline: async (input) => {
-        const rendererState = await workspaceRuntimeRegistry.getRendererStateFacade();
-        return rendererState.readModels.rebaseline(input);
-      },
-    },
-  },
-  rendererEmit: (notification) => {
-    rpc.send.sendDesktopNotification(notification);
-  },
-  onError: (error, context) => {
-    recordDevBrowserToolsError("rpc", "Desktop notification bridge failed.", context, {}, error);
-  },
-});
-await desktopNotificationBridge.start();
+let desktopApp: DesktopApp | null = null;
+let desktopShutdownPromise: Promise<void> | null = null;
+let desktopShutdownReason: "app-shutdown" | "startup-failure" | null = null;
+let rendererCallsClosed = false;
 
-const appMenu: Parameters<typeof ApplicationMenu.setApplicationMenu>[0] = [
-  {
-    label: "svvy",
-    submenu: [
-      { role: "about" },
-      { type: "separator" },
-      { role: "hide", accelerator: "CommandOrControl+H" },
-      { role: "hideOthers", accelerator: "CommandOrControl+Option+H" },
-      { role: "showAll" },
-      { type: "separator" },
-      { role: "quit", accelerator: "CommandOrControl+Q" },
-    ],
-  },
-  {
-    label: "File",
-    submenu: [
-      appMenuItem("workspace.open"),
-      appMenuItem("workspace.newTab"),
-      appMenuItem("workspace.openInNewTab"),
-      { type: "separator" },
-      appMenuItem("session.new"),
-      appMenuItem("session.newPane"),
-    ],
-  },
-  {
-    label: "Edit",
-    submenu: [
-      { role: "undo", accelerator: "CommandOrControl+Z" },
-      { role: "redo", accelerator: "CommandOrControl+Shift+Z" },
-      { type: "separator" },
-      { role: "cut", accelerator: "CommandOrControl+X" },
-      { role: "copy", accelerator: "CommandOrControl+C" },
-      { role: "paste", accelerator: "CommandOrControl+V" },
-      { role: "pasteAndMatchStyle" },
-      { role: "delete" },
-      { type: "separator" },
-      { role: "selectAll", accelerator: "CommandOrControl+A" },
-    ],
-  },
-  {
-    label: "View",
-    submenu: [
-      appMenuItem("commandPalette.open"),
-      appMenuItem("quickOpen.open"),
-      { type: "separator" },
-      appMenuItem("sidebar.toggle"),
-      { type: "separator" },
-      appMenuItem("surface.logs.open"),
-      appMenuItem("surface.agents.open"),
-      appMenuItem("surface.extensions.open"),
-      appMenuItem("surface.workflows.open"),
-    ],
-  },
-  {
-    label: "Window",
-    submenu: [
-      { role: "close" },
-      { role: "minimize" },
-      { role: "zoom" },
-      { type: "separator" },
-      { role: "bringAllToFront" },
-    ],
-  },
-];
+function rejectRendererCalls(error: ReturnType<typeof normalizeDesktopBridgeErrorContract>): void {
+  rendererCallsClosed = true;
+  desktopHost?.rejectRendererCalls(error);
+}
 
-const localInfoChannelPromise = Updater.localInfo.channel();
-
-ApplicationMenu.setApplicationMenu(appMenu);
-ApplicationMenu.on("application-menu-clicked", (event) => {
-  const action = (event as { data?: { action?: unknown } }).data?.action;
-  if (!isAppMenuAction(action)) {
-    return;
+function shutdownDesktopApp(
+  reason: "app-shutdown" | "startup-failure" = "app-shutdown",
+): Promise<void> {
+  if (desktopShutdownPromise) {
+    return desktopShutdownPromise;
   }
-  if (action === "commandPalette.open" || action === "quickOpen.open") {
-    rpc.send.sendDesktopNotification({
-      kind: "renderer-command",
-      command: action === "commandPalette.open" ? "command-palette.open" : "quick-open.open",
+  desktopShutdownReason = reason;
+  desktopShutdownPromise = (async () => {
+    const errors: unknown[] = [];
+    if (!rendererCallsClosed) {
+      rejectRendererCalls(
+        normalizeDesktopBridgeErrorContract({
+          operation: "desktop.shutdown",
+          reason: "desktop-shutdown",
+          message: "The desktop app is shutting down.",
+        }),
+      );
+    }
+    try {
+      await devBrowserToolsRecorder.close();
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      await desktopApp?.dispose();
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      await workspaceRuntimeRegistry.shutdownApp(reason);
+    } catch (error) {
+      errors.push(error);
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "The desktop app did not shut down cleanly.");
+    }
+  })();
+  return desktopShutdownPromise;
+}
+
+const appChannelPromise = Updater.localInfo.channel();
+desktopHost = createElectrobunDesktopHostAdapter({
+  maxRequestTime: getRpcRequestTimeoutMs(),
+  buildRpcHandlers: buildDesktopRpcHandlers,
+  resolveMainWindowUrl: async () => getMainViewUrl(await appChannelPromise),
+  prepareMainWindow: async (mainWindow) => {
+    if ((await appChannelPromise) !== "dev") {
+      return;
+    }
+    const { mountDevBrowserToolsBridge } = await import("./dev-browser-tools-bridge");
+    const mountedDevBrowserToolsBridge = await mountDevBrowserToolsBridge({
+      defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
+      getDefaultAgentSettings,
+      getMainWindow: () => mainWindow,
+      getActiveWorkspace: () =>
+        workspaceRuntimeRegistry.getActiveRuntimeOrNull()?.getInfo() ?? null,
+      getOpenWorkspaces: () => workspaceRuntimeRegistry.listOpenWorkspaces(),
+      getWorkspaceBranch,
+      listProviderAuthSummaries,
+      listOpenSurfaceSnapshots: async () =>
+        (await workspaceRuntimeRegistry
+          .getActiveRuntimeOrNull()
+          ?.catalog.listOpenSurfaceSnapshots()) ?? [],
+      listWorkspaceSessions: async () =>
+        (await workspaceRuntimeRegistry.getActiveRuntimeOrNull()?.catalog.listSessions()) ?? {
+          sessions: [],
+        },
+      mainWindow,
+    }).catch((error) => {
+      recordAppRuntimeError(
+        "app",
+        "svvy dev browser tools bridge failed to mount.",
+        "dev-browser-tools",
+        {},
+        error,
+      );
+      throw error;
     });
-  }
-  rpc.send.sendAppMenuAction({ action });
-});
-
-loadRuntimeEnv(startupWorkspaceCwd);
-
-const appChannel = await localInfoChannelPromise;
-const url = await getMainViewUrl(appChannel);
-
-mainWindow = new BrowserWindow({
-  title: "svvy",
-  frame: {
-    x: 0,
-    y: 0,
-    width: 1180,
-    height: 820,
+    devBrowserToolsRecorder = mountedDevBrowserToolsBridge;
+    devBrowserToolsMetadata = {
+      appId: mountedDevBrowserToolsBridge.appId,
+      ...(mountedDevBrowserToolsBridge.url ? { url: mountedDevBrowserToolsBridge.url } : {}),
+    };
   },
-  titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
-  hidden: process.platform === "darwin",
-  rpc,
-});
-
-if (appChannel === "dev") {
-  const { mountDevBrowserToolsBridge } = await import("./dev-browser-tools-bridge");
-  const mountedDevBrowserToolsBridge = await mountDevBrowserToolsBridge({
-    defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
-    getDefaultAgentSettings,
-    getMainWindow: () => mainWindow,
-    getActiveWorkspace: () => workspaceRuntimeRegistry.getActiveRuntimeOrNull()?.getInfo() ?? null,
-    getOpenWorkspaces: () => workspaceRuntimeRegistry.listOpenWorkspaces(),
-    getWorkspaceBranch,
-    listProviderAuthSummaries,
-    listOpenSurfaceSnapshots: async () =>
-      (await workspaceRuntimeRegistry
-        .getActiveRuntimeOrNull()
-        ?.catalog.listOpenSurfaceSnapshots()) ?? [],
-    listWorkspaceSessions: async () =>
-      (await workspaceRuntimeRegistry.getActiveRuntimeOrNull()?.catalog.listSessions()) ?? {
-        sessions: [],
-      },
-    mainWindow,
-  }).catch((error) => {
-    recordAppRuntimeError(
+  includeSettingsMenuItem: true,
+  onLegacyAppMenuAction: (action) =>
+    sendLegacyRendererMessage(
+      "sendAppMenuAction",
+      { action },
+      "Unable to send an app menu action to the main view.",
+    ),
+  onBeforeQuit: shutdownDesktopApp,
+  onError: (error, context) => {
+    recordDevBrowserToolsError(
       "app",
-      "svvy dev browser tools bridge failed to mount.",
-      "dev-browser-tools",
+      "Electrobun desktop host operation failed.",
+      context,
       {},
       error,
     );
-    throw error;
-  });
-  devBrowserToolsRecorder = mountedDevBrowserToolsBridge;
+  },
+});
 
-  recordDevBrowserToolsEvent("app.ready", {
-    bridgeUrl: mountedDevBrowserToolsBridge.url ?? null,
-    url,
-    workspaceId: workspaceRuntimeRegistry.getActiveWorkspaceId(),
-  });
-  recordAppRuntimeLog("info", "svvy dev browser tools bridge mounted.", "dev-browser-tools", {
-    appId: mountedDevBrowserToolsBridge.appId,
-    bridgeUrl: mountedDevBrowserToolsBridge.url ?? null,
-  });
-  console.log(
-    `svvy bridge: ${JSON.stringify({
-      appId: mountedDevBrowserToolsBridge.appId,
-      bridgeUrl: mountedDevBrowserToolsBridge.url ?? null,
-    })}`,
-  );
-}
+await runDesktopBootstrap({
+  awaitReadiness: async () => {
+    desktopHost!.lifecycle.start();
+    await workspaceRuntimeRegistry.ready();
+  },
+  acquireFacades: () => workspaceRuntimeRegistry.acquireDesktopAppFacades(),
+  startDesktop: async (facades) => {
+    const appChannel = await appChannelPromise;
+    const url = await getMainViewUrl(appChannel);
+    const host = desktopHost!;
 
-mainWindow.webview.loadURL(url);
-positionNativeTrafficLights(mainWindow.ptr, NATIVE_TRAFFIC_LIGHT_POSITION);
-mainWindow.show();
+    const notifications = createDesktopNotificationBridge({
+      runtimeEvents: facades.runtimeEvents,
+      state: facades.rendererState,
+      rendererEmit: (notification) => host.bridge.sendToRenderer(notification),
+      onError: (error, context) => {
+        recordDevBrowserToolsError(
+          "rpc",
+          "Desktop notification bridge failed.",
+          context,
+          {},
+          error,
+        );
+      },
+    });
 
-void mainWindow;
+    desktopApp = createDesktopApp({
+      runtime: facades.runtimeActions,
+      state: facades.rendererState,
+      commands: {
+        runtime: facades.runtimeCommands,
+        state: facades.rendererStateCommands,
+      },
+      notifications,
+      host,
+    });
+    await desktopApp.start();
 
-console.log("svvy desktop app started");
+    const mainWindow = host.getMainWindow();
+    if (!mainWindow) {
+      throw new Error("The desktop app started without an Electrobun main window.");
+    }
+
+    if (devBrowserToolsMetadata) {
+      recordDevBrowserToolsEvent("app.ready", {
+        bridgeUrl: devBrowserToolsMetadata.url ?? null,
+        url,
+        workspaceId: workspaceRuntimeRegistry.getActiveWorkspaceId(),
+      });
+      recordAppRuntimeLog("info", "svvy dev browser tools bridge mounted.", "dev-browser-tools", {
+        appId: devBrowserToolsMetadata.appId,
+        bridgeUrl: devBrowserToolsMetadata.url ?? null,
+      });
+      console.log(
+        `svvy bridge: ${JSON.stringify({
+          appId: devBrowserToolsMetadata.appId,
+          bridgeUrl: devBrowserToolsMetadata.url ?? null,
+        })}`,
+      );
+    }
+
+    console.log("svvy desktop app started");
+  },
+  rejectRendererCalls,
+  cleanup: (reason) => shutdownDesktopApp(reason),
+  showStartupFailure: async (cause) => {
+    if (desktopShutdownReason === "app-shutdown") {
+      return;
+    }
+    await showStartupFailureSurface({
+      cause,
+      host: {
+        showStartupFailure: async ({ title, message }) => {
+          await Utils.showMessageBox({
+            type: "error",
+            title,
+            message,
+            buttons: ["Close"],
+            defaultId: 0,
+            cancelId: 0,
+          });
+        },
+      },
+    });
+  },
+  finalizeFailure: () => desktopHost!.lifecycle.finishQuit(),
+  onAuxiliaryFailure: (error, phase) => {
+    recordDevBrowserToolsError(
+      "app",
+      phase === "cleanup"
+        ? "Desktop startup cleanup failed."
+        : phase === "failure-surface"
+          ? "Desktop startup failure surface could not be shown."
+          : phase === "finalization"
+            ? "Desktop startup failure finalization failed."
+            : "Desktop renderer rejection failed during startup cleanup.",
+      "desktop.startup",
+      {},
+      error,
+    );
+  },
+});

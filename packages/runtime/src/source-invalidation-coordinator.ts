@@ -110,7 +110,8 @@ export interface SourceInvalidationCoordinatorOptions {
   retryMaxDelayMs?: number;
   sourceScanRecorder?: {
     scope: SourceInvalidationScope;
-    statePort: Pick<RuntimeSourceStatePortService, "recordSourceScan">;
+    statePort: Pick<RuntimeSourceStatePortService, "recordSourceScan"> &
+      Partial<Pick<RuntimeSourceStatePortService, "recordSourceDiagnostic">>;
   };
   watchEnabled?: boolean;
 }
@@ -255,6 +256,7 @@ export function createSourceInvalidationCoordinator(
     reason: string,
     options: {
       readonly domains?: readonly SourceInvalidationDomain[];
+      readonly failOnNotificationError?: boolean;
       readonly notify?: boolean;
     } = {},
   ): Effect.fn.Return<SourceInvalidationEvent | null> {
@@ -343,20 +345,62 @@ export function createSourceInvalidationCoordinator(
           afterCommit,
         } satisfies SourceInvalidationEvent;
         if (options.notify ?? true) {
-          const notified = yield* input.onDomainsChanged(event).pipe(
-            Effect.as(true),
-            Effect.catchCause((cause) =>
-              Effect.sync(() => {
-                input.onWatchError?.(
-                  Cause.squash(cause),
-                  `source-notification:${acceptedDomains.join(",")}`,
-                );
-                return false;
-              }),
-            ),
-          );
-          if (!notified) {
-            return null;
+          if (options.failOnNotificationError) {
+            yield* input.onDomainsChanged(event).pipe(
+              Effect.catchCause((cause) =>
+                Effect.gen(function* () {
+                  const sourceNotificationPath = `source-notification:${acceptedDomains.join(",")}`;
+                  input.onWatchError?.(Cause.squash(cause), sourceNotificationPath);
+                  const sourceScanRecorder = input.sourceScanRecorder;
+                  const diagnosticStatePort = sourceScanRecorder?.statePort.recordSourceDiagnostic;
+                  if (diagnosticStatePort && sourceScanRecorder) {
+                    const observedAt = DateTime.formatIso(yield* DateTime.now);
+                    yield* Effect.forEach(
+                      acceptedDomains,
+                      (domain) =>
+                        diagnosticStatePort({
+                          scope: sourceScanRecorder.scope,
+                          domain,
+                          sourceFingerprint: nextFingerprints[domain],
+                          diagnostic: {
+                            severity: "error",
+                            code: "RUNTIME_SOURCE_REACTION_FAILED",
+                            message: "Startup source invalidation reaction failed.",
+                          },
+                          observedAt: observedAt as RecordRuntimeSourceScanInput["scannedAt"],
+                        }),
+                      { discard: true },
+                    ).pipe(
+                      Effect.catchCause((diagnosticCause) =>
+                        Effect.sync(() => {
+                          input.onWatchError?.(
+                            Cause.squash(diagnosticCause),
+                            `source-diagnostic:${acceptedDomains.join(",")}`,
+                          );
+                        }),
+                      ),
+                    );
+                  }
+                  return yield* Effect.failCause(cause);
+                }),
+              ),
+            );
+          } else {
+            const notified = yield* input.onDomainsChanged(event).pipe(
+              Effect.as(true),
+              Effect.catchCause((cause) =>
+                Effect.sync(() => {
+                  input.onWatchError?.(
+                    Cause.squash(cause),
+                    `source-notification:${acceptedDomains.join(",")}`,
+                  );
+                  return false;
+                }),
+              ),
+            );
+            if (!notified) {
+              return null;
+            }
           }
         }
         fingerprints = requestedDomains
@@ -451,7 +495,7 @@ export function createSourceInvalidationCoordinator(
     requestScan: scheduleScan,
     start: () =>
       Effect.gen(function* () {
-        yield* scan("startup_reconcile");
+        yield* scan("startup_reconcile", { failOnNotificationError: true });
         if (reconciliationIntervalMs > 0) {
           yield* runPeriodicReconciliation().pipe(Effect.forkIn(timerScope), Effect.asVoid);
         }

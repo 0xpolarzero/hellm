@@ -16,6 +16,7 @@ import {
   type ComposerAttachment,
   type AppWorkspaceUiRestoreState,
   type AppLogEntry,
+  type AppLogReadModel,
   type AppLogSummary,
   type AppLogUpdateMessage,
   type ConversationSurfaceSnapshot,
@@ -133,6 +134,8 @@ type FakeRpcHarness = {
   cancelRequests: PromptTarget[];
   requestCounts: {
     listSessions: number;
+    rebaselineStateReadModels: number;
+    rendererReady: number;
   };
   appLogSeenRequests: number[];
   branchListRequests: string[];
@@ -140,6 +143,7 @@ type FakeRpcHarness = {
   emitAppLogUpdate: (payload: AppLogUpdateMessage) => void;
   emitDesktopNotification: (payload: DesktopRendererNotification) => void;
   setRebaselineResult: (baseline: StateReadModelBaseline) => void;
+  setAppGlobalLogs: (readModel: AppLogReadModel) => void;
   emitExtensionCliRequirementActionUpdate: (
     payload: ExtensionCliRequirementActionUpdateMessage,
   ) => void;
@@ -735,6 +739,18 @@ function createWorkspaceRestoreState(
   };
 }
 
+function emptyAppLogReadModel(): AppLogReadModel {
+  return {
+    entries: [],
+    summary: {
+      latestSeq: 0,
+      seenSeq: 0,
+      unread: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
+      totals: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
+    },
+  };
+}
+
 function createFakeRpc(input: {
   sessions: WorkspaceSessionSummary[];
   surfaces: ConversationSurfaceSnapshot[];
@@ -796,6 +812,7 @@ function createFakeRpc(input: {
   let workspaceInfo = structuredClone(TEST_WORKSPACE_INFO);
   let appLogEntries: AppLogEntry[] = [];
   let appLogSeenSeq = 0;
+  let appGlobalLogs = emptyAppLogReadModel();
   let desktopNotificationSequence = 0;
   let rebaselineResult: StateReadModelBaseline = {
     app: [],
@@ -804,6 +821,8 @@ function createFakeRpc(input: {
   };
   const requestCounts = {
     listSessions: 0,
+    rebaselineStateReadModels: 0,
+    rendererReady: 0,
   };
   let focusedSurfacePiSessionId: string | null = null;
   let queuedMessageSequence = 0;
@@ -995,6 +1014,10 @@ function createFakeRpc(input: {
   const harness: FakeRpcHarness = {
     client: {
       request: {
+        rendererReady: async () => {
+          requestCounts.rendererReady += 1;
+          return { ok: true as const };
+        },
         getDefaults: async () => ({
           provider: "openai",
           model: "gpt-4o",
@@ -1148,17 +1171,21 @@ function createFakeRpc(input: {
             case "appLogs":
               return {
                 kind: "appLogs",
-                value: await harness.client.request.getAppLogs({
-                  workspaceId: TEST_WORKSPACE_INFO.workspaceId,
-                  ...request.query,
-                }),
+                value: request.workspaceId
+                  ? await harness.client.request.getAppLogs({
+                      workspaceId: request.workspaceId,
+                      ...request.query,
+                    })
+                  : structuredClone(appGlobalLogs),
               };
             case "appLogSummary":
               return {
                 kind: "appLogSummary",
-                value: await harness.client.request.getAppLogSummary({
-                  workspaceId: TEST_WORKSPACE_INFO.workspaceId,
-                }),
+                value: request.workspaceId
+                  ? await harness.client.request.getAppLogSummary({
+                      workspaceId: request.workspaceId,
+                    })
+                  : structuredClone(appGlobalLogs.summary),
               };
             case "providerAuth":
               return {
@@ -1203,7 +1230,10 @@ function createFakeRpc(input: {
               return [];
           }
         },
-        rebaselineStateReadModels: async () => structuredClone(rebaselineResult),
+        rebaselineStateReadModels: async () => {
+          requestCounts.rebaselineStateReadModels += 1;
+          return structuredClone(rebaselineResult);
+        },
         revertExtensionChange: async () => ({
           extensions: [],
           reversibleChanges: [],
@@ -2456,6 +2486,9 @@ function createFakeRpc(input: {
     },
     setRebaselineResult: (baseline) => {
       rebaselineResult = structuredClone(baseline);
+    },
+    setAppGlobalLogs: (readModel) => {
+      appGlobalLogs = structuredClone(readModel);
     },
     emitExtensionCliRequirementActionUpdate,
     getRetainCount: (surfacePiSessionId) => surfaces.get(surfacePiSessionId)?.retainCount ?? 0,
@@ -5673,6 +5706,55 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
+  it("forwards typed renderer commands from desktop notifications", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    const runtime = await createRuntime(harness);
+    const commands: string[] = [];
+    const unsubscribe = runtime.subscribeRendererCommand((command) => commands.push(command));
+
+    for (const command of ["command-palette.open", "quick-open.open", "settings.open"] as const) {
+      harness.emitDesktopNotification({ kind: "renderer-command", command });
+    }
+
+    expect(commands).toEqual(["command-palette.open", "quick-open.open", "settings.open"]);
+
+    unsubscribe();
+    harness.emitDesktopNotification({ kind: "renderer-command", command: "settings.open" });
+    expect(commands).toHaveLength(3);
+    runtime.dispose();
+  });
+
+  it("applies one renderer-startup baseline before acknowledging renderer readiness", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    const runtime = await createRuntime(harness);
+    harness.setRebaselineResult({
+      app: [
+        {
+          kind: "appPreferences",
+          value: {
+            appearance: "dark",
+            externalEditor: "zed",
+            artifactDirectory: "/tmp/renderer-ready" as never,
+            approvalMode: "user",
+            networkAccess: false,
+            ambientResources: {},
+            updatedAt: "2026-07-11T00:00:00.000Z" as never,
+            revision: 1 as StateRevision,
+          },
+        },
+      ],
+      workspaces: [],
+      revision: 1 as StateRevision,
+    });
+
+    await Promise.all([runtime.markRendererReady(), runtime.markRendererReady()]);
+
+    expect(harness.requestCounts.rebaselineStateReadModels).toBe(1);
+    expect(harness.requestCounts.rendererReady).toBe(1);
+    expect(runtime.appPreferencesSnapshot?.appAppearance).toBe("dark");
+    runtime.dispose();
+  });
+
   it("replaces notification-managed caches from an authoritative workspace rebaseline", async () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
@@ -5770,6 +5852,70 @@ describe("createChatRuntime", () => {
     expect(harness.appLogSeenRequests).toEqual([1]);
     expect(runtime.appLogSummary.unread.total).toBe(0);
 
+    runtime.dispose();
+  });
+
+  it("caches app-scoped app logs without replacing workspace logs or unread state", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
+      surfaces: [
+        createSurfaceSnapshot({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("main reply")],
+        }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+    const entry: AppLogEntry = {
+      id: "app-log-workspace-error",
+      seq: 1,
+      createdAt: "2026-07-10T10:00:00.000Z",
+      level: "error",
+      source: "workspace",
+      message: "Workspace failure",
+    };
+    const appGlobalEntry: AppLogEntry = {
+      id: "app-log-global-warning",
+      seq: 7,
+      createdAt: "2026-07-10T10:01:00.000Z",
+      level: "warn",
+      source: "app.lifecycle",
+      message: "Global lifecycle warning",
+    };
+    harness.setAppGlobalLogs({
+      entries: [appGlobalEntry],
+      summary: {
+        latestSeq: 7,
+        seenSeq: 0,
+        unread: { total: 1, debug: 0, info: 0, warn: 1, error: 0 },
+        totals: { total: 1, debug: 0, info: 0, warn: 1, error: 0 },
+      },
+    });
+
+    harness.emitAppLogUpdate({
+      workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+      entries: [entry],
+      summary: {
+        latestSeq: 1,
+        seenSeq: 0,
+        unread: { total: 1, debug: 0, info: 0, warn: 0, error: 1 },
+        totals: { total: 1, debug: 0, info: 0, warn: 0, error: 1 },
+      },
+    });
+    await waitFor(() => runtime.appLogSummary.unread.error === 1);
+
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 2 as never,
+      scope: { kind: "app" },
+      invalidation: { scope: "app", invalidation: { model: "appLogs" } },
+    });
+    await waitFor(() => runtime.appGlobalLogsSnapshot?.entries.length === 1);
+
+    expect(runtime.appLogSummary.unread.error).toBe(1);
+    expect(await runtime.getAppLogs()).toMatchObject({ entries: [entry] });
+    expect(runtime.appGlobalLogsSnapshot).toMatchObject({ entries: [appGlobalEntry] });
     runtime.dispose();
   });
 

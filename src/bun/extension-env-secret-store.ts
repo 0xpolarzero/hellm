@@ -31,27 +31,31 @@ export function createMacOsKeychainExtensionEnvSecretStore(
   const run = options.runSecurity ?? runSecurity;
   return {
     get: (key) => {
-      const result = run([
-        "find-generic-password",
-        "-s",
-        KEYCHAIN_SERVICE,
-        "-a",
-        keychainAccount(key),
-        "-w",
-      ]);
+      let result: SecurityResult;
+      try {
+        result = run([
+          "find-generic-password",
+          "-s",
+          KEYCHAIN_SERVICE,
+          "-a",
+          keychainAccount(key),
+          "-w",
+        ]);
+      } catch {
+        return undefined;
+      }
       if (result.status !== 0) {
         return undefined;
       }
       return result.stdout.replace(/\n$/, "");
     },
     has: (key) => {
-      const result = run([
-        "find-generic-password",
-        "-s",
-        KEYCHAIN_SERVICE,
-        "-a",
-        keychainAccount(key),
-      ]);
+      let result: SecurityResult;
+      try {
+        result = run(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", keychainAccount(key)]);
+      } catch {
+        return false;
+      }
       return result.status === 0;
     },
     set: (key, value) => {

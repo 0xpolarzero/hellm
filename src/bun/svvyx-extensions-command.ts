@@ -3779,7 +3779,10 @@ function preserveSnapshotSecretState(
     }
   }
   if (records.length === 0) {
-    envSecretStore.remove(snapshotSecretStateKey(snapshotId));
+    const snapshotKey = snapshotSecretStateKey(snapshotId);
+    if (envSecretStore.has(snapshotKey)) {
+      envSecretStore.remove(snapshotKey);
+    }
     return 0;
   }
   envSecretStore.set(

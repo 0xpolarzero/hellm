@@ -60,15 +60,29 @@ export class AppLifecycleCoordinator {
     if (this.shutdownPromise) return this.shutdownPromise;
     this.state = "shutting-down";
     this.shutdownPromise = (async () => {
+      const errors: unknown[] = [];
       try {
         await closeScopes();
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
         await prepare();
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        await dispose();
+      } catch (error) {
+        errors.push(error);
       } finally {
-        try {
-          await dispose();
-        } finally {
-          this.state = "closed";
-        }
+        this.state = "closed";
+      }
+      if (errors.length === 1) {
+        throw errors[0];
+      }
+      if (errors.length > 1) {
+        throw new AggregateError(errors, "App runtime shutdown did not complete cleanly.");
       }
       return { state: "closed", reason };
     })();

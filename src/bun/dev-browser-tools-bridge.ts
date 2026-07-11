@@ -8,6 +8,7 @@ type ErrorKind = "app" | "rpc";
 type DevBrowserToolsBridgeInstance = {
   appId: string;
   url?: string;
+  close: () => Promise<void>;
   recordEvent: (input: {
     eventName: string;
     payload?: Record<string, unknown>;
@@ -50,6 +51,7 @@ type WorkspaceSessionsState = {
 type DevBrowserToolsState = Record<string, Record<string, unknown>>;
 
 export type DevBrowserToolsRecorder = {
+  close: () => Promise<void>;
   recordError: (
     kind: ErrorKind,
     message: string,
@@ -67,6 +69,7 @@ export type DevBrowserToolsRecorder = {
 };
 
 export const noopDevBrowserToolsRecorder: DevBrowserToolsRecorder = {
+  close: async () => {},
   recordError: () => {},
   recordEvent: () => {},
   recordLog: () => {},
@@ -162,6 +165,11 @@ export async function mountDevBrowserToolsBridge(
   return {
     appId: browserToolsBridge.appId,
     url: browserToolsBridge.url,
+    close: async (): Promise<void> => {
+      const bridge = browserToolsBridge;
+      browserToolsBridge = null;
+      await bridge?.close();
+    },
     recordError: (
       kind: ErrorKind,
       message: string,

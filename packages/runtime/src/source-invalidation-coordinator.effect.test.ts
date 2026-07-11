@@ -18,6 +18,7 @@ import * as Exit from "effect/Exit";
 import { TestClock } from "effect/testing";
 import { RuntimeContractError, StateContractError, type AbsolutePath } from "@svvy/core";
 import type {
+  RecordRuntimeSourceDiagnosticInput,
   RecordRuntimeSourceScanInput,
   StateInvalidationDescriptor,
   StateMutationResult,
@@ -238,6 +239,103 @@ describe("runtime source invalidation coordinator", () => {
             }),
           ),
         );
+      }),
+    ),
+  );
+
+  it.effect("fails startup readiness and records a diagnostic when its reaction fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* tempRoot("runtime-source-startup-reaction-failure");
+        const workflows = join(root, "workflows", "agents");
+        const failure = new Error("startup source reaction failed");
+        const diagnostics: RecordRuntimeSourceDiagnosticInput[] = [];
+        const watchErrors: Array<{ error: unknown; path: string }> = [];
+
+        yield* Effect.sync(() => {
+          mkdirSync(workflows, { recursive: true });
+          writeFileSync(join(workflows, "implementer.agent.json"), "{}\n");
+        });
+
+        const exit = yield* Effect.exit(
+          Effect.gen(function* () {
+            yield* RuntimeSourceInvalidationCoordinator;
+          }).pipe(
+            Effect.provide(
+              layerRuntimeSourceInvalidationCoordinator({
+                ...testCoordinatorOptions(root, [
+                  {
+                    domain: "workflows",
+                    kind: "directory",
+                    path: workflows,
+                    recursive: true,
+                  },
+                ]),
+                sourceScanRecorder: {
+                  scope: { kind: "app-global" },
+                  statePort: {
+                    recordSourceScan: (input) =>
+                      Effect.succeed(
+                        stateMutation({
+                          scope: input.scope,
+                          scopeKey: "app-global",
+                          domain: input.domain,
+                          sourceFingerprint: input.sourceFingerprint,
+                          diagnostics: input.diagnostics,
+                          lastObservedPath: null,
+                          lastObservationKind: "scan" as const,
+                          observedAt: input.scannedAt,
+                          createdAt: input.scannedAt,
+                          updatedAt: input.scannedAt,
+                        }),
+                      ),
+                    recordSourceDiagnostic: (input) =>
+                      Effect.sync(() => {
+                        diagnostics.push(input);
+                        return stateMutation({
+                          scope: input.scope,
+                          scopeKey: "app-global",
+                          domain: input.domain,
+                          sourceFingerprint: input.sourceFingerprint ?? "unresolved:workflows",
+                          diagnostics: [input.diagnostic],
+                          lastObservedPath: input.path ?? null,
+                          lastObservationKind: "diagnostic" as const,
+                          observedAt: input.observedAt,
+                          createdAt: input.observedAt,
+                          updatedAt: input.observedAt,
+                        });
+                      }),
+                  },
+                },
+                onDomainsChanged: () => Effect.die(failure),
+                onWatchError: (error, path) => {
+                  watchErrors.push({ error, path });
+                },
+              }),
+            ),
+          ),
+        );
+
+        assert.strictEqual(Exit.isFailure(exit), true);
+        if (Exit.isFailure(exit)) {
+          assert.strictEqual(Cause.squash(exit.cause), failure);
+        }
+        assert.deepStrictEqual(
+          diagnostics.map(({ domain, diagnostic }) => ({ domain, diagnostic })),
+          [
+            {
+              domain: "workflows",
+              diagnostic: {
+                severity: "error",
+                code: "RUNTIME_SOURCE_REACTION_FAILED",
+                message: "Startup source invalidation reaction failed.",
+              },
+            },
+          ],
+        );
+        assert.deepStrictEqual(watchErrors, [
+          { error: failure, path: "source-notification:workflows" },
+        ]);
       }),
     ),
   );

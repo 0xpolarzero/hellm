@@ -27,6 +27,7 @@
   import type {
     AppLogSummary,
     AgentModelChoice,
+    DesktopRendererCommand,
     WorkspaceHandlerThreadSummary,
     WorkspaceWorkflowTaskAttemptSummary,
     PromptTarget,
@@ -773,6 +774,21 @@
     }
   }
 
+  function handleRendererCommand(command: DesktopRendererCommand) {
+    if (!shortcutsEnabled) return;
+    switch (command) {
+      case "command-palette.open":
+        handleAppMenuAction("commandPalette.open");
+        return;
+      case "quick-open.open":
+        handleAppMenuAction("quickOpen.open");
+        return;
+      case "settings.open":
+        openSettingsPane();
+        return;
+    }
+  }
+
   async function runPaletteMutation(action: () => Promise<void>) {
     if (paletteBusy) return;
     paletteBusy = true;
@@ -1447,6 +1463,10 @@
     };
     window.addEventListener("resize", handleResize);
     const unsubscribeAppMenuAction = runtime.subscribeAppMenuAction(handleAppMenuMessage);
+    const unsubscribeRendererCommand = runtime.subscribeRendererCommand(handleRendererCommand);
+    void runtime
+      .markRendererReady()
+      .catch((error) => console.error("Failed to report renderer readiness:", error));
 
     void runtime.storage.promptHistory
       .list(runtime.workspaceId)
@@ -1480,6 +1500,7 @@
       clearCopyTranscriptResetTimer();
       window.removeEventListener("resize", handleResize);
       unsubscribeAppMenuAction();
+      unsubscribeRendererCommand();
     };
   });
 </script>

@@ -1,9 +1,12 @@
 import type {
+  RuntimeEventGenerationId,
   RuntimeEventSequence,
   RuntimeSurfaceTarget,
   StateInvalidationDescriptor,
-  SurfaceStreamPatchInput,
   SurfacePiSessionId,
+  SurfaceStreamGenerationId,
+  SurfaceStreamPatchInput,
+  SurfaceStreamSequence,
   WorkspaceId,
 } from "@svvy/core";
 import type { createRuntimeFacade } from "@svvy/runtime";
@@ -67,6 +70,7 @@ export interface DesktopBridgeAdapter {
 }
 
 export interface DesktopBridgeRegistration {
+  readonly rendererReady: Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -75,6 +79,7 @@ export type DesktopRendererCommand = "command-palette.open" | "quick-open.open" 
 export type DesktopRendererNotification =
   | {
       readonly kind: "read-model-changed";
+      readonly eventGenerationId: RuntimeEventGenerationId;
       readonly sequence: RuntimeEventSequence;
       readonly scope:
         | { readonly kind: "app" }
@@ -88,14 +93,43 @@ export type DesktopRendererNotification =
     }
   | {
       readonly kind: "surface-stream-patch";
+      readonly eventGenerationId: RuntimeEventGenerationId;
       readonly sequence: RuntimeEventSequence;
       readonly workspaceId: WorkspaceId;
+      readonly target: Readonly<RuntimeSurfaceTarget>;
       readonly surfacePiSessionId: SurfacePiSessionId;
+      readonly streamGenerationId: SurfaceStreamGenerationId;
+      readonly streamSequence: SurfaceStreamSequence;
       readonly patch: SurfaceStreamPatchInput;
     }
-  | { readonly kind: "read-model-rebaseline-required"; readonly reason: string }
+  | {
+      readonly kind: "read-model-rebaseline-required";
+      readonly reason:
+        | "event-sequence-gap"
+        | "surface-stream-gap"
+        | "surface-stream-generation-mismatch"
+        | "scope-descriptor-mismatch"
+        | "runtime-restart"
+        | "slow-consumer"
+        | "bridge-restart"
+        | "bridge-disposed";
+      readonly rebaselineRequired: true;
+      readonly eventGenerationId?: RuntimeEventGenerationId;
+      readonly lastContiguousSequence?: RuntimeEventSequence;
+      readonly scope?:
+        | { readonly kind: "app" }
+        | { readonly kind: "workspace"; readonly workspaceId: WorkspaceId }
+        | {
+            readonly kind: "surface";
+            readonly workspaceId: WorkspaceId;
+            readonly surfacePiSessionId: SurfacePiSessionId;
+          };
+    }
   | { readonly kind: "renderer-command"; readonly command: DesktopRendererCommand }
-  | { readonly kind: "app-shutdown"; readonly reason: string };
+  | {
+      readonly kind: "app-shutdown";
+      readonly reason: "app-shutdown" | "bridge-stopped" | "runtime-shutdown" | "startup-failure";
+    };
 
 export interface DesktopWindowAdapter {
   createMainWindow(input: DesktopMainWindowInput): Promise<DesktopWindowHandle>;
@@ -142,25 +176,45 @@ export interface DesktopApp {
 }
 
 export function createDesktopApp(input: CreateDesktopAppInput): DesktopApp {
+  type LifecycleState = "idle" | "starting" | "started" | "failed" | "disposing" | "disposed";
+
   let bridgeRegistration: DesktopBridgeRegistration | undefined;
   let menuRegistration: DesktopMenuRegistration | undefined;
   let mainWindow: DesktopWindowHandle | undefined;
-  let notificationsStarted = false;
-  let started = false;
-  let disposed = false;
+  let notificationsStartAttempted = false;
+  let lifecycleState: LifecycleState = "idle";
+  let disposeRequested = false;
+  let requestStartupStop!: () => void;
+  const startupStopRequested = new Promise<void>((resolve) => {
+    requestStartupStop = resolve;
+  });
+  let startPromise: Promise<void> | undefined;
+  let disposePromise: Promise<void> | undefined;
 
-  const sendRendererCommand = (command: DesktopRendererCommand) =>
-    input.host.bridge.sendToRenderer({ kind: "renderer-command", command });
+  const sendRendererCommand = (command: DesktopRendererCommand): Promise<void> => {
+    if (disposeRequested || (lifecycleState !== "starting" && lifecycleState !== "started")) {
+      return Promise.reject(new Error("Cannot send a renderer command after desktop disposal."));
+    }
+    return input.host.bridge.sendToRenderer({ kind: "renderer-command", command });
+  };
 
-  const disposeStartedResources = async () => {
+  const disposeStartedResources = async (): Promise<unknown[]> => {
     const errors: unknown[] = [];
-    if (notificationsStarted) {
+    if (menuRegistration) {
+      const menu = menuRegistration;
+      menuRegistration = undefined;
+      try {
+        await menu.dispose();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (notificationsStartAttempted) {
+      notificationsStartAttempted = false;
       try {
         await input.notifications.stop();
       } catch (error) {
         errors.push(error);
-      } finally {
-        notificationsStarted = false;
       }
     }
     if (mainWindow) {
@@ -168,15 +222,6 @@ export function createDesktopApp(input: CreateDesktopAppInput): DesktopApp {
       mainWindow = undefined;
       try {
         await window.dispose();
-      } catch (error) {
-        errors.push(error);
-      }
-    }
-    if (menuRegistration) {
-      const menu = menuRegistration;
-      menuRegistration = undefined;
-      try {
-        await menu.dispose();
       } catch (error) {
         errors.push(error);
       }
@@ -190,50 +235,92 @@ export function createDesktopApp(input: CreateDesktopAppInput): DesktopApp {
         errors.push(error);
       }
     }
-    if (errors.length > 0) {
-      throw new AggregateError(errors, "Failed to dispose desktop app resources.");
+    return errors;
+  };
+
+  const assertStartupMayContinue = (): void => {
+    if (disposeRequested) {
+      throw new Error("Desktop app was disposed during startup.");
     }
   };
 
   return {
-    async start() {
-      if (disposed) {
-        throw new Error("Cannot start a disposed desktop app.");
+    start() {
+      if (disposeRequested || lifecycleState === "disposing" || lifecycleState === "disposed") {
+        return Promise.reject(new Error("Cannot start a disposed desktop app."));
       }
-      if (started) {
-        throw new Error("Desktop app has already started.");
+      if (lifecycleState === "starting") {
+        return startPromise!;
+      }
+      if (lifecycleState === "started") {
+        return Promise.reject(new Error("Desktop app has already started."));
+      }
+      if (lifecycleState === "failed") {
+        return Promise.reject(new Error("Desktop app startup has already failed."));
       }
 
-      try {
-        bridgeRegistration = await input.host.bridge.exposeRendererApi({
-          runtime: input.runtime,
-          state: input.state,
-          commands: input.commands,
-        });
-        menuRegistration = await input.host.menus.installAppMenu({
-          commandPalette: () => sendRendererCommand("command-palette.open"),
-          quickOpen: () => sendRendererCommand("quick-open.open"),
-          openSettings: () => sendRendererCommand("settings.open"),
-        });
-        mainWindow = await input.host.windows.createMainWindow({
-          initialRoute: "workspace",
-          title: "svvy",
-        });
-        await input.notifications.start();
-        notificationsStarted = true;
-        started = true;
-      } catch (error) {
-        await disposeStartedResources();
-        throw error;
-      }
+      lifecycleState = "starting";
+      startPromise = (async () => {
+        try {
+          bridgeRegistration = await input.host.bridge.exposeRendererApi({
+            runtime: input.runtime,
+            state: input.state,
+            commands: input.commands,
+          });
+          assertStartupMayContinue();
+          notificationsStartAttempted = true;
+          await input.notifications.start();
+          assertStartupMayContinue();
+          mainWindow = await input.host.windows.createMainWindow({
+            initialRoute: "workspace",
+            title: "svvy",
+          });
+          assertStartupMayContinue();
+          await Promise.race([bridgeRegistration.rendererReady, startupStopRequested]);
+          assertStartupMayContinue();
+          menuRegistration = await input.host.menus.installAppMenu({
+            commandPalette: () => sendRendererCommand("command-palette.open"),
+            quickOpen: () => sendRendererCommand("quick-open.open"),
+            openSettings: () => sendRendererCommand("settings.open"),
+          });
+          assertStartupMayContinue();
+          lifecycleState = "started";
+        } catch (error) {
+          lifecycleState = disposeRequested ? "disposing" : "failed";
+          const cleanupErrors = await disposeStartedResources();
+          if (cleanupErrors.length > 0) {
+            return Promise.reject(
+              new AggregateError(
+                [error, ...cleanupErrors],
+                "Desktop app startup failed and acquired resources could not be fully disposed.",
+                { cause: error },
+              ),
+            );
+          }
+          throw error;
+        }
+      })();
+      return startPromise;
     },
-    async dispose() {
-      if (disposed) {
-        return;
+    dispose() {
+      if (disposePromise) {
+        return disposePromise;
       }
-      disposed = true;
-      started = false;
-      await disposeStartedResources();
+      if (lifecycleState === "disposed") {
+        return Promise.resolve();
+      }
+      disposeRequested = true;
+      requestStartupStop();
+      lifecycleState = "disposing";
+      disposePromise = (async () => {
+        await startPromise?.catch(() => undefined);
+        const errors = await disposeStartedResources();
+        lifecycleState = "disposed";
+        if (errors.length > 0) {
+          throw new AggregateError(errors, "Failed to dispose desktop app resources.");
+        }
+      })();
+      return disposePromise;
     },
   };
 }

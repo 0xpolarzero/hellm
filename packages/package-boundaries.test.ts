@@ -6189,6 +6189,7 @@ describe("package boundaries", () => {
       ["Bun", new Set(["CryptoHasher", "hash"])],
     ]);
     const allowedViolations = new Map<string, string[]>([
+      ["packages/desktop/src/index.ts", ["new Promise"]],
       ["packages/runtime/src/index.ts", ["new Promise"]],
     ]);
     const violations = sourceRoots.flatMap((root) =>
@@ -6268,7 +6269,10 @@ describe("package boundaries", () => {
     );
 
     expect({ unusedAllowedViolations: Array.from(allowedViolations), violations }).toEqual({
-      unusedAllowedViolations: [["packages/runtime/src/index.ts", []]],
+      unusedAllowedViolations: [
+        ["packages/desktop/src/index.ts", []],
+        ["packages/runtime/src/index.ts", []],
+      ],
       violations: [],
     });
   });
@@ -8463,16 +8467,14 @@ describe("package boundaries", () => {
     expect(answerStart).toBeGreaterThanOrEqual(0);
     expect(approvalStart).toBeGreaterThan(answerStart);
     const answerSource = source.slice(answerStart, approvalStart);
-    expect(answerSource).toContain("getWorkspaceRuntimeOperations(input)");
-    expect(answerSource).toContain("runtimeOperations.requestInput.answer(");
+    expect(answerSource).toContain("facades.runtime.requestInput.answer(");
     expect(answerSource).not.toContain("runtime.catalog.answerRequestUserInput(");
     expect(answerSource).not.toContain("runtime.catalog.afterRequestInputAnswered(");
 
     const pauseStart = source.indexOf("setRequestUserInputTimerPaused: async");
     expect(pauseStart).toBeGreaterThan(approvalStart);
     const approvalSource = source.slice(approvalStart, pauseStart);
-    expect(approvalSource).toContain("getWorkspaceRuntimeOperations(input)");
-    expect(approvalSource).toContain("runtimeOperations.approvals.answer(");
+    expect(approvalSource).toContain("facades.runtime.approvals.answer(");
     expect(approvalSource).not.toContain("runtime.catalog.answerRuntimeApprovalRequest(");
 
     const nextBridgeMethodStart = source.indexOf(
@@ -8482,8 +8484,7 @@ describe("package boundaries", () => {
     expect(pauseStart).toBeGreaterThanOrEqual(0);
     expect(nextBridgeMethodStart).toBeGreaterThan(pauseStart);
     const pauseSource = source.slice(pauseStart, nextBridgeMethodStart);
-    expect(pauseSource).toContain("getWorkspaceRuntimeOperations(input)");
-    expect(pauseSource).toContain("runtimeOperations.requestInput.setTimerPaused(");
+    expect(pauseSource).toContain("facades.runtime.requestInput.setTimerPaused(");
     expect(pauseSource).not.toContain("runtime.catalog.setRequestUserInputTimerPaused(");
     expect(pauseSource).not.toContain("runtime.catalog.afterRequestInputTimerPaused(");
 
@@ -8589,6 +8590,47 @@ describe("package boundaries", () => {
     expect(source).not.toMatch(/\bEffect\.runPromise\b/);
     expect(source).not.toMatch(
       /\bexport\s+(?:interface|type)\s+\w+[^=;{]*(?:ManagedRuntime|RuntimeFacade|Context)\b/,
+    );
+  });
+
+  it("Electrobun shell construction is isolated to the desktop host and createDesktopApp has one product call site", () => {
+    const bunFiles = listTypeScriptFiles(join(projectRoot, "src", "bun")).filter(
+      (file) => !isTestFile(file),
+    );
+    const nativeShellOwners = bunFiles
+      .filter((file) =>
+        /\b(?:new BrowserWindow|ApplicationMenu\.|defineElectrobunRPC(?:<|\())/.test(
+          readSource(file),
+        ),
+      )
+      .map(display)
+      .toSorted();
+    const desktopAppCallSites = bunFiles
+      .filter((file) => /\bcreateDesktopApp\s*\(/.test(readSource(file)))
+      .map((file) => `${display(file)} -> createDesktopApp`)
+      .toSorted();
+    const appBootstrapSource = readSource(join(projectRoot, "src", "bun", "index.ts"));
+
+    expect(nativeShellOwners).toEqual(["src/bun/electrobun-desktop-host.ts"]);
+    expect(desktopAppCallSites).toEqual(["src/bun/index.ts -> createDesktopApp"]);
+    expect(appBootstrapSource).not.toMatch(/\bnew BrowserWindow\b/);
+    expect(appBootstrapSource).not.toMatch(/\bApplicationMenu\./);
+    expect(appBootstrapSource).not.toMatch(/\bdefineElectrobunRPC\b/);
+    expect(appBootstrapSource).not.toMatch(/\bdesktopNotificationBridge\.start\s*\(/);
+    const shutdownStart = appBootstrapSource.indexOf("function shutdownDesktopApp(");
+    const bootstrapStart = appBootstrapSource.indexOf("await runDesktopBootstrap(", shutdownStart);
+    expect(shutdownStart).toBeGreaterThanOrEqual(0);
+    expect(bootstrapStart).toBeGreaterThan(shutdownStart);
+    const shutdownSource = appBootstrapSource.slice(shutdownStart, bootstrapStart);
+    expect(shutdownSource).toContain('operation: "desktop.shutdown"');
+    expect(shutdownSource.indexOf("rejectRendererCalls(")).toBeLessThan(
+      shutdownSource.indexOf("devBrowserToolsRecorder.close()"),
+    );
+    expect(shutdownSource.indexOf("devBrowserToolsRecorder.close()")).toBeLessThan(
+      shutdownSource.indexOf("desktopApp?.dispose()"),
+    );
+    expect(shutdownSource.indexOf("desktopApp?.dispose()")).toBeLessThan(
+      shutdownSource.indexOf("workspaceRuntimeRegistry.shutdownApp(reason)"),
     );
   });
 
@@ -8739,16 +8781,16 @@ describe("package boundaries", () => {
     );
     const ownershipPatterns = [
       {
-        pattern: /\bruntimeOperations\.messages\.submit\s*\(/g,
-        name: "runtimeOperations.messages.submit",
+        pattern: /\bfacades\.runtime\.messages\.submit\s*\(/g,
+        name: "facades.runtime.messages.submit",
       },
       {
-        pattern: /\bruntimeOperations\.messages\.abort\s*\(/g,
-        name: "runtimeOperations.messages.abort",
+        pattern: /\bfacades\.runtime\.messages\.abort\s*\(/g,
+        name: "facades.runtime.messages.abort",
       },
       {
-        pattern: /\bruntimeOperations\.queues\.steer\s*\(/g,
-        name: "runtimeOperations.queues.steer",
+        pattern: /\bfacades\.runtime\.queues\.steer\s*\(/g,
+        name: "facades.runtime.queues.steer",
       },
       {
         pattern: /\bruntime\.catalog\.editCommittedUserMessage\s*\(/g,
@@ -8774,12 +8816,12 @@ describe("package boundaries", () => {
       .toSorted();
 
     expect(actual).toEqual([
+      "src/bun/index.ts -> facades.runtime.messages.abort",
+      "src/bun/index.ts -> facades.runtime.messages.abort",
+      "src/bun/index.ts -> facades.runtime.queues.steer",
       "src/bun/index.ts -> runtime.catalog.editCommittedUserMessage",
       "src/bun/index.ts -> runtime.catalog.editQueuedSurfaceMessage",
       "src/bun/index.ts -> runtime.catalog.reorderQueuedSurfaceMessage",
-      "src/bun/index.ts -> runtimeOperations.messages.abort",
-      "src/bun/index.ts -> runtimeOperations.messages.abort",
-      "src/bun/index.ts -> runtimeOperations.queues.steer",
     ]);
   });
 

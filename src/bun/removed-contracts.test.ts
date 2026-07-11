@@ -17,9 +17,9 @@ describe("retired desktop integration RPC paths", () => {
     expect(indexSource).not.toContain("catalog.updateAppPreferences(preferences)");
     expect(indexSource).not.toContain("appLogs.markSeen(throughSeq)");
     expect(indexSource).not.toContain("appLogs.query(stripWorkspaceId(query))");
-    expect(indexSource).toContain("stateCommands.appPreferences.update");
+    expect(indexSource).toContain("facades.commands.state.appPreferences.update");
     expect(indexSource).toContain("stateCommands.providerAuth.recordStatus");
-    expect(indexSource).toContain("stateCommands.appLogs.markRead");
+    expect(indexSource).toContain("facades.commands.state.appLogs.markRead");
 
     expect(chatRuntimeSource).toContain("rpcClient.request.fetchStateReadModel");
     expect(chatRuntimeSource).not.toContain("rpcClient.request.getAppLogs(scoped");

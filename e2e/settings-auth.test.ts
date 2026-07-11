@@ -34,20 +34,22 @@ const BLANK_PROVIDER_ENV = {
   AWS_WEB_IDENTITY_TOKEN_FILE: "",
 } satisfies Record<string, string>;
 
-const MIXED_AUTH_STATE = {
-  anthropic: {
-    type: "oauth",
-    credentials: {
-      refresh: "anthropic-refresh-token",
-      access: "anthropic-access-token",
-      expires: Date.now() + 60_000,
-    } satisfies OAuthCredentials,
-  },
-  openai: {
-    type: "apikey",
-    key: "openai-e2e-key",
-  },
-} as const;
+function mixedAuthState() {
+  return {
+    anthropic: {
+      type: "oauth",
+      credentials: {
+        refresh: "anthropic-refresh-token",
+        access: "anthropic-access-token",
+        expires: Date.now() + 60_000,
+      } satisfies OAuthCredentials,
+    },
+    openai: {
+      type: "apikey",
+      key: "openai-e2e-key",
+    },
+  } as const;
+}
 
 const OAUTH_SUPPORTED_PROVIDERS = ["anthropic", "github-copilot", "openai-codex"] as const;
 
@@ -83,15 +85,36 @@ async function providerRow(page: SvvyApp["page"], providerId: string) {
   throw new Error(`Could not find provider row for "${providerId}".`);
 }
 
-async function openSettings(page: SvvyApp["page"]): Promise<void> {
-  await page.getByRole("button", { name: "Open settings" }).click();
-  await page.getByTestId("settings-pane").waitFor({ state: "visible" });
-  await page.getByRole("button", { name: "Providers" }).click();
-  await page.locator(".settings-search").waitFor({ state: "visible" });
+async function openSettings(page: SvvyApp["page"], attempt = "settings"): Promise<void> {
+  try {
+    await page.getByRole("button", { name: "Open settings" }).click();
+  } catch (error) {
+    throw new Error(`${attempt}: failed to click Open settings.`, { cause: error });
+  }
+  try {
+    await page.getByTestId("settings-pane").waitFor({ state: "visible" });
+  } catch (error) {
+    throw new Error(`${attempt}: the Settings pane did not become visible.`, { cause: error });
+  }
+  try {
+    await page.getByRole("button", { name: "Providers" }).click();
+  } catch (error) {
+    throw new Error(`${attempt}: failed to click Providers.`, { cause: error });
+  }
+  try {
+    await page.locator(".settings-search").waitFor({ state: "visible" });
+  } catch (error) {
+    throw new Error(`${attempt}: the Providers section did not become visible.`, { cause: error });
+  }
 }
 
-async function closeSettings(page: SvvyApp["page"]): Promise<void> {
-  await page.getByRole("button", { name: "Close pane" }).click();
+async function closeSettings(page: SvvyApp["page"], attempt: string): Promise<void> {
+  const closeButtons = page.getByRole("button", { name: "Close pane" });
+  const closeButtonCount = await closeButtons.count();
+  if (closeButtonCount !== 1) {
+    throw new Error(`${attempt}: expected one Close pane button, found ${closeButtonCount}.`);
+  }
+  await closeButtons.click();
   await page.getByTestId("settings-pane").waitFor({ state: "detached" });
 }
 
@@ -147,7 +170,7 @@ function noAuthEnv(overrides: Record<string, string> = {}): Record<string, strin
 
 test("settings opens and closes, loads provider summaries, and exposes OAuth actions", async () => {
   await withSvvyApp({ env: noAuthEnv() }, async ({ page }) => {
-    await openSettings(page);
+    await openSettings(page, "initial open");
     await page.locator(".provider-row").first().waitFor({ state: "visible" });
 
     const names = await providerNames(page);
@@ -157,8 +180,8 @@ test("settings opens and closes, loads provider summaries, and exposes OAuth act
     expect(names).toContain("github-copilot");
     expect(names).toContain("zai");
 
-    await closeSettings(page);
-    await openSettings(page);
+    await closeSettings(page, "initial close");
+    await openSettings(page, "reopen after close");
     await page.locator(".provider-row").first().waitFor({ state: "visible" });
 
     for (const providerId of OAUTH_SUPPORTED_PROVIDERS) {
@@ -184,7 +207,7 @@ test("settings opens and closes, loads provider summaries, and exposes OAuth act
         .count(),
     ).toBe(0);
 
-    await closeSettings(page);
+    await closeSettings(page, "final close");
   });
 });
 
@@ -195,7 +218,7 @@ test("configured providers sort ahead of unconfigured ones and render the correc
         ZAI_API_KEY: "zai-env-key",
       }),
       beforeLaunch: async ({ homeDir }) => {
-        await seedAuthState(homeDir, MIXED_AUTH_STATE);
+        await seedAuthState(homeDir, mixedAuthState());
       },
     },
     async ({ page }) => {
@@ -267,7 +290,7 @@ test("removing provider auth clears the status and shows feedback", async () => 
       env: noAuthEnv(),
       beforeLaunch: async ({ homeDir }) => {
         await seedAuthState(homeDir, {
-          openai: MIXED_AUTH_STATE.openai,
+          openai: mixedAuthState().openai,
         });
       },
     },

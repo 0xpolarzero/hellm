@@ -11,6 +11,16 @@ const REMAINING_LEGACY_SYNC_CHANNELS = [
     retiresInIncrement: 10,
     reason: "surface/transcript panes still consume stream and snapshot sync until increment 10",
   },
+  {
+    channel: "sendExtensionCliRequirementActionUpdate",
+    retiresInIncrement: 10,
+    reason: "extension CLI progress still uses its legacy push listener until increment 10",
+  },
+  {
+    channel: "sendAppMenuAction",
+    retiresInIncrement: 10,
+    reason: "legacy workspace, session, sidebar, and surface menu routes retire in increment 10",
+  },
 ] as const;
 
 describe("legacy sync seam", () => {

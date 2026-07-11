@@ -16,12 +16,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type {
+  AbsolutePath,
   CommandId,
   RecoveryWorkId,
   RuntimeApprovalId,
   RuntimeClientSubmissionSource,
   RuntimeClientRequestId,
   RuntimeEvent,
+  RuntimeOwnerId,
   SubmitMessageInput,
   WorkspaceId,
 } from "@svvy/core";
@@ -53,7 +55,7 @@ afterEach(async () => {
           .map((workspace) => registry.closeWorkspace(workspace.workspaceId)),
       );
     }
-    await registry.closeSourceInvalidationCoordinator();
+    await registry.shutdownApp();
   }
 });
 
@@ -64,6 +66,74 @@ afterAll(() => {
 });
 
 describe("WorkspaceRuntimeRegistry", () => {
+  it("acquires one readiness-gated desktop facade bundle without exposing bootstrap authority", async () => {
+    const registry = createRegistry(tempWorkspace("desktop-facade-acquisition"));
+
+    expect(registry["appRuntimeBootstrap"]).toBeNull();
+    const firstAcquisition = registry.acquireDesktopAppFacades();
+    const secondAcquisition = registry.acquireDesktopAppFacades();
+
+    expect(secondAcquisition).toBe(firstAcquisition);
+    const facades = await firstAcquisition;
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    expect(bootstrapPromise).not.toBeNull();
+    if (!bootstrapPromise)
+      throw new Error("Expected desktop acquisition to start the app runtime.");
+    const bootstrap = await bootstrapPromise;
+
+    expect(await secondAcquisition).toBe(facades);
+    expect(Object.keys(facades).toSorted()).toEqual([
+      "rendererState",
+      "rendererStateCommands",
+      "runtimeActions",
+      "runtimeCommands",
+      "runtimeEvents",
+    ]);
+    expect(Object.keys(facades.runtimeActions).toSorted()).toEqual([
+      "approvals",
+      "messages",
+      "queues",
+      "requestInput",
+      "sourceEdits",
+      "sourceInvalidation",
+      "surfaces",
+      "workspaces",
+    ]);
+    expect("events" in facades.runtimeActions).toBeFalse();
+    expect("commands" in facades.runtimeActions).toBeFalse();
+    expect("close" in facades.runtimeActions).toBeFalse();
+    expect("facade" in facades).toBeFalse();
+    expect("readiness" in facades).toBeFalse();
+    expect("internal" in facades).toBeFalse();
+    expect("dispose" in facades).toBeFalse();
+    expect(facades.runtimeCommands).toBe(bootstrap.facade.commands);
+    expect(facades.rendererState).toBe(bootstrap.rendererState);
+    expect(facades.rendererStateCommands).toBe(bootstrap.rendererStateCommands);
+    expect(facades.runtimeEvents).toBe(bootstrap.facade.events);
+    expect(registry["appRuntimeBootstrap"]).toBe(bootstrapPromise);
+  });
+
+  it("does not acquire external owners without a registered workspace host", async () => {
+    const cwd = tempWorkspace("desktop-facade-unregistered-workspace");
+    const registry = createRegistry(cwd);
+    const facades = await registry.acquireDesktopAppFacades();
+
+    await expect(
+      facades.runtimeActions.workspaces.acquire({
+        cwd: cwd as AbsolutePath,
+        owner: {
+          kind: "headless",
+          ownerId: "headless:unregistered-workspace" as RuntimeOwnerId,
+        },
+        openReason: "headless",
+      }),
+    ).rejects.toMatchObject({
+      operation: "runtime.workspaces.acquire",
+      reason: "target-not-found",
+    });
+    expect(registry["externalWorkspaceOwners"].size).toBe(0);
+  });
+
   it("does not open the initial cwd unless startup opening is requested", async () => {
     const cwd = tempWorkspace("no-startup-open");
     const registry = createRegistry(cwd);
@@ -86,6 +156,168 @@ describe("WorkspaceRuntimeRegistry", () => {
 
     expect(workspace?.cwd).toBe(realpathSync.native(cwd));
     expect(registry.getActiveWorkspaceId()).toBe(workspace.workspaceId);
+  });
+
+  it("reaches app-runtime readiness before opening the initial workspace", async () => {
+    const events: string[] = [];
+    const registry = createRegistry(
+      tempWorkspace("readiness-before-startup-open"),
+      tempWorkspace("agent-dir"),
+      { openInitialWorkspace: true },
+    );
+    const createAppRuntimeBootstrap = registry["createAppRuntimeBootstrap"].bind(registry);
+    registry["createAppRuntimeBootstrap"] = async () => {
+      events.push("runtime-readiness:start");
+      const bootstrap = await createAppRuntimeBootstrap();
+      events.push("runtime-readiness:complete");
+      return bootstrap;
+    };
+    const acquireWorkspace = registry.acquireWorkspace.bind(registry);
+    registry.acquireWorkspace = async (...args) => {
+      events.push("workspace-open:start");
+      const workspace = await acquireWorkspace(...args);
+      events.push("workspace-open:complete");
+      return workspace;
+    };
+
+    await registry.ready();
+
+    expect(events).toEqual([
+      "runtime-readiness:start",
+      "runtime-readiness:complete",
+      "workspace-open:start",
+      "workspace-open:complete",
+    ]);
+  });
+
+  it("does not expose an opening workspace host to external owner acquisition", async () => {
+    const cwd = tempWorkspace("opening-workspace-external-owner");
+    const registry = createRegistry(cwd);
+    const facades = await registry.acquireDesktopAppFacades();
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
+    const bootstrap = await bootstrapPromise;
+    const refreshGeneratedPackages =
+      bootstrap.internal.sourceInvalidation.refreshGeneratedPackages.bind(
+        bootstrap.internal.sourceInvalidation,
+      );
+    let signalOpeningHost!: () => void;
+    const openingHostReady = new Promise<void>((resolve) => {
+      signalOpeningHost = resolve;
+    });
+    let allowWorkspaceStartup!: () => void;
+    const workspaceStartupGate = new Promise<void>((resolve) => {
+      allowWorkspaceStartup = resolve;
+    });
+    Reflect.set(
+      bootstrap.internal.sourceInvalidation,
+      "refreshGeneratedPackages",
+      async (input: Parameters<typeof refreshGeneratedPackages>[0]) => {
+        if (input.scope === "workspace-link-repair") {
+          signalOpeningHost();
+          await workspaceStartupGate;
+        }
+        return refreshGeneratedPackages(input);
+      },
+    );
+
+    const opening = registry.acquireWorkspace(cwd);
+    await openingHostReady;
+    expect(registry["openingRuntimes"].size).toBeGreaterThan(0);
+    await expect(
+      facades.runtimeActions.workspaces.acquire({
+        cwd: cwd as AbsolutePath,
+        owner: {
+          kind: "headless",
+          ownerId: "headless:opening-workspace" as RuntimeOwnerId,
+        },
+        openReason: "headless",
+      }),
+    ).rejects.toMatchObject({ reason: "target-not-found" });
+    expect(registry["externalWorkspaceOwners"].size).toBe(0);
+
+    allowWorkspaceStartup();
+    await opening;
+  });
+
+  it("applies the mandatory workspace source reconcile before acquisition becomes ready", async () => {
+    const cwd = tempWorkspace("workspace-startup-source-reconcile");
+    writeFileSync(join(cwd, "AGENTS.md"), "# Workspace instructions\n");
+    const bridgeWarnings: string[] = [];
+    const registry = createRegistry(cwd, tempWorkspace("agent-dir"), {
+      forwardBridgeLog: (level, message, source) => {
+        if (level === "warn") bridgeWarnings.push(`${source}:${message}`);
+      },
+    });
+
+    const runtime = await registry.acquireWorkspace(cwd);
+
+    expect(bridgeWarnings).not.toContain(
+      "source.graph:Runtime source invalidation reaction failed.",
+    );
+    expect(
+      runtime.appLogs
+        .query({ sources: ["source.graph"] })
+        .entries.some(
+          (entry) =>
+            entry.message === "Source inputs changed." &&
+            Array.isArray(entry.details?.domains) &&
+            entry.details.domains.includes("external_instructions"),
+        ),
+    ).toBeTrue();
+  });
+
+  it("rejects workspace readiness and records a durable diagnostic when startup source reaction fails", async () => {
+    const cwd = tempWorkspace("workspace-startup-source-reaction-failure");
+    const agentDir = tempWorkspace("agent-dir");
+    writeFileSync(join(cwd, "AGENTS.md"), "# Workspace instructions\n");
+    const registry = createRegistry(cwd, agentDir);
+    await registry.ready();
+    const handleSourceInvalidationEvent = registry["handleSourceInvalidationEvent"].bind(registry);
+    const failure = new Error("startup source reaction failed");
+    registry["handleSourceInvalidationEvent"] = async (input) => {
+      if (input.scope.kind === "workspace") {
+        throw failure;
+      }
+      return handleSourceInvalidationEvent(input);
+    };
+    const baselineAppLogFacades = registry["sharedAppLogFacades"].size;
+
+    await expect(registry.acquireWorkspace(cwd)).rejects.toThrow(failure.message);
+
+    expect(registry.listOpenWorkspaces()).toEqual([]);
+    expect(registry["openingRuntimes"].size).toBe(0);
+    expect(registry["pendingRuntimes"].size).toBe(0);
+    expect(registry["sharedAppLogFacades"].size).toBe(baselineAppLogFacades);
+    const database = new Database(
+      join(getSvvySessionDir(realpathSync.native(cwd), agentDir), STRUCTURED_SESSION_DB_FILENAME),
+      { readonly: true },
+    );
+    try {
+      const diagnostics = database
+        .query(
+          `SELECT domain, diagnostics_json, last_observation_kind
+           FROM runtime_source_scan_fact
+           WHERE scope_kind = 'workspace'
+           ORDER BY domain ASC`,
+        )
+        .all() as Array<{
+        domain: string;
+        diagnostics_json: string;
+        last_observation_kind: string;
+      }>;
+      expect(
+        diagnostics.some(
+          (record) =>
+            record.last_observation_kind === "diagnostic" &&
+            (JSON.parse(record.diagnostics_json) as Array<{ code?: string }>).some(
+              (diagnostic) => diagnostic.code === "RUNTIME_SOURCE_REACTION_FAILED",
+            ),
+        ),
+      ).toBeTrue();
+    } finally {
+      database.close();
+    }
   });
 
   it("acquires the same cwd as one shared workspace scope for duplicate workspace tabs", async () => {
@@ -489,7 +721,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(readGeneratedPackageWorkspaceLinks(second.cwd, agentDir)).toContainEqual({
       workspace_id: second.workspaceId,
       package_name: "@svvyx/extensions",
-      status: "linked",
+      status: "unchanged",
       source_command_id: null,
     });
     expect(
@@ -572,7 +804,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     const registry = createRegistry(cwd);
     const runtime = await registry.acquireWorkspace(cwd);
 
-    const closePromise = registry.closeSourceInvalidationCoordinator();
+    const closePromise = registry.shutdownApp();
     try {
       await expect(registry.getRuntimeEventSubscription(runtime.workspaceId)).rejects.toMatchObject(
         {
@@ -589,6 +821,635 @@ describe("WorkspaceRuntimeRegistry", () => {
       registries.splice(registries.indexOf(registry), 1);
       await closePromise.catch(() => {});
     }
+  });
+
+  it("shuts down workspace and source scopes before disposing the single app bootstrap", async () => {
+    const cwd = tempWorkspace("ordered-app-shutdown");
+    const registry = createRegistry(cwd);
+    const workspace = await registry.acquireWorkspace(cwd);
+    await registry.acquireDesktopAppFacades();
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    expect(bootstrapPromise).not.toBeNull();
+    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
+    const bootstrap = await bootstrapPromise;
+    const runtime = registry["runtimes"].get(workspace.workspaceId);
+    expect(runtime).toBeDefined();
+    if (!runtime) throw new Error("Expected the workspace runtime to exist.");
+    const order: string[] = [];
+    const releaseReasons: string[] = [];
+    const releaseWorkspace = bootstrap.facade.workspaces.release.bind(bootstrap.facade.workspaces);
+    Reflect.set(
+      bootstrap.facade.workspaces,
+      "release",
+      async (input: Parameters<typeof releaseWorkspace>[0]) => {
+        releaseReasons.push(input.releaseReason);
+        return releaseWorkspace(input);
+      },
+    );
+    const originalWorkspaceShutdown = runtime.shutdown.bind(runtime);
+    runtime.shutdown = async (appRuntime) => {
+      order.push("workspace:start");
+      await originalWorkspaceShutdown(appRuntime);
+      order.push("workspace:closed");
+    };
+    const appSource = registry["appGlobalSourceInvalidationCoordinator"];
+    const originalAppSourceClose = appSource.close.bind(appSource);
+    appSource.close = async () => {
+      order.push("app-source:start");
+      await originalAppSourceClose();
+      order.push("app-source:closed");
+    };
+    const originalBootstrapDispose = bootstrap.dispose.bind(bootstrap);
+    bootstrap.dispose = async (reason) => {
+      order.push("bootstrap:dispose");
+      expect(reason).toBe("app-shutdown");
+      expect(registry.listOpenWorkspaces()).toEqual([]);
+      expect(order).toContain("workspace:closed");
+      expect(order).toContain("app-source:closed");
+      await originalBootstrapDispose(reason);
+    };
+
+    const firstShutdown = registry.shutdownApp();
+    const secondShutdown = registry.shutdownApp();
+
+    expect(secondShutdown).toBe(firstShutdown);
+    await firstShutdown;
+    expect(order).toEqual([
+      "workspace:start",
+      "workspace:closed",
+      "app-source:start",
+      "app-source:closed",
+      "bootstrap:dispose",
+    ]);
+    expect(releaseReasons).toEqual(["shutdown"]);
+    expect(registry["appRuntimeBootstrap"]).toBe(bootstrapPromise);
+    expect(registry["appRuntimeBootstrapState"]).toBe("closed");
+    await expect(registry.acquireDesktopAppFacades()).rejects.toMatchObject({
+      operation: "workspace-runtime-registry.acquireDesktopAppFacades",
+      reason: "runtime-shutdown",
+    });
+    await expect(registry.acquireWorkspace(cwd)).rejects.toMatchObject({
+      operation: "workspace-runtime-registry.acquireWorkspace",
+      reason: "runtime-shutdown",
+    });
+    expect(registry["appRuntimeBootstrap"]).toBe(bootstrapPromise);
+  });
+
+  it("disposes a ready app runtime with the startup-failure preparation reason", async () => {
+    const registry = createRegistry(tempWorkspace("ready-runtime-startup-failure"));
+    await registry.acquireDesktopAppFacades();
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
+    const bootstrap = await bootstrapPromise;
+    const disposeReasons: Array<"app-shutdown" | "startup-failure" | undefined> = [];
+    const dispose = bootstrap.dispose.bind(bootstrap);
+    bootstrap.dispose = async (reason) => {
+      disposeReasons.push(reason);
+      await dispose(reason);
+    };
+
+    await registry.shutdownApp("startup-failure");
+
+    expect(disposeReasons).toEqual(["startup-failure"]);
+  });
+
+  it("settles and disposes a pending workspace acquisition before app bootstrap disposal", async () => {
+    const cwd = tempWorkspace("pending-acquire-app-shutdown");
+    const registry = createRegistry(cwd);
+    const originalCreateRuntime = registry["createRuntime"].bind(registry);
+    let createdRuntime: Awaited<ReturnType<typeof originalCreateRuntime>> | null = null;
+    let signalRuntimeCreated!: () => void;
+    const runtimeCreated = new Promise<void>((resolve) => {
+      signalRuntimeCreated = resolve;
+    });
+    let releasePendingRuntime!: () => void;
+    const pendingRuntimeGate = new Promise<void>((resolve) => {
+      releasePendingRuntime = resolve;
+    });
+    let pendingRuntimeDisposeCount = 0;
+    const order: string[] = [];
+    registry["createRuntime"] = async (...input) => {
+      const runtime = await originalCreateRuntime(...input);
+      createdRuntime = runtime;
+      const originalShutdown = runtime.shutdown.bind(runtime);
+      runtime.shutdown = async (appRuntime) => {
+        pendingRuntimeDisposeCount += 1;
+        order.push("pending-workspace:dispose");
+        await originalShutdown(appRuntime);
+      };
+      signalRuntimeCreated();
+      await pendingRuntimeGate;
+      return runtime;
+    };
+
+    const acquisition = registry.acquireWorkspace(cwd);
+    const acquisitionOutcome = acquisition.then(
+      () => ({ status: "fulfilled" as const }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+    await runtimeCreated;
+    expect(createdRuntime).not.toBeNull();
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    expect(bootstrapPromise).not.toBeNull();
+    if (!bootstrapPromise)
+      throw new Error("Expected the pending workspace to acquire the bootstrap.");
+    const bootstrap = await bootstrapPromise;
+    const originalBootstrapDispose = bootstrap.dispose.bind(bootstrap);
+    bootstrap.dispose = async () => {
+      order.push("bootstrap:dispose");
+      expect(pendingRuntimeDisposeCount).toBe(1);
+      await originalBootstrapDispose();
+    };
+
+    const shutdown = registry.shutdownApp();
+    releasePendingRuntime();
+    const outcome = await acquisitionOutcome;
+    expect(outcome).toMatchObject({
+      status: "rejected",
+      error: {
+        operation: "workspace-runtime-registry.acquireWorkspace",
+        reason: "runtime-shutdown",
+      },
+    });
+    await shutdown;
+
+    expect(pendingRuntimeDisposeCount).toBe(1);
+    expect(order).toEqual(["pending-workspace:dispose", "bootstrap:dispose"]);
+    expect(registry.listOpenWorkspaces()).toEqual([]);
+    expect(registry["pendingRuntimes"].size).toBe(0);
+  });
+
+  it("waits for an in-flight workspace close before disposing the app bootstrap", async () => {
+    const cwd = tempWorkspace("workspace-close-app-shutdown-race");
+    const registry = createRegistry(cwd);
+    const workspace = await registry.acquireWorkspace(cwd);
+    const runtime = registry["runtimes"].get(workspace.workspaceId);
+    if (!runtime) throw new Error("Expected the workspace runtime to exist.");
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
+    const bootstrap = await bootstrapPromise;
+    const order: string[] = [];
+    let signalCloseStarted!: () => void;
+    const closeStarted = new Promise<void>((resolve) => {
+      signalCloseStarted = resolve;
+    });
+    let allowClose!: () => void;
+    const closeGate = new Promise<void>((resolve) => {
+      allowClose = resolve;
+    });
+    const originalReleaseVisualOwner = runtime.releaseVisualOwner.bind(runtime);
+    runtime.releaseVisualOwner = async () => {
+      order.push("workspace-close:start");
+      signalCloseStarted();
+      await closeGate;
+      const result = await originalReleaseVisualOwner();
+      order.push("workspace-close:complete");
+      return result;
+    };
+    const originalBootstrapDispose = bootstrap.dispose.bind(bootstrap);
+    bootstrap.dispose = async (reason) => {
+      order.push("bootstrap:dispose");
+      await originalBootstrapDispose(reason);
+    };
+
+    const close = registry.releaseWorkspace(workspace.workspaceId);
+    await closeStarted;
+    const shutdown = registry.shutdownApp();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(order).toEqual(["workspace-close:start"]);
+    allowClose();
+    await Promise.all([close, shutdown]);
+    expect(order).toEqual([
+      "workspace-close:start",
+      "workspace-close:complete",
+      "bootstrap:dispose",
+    ]);
+    expect(registry["closingRuntimes"].size).toBe(0);
+  });
+
+  it("waits for same-cwd cleanup before constructing a replacement workspace", async () => {
+    const cwd = tempWorkspace("workspace-close-reopen-race");
+    const registry = createRegistry(cwd);
+    const first = await registry.acquireWorkspace(cwd);
+    const runtime = registry["runtimes"].get(first.workspaceId);
+    if (!runtime) throw new Error("Expected the workspace runtime to exist.");
+    let signalCloseStarted!: () => void;
+    const closeStarted = new Promise<void>((resolve) => {
+      signalCloseStarted = resolve;
+    });
+    let allowClose!: () => void;
+    const closeGate = new Promise<void>((resolve) => {
+      allowClose = resolve;
+    });
+    const originalReleaseVisualOwner = runtime.releaseVisualOwner.bind(runtime);
+    runtime.releaseVisualOwner = async () => {
+      signalCloseStarted();
+      await closeGate;
+      return originalReleaseVisualOwner();
+    };
+
+    const close = registry.releaseWorkspace(first.workspaceId);
+    await closeStarted;
+    let reopenSettled = false;
+    const reopen = registry.acquireWorkspace(cwd).finally(() => {
+      reopenSettled = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(reopenSettled).toBeFalse();
+    expect(registry["pendingRuntimes"].size).toBe(0);
+    allowClose();
+    await close;
+    const second = await reopen;
+
+    expect(second).not.toBe(first);
+    expect(second.workspaceId).toBe(first.workspaceId);
+    expect(registry.listOpenWorkspaces()).toHaveLength(1);
+    expect(registry["closingRuntimes"].size).toBe(0);
+    await expect(
+      (await registry.getRendererStateFacade()).readModels.fetch({
+        kind: "sessionNavigation",
+        workspaceId: second.workspaceId as WorkspaceId,
+      }),
+    ).resolves.toMatchObject({ kind: "sessionNavigation" });
+  });
+
+  it("retries zero-owner cleanup without losing the dormant host record", async () => {
+    const cwd = tempWorkspace("workspace-zero-owner-cleanup-retry");
+    const registry = createRegistry(cwd);
+    const workspace = await registry.acquireWorkspace(cwd);
+    const facades = await registry.acquireDesktopAppFacades();
+    const runtime = registry["runtimes"].get(workspace.workspaceId);
+    if (!runtime) throw new Error("Expected the workspace runtime to exist.");
+    const closeSourceCoordinator = runtime.sourceInvalidationCoordinator.close.bind(
+      runtime.sourceInvalidationCoordinator,
+    );
+    const failure = new Error("source coordinator close failed");
+    let closeAttempts = 0;
+    runtime.sourceInvalidationCoordinator.close = async () => {
+      closeAttempts += 1;
+      if (closeAttempts === 1) {
+        throw failure;
+      }
+      await closeSourceCoordinator();
+    };
+
+    await expect(registry.releaseWorkspace(workspace.workspaceId)).rejects.toThrow(
+      "Workspace runtime resources did not close cleanly.",
+    );
+
+    expect(registry["dormantRuntimes"].get(workspace.workspaceId)).toBe(runtime);
+    expect(runtime.latestOwnerReleaseResult).toMatchObject({
+      remainingOwners: 0,
+      lifecycle: "idle",
+    });
+    await expect(
+      facades.runtimeActions.workspaces.acquire({
+        cwd: workspace.cwd as AbsolutePath,
+        owner: {
+          kind: "headless",
+          ownerId: "headless:closing-host" as RuntimeOwnerId,
+        },
+        openReason: "headless",
+      }),
+    ).rejects.toMatchObject({ reason: "target-not-found" });
+    expect(registry["externalWorkspaceOwners"].size).toBe(0);
+    await expect(registry.releaseWorkspace(workspace.workspaceId)).resolves.toBe(true);
+    expect(closeAttempts).toBe(2);
+    expect(registry["dormantRuntimes"].has(workspace.workspaceId)).toBeFalse();
+  });
+
+  it("does not construct a replacement when shutdown begins during dormant cleanup", async () => {
+    const cwd = tempWorkspace("workspace-dormant-cleanup-shutdown-race");
+    const registry = createRegistry(cwd);
+    const workspace = await registry.acquireWorkspace(cwd);
+    const runtime = registry["runtimes"].get(workspace.workspaceId);
+    if (!runtime) throw new Error("Expected the workspace runtime to exist.");
+    let signalRetryCleanupStarted!: () => void;
+    const retryCleanupStarted = new Promise<void>((resolve) => {
+      signalRetryCleanupStarted = resolve;
+    });
+    let allowRetryCleanup!: () => void;
+    const retryCleanupGate = new Promise<void>((resolve) => {
+      allowRetryCleanup = resolve;
+    });
+    const shutdownRuntime = runtime.shutdown.bind(runtime);
+    const cleanupFailure = new Error("workspace cleanup failed before replacement");
+    let runtimeShutdownCalls = 0;
+    runtime.shutdown = async (appRuntime) => {
+      runtimeShutdownCalls += 1;
+      if (runtimeShutdownCalls === 1) {
+        throw cleanupFailure;
+      }
+      if (runtimeShutdownCalls === 2) {
+        signalRetryCleanupStarted();
+        await retryCleanupGate;
+        return;
+      }
+      await shutdownRuntime(appRuntime);
+    };
+
+    await expect(registry.releaseWorkspace(workspace.workspaceId)).rejects.toBe(cleanupFailure);
+    expect(registry["dormantRuntimes"].get(workspace.workspaceId)).toBe(runtime);
+    expect(runtime.latestOwnerReleaseResult).toMatchObject({
+      remainingOwners: 0,
+      lifecycle: "idle",
+    });
+
+    const createRuntime = registry["createRuntime"].bind(registry);
+    let replacementRuntimeConstructions = 0;
+    registry["createRuntime"] = async (...input) => {
+      replacementRuntimeConstructions += 1;
+      return await createRuntime(...input);
+    };
+
+    const reopening = registry.acquireWorkspace(cwd);
+    await retryCleanupStarted;
+    let shutdownSettled = false;
+    const shutdown = registry.shutdownApp().finally(() => {
+      shutdownSettled = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(shutdownSettled).toBeFalse();
+    allowRetryCleanup();
+    const reopeningError = await reopening.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect((reopeningError as { operation?: unknown }).operation).toBe(
+      "workspace-runtime-registry.acquireWorkspace",
+    );
+    expect((reopeningError as { reason?: unknown }).reason).toBe("runtime-shutdown");
+    await shutdown;
+
+    expect(replacementRuntimeConstructions).toBe(0);
+    expect(runtimeShutdownCalls).toBe(3);
+    expect(registry["pendingRuntimes"].size).toBe(0);
+    expect(registry["openingRuntimes"].size).toBe(0);
+    expect(registry["dormantRuntimes"].size).toBe(0);
+    expect(registry["sharedAppLogFacades"].size).toBe(0);
+  });
+
+  it("retries a failed final visual-owner release from the dormant record", async () => {
+    const cwd = tempWorkspace("workspace-visual-release-retry");
+    const registry = createRegistry(cwd);
+    const workspace = await registry.acquireWorkspace(cwd);
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
+    const bootstrap = await bootstrapPromise;
+    const release = bootstrap.facade.workspaces.release.bind(bootstrap.facade.workspaces);
+    const failure = new Error("visual owner release failed before commit");
+    let releaseAttempts = 0;
+    Reflect.set(
+      bootstrap.facade.workspaces,
+      "release",
+      async (input: Parameters<typeof release>[0]) => {
+        if (input.owner.kind === "desktop-tab") {
+          releaseAttempts += 1;
+          if (releaseAttempts === 1) {
+            throw failure;
+          }
+        }
+        return release(input);
+      },
+    );
+
+    await expect(registry.releaseWorkspace(workspace.workspaceId)).rejects.toBe(failure);
+    expect(registry["dormantRuntimes"].has(workspace.workspaceId)).toBeTrue();
+    await expect(registry.releaseWorkspace(workspace.workspaceId)).resolves.toBe(true);
+    expect(releaseAttempts).toBe(2);
+    expect(registry["dormantRuntimes"].has(workspace.workspaceId)).toBeFalse();
+  });
+
+  it("does not resurrect a dormant runtime when shutdown wins reactivation", async () => {
+    const cwd = tempWorkspace("workspace-dormant-reactivation-shutdown-race");
+    const registry = createRegistry(cwd);
+    const workspace = await registry.acquireWorkspace(cwd);
+    const facades = await registry.acquireDesktopAppFacades();
+    const headlessOwner = {
+      kind: "headless" as const,
+      ownerId: "headless:reactivation-race" as RuntimeOwnerId,
+    };
+    await facades.runtimeActions.workspaces.acquire({
+      cwd: workspace.cwd as AbsolutePath,
+      owner: headlessOwner,
+      openReason: "headless",
+    });
+    await registry.releaseWorkspace(workspace.workspaceId);
+    const dormant = registry["dormantRuntimes"].get(workspace.workspaceId);
+    if (!dormant) throw new Error("Expected a dormant workspace runtime.");
+
+    let signalReactivated!: () => void;
+    const reactivated = new Promise<void>((resolve) => {
+      signalReactivated = resolve;
+    });
+    let allowReactivationToReturn!: () => void;
+    const reactivationGate = new Promise<void>((resolve) => {
+      allowReactivationToReturn = resolve;
+    });
+    const originalReactivate = dormant.reactivate.bind(dormant);
+    dormant.reactivate = async () => {
+      await originalReactivate();
+      signalReactivated();
+      await reactivationGate;
+    };
+    let shutdownCount = 0;
+    const originalShutdown = dormant.shutdown.bind(dormant);
+    dormant.shutdown = async (appRuntime) => {
+      shutdownCount += 1;
+      await originalShutdown(appRuntime);
+    };
+
+    const reopening = registry.acquireWorkspace(cwd);
+    await reactivated;
+    const shutdown = registry.shutdownApp();
+    allowReactivationToReturn();
+
+    await expect(reopening).rejects.toMatchObject({
+      operation: "workspace-runtime-registry.acquireWorkspace",
+      reason: "runtime-shutdown",
+    });
+    await shutdown;
+
+    expect(shutdownCount).toBe(1);
+    expect(registry.listOpenWorkspaces()).toEqual([]);
+    expect(registry["runtimes"].size).toBe(0);
+    expect(registry["dormantRuntimes"].size).toBe(0);
+    expect(registry["pendingRuntimes"].size).toBe(0);
+    expect(() => registry.getRuntime(workspace.workspaceId)).toThrow("Workspace is not open");
+  });
+
+  it("rolls back an acquired workspace when startup package recovery fails", async () => {
+    const cwd = tempWorkspace("workspace-startup-recovery-failure");
+    const registry = createRegistry(cwd);
+    await registry.acquireDesktopAppFacades();
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
+    const bootstrap = await bootstrapPromise;
+    const baselineAppLogFacades = registry["sharedAppLogFacades"].size;
+    const failure = new Error("workspace package recovery failed");
+    const cleanupCalls: string[] = [];
+    const refreshGeneratedPackages =
+      bootstrap.internal.sourceInvalidation.refreshGeneratedPackages.bind(
+        bootstrap.internal.sourceInvalidation,
+      );
+    Reflect.set(
+      bootstrap.internal.sourceInvalidation,
+      "refreshGeneratedPackages",
+      async (input: Parameters<typeof refreshGeneratedPackages>[0]) => {
+        if (input.scope === "workspace-link-repair") {
+          throw failure;
+        }
+        return refreshGeneratedPackages(input);
+      },
+    );
+    const releaseWorkspace = bootstrap.facade.workspaces.release.bind(bootstrap.facade.workspaces);
+    Reflect.set(
+      bootstrap.facade.workspaces,
+      "release",
+      async (input: Parameters<typeof releaseWorkspace>[0]) => {
+        cleanupCalls.push(`release:${input.releaseReason}`);
+        return releaseWorkspace(input);
+      },
+    );
+    const unregisterWorkspace = bootstrap.internal.workspaceStates.unregister.bind(
+      bootstrap.internal.workspaceStates,
+    );
+    Reflect.set(bootstrap.internal.workspaceStates, "unregister", (workspaceId: WorkspaceId) => {
+      cleanupCalls.push(`unregister:${workspaceId}`);
+      return unregisterWorkspace(workspaceId);
+    });
+    const releaseAppLogFacade = registry["releaseAppLogFacade"].bind(registry);
+    registry["releaseAppLogFacade"] = (workspaceCwd) => {
+      cleanupCalls.push("app-logs:release");
+      releaseAppLogFacade(workspaceCwd);
+    };
+
+    await expect(registry.acquireWorkspace(cwd)).rejects.toBe(failure);
+
+    expect(cleanupCalls[0]).toBe("release:shutdown");
+    expect(cleanupCalls[1]).toStartWith("unregister:");
+    expect(cleanupCalls.at(-1)).toBe("app-logs:release");
+    expect(registry.listOpenWorkspaces()).toEqual([]);
+    expect(registry["pendingRuntimes"].size).toBe(0);
+    expect(registry["sharedAppLogFacades"].size).toBe(baselineAppLogFacades);
+  });
+
+  it("releases a workspace when acquisition fails after committing ownership", async () => {
+    const cwd = tempWorkspace("workspace-acquire-post-commit-failure");
+    const registry = createRegistry(cwd);
+    await registry.acquireDesktopAppFacades();
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
+    const bootstrap = await bootstrapPromise;
+    const failure = new Error("workspace acquisition response failed after commit");
+    const releaseReasons: string[] = [];
+    const acquireWorkspace = bootstrap.facade.workspaces.acquire.bind(bootstrap.facade.workspaces);
+    Reflect.set(
+      bootstrap.facade.workspaces,
+      "acquire",
+      async (input: Parameters<typeof acquireWorkspace>[0]) => {
+        await acquireWorkspace(input);
+        throw failure;
+      },
+    );
+    const releaseWorkspace = bootstrap.facade.workspaces.release.bind(bootstrap.facade.workspaces);
+    Reflect.set(
+      bootstrap.facade.workspaces,
+      "release",
+      async (input: Parameters<typeof releaseWorkspace>[0]) => {
+        releaseReasons.push(input.releaseReason);
+        return releaseWorkspace(input);
+      },
+    );
+
+    await expect(registry.acquireWorkspace(cwd)).rejects.toBe(failure);
+
+    expect(releaseReasons).toEqual(["shutdown"]);
+    expect(registry.listOpenWorkspaces()).toEqual([]);
+    expect(registry["pendingRuntimes"].size).toBe(0);
+  });
+
+  it("rolls back a partially committed workspace-state registration", async () => {
+    const cwd = tempWorkspace("workspace-state-registration-failure");
+    const registry = createRegistry(cwd);
+    await registry.acquireDesktopAppFacades();
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
+    const bootstrap = await bootstrapPromise;
+    const baselineAppLogFacades = registry["sharedAppLogFacades"].size;
+    const failure = new Error("workspace state registration response failed");
+    const cleanupCalls: string[] = [];
+    const registerWorkspace = bootstrap.internal.workspaceStates.register.bind(
+      bootstrap.internal.workspaceStates,
+    );
+    Reflect.set(
+      bootstrap.internal.workspaceStates,
+      "register",
+      async (...input: Parameters<typeof registerWorkspace>) => {
+        await registerWorkspace(...input);
+        throw failure;
+      },
+    );
+    const unregisterWorkspace = bootstrap.internal.workspaceStates.unregister.bind(
+      bootstrap.internal.workspaceStates,
+    );
+    Reflect.set(bootstrap.internal.workspaceStates, "unregister", (workspaceId: WorkspaceId) => {
+      cleanupCalls.push(`unregister:${workspaceId}`);
+      return unregisterWorkspace(workspaceId);
+    });
+
+    await expect(registry.acquireWorkspace(cwd)).rejects.toBe(failure);
+
+    expect(cleanupCalls).toHaveLength(1);
+    expect(cleanupCalls[0]).toStartWith("unregister:");
+    expect(registry.listOpenWorkspaces()).toEqual([]);
+    expect(registry["pendingRuntimes"].size).toBe(0);
+    expect(registry["sharedAppLogFacades"].size).toBe(baselineAppLogFacades);
+  });
+
+  it("rolls back workspace state when runtime event forwarding cannot start", async () => {
+    const cwd = tempWorkspace("workspace-event-forwarder-failure");
+    const registry = createRegistry(cwd);
+    await registry.acquireDesktopAppFacades();
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
+    const bootstrap = await bootstrapPromise;
+    const baselineAppLogFacades = registry["sharedAppLogFacades"].size;
+    const failure = new Error("runtime event subscription failed");
+    const cleanupCalls: string[] = [];
+    registry["startRuntimeEventForwarder"] = async () => {
+      throw failure;
+    };
+    const releaseWorkspace = bootstrap.facade.workspaces.release.bind(bootstrap.facade.workspaces);
+    Reflect.set(
+      bootstrap.facade.workspaces,
+      "release",
+      async (input: Parameters<typeof releaseWorkspace>[0]) => {
+        cleanupCalls.push(`release:${input.releaseReason}`);
+        return releaseWorkspace(input);
+      },
+    );
+    const unregisterWorkspace = bootstrap.internal.workspaceStates.unregister.bind(
+      bootstrap.internal.workspaceStates,
+    );
+    Reflect.set(bootstrap.internal.workspaceStates, "unregister", (workspaceId: WorkspaceId) => {
+      cleanupCalls.push(`unregister:${workspaceId}`);
+      return unregisterWorkspace(workspaceId);
+    });
+
+    await expect(registry.acquireWorkspace(cwd)).rejects.toBe(failure);
+
+    expect(cleanupCalls[0]).toBe("release:shutdown");
+    expect(cleanupCalls[1]).toStartWith("unregister:");
+    expect(registry.listOpenWorkspaces()).toEqual([]);
+    expect(registry["pendingRuntimes"].size).toBe(0);
+    expect(registry["sharedAppLogFacades"].size).toBe(baselineAppLogFacades);
   });
 
   it("routes queue submit, steer, approval answer, and command stdin through the single facade", async () => {
@@ -877,6 +1738,7 @@ describe("WorkspaceRuntimeRegistry", () => {
           workspaceId,
           kind: "user",
           cwd: runtime.cwd,
+          releaseReason: "tab-closed",
         },
       }),
     );
@@ -894,6 +1756,277 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(registry.getRuntime(first.workspaceId)).toBeDefined();
     expect(await registry.releaseWorkspace(second.workspaceId)).toBe(true);
     expect(() => registry.getRuntime(first.workspaceId)).toThrow("Workspace is not open");
+  });
+
+  it("retains a dormant host record while a non-visual runtime owner remains", async () => {
+    const cwd = tempWorkspace("headless-owner-host-lifetime");
+    const registry = createRegistry(cwd);
+    const workspace = await registry.acquireWorkspace(cwd);
+    const facades = await registry.acquireDesktopAppFacades();
+    const headlessOwner = {
+      kind: "headless" as const,
+      ownerId: "headless:host-lifetime" as RuntimeOwnerId,
+    };
+    await facades.runtimeActions.workspaces.acquire({
+      cwd: workspace.cwd as AbsolutePath,
+      owner: headlessOwner,
+      openReason: "headless",
+    });
+
+    await registry.releaseWorkspace(workspace.workspaceId);
+
+    expect(registry.listOpenWorkspaces()).toEqual([]);
+    expect(registry["dormantRuntimes"].get(workspace.workspaceId)?.workspaceId).toBe(
+      workspace.workspaceId,
+    );
+    await expect(
+      facades.runtimeActions.workspaces.release({
+        workspaceId: workspace.workspaceId as WorkspaceId,
+        owner: headlessOwner,
+        releaseReason: "headless-complete",
+      }),
+    ).resolves.toMatchObject({
+      remainingOwners: 0,
+      lifecycle: "idle",
+    });
+
+    expect(registry["dormantRuntimes"].has(workspace.workspaceId)).toBeFalse();
+    expect(registry["externalWorkspaceOwners"].has(workspace.workspaceId)).toBeFalse();
+
+    const reopened = await registry.acquireWorkspace(cwd);
+    expect(reopened).not.toBe(workspace);
+    expect(reopened.workspaceId).toBe(workspace.workspaceId);
+    expect(registry.getRuntime(workspace.workspaceId)).toBe(reopened);
+  });
+
+  it("tracks an external owner before an acquisition waiter can fail after commit", async () => {
+    const cwd = tempWorkspace("headless-owner-post-commit-acquire-failure");
+    const registry = createRegistry(cwd);
+    const workspace = await registry.acquireWorkspace(cwd);
+    const facades = await registry.acquireDesktopAppFacades();
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
+    const bootstrap = await bootstrapPromise;
+    const preAbortedController = new AbortController();
+    preAbortedController.abort();
+    await expect(
+      facades.runtimeActions.workspaces.acquire(
+        {
+          cwd: workspace.cwd as AbsolutePath,
+          owner: {
+            kind: "headless",
+            ownerId: "headless:pre-aborted" as RuntimeOwnerId,
+          },
+          openReason: "headless",
+        },
+        { signal: preAbortedController.signal },
+      ),
+    ).rejects.toMatchObject({ reason: "aborted" });
+    expect(registry["externalWorkspaceOwners"].size).toBe(0);
+    const acquire = bootstrap.facade.workspaces.acquire.bind(bootstrap.facade.workspaces);
+    const failure = new Error("acquisition waiter failed after commit");
+    Reflect.set(
+      bootstrap.facade.workspaces,
+      "acquire",
+      async (...input: Parameters<typeof acquire>) => {
+        await acquire(...input);
+        throw failure;
+      },
+    );
+    const headlessOwner = {
+      kind: "headless" as const,
+      ownerId: "headless:post-commit-acquire-failure" as RuntimeOwnerId,
+    };
+
+    await expect(
+      facades.runtimeActions.workspaces.acquire({
+        cwd: workspace.cwd as AbsolutePath,
+        owner: headlessOwner,
+        openReason: "headless",
+      }),
+    ).rejects.toBe(failure);
+
+    expect(registry["externalWorkspaceOwners"].get(workspace.workspaceId)?.size).toBe(1);
+    await registry.releaseWorkspace(workspace.workspaceId);
+    expect(registry["dormantRuntimes"].has(workspace.workspaceId)).toBeTrue();
+    await registry.shutdownApp();
+    expect(registry["externalWorkspaceOwners"].size).toBe(0);
+    expect(registry["dormantRuntimes"].size).toBe(0);
+  });
+
+  it("keeps cancel-wait-only acquisition serialized until ownership commits", async () => {
+    const cwd = tempWorkspace("headless-owner-cancel-wait-serialization");
+    const registry = createRegistry(cwd);
+    const workspace = await registry.acquireWorkspace(cwd);
+    const facades = await registry.acquireDesktopAppFacades();
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
+    const bootstrap = await bootstrapPromise;
+    const acquire = bootstrap.facade.workspaces.acquire.bind(bootstrap.facade.workspaces);
+    let signalAuthoritativeAcquire!: () => void;
+    const authoritativeAcquireStarted = new Promise<void>((resolve) => {
+      signalAuthoritativeAcquire = resolve;
+    });
+    let allowAuthoritativeAcquire!: () => void;
+    const authoritativeAcquireGate = new Promise<void>((resolve) => {
+      allowAuthoritativeAcquire = resolve;
+    });
+    Reflect.set(
+      bootstrap.facade.workspaces,
+      "acquire",
+      async (...input: Parameters<typeof acquire>) => {
+        if (input[1]?.signal?.aborted) {
+          return acquire(...input);
+        }
+        signalAuthoritativeAcquire();
+        await authoritativeAcquireGate;
+        return acquire(...input);
+      },
+    );
+    const headlessOwner = {
+      kind: "headless" as const,
+      ownerId: "headless:cancel-wait-serialization" as RuntimeOwnerId,
+    };
+    const controller = new AbortController();
+    const acquisition = facades.runtimeActions.workspaces.acquire(
+      {
+        cwd: workspace.cwd as AbsolutePath,
+        owner: headlessOwner,
+        openReason: "headless",
+      },
+      { signal: controller.signal },
+    );
+    await authoritativeAcquireStarted;
+    controller.abort();
+    await expect(acquisition).rejects.toMatchObject({ reason: "aborted" });
+
+    let visualCloseSettled = false;
+    const visualClose = registry.releaseWorkspace(workspace.workspaceId).finally(() => {
+      visualCloseSettled = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(visualCloseSettled).toBeFalse();
+
+    allowAuthoritativeAcquire();
+    await visualClose;
+    expect(registry["externalWorkspaceOwners"].get(workspace.workspaceId)?.size).toBe(1);
+    expect(registry["dormantRuntimes"].has(workspace.workspaceId)).toBeTrue();
+
+    await facades.runtimeActions.workspaces.release({
+      workspaceId: workspace.workspaceId as WorkspaceId,
+      owner: headlessOwner,
+      releaseReason: "headless-complete",
+    });
+    expect(registry["externalWorkspaceOwners"].size).toBe(0);
+    expect(registry["dormantRuntimes"].size).toBe(0);
+  });
+
+  it("releases tracked non-visual owners before unregistering workspace hosts at shutdown", async () => {
+    const cwd = tempWorkspace("headless-owner-app-shutdown");
+    const registry = createRegistry(cwd);
+    const workspace = await registry.acquireWorkspace(cwd);
+    const facades = await registry.acquireDesktopAppFacades();
+    const headlessOwner = {
+      kind: "headless" as const,
+      ownerId: "headless:app-shutdown" as RuntimeOwnerId,
+    };
+    await facades.runtimeActions.workspaces.acquire({
+      cwd: workspace.cwd as AbsolutePath,
+      owner: headlessOwner,
+      openReason: "headless",
+    });
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
+    const bootstrap = await bootstrapPromise;
+    const releases: Array<{ ownerId: string; releaseReason: string }> = [];
+    const release = bootstrap.facade.workspaces.release.bind(bootstrap.facade.workspaces);
+    Reflect.set(
+      bootstrap.facade.workspaces,
+      "release",
+      async (input: Parameters<typeof release>[0]) => {
+        releases.push({ ownerId: input.owner.ownerId, releaseReason: input.releaseReason });
+        return release(input);
+      },
+    );
+
+    await registry.shutdownApp();
+
+    expect(releases).toEqual([
+      { ownerId: headlessOwner.ownerId, releaseReason: "shutdown" },
+      { ownerId: `desktop:${workspace.workspaceId}`, releaseReason: "shutdown" },
+    ]);
+    expect(registry["externalWorkspaceOwners"].size).toBe(0);
+    expect(registry["dormantRuntimes"].size).toBe(0);
+  });
+
+  it("keeps workspace hosts registered and retries shutdown after owner release fails", async () => {
+    const cwd = tempWorkspace("headless-owner-shutdown-release-retry");
+    const registry = createRegistry(cwd);
+    const workspace = await registry.acquireWorkspace(cwd);
+    const facades = await registry.acquireDesktopAppFacades();
+    const headlessOwner = {
+      kind: "headless" as const,
+      ownerId: "headless:shutdown-release-retry" as RuntimeOwnerId,
+    };
+    await facades.runtimeActions.workspaces.acquire({
+      cwd: workspace.cwd as AbsolutePath,
+      owner: headlessOwner,
+      openReason: "headless",
+    });
+    const runtime = registry["runtimes"].get(workspace.workspaceId);
+    if (!runtime) throw new Error("Expected the workspace runtime to exist.");
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
+    const bootstrap = await bootstrapPromise;
+    const release = bootstrap.facade.workspaces.release.bind(bootstrap.facade.workspaces);
+    const failure = new Error("headless shutdown release failed before commit");
+    let failHeadlessRelease = true;
+    Reflect.set(
+      bootstrap.facade.workspaces,
+      "release",
+      async (input: Parameters<typeof release>[0]) => {
+        if (input.owner.ownerId === headlessOwner.ownerId && failHeadlessRelease) {
+          failHeadlessRelease = false;
+          throw failure;
+        }
+        return release(input);
+      },
+    );
+    let workspaceShutdowns = 0;
+    const shutdownRuntime = runtime.shutdown.bind(runtime);
+    runtime.shutdown = async (appRuntime) => {
+      workspaceShutdowns += 1;
+      await shutdownRuntime(appRuntime);
+    };
+    let bootstrapDisposals = 0;
+    const disposeBootstrap = bootstrap.dispose.bind(bootstrap);
+    bootstrap.dispose = async (reason) => {
+      bootstrapDisposals += 1;
+      await disposeBootstrap(reason);
+    };
+
+    const firstShutdown = registry.shutdownApp();
+    await expect(firstShutdown).rejects.toThrow(
+      "Workspace runtime resources did not shut down cleanly.",
+    );
+    await Promise.resolve();
+
+    expect(workspaceShutdowns).toBe(0);
+    expect(bootstrapDisposals).toBe(0);
+    expect(registry["appRuntimeBootstrapState"]).toBe("shutting-down");
+    expect(registry["dormantRuntimes"].get(workspace.workspaceId)).toBe(runtime);
+    expect(registry["externalWorkspaceOwners"].get(workspace.workspaceId)?.size).toBe(1);
+
+    const secondShutdown = registry.shutdownApp();
+    expect(secondShutdown).not.toBe(firstShutdown);
+    await secondShutdown;
+
+    expect(workspaceShutdowns).toBe(1);
+    expect(bootstrapDisposals).toBe(1);
+    expect(registry["appRuntimeBootstrapState"]).toBe("closed");
+    expect(registry["dormantRuntimes"].size).toBe(0);
+    expect(registry["externalWorkspaceOwners"].size).toBe(0);
   });
 
   it("creates a stable default workspace scope under the svvy app data dir", async () => {
@@ -976,6 +2109,28 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(runtime.agentSettingsStore.getState().appPreferences.networkAccess).toBe(false);
   });
 
+  it("hydrates authoritative security preferences before a new workspace becomes ready", async () => {
+    const initialCwd = tempWorkspace("state-owned-preferences-bootstrap");
+    const nextCwd = tempWorkspace("state-owned-preferences-new-workspace");
+    const registry = createRegistry(initialCwd);
+    const stateCommands = await registry.getStateCommandsFacade();
+    await stateCommands.appPreferences.update({
+      patch: {
+        approvalMode: "user",
+        networkAccess: false,
+      },
+      clientSubmission: {
+        clientRequestId: "new-workspace-security-preferences" as RuntimeClientRequestId,
+        source: "test" as RuntimeClientSubmissionSource,
+      },
+    });
+
+    const runtime = await registry.acquireWorkspace(nextCwd);
+
+    expect(runtime.agentSettingsStore.getState().appPreferences.approvalMode).toBe("user");
+    expect(runtime.agentSettingsStore.getState().appPreferences.networkAccess).toBe(false);
+  });
+
   it("passes the decoded runtime layer config into workspace catalogs and runtime adapter creation", () => {
     const source = readFileSync(
       new URL("./workspace-runtime-registry.ts", import.meta.url),
@@ -1004,6 +2159,9 @@ function createRegistry(
     workflowsExtensionsGeneratedPackagePath?: string;
     workflowsGeneratedPackagePath?: string;
     workflowsSourceRoot?: string;
+    forwardBridgeLog?: ConstructorParameters<
+      typeof WorkspaceRuntimeRegistry
+    >[0]["forwardBridgeLog"];
     listRecoverableWorkspaces?: ConstructorParameters<
       typeof WorkspaceRuntimeRegistry
     >[0]["listRecoverableWorkspaces"];
