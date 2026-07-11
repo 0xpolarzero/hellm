@@ -2599,10 +2599,17 @@ function deriveSurfaceStatus(
   snapshot: StructuredSessionSnapshot,
   surfacePiSessionId: string,
 ): SurfaceTranscriptReadModel["surfaceStatus"] {
-  const turns = snapshot.turns.filter((turn) => turn.surfacePiSessionId === surfacePiSessionId);
-  if (turns.some((turn) => turn.status === "failed")) return "error";
-  if (turns.some((turn) => turn.status === "waiting")) return "waiting";
-  if (turns.some((turn) => turn.status === "running")) return "running";
+  const latestTurn = snapshot.turns
+    .filter((turn) => turn.surfacePiSessionId === surfacePiSessionId)
+    .toSorted(
+      (left, right) =>
+        right.startedAt.localeCompare(left.startedAt) ||
+        right.updatedAt.localeCompare(left.updatedAt) ||
+        right.id.localeCompare(left.id),
+    )[0];
+  if (latestTurn?.status === "failed") return "error";
+  if (latestTurn?.status === "waiting") return "waiting";
+  if (latestTurn?.status === "running") return "running";
   return "idle";
 }
 

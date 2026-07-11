@@ -2013,6 +2013,65 @@ describe("State read-model kind expansion", () => {
     }
   });
 
+  it("derives surface status from the latest turn instead of historical failures", async () => {
+    const workspaceId = "workspace_surface_latest_status" as WorkspaceId;
+    let clock = Date.parse("2026-06-21T12:00:00.000Z");
+    const store = createStructuredSessionStateStore({
+      databasePath: ":memory:",
+      digest: testDigest,
+      idFactory: (() => {
+        let sequence = 0;
+        return (prefix: string) => `${prefix}-surface-status-${++sequence}`;
+      })(),
+      now: () => new Date(clock++).toISOString(),
+      workspace: {
+        id: workspaceId,
+        label: workspaceId,
+        cwd: "/tmp/workspace-surface-latest-status" as typeof AbsolutePath.Type,
+        artifactDir: "/tmp/workspace-surface-latest-status-artifacts" as typeof AbsolutePath.Type,
+      },
+    });
+    const appLogStore = createAppLogStore({ now: () => new Date(clock++).toISOString() });
+
+    try {
+      const surface = store.createOrchestratorSurface({ workspaceId, title: "Status recovery" });
+      const failed = store.startTurn({
+        sessionId: surface.workspaceSessionId,
+        surfacePiSessionId: surface.surfacePiSessionId,
+        requestSummary: "First attempt",
+      });
+      store.finishTurn({ turnId: failed.id, status: "failed" });
+      const recovered = store.startTurn({
+        sessionId: surface.workspaceSessionId,
+        surfacePiSessionId: surface.surfacePiSessionId,
+        requestSummary: "Recovered attempt",
+      });
+      store.finishTurn({ turnId: recovered.id, status: "completed" });
+      const readModels = stateReadModelsFromRouter({
+        router: createWorkspaceStateRouter({
+          appGlobalStore: store,
+          workspaceStores: [{ store }],
+        }),
+        appLogs: appLogStateFromStore(appLogStore),
+      });
+
+      const transcript = await runTestEffect(
+        readModels.fetch({ kind: "surfaceTranscript", target: surface.target }),
+      );
+      const summary = await runTestEffect(
+        readModels.fetch({ kind: "surfaceSummary", target: surface.target }),
+      );
+      expect(transcript).toMatchObject({
+        kind: "surfaceTranscript",
+        value: { surfaceStatus: "idle" },
+      });
+      expect(summary).toMatchObject({ kind: "surfaceSummary", value: { status: "idle" } });
+    } finally {
+      appLogStore.close();
+      store.close();
+    }
+  });
+
   it("routes command-inspector reads by explicit workspace identity", async () => {
     const makeStore = (workspaceId: WorkspaceId) => {
       let nextId = 0;
