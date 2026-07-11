@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as Effect from "effect/Effect";
 import {
   IsoDateTimeStringSchema,
+  RuntimeContractError,
   type AbsolutePath,
   type AppLogEntryId,
   type CommandId,
@@ -477,6 +478,53 @@ describe("app runtime bootstrap", () => {
     } finally {
       harness.appGlobal.store.listSessionStates = listSessionStates;
     }
+  });
+
+  it("rejects public and bootstrap-internal calls as soon as app shutdown starts", async () => {
+    const harness = createBootstrapHarness();
+    const bootstrap = await createAppRuntimeBootstrap(harness.input);
+
+    const firstShutdown = bootstrap.dispose();
+    const duplicateShutdown = bootstrap.dispose();
+
+    expect(() => bootstrap.internal.workspaceStates.unregister(harness.workspaceAId)).toThrow(
+      RuntimeContractError,
+    );
+    try {
+      bootstrap.internal.workspaceStates.unregister(harness.workspaceAId);
+    } catch (error) {
+      expect(error).toMatchObject({
+        operation: "app-runtime-bootstrap.workspaceStates.unregister",
+        reason: "runtime-shutdown",
+      });
+    }
+    await expect(bootstrap.facade.events()).rejects.toMatchObject({
+      type: "runtime-facade-error",
+      reason: "disposed",
+    });
+    await expect(Promise.all([firstShutdown, duplicateShutdown])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("closes facades before runtime preparation and bootstrap-owned ManagedRuntime disposal", () => {
+    const source = readFileSync(new URL("./app-runtime-bootstrap.ts", import.meta.url), "utf8");
+    const start = source.indexOf('dispose: (reason = "app-shutdown")');
+    const end = source.indexOf("          .then(() => undefined)", start);
+    const shutdownSource = source.slice(start, end);
+    const closeSubscriptions = shutdownSource.indexOf("closeCommittedAppLogAppendSubscriptions();");
+    const closeRuntimeFacade = shutdownSource.indexOf("await facade.close();");
+    const prepareRuntime = shutdownSource.indexOf("() => prepareShutdown(managedRuntime, reason)");
+    const disposeRuntime = shutdownSource.indexOf("() => disposeManagedRuntime(managedRuntime)");
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(closeSubscriptions).toBeGreaterThanOrEqual(0);
+    expect(closeRuntimeFacade).toBeGreaterThan(closeSubscriptions);
+    expect(prepareRuntime).toBeGreaterThan(closeRuntimeFacade);
+    expect(disposeRuntime).toBeGreaterThan(prepareRuntime);
+    expect(shutdownSource.match(/disposeManagedRuntime\(managedRuntime\)/g)).toHaveLength(1);
   });
 
   it("prepares an already-ready runtime with the requested startup-failure reason", async () => {

@@ -7,9 +7,11 @@ export type AppLifecycleState =
   | "shutting-down"
   | "closed";
 
+export type AppLifecycleShutdownReason = "app-shutdown" | "runtime-restart" | "startup-failure";
+
 export interface AppLifecycleShutdownReceipt {
   readonly state: "closed";
-  readonly reason: string;
+  readonly reason: AppLifecycleShutdownReason;
 }
 
 export class AppLifecycleCoordinator {
@@ -52,7 +54,7 @@ export class AppLifecycleCoordinator {
   }
 
   shutdown(
-    reason: string,
+    reason: AppLifecycleShutdownReason,
     closeScopes: () => Promise<void>,
     prepare: () => Promise<void>,
     dispose: () => Promise<void>,

@@ -591,7 +591,7 @@ export async function createAppRuntimeBootstrap(
               closeCommittedAppLogAppendSubscriptions();
               stateCommands.close();
               state.close();
-              facade.close();
+              await facade.close();
             },
             () => prepareShutdown(managedRuntime, reason),
             () => disposeManagedRuntime(managedRuntime),
