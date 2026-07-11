@@ -7,6 +7,7 @@ import type {
   AbsolutePath,
   CommandId,
   GeneratedPackageBuildId,
+  GeneratedWorkflowsExportBuildEvidence,
   RecoveryWorkId,
   WorkspaceId,
 } from "@svvy/core";
@@ -23,6 +24,17 @@ const generatedPackageBuildId = (value: string): GeneratedPackageBuildId =>
   value as GeneratedPackageBuildId;
 const recoveryWorkId = (value: string): RecoveryWorkId => value as RecoveryWorkId;
 const workspaceId = (value: string): WorkspaceId => value as WorkspaceId;
+const promptExport = (exportName: string): GeneratedWorkflowsExportBuildEvidence => ({
+  kind: "prompt",
+  namespace: "Prompts",
+  exportName,
+  qualifiedName: `Prompts.${exportName}`,
+  sourcePath: absolutePath(`/workflows/prompts/${exportName}.mdx`),
+  generatedPath: absolutePath(`/generated/workflows/prompts/${exportName}.ts`),
+  generatedCode: `export const ${exportName} = "Prompt";\n`,
+  agentParameters: null,
+  workflowAgentId: null,
+});
 const testDigest = {
   sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
 };
@@ -104,6 +116,7 @@ describe("runtime generated package state port", () => {
           },
         ],
       },
+      workflowsExports: [],
       sourceCommandId: commandId("cmd_generated_package_001"),
       recoveryWorkId: recoveryWorkId("recovery_generated_package_001"),
     });
@@ -133,6 +146,79 @@ describe("runtime generated package state port", () => {
 
     const readBack = store.readGeneratedPackageFacts({ packages: ["@svvyx/workflows"] });
     expect(readBack).toEqual([fact]);
+  });
+
+  it("atomically replaces successful Workflows exports and preserves them on failure", () => {
+    const store = createStore();
+    const firstExport = promptExport("firstPrompt");
+    const firstBuildId = generatedPackageBuildId("generated-workflows-build-first");
+    store.recordGeneratedPackageBuild({
+      status: {
+        packageName: "@svvyx/workflows",
+        action: "written",
+        refreshScope: "app-global-build",
+        buildId: firstBuildId,
+      },
+      workflowsExports: [firstExport],
+    });
+
+    store.recordGeneratedPackageFailure({
+      status: {
+        packageName: "@svvyx/workflows",
+        action: "failed",
+        refreshScope: "app-global-build",
+        diagnostics: ["Workflows validation failed."],
+      },
+    });
+    expect(store.readGeneratedWorkflowsExports()).toEqual([
+      expect.objectContaining({
+        ...firstExport,
+        buildId: firstBuildId,
+        position: 0,
+      }),
+    ]);
+
+    const secondExport = promptExport("secondPrompt");
+    const secondBuildId = generatedPackageBuildId("generated-workflows-build-second");
+    store.recordGeneratedPackageBuild({
+      status: {
+        packageName: "@svvyx/workflows",
+        action: "written",
+        refreshScope: "app-global-build",
+        buildId: secondBuildId,
+      },
+      workflowsExports: [secondExport],
+    });
+    expect(store.readGeneratedWorkflowsExports()).toEqual([
+      expect.objectContaining({
+        ...secondExport,
+        buildId: secondBuildId,
+        position: 0,
+      }),
+    ]);
+
+    const failedBuildId = generatedPackageBuildId("generated-workflows-build-rolled-back");
+    expect(() =>
+      store.recordGeneratedPackageBuild({
+        status: {
+          packageName: "@svvyx/workflows",
+          action: "written",
+          refreshScope: "app-global-build",
+          buildId: failedBuildId,
+        },
+        workflowsExports: [secondExport, secondExport],
+      }),
+    ).toThrow();
+    expect(store.readGeneratedPackageFacts({ packages: ["@svvyx/workflows"] })[0]?.buildId).toBe(
+      secondBuildId,
+    );
+    expect(store.readGeneratedWorkflowsExports()).toEqual([
+      expect.objectContaining({
+        ...secondExport,
+        buildId: secondBuildId,
+        position: 0,
+      }),
+    ]);
   });
 
   it("records failed builds while preserving the previous ready output evidence", async () => {

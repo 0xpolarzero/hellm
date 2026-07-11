@@ -188,7 +188,7 @@ describe("workspace state router", () => {
       await runTestEffect(
         router.generatedPackage.recordGeneratedPackageBuild({
           status: {
-            packageName: "@svvyx/workflows" as GeneratedPackageName,
+            packageName: "@svvyx/workflows",
             action: "written",
             refreshScope: "app-global-build",
             buildId: "generated-package-build-router" as never,
@@ -198,6 +198,7 @@ describe("workspace state router", () => {
             generatedFiles: [],
             dependencies: [],
           },
+          workflowsExports: [],
         }),
       );
 

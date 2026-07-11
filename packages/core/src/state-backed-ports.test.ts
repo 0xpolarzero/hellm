@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
+import { strictBoundaryParseOptions } from "./boundary-parse-options";
 import { SandboxPolicySnapshotSchema } from "./sandbox-policy-contracts";
 import { WorkspaceSessionNavigationReadModelSchema } from "./session-navigation-contracts";
 import {
@@ -956,6 +957,10 @@ describe("@svvy/core state-backed port contracts", () => {
   });
 
   it("keeps generated-package build and failure input actions disjoint", () => {
+    const decodeBuildInput = Schema.decodeUnknownSync(
+      RecordGeneratedPackageBuildInputSchema,
+      strictBoundaryParseOptions,
+    );
     const buildStatus = {
       packageName: "@svvyx/workflows",
       action: "written",
@@ -964,12 +969,27 @@ describe("@svvy/core state-backed port contracts", () => {
       manifestPath: "/app/generated/workflows/.svvy-generated-package.json",
     };
     expect(
-      Schema.decodeUnknownSync(RecordGeneratedPackageBuildInputSchema)({
+      decodeBuildInput({
         status: buildStatus,
+        workflowsExports: [],
       }).status.action,
     ).toBe("written");
     expect(() =>
-      Schema.decodeUnknownSync(RecordGeneratedPackageBuildInputSchema)({
+      decodeBuildInput({
+        status: buildStatus,
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeBuildInput({
+        status: {
+          ...buildStatus,
+          packageName: "@svvyx/extensions",
+        },
+        workflowsExports: [],
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeBuildInput({
         status: {
           packageName: "@svvyx/workflows",
           action: "written",
@@ -978,7 +998,7 @@ describe("@svvy/core state-backed port contracts", () => {
       }),
     ).toThrow();
     expect(() =>
-      Schema.decodeUnknownSync(RecordGeneratedPackageBuildInputSchema)({
+      decodeBuildInput({
         status: {
           packageName: "@svvyx/workflows",
           action: "failed",

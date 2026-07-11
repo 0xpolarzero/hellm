@@ -3002,6 +3002,10 @@ persist state.
 `RuntimeGeneratedPackageStatePort` is the core-owned state port used by runtime generated-package
 refresh and workspace-link repair. It is a state contract, not a generated-package build contract.
 The generated-package build host still receives only `GeneratedPackageBuildInput`.
+`RecordGeneratedPackageBuildInput` is a closed package-discriminated union: a successful
+`@svvyx/workflows` write requires its `GeneratedPackageBuildId` and the complete
+`workflowsExports` snapshot from the same build plan, while a successful `@svvyx/extensions` write
+does not accept `workflowsExports`. Failure writes never carry export evidence.
 
 ```ts
 type RuntimeGeneratedPackageFactRecord = {
@@ -3063,12 +3067,30 @@ domain read verbs such as `fetch`, `rebaseline`, and `snapshot` when the state p
 method and the method still performs no write.
 
 ```ts
+type RecordGeneratedPackageBuildInput = {
+  sourceCommandId?: CommandId | null;
+  recoveryWorkId?: RecoveryWorkId | null;
+} & (
+  | {
+      status: GeneratedPackageRefreshStatus & {
+        packageName: "@svvyx/workflows";
+        action: "written" | "unchanged";
+        buildId: GeneratedPackageBuildId;
+      };
+      workflowsExports: readonly GeneratedWorkflowsExportBuildEvidence[];
+    }
+  | {
+      status: GeneratedPackageRefreshStatus & {
+        packageName: "@svvyx/extensions";
+        action: "written" | "unchanged";
+      };
+    }
+);
+
 type RuntimeGeneratedPackageStatePortService = {
-  recordGeneratedPackageBuild(input: {
-    status: GeneratedPackageRefreshStatus & { action: "written" | "unchanged" };
-    sourceCommandId?: CommandId | null;
-    recoveryWorkId?: RecoveryWorkId | null;
-  }): Effect.Effect<StateMutationResult<RuntimeGeneratedPackageFactRecord>, StateContractError>;
+  recordGeneratedPackageBuild(
+    input: RecordGeneratedPackageBuildInput,
+  ): Effect.Effect<StateMutationResult<RuntimeGeneratedPackageFactRecord>, StateContractError>;
   recordGeneratedPackageFailure(input: {
     status: GeneratedPackageRefreshStatus & { action: "failed" };
     sourceCommandId?: CommandId | null;

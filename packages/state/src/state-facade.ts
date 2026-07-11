@@ -717,6 +717,7 @@ export interface WorkflowsGeneratedExportReadModelRecord {
   generatedPath: string | null;
   sourcePath: string | null;
   agentParameters: JsonValueType | null;
+  workflowAgentId: string | null;
 }
 
 export type HandlerInspectorReadModel = StructuredHandlerThreadInspector;
@@ -2346,13 +2347,28 @@ function buildWorkflowsGeneratedReadModel(
   state: StructuredSessionState["Service"],
   request: WorkflowsGeneratedReadModelRequest,
 ): Effect.Effect<WorkflowsGeneratedReadModel, StateContractError> {
-  return state.readGeneratedPackageFacts({ packages: ["@svvyx/workflows"] }).pipe(
-    Effect.map((facts) => ({
+  return Effect.gen(function* () {
+    const facts = (yield* state.readGeneratedPackageFacts({
+      packages: ["@svvyx/workflows"],
+    })).filter((fact) => (request.buildId ? fact.buildId === request.buildId : true));
+    const buildId = facts[0]?.buildId;
+    const exports = buildId ? yield* state.readGeneratedWorkflowsExports({ buildId }) : [];
+    return {
       packageName: "@svvyx/workflows" as const,
-      facts: facts.filter((fact) => (request.buildId ? fact.buildId === request.buildId : true)),
-      exports: [],
-    })),
-  );
+      facts,
+      exports: exports.map((record) => ({
+        namespace: record.namespace,
+        exportName: record.exportName,
+        qualifiedName: record.qualifiedName,
+        kind: record.kind,
+        generatedCode: record.generatedCode,
+        generatedPath: record.generatedPath,
+        sourcePath: record.sourcePath,
+        agentParameters: record.agentParameters,
+        workflowAgentId: record.workflowAgentId,
+      })),
+    };
+  });
 }
 
 function buildHandlerInspectorReadModel(

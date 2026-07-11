@@ -106,6 +106,7 @@ import {
   GeneratedPackageNameSchema,
   GeneratedPackageRefreshStatusSchema,
   GeneratedPackageWorkspaceLinkStatusSchema,
+  GeneratedWorkflowsExportBuildEvidenceSchema,
   type GeneratedPackageDependencyEvidence,
   type GeneratedPackageName,
   type GeneratedPackageRefreshStatus,
@@ -1602,20 +1603,35 @@ export const ReadGeneratedPackageFactsInputSchema = Schema.Struct({
   packages: Schema.optionalKey(Schema.Array(GeneratedPackageNameSchema)),
 });
 
-export interface RecordGeneratedPackageBuildInput {
-  status: GeneratedPackageRefreshStatus & { action: "written" | "unchanged" };
-  sourceCommandId?: CommandId | null;
-  recoveryWorkId?: RecoveryWorkId | null;
-}
 export const RecordGeneratedPackageBuildStatusSchema = Schema.Struct({
   ...GeneratedPackageRefreshStatusSchema.fields,
   action: Schema.Literals(["written", "unchanged"]),
 });
-export const RecordGeneratedPackageBuildInputSchema = Schema.Struct({
-  status: RecordGeneratedPackageBuildStatusSchema,
+const RecordGeneratedPackageBuildLineageFields = {
   sourceCommandId: Schema.optionalKey(Schema.NullOr(CommandId)),
   recoveryWorkId: Schema.optionalKey(Schema.NullOr(RecoveryWorkId)),
-});
+};
+export const RecordGeneratedPackageBuildInputSchema = Schema.Union([
+  Schema.Struct({
+    status: Schema.Struct({
+      ...GeneratedPackageRefreshStatusSchema.fields,
+      packageName: Schema.Literal("@svvyx/workflows"),
+      action: Schema.Literals(["written", "unchanged"]),
+      buildId: GeneratedPackageBuildId,
+    }),
+    workflowsExports: Schema.Array(GeneratedWorkflowsExportBuildEvidenceSchema),
+    ...RecordGeneratedPackageBuildLineageFields,
+  }),
+  Schema.Struct({
+    status: Schema.Struct({
+      ...GeneratedPackageRefreshStatusSchema.fields,
+      packageName: Schema.Literal("@svvyx/extensions"),
+      action: Schema.Literals(["written", "unchanged"]),
+    }),
+    ...RecordGeneratedPackageBuildLineageFields,
+  }),
+]);
+export type RecordGeneratedPackageBuildInput = typeof RecordGeneratedPackageBuildInputSchema.Type;
 
 export interface RecordGeneratedPackageFailureInput {
   status: GeneratedPackageRefreshStatus & { action: "failed" };

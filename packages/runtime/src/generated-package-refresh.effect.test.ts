@@ -7,6 +7,7 @@ import {
   type GeneratedPackageDependencyEvidence,
   type GeneratedPackageName,
   type GeneratedPackageWorkspaceLinkRepairPlan,
+  type GeneratedWorkflowsExportBuildEvidence,
   type IsoDateTimeString,
   type RecoveryWorkId,
   RuntimeContractError,
@@ -24,6 +25,8 @@ import {
   type RuntimeGeneratedPackageRefreshHost,
 } from "./generated-package-refresh";
 
+const defaultWorkflowsBuildId = "generated-workflows-build-runtime-test" as GeneratedPackageBuildId;
+
 function host(
   overrides: Partial<RuntimeGeneratedPackageRefreshHost> = {},
 ): RuntimeGeneratedPackageRefreshHost {
@@ -33,6 +36,7 @@ function host(
         packages: packages.map((packageName) => ({
           packageName,
           action: "written" as const,
+          ...(packageName === "@svvyx/workflows" ? { buildId: defaultWorkflowsBuildId } : {}),
         })),
         workflowsExports: [],
       }),
@@ -453,7 +457,13 @@ describe("refreshRuntimeGeneratedPackages", () => {
         );
         assert.deepStrictEqual(result, {
           scope: "app-global",
-          packages: [{ packageName: "@svvyx/workflows", action: "written" }],
+          packages: [
+            {
+              packageName: "@svvyx/workflows",
+              action: "written",
+              buildId: defaultWorkflowsBuildId,
+            },
+          ],
           workspaceLinks: [],
           recoveryWorkIds: [],
         });
@@ -503,7 +513,13 @@ describe("refreshRuntimeGeneratedPackages", () => {
         );
         assert.deepStrictEqual(result, {
           scope: "app-global",
-          packages: [{ packageName: "@svvyx/workflows", action: "written" }],
+          packages: [
+            {
+              packageName: "@svvyx/workflows",
+              action: "written",
+              buildId: defaultWorkflowsBuildId,
+            },
+          ],
           workspaceLinks: [],
           recoveryWorkIds: [],
         });
@@ -567,7 +583,13 @@ describe("refreshRuntimeGeneratedPackages", () => {
         );
         assert.deepStrictEqual(result, {
           scope: "app-global",
-          packages: [{ packageName: "@svvyx/workflows", action: "written" }],
+          packages: [
+            {
+              packageName: "@svvyx/workflows",
+              action: "written",
+              buildId: defaultWorkflowsBuildId,
+            },
+          ],
           workspaceLinks: [],
           recoveryWorkIds: [`recovery_link_repair:${unopenedWorkspaceId}` as RecoveryWorkId],
         });
@@ -704,7 +726,22 @@ describe("refreshRuntimeGeneratedPackages", () => {
   it.effect("records actual generated package build statuses", () =>
     Effect.gen(function* () {
       const buildInputs: unknown[] = [];
-      const stateStatuses: unknown[] = [];
+      const stateInputs: unknown[] = [];
+      const workflowsBuildId =
+        "generated-workflows-build-status-evidence" as GeneratedPackageBuildId;
+      const workflowsExports = [
+        {
+          kind: "prompt",
+          namespace: "Prompts",
+          exportName: "reviewChecklist",
+          qualifiedName: "Prompts.reviewChecklist",
+          sourcePath: "/workflows/prompts/reviewChecklist.mdx" as AbsolutePath,
+          generatedPath: "/generated/workflows/prompts/reviewChecklist.ts" as AbsolutePath,
+          generatedCode: 'export const reviewChecklist = "Review carefully.";\n',
+          agentParameters: null,
+          workflowAgentId: null,
+        },
+      ] satisfies readonly GeneratedWorkflowsExportBuildEvidence[];
       const dependencies = [
         {
           specifier: "@svvy/core",
@@ -737,9 +774,14 @@ describe("refreshRuntimeGeneratedPackages", () => {
                 return {
                   packages: [
                     { packageName: "@svvyx/extensions", action: "written" },
-                    { packageName: "@svvyx/workflows", action: "written", dependencies },
+                    {
+                      packageName: "@svvyx/workflows",
+                      action: "written",
+                      buildId: workflowsBuildId,
+                      dependencies,
+                    },
                   ],
-                  workflowsExports: [],
+                  workflowsExports,
                 };
               }),
           }),
@@ -747,7 +789,7 @@ describe("refreshRuntimeGeneratedPackages", () => {
         generatedPackageState([], {
           recordGeneratedPackageBuild: (input) =>
             Effect.sync(() => {
-              stateStatuses.push(input.status);
+              stateInputs.push(input);
               return {
                 value: {
                   packageName: input.status.packageName,
@@ -775,7 +817,12 @@ describe("refreshRuntimeGeneratedPackages", () => {
         scope: "app-global",
         packages: [
           { packageName: "@svvyx/extensions", action: "written" },
-          { packageName: "@svvyx/workflows", action: "written", dependencies },
+          {
+            packageName: "@svvyx/workflows",
+            action: "written",
+            buildId: workflowsBuildId,
+            dependencies,
+          },
         ],
         workspaceLinks: [],
         recoveryWorkIds: [],
@@ -783,17 +830,23 @@ describe("refreshRuntimeGeneratedPackages", () => {
       assert.deepStrictEqual(buildInputs, [
         { packages: ["@svvyx/extensions", "@svvyx/workflows"] },
       ]);
-      assert.deepStrictEqual(stateStatuses, [
+      assert.deepStrictEqual(stateInputs, [
         {
-          packageName: "@svvyx/extensions",
-          action: "written",
-          refreshScope: "app-global-build",
+          status: {
+            packageName: "@svvyx/extensions",
+            action: "written",
+            refreshScope: "app-global-build",
+          },
         },
         {
-          packageName: "@svvyx/workflows",
-          action: "written",
-          dependencies,
-          refreshScope: "app-global-build",
+          status: {
+            packageName: "@svvyx/workflows",
+            action: "written",
+            buildId: workflowsBuildId,
+            dependencies,
+            refreshScope: "app-global-build",
+          },
+          workflowsExports,
         },
       ]);
     }),
@@ -821,7 +874,11 @@ describe("refreshRuntimeGeneratedPackages", () => {
                   return {
                     packages: [
                       { packageName: "@svvyx/extensions", action: "written" },
-                      { packageName: "@svvyx/workflows", action: "written" },
+                      {
+                        packageName: "@svvyx/workflows",
+                        action: "written",
+                        buildId: defaultWorkflowsBuildId,
+                      },
                     ],
                     workflowsExports: [],
                   };
@@ -867,7 +924,11 @@ describe("refreshRuntimeGeneratedPackages", () => {
           scope: "app-global",
           packages: [
             { packageName: "@svvyx/extensions", action: "written" },
-            { packageName: "@svvyx/workflows", action: "written" },
+            {
+              packageName: "@svvyx/workflows",
+              action: "written",
+              buildId: defaultWorkflowsBuildId,
+            },
           ],
           workspaceLinks: [],
           recoveryWorkIds: [],
@@ -882,6 +943,7 @@ describe("refreshRuntimeGeneratedPackages", () => {
           {
             packageName: "@svvyx/workflows",
             action: "written",
+            buildId: defaultWorkflowsBuildId,
             refreshScope: "app-global-build",
           },
         ]);

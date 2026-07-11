@@ -165,6 +165,7 @@ describe("sandbox policy source", () => {
             dependencies: [],
             diagnostics: [],
           },
+          workflowsExports: [],
         });
 
         const source = yield* SandboxPolicySource;

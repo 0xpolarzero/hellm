@@ -39,7 +39,9 @@ import {
   type ExtensionId,
   type ExtensionUsageState,
   type ExternalInstructionsSettings,
+  type GeneratedPackageBuildId,
   type GeneratedPackageName,
+  type GeneratedWorkflowsExportBuildEvidence,
   type HandlerInheritedHistoryBlock,
   type JsonValue,
   type DeletePiSessionReferenceInput,
@@ -102,6 +104,7 @@ import {
   type SnippetMetadata,
   type SnippetSource,
   decodeUnknownExternalInstructionsSettingsExit,
+  decodeUnknownGeneratedWorkflowsExportBuildEvidenceExit,
   normalizeExternalInstructionsSettings,
 } from "@svvy/core";
 import type {
@@ -868,6 +871,15 @@ export interface StructuredRecoveryWorkRecord {
 }
 
 export type StructuredGeneratedPackageFactRecord = RuntimeGeneratedPackageFactRecord;
+export type StructuredGeneratedWorkflowsExportRecord = GeneratedWorkflowsExportBuildEvidence & {
+  readonly buildId: GeneratedPackageBuildId;
+  readonly position: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+};
+export interface ReadGeneratedWorkflowsExportsInput {
+  readonly buildId?: GeneratedPackageBuildId;
+}
 export type StructuredGeneratedPackageWorkspaceLinkRecord =
   RuntimeGeneratedPackageWorkspaceLinkRecord;
 export type StructuredExtensionDependencyReadinessRecord = ExtensionDependencyReadiness;
@@ -1707,6 +1719,9 @@ export interface StructuredSessionStateStore {
   readGeneratedPackageFacts(
     input?: ReadGeneratedPackageFactsInput,
   ): StructuredGeneratedPackageFactRecord[];
+  readGeneratedWorkflowsExports(
+    input?: ReadGeneratedWorkflowsExportsInput,
+  ): StructuredGeneratedWorkflowsExportRecord[];
   reconcileGeneratedPackageManifest(
     input: ReconcileGeneratedPackageManifestInput,
   ): StructuredGeneratedPackageFactRecord;
@@ -2121,6 +2136,23 @@ type GeneratedPackageFactRow = {
   source_command_id: string | null;
   refresh_needed_reason: string | null;
   last_recovery_work_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type GeneratedWorkflowsExportRow = {
+  package_name: "@svvyx/workflows";
+  build_id: string;
+  position: number;
+  kind: GeneratedWorkflowsExportBuildEvidence["kind"];
+  namespace: GeneratedWorkflowsExportBuildEvidence["namespace"];
+  export_name: string;
+  qualified_name: string;
+  source_path: string;
+  generated_path: string;
+  generated_code: string;
+  agent_parameters_json: string | null;
+  workflow_agent_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -8846,30 +8878,39 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   recordGeneratedPackageBuild(
     input: RecordGeneratedPackageBuildInput,
   ): StructuredGeneratedPackageFactRecord {
-    const existing = this.findGeneratedPackageFactRow(input.status.packageName);
-    const timestamp = this.now();
-    const generatedFileListDigest =
-      digestGeneratedPackageFileList(this.digest, input.status.generatedFiles) ??
-      existing?.generated_file_list_digest ??
-      null;
-    this.upsertGeneratedPackageFact({
-      packageName: input.status.packageName,
-      status: "ready",
-      buildId: input.status.buildId ?? existing?.build_id ?? null,
-      manifestPath: input.status.manifestPath ?? existing?.manifest_path ?? null,
-      sourceFingerprint: input.status.sourceFingerprint ?? existing?.source_fingerprint ?? null,
-      outputFingerprint: input.status.outputFingerprint ?? existing?.output_fingerprint ?? null,
-      generatedFileListDigest,
-      dependencies:
-        input.status.dependencies ?? this.dependenciesFromGeneratedPackageFact(existing),
-      diagnostics: input.status.diagnostics ?? [],
-      sourceCommandId: input.sourceCommandId ?? null,
-      refreshNeededReason: null,
-      lastRecoveryWorkId: input.recoveryWorkId ?? null,
-      createdAt: existing?.created_at ?? timestamp,
-      updatedAt: timestamp,
-    });
-    return this.mustFindGeneratedPackageFact(input.status.packageName);
+    return this.db.transaction(() => {
+      const existing = this.findGeneratedPackageFactRow(input.status.packageName);
+      const timestamp = this.now();
+      const generatedFileListDigest =
+        digestGeneratedPackageFileList(this.digest, input.status.generatedFiles) ??
+        existing?.generated_file_list_digest ??
+        null;
+      this.upsertGeneratedPackageFact({
+        packageName: input.status.packageName,
+        status: "ready",
+        buildId: input.status.buildId ?? existing?.build_id ?? null,
+        manifestPath: input.status.manifestPath ?? existing?.manifest_path ?? null,
+        sourceFingerprint: input.status.sourceFingerprint ?? existing?.source_fingerprint ?? null,
+        outputFingerprint: input.status.outputFingerprint ?? existing?.output_fingerprint ?? null,
+        generatedFileListDigest,
+        dependencies:
+          input.status.dependencies ?? this.dependenciesFromGeneratedPackageFact(existing),
+        diagnostics: input.status.diagnostics ?? [],
+        sourceCommandId: input.sourceCommandId ?? null,
+        refreshNeededReason: null,
+        lastRecoveryWorkId: input.recoveryWorkId ?? null,
+        createdAt: existing?.created_at ?? timestamp,
+        updatedAt: timestamp,
+      });
+      if ("workflowsExports" in input) {
+        this.replaceGeneratedWorkflowsExports(
+          input.status.buildId,
+          input.workflowsExports,
+          timestamp,
+        );
+      }
+      return this.mustFindGeneratedPackageFact(input.status.packageName);
+    })();
   }
 
   recordGeneratedPackageFailure(
@@ -9038,6 +9079,14 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.queryGeneratedPackageFactRows()
       .filter((row) => !input.packages || input.packages.includes(row.package_name))
       .map((row) => this.mapGeneratedPackageFact(row));
+  }
+
+  readGeneratedWorkflowsExports(
+    input: ReadGeneratedWorkflowsExportsInput = {},
+  ): StructuredGeneratedWorkflowsExportRecord[] {
+    return this.queryGeneratedWorkflowsExportRows()
+      .filter((row) => !input.buildId || row.build_id === input.buildId)
+      .map((row) => this.mapGeneratedWorkflowsExport(row));
   }
 
   reconcileGeneratedPackageManifest(
@@ -10837,6 +10886,16 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .all() as GeneratedPackageFactRow[];
   }
 
+  private queryGeneratedWorkflowsExportRows(): GeneratedWorkflowsExportRow[] {
+    return this.db
+      .query(
+        `SELECT *
+         FROM generated_workflows_export
+         ORDER BY position ASC, qualified_name ASC`,
+      )
+      .all() as GeneratedWorkflowsExportRow[];
+  }
+
   private findGeneratedPackageFactRow(
     packageName: GeneratedPackageName,
   ): GeneratedPackageFactRow | null {
@@ -10937,6 +10996,51 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       );
   }
 
+  private replaceGeneratedWorkflowsExports(
+    buildId: GeneratedPackageBuildId,
+    exports: readonly GeneratedWorkflowsExportBuildEvidence[],
+    timestamp: string,
+  ): void {
+    this.db
+      .query(`DELETE FROM generated_workflows_export WHERE package_name = '@svvyx/workflows'`)
+      .run();
+    const insert = this.db.query(
+      `INSERT INTO generated_workflows_export (
+         package_name,
+         build_id,
+         position,
+         kind,
+         namespace,
+         export_name,
+         qualified_name,
+         source_path,
+         generated_path,
+         generated_code,
+         agent_parameters_json,
+         workflow_agent_id,
+         created_at,
+         updated_at
+       ) VALUES ('@svvyx/workflows', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const [position, evidence] of exports.entries()) {
+      insert.run(
+        buildId,
+        position,
+        evidence.kind,
+        evidence.namespace,
+        evidence.exportName,
+        evidence.qualifiedName,
+        evidence.sourcePath,
+        evidence.generatedPath,
+        evidence.generatedCode,
+        toJson(evidence.agentParameters),
+        evidence.workflowAgentId,
+        timestamp,
+        timestamp,
+      );
+    }
+  }
+
   private mapGeneratedPackageFact(
     row: GeneratedPackageFactRow,
   ): StructuredGeneratedPackageFactRecord {
@@ -10955,6 +11059,37 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       refreshNeededReason: row.refresh_needed_reason,
       lastRecoveryWorkId:
         row.last_recovery_work_id as StructuredGeneratedPackageFactRecord["lastRecoveryWorkId"],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapGeneratedWorkflowsExport(
+    row: GeneratedWorkflowsExportRow,
+  ): StructuredGeneratedWorkflowsExportRecord {
+    const decoded = decodeUnknownGeneratedWorkflowsExportBuildEvidenceExit({
+      kind: row.kind,
+      namespace: row.namespace,
+      exportName: row.export_name,
+      qualifiedName: row.qualified_name,
+      sourcePath: row.source_path,
+      generatedPath: row.generated_path,
+      generatedCode: row.generated_code,
+      agentParameters: fromJson<JsonValue>(row.agent_parameters_json),
+      workflowAgentId: row.workflow_agent_id,
+    });
+    if (Exit.isFailure(decoded)) {
+      throw new StateContractError({
+        operation: "structured-session.generated-workflows-export.decode",
+        reason: "decode-failed",
+        message: `Persisted generated Workflows export is invalid: ${row.qualified_name}`,
+        cause: decoded.cause,
+      });
+    }
+    return {
+      ...decoded.value,
+      buildId: row.build_id as GeneratedPackageBuildId,
+      position: row.position,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -11854,6 +11989,25 @@ function initializeSchema(db: Database): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS generated_workflows_export (
+      package_name TEXT NOT NULL CHECK (package_name = '@svvyx/workflows'),
+      build_id TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      namespace TEXT NOT NULL,
+      export_name TEXT NOT NULL,
+      qualified_name TEXT NOT NULL,
+      source_path TEXT NOT NULL,
+      generated_path TEXT NOT NULL,
+      generated_code TEXT NOT NULL,
+      agent_parameters_json TEXT,
+      workflow_agent_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(package_name, qualified_name),
+      UNIQUE(package_name, position)
+    );
+
     CREATE TABLE IF NOT EXISTS generated_package_workspace_link (
       workspace_id TEXT NOT NULL,
       package_name TEXT NOT NULL,
@@ -12393,6 +12547,10 @@ function initializeSchema(db: Database): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_generated_package_fact_status
      ON generated_package_fact (status, updated_at)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_generated_workflows_export_build
+     ON generated_workflows_export (build_id, position)`,
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_generated_package_workspace_link_repair

@@ -1421,6 +1421,40 @@ describe("State read-model kind expansion", () => {
             },
           ],
         },
+        workflowsExports: [
+          {
+            kind: "agent",
+            namespace: "Agents",
+            exportName: "reviewerAgent",
+            qualifiedName: "Agents.reviewerAgent",
+            sourcePath:
+              "/tmp/workflows/agents/reviewerAgent.agent.json" as typeof AbsolutePath.Type,
+            generatedPath:
+              "/tmp/generated-workflows/agents/reviewerAgent.ts" as typeof AbsolutePath.Type,
+            generatedCode: "export const reviewerAgent = {};\n",
+            agentParameters: {
+              id: "workflow-reviewer",
+              label: "Workflow Reviewer",
+              provider: "openai",
+              model: "gpt-5.4",
+              reasoning: { effort: "medium" },
+              instructions: "Review workflow output.",
+            },
+            workflowAgentId: "workflow-reviewer",
+          },
+          {
+            kind: "prompt",
+            namespace: "Prompts",
+            exportName: "reviewChecklist",
+            qualifiedName: "Prompts.reviewChecklist",
+            sourcePath: "/tmp/workflows/prompts/reviewChecklist.mdx" as typeof AbsolutePath.Type,
+            generatedPath:
+              "/tmp/generated-workflows/prompts/reviewChecklist.ts" as typeof AbsolutePath.Type,
+            generatedCode: 'export const reviewChecklist = "Review carefully.";\n',
+            agentParameters: null,
+            workflowAgentId: null,
+          },
+        ],
         sourceCommandId: workflowCommand.id as CommandId,
       });
       store.recordGeneratedPackageBuild({
@@ -1664,6 +1698,51 @@ describe("State read-model kind expansion", () => {
               buildId: "generated-package-build-read-model-workflows",
             },
           ],
+          exports: [
+            {
+              kind: "agent",
+              namespace: "Agents",
+              exportName: "reviewerAgent",
+              qualifiedName: "Agents.reviewerAgent",
+              sourcePath: "/tmp/workflows/agents/reviewerAgent.agent.json",
+              generatedPath: "/tmp/generated-workflows/agents/reviewerAgent.ts",
+              generatedCode: "export const reviewerAgent = {};\n",
+              agentParameters: {
+                id: "workflow-reviewer",
+                label: "Workflow Reviewer",
+                provider: "openai",
+                model: "gpt-5.4",
+                reasoning: { effort: "medium" },
+                instructions: "Review workflow output.",
+              },
+              workflowAgentId: "workflow-reviewer",
+            },
+            {
+              kind: "prompt",
+              namespace: "Prompts",
+              exportName: "reviewChecklist",
+              qualifiedName: "Prompts.reviewChecklist",
+              sourcePath: "/tmp/workflows/prompts/reviewChecklist.mdx",
+              generatedPath: "/tmp/generated-workflows/prompts/reviewChecklist.ts",
+              generatedCode: 'export const reviewChecklist = "Review carefully.";\n',
+              agentParameters: null,
+              workflowAgentId: null,
+            },
+          ],
+        },
+      });
+      expect(
+        await runTestEffect(
+          readModels.fetch({
+            kind: "workflowsGenerated",
+            buildId: "generated-package-build-not-current",
+          }),
+        ),
+      ).toEqual({
+        kind: "workflowsGenerated",
+        value: {
+          packageName: "@svvyx/workflows",
+          facts: [],
           exports: [],
         },
       });

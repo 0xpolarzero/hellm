@@ -10,6 +10,7 @@ import {
   type GeneratedPackageWorkspaceLinkRepairPlan,
   type GeneratedPackagesRefreshResult,
   type GeneratedPackageWorkspaceLinkRepairInput,
+  type GeneratedWorkflowsExportBuildEvidence,
   type InternalRefreshGeneratedPackagesRequest,
   type RefreshGeneratedContextRequest,
   type SourceDomain,
@@ -237,6 +238,7 @@ function publishGeneratedPackageInvalidations(
 function recordPackageStatus(
   status: RuntimeGeneratedPackageRefreshStatus,
   input: InternalRefreshGeneratedPackagesRequest,
+  workflowsExports: readonly GeneratedWorkflowsExportBuildEvidence[],
 ): Effect.Effect<
   readonly StateInvalidationDescriptor[],
   RuntimeContractError,
@@ -254,36 +256,74 @@ function recordPackageStatus(
       ...status,
       refreshScope: "app-global-build" as const,
     };
-    const result =
-      status.action === "failed"
-        ? yield* state
-            .recordGeneratedPackageFailure({
-              status: refreshStatus as GeneratedPackageRefreshStatus & { action: "failed" },
-              ...lineage,
-            })
-            .pipe(
-              Effect.mapError((error) =>
-                generatedPackageStateError(
-                  "runtime.sourceInvalidation.refreshGeneratedPackages.recordFailure",
-                  error,
-                ),
-              ),
-            )
-        : yield* state
-            .recordGeneratedPackageBuild({
-              status: refreshStatus as GeneratedPackageRefreshStatus & {
-                action: "written" | "unchanged";
-              },
-              ...lineage,
-            })
-            .pipe(
-              Effect.mapError((error) =>
-                generatedPackageStateError(
-                  "runtime.sourceInvalidation.refreshGeneratedPackages.recordBuild",
-                  error,
-                ),
-              ),
-            );
+    if (status.action === "failed") {
+      const result = yield* state
+        .recordGeneratedPackageFailure({
+          status: refreshStatus as GeneratedPackageRefreshStatus & { action: "failed" },
+          ...lineage,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            generatedPackageStateError(
+              "runtime.sourceInvalidation.refreshGeneratedPackages.recordFailure",
+              error,
+            ),
+          ),
+        );
+      return result.afterCommit;
+    }
+
+    if (status.packageName === "@svvyx/workflows") {
+      const buildId = status.buildId;
+      if (!buildId) {
+        return yield* Effect.fail(
+          new RuntimeContractError({
+            operation: "runtime.sourceInvalidation.refreshGeneratedPackages.recordBuild",
+            reason: "schema-error",
+            message:
+              "A successful generated Workflows package build must include a build id before export evidence can commit.",
+          }),
+        );
+      }
+      const result = yield* state
+        .recordGeneratedPackageBuild({
+          status: {
+            ...refreshStatus,
+            packageName: "@svvyx/workflows",
+            action: status.action,
+            buildId,
+          },
+          workflowsExports,
+          ...lineage,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            generatedPackageStateError(
+              "runtime.sourceInvalidation.refreshGeneratedPackages.recordBuild",
+              error,
+            ),
+          ),
+        );
+      return result.afterCommit;
+    }
+
+    const result = yield* state
+      .recordGeneratedPackageBuild({
+        status: {
+          ...refreshStatus,
+          packageName: "@svvyx/extensions",
+          action: status.action,
+        },
+        ...lineage,
+      })
+      .pipe(
+        Effect.mapError((error) =>
+          generatedPackageStateError(
+            "runtime.sourceInvalidation.refreshGeneratedPackages.recordBuild",
+            error,
+          ),
+        ),
+      );
     return result.afterCommit;
   });
 }
@@ -321,14 +361,17 @@ function recordWorkspaceLinkStatus(
   });
 }
 
-function statusesForBuildPlan(
+function buildPlanForRefresh(
   input: GeneratedPackageBuildInput,
   effect: Effect.Effect<GeneratedPackageBuildPlanResult, RuntimeContractError>,
-): Effect.Effect<readonly RuntimeGeneratedPackageRefreshStatus[]> {
+): Effect.Effect<GeneratedPackageBuildPlanResult> {
   return Effect.matchEffect(effect, {
     onFailure: (error) =>
-      Effect.succeed(input.packages.map((packageName) => packageFailureStatus(packageName, error))),
-    onSuccess: (result) => Effect.succeed(result.packages),
+      Effect.succeed({
+        packages: input.packages.map((packageName) => packageFailureStatus(packageName, error)),
+        workflowsExports: [],
+      }),
+    onSuccess: Effect.succeed,
   });
 }
 
@@ -481,12 +524,13 @@ export const refreshRuntimeGeneratedPackages = Effect.fn(
   }
 
   const buildPackages = orderedGeneratedPackages(input.packages);
-  for (const status of yield* statusesForBuildPlan(
+  const buildPlan = yield* buildPlanForRefresh(
     { packages: buildPackages },
     host.buildGeneratedPackages({ packages: buildPackages }),
-  )) {
+  );
+  for (const status of buildPlan.packages) {
     setStatus(status);
-    const afterCommit = yield* recordPackageStatus(status, input);
+    const afterCommit = yield* recordPackageStatus(status, input, buildPlan.workflowsExports);
     yield* publishGeneratedPackageInvalidations(
       "runtime.sourceInvalidation.refreshGeneratedPackages.publishPackage",
       afterCommit,
