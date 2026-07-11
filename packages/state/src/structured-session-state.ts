@@ -92,6 +92,7 @@ import {
   type RuntimeTurnDecision,
   type StateRevision,
   decodeUnknownExternalInstructionsSettingsExit,
+  normalizeExternalInstructionsSettings,
 } from "@svvy/core";
 import type {
   CloseWorkspacePaneCommandInput,
@@ -2565,7 +2566,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         externalInstructions:
           input.externalInstructions === undefined
             ? current.externalInstructions
-            : input.externalInstructions,
+            : normalizeExternalInstructionsSettings(input.externalInstructions),
         ambientResources:
           input.ambientResources === undefined ? current.ambientResources : input.ambientResources,
         updatedAt: nextUpdatedAt,
@@ -2618,7 +2619,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       externalInstructions:
         input.externalInstructions === undefined
           ? current.externalInstructions
-          : input.externalInstructions,
+          : normalizeExternalInstructionsSettings(input.externalInstructions),
       ambientResources:
         input.ambientResources === undefined ? current.ambientResources : input.ambientResources,
       updatedAt: nextUpdatedAt,
@@ -12393,7 +12394,7 @@ function decodeExternalInstructionsSettings(value: unknown): ExternalInstruction
   if (Exit.isFailure(decoded)) {
     throw new Error("INVALID_STATE: persisted external instruction settings are invalid.");
   }
-  return decoded.value;
+  return normalizeExternalInstructionsSettings(decoded.value);
 }
 
 function normalizeStringList(values: readonly string[]): string[] {

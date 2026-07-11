@@ -5,9 +5,9 @@ import {
   DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ARTIFACT_DIRECTORY,
   DEFAULT_EXTERNAL_INSTRUCTION_ACTORS,
-  DEFAULT_EXTERNAL_INSTRUCTION_GLOBAL_ROOTS,
   DEFAULT_WORKFLOW_AGENT_SETTINGS,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
+  normalizeExternalInstructionsSettings,
   type AgentSettingsState,
   type AgentProfileId,
   type AgentProfileSettings,
@@ -22,10 +22,6 @@ import {
   type AppPreferences,
   type ExtensionEnvSettings,
   type ExtensionDefaultsSettings,
-  type ExternalInstructionActor,
-  type ExternalInstructionControl,
-  type ExternalInstructionGlobalRootSetting,
-  type ExternalInstructionsSettings,
   type PreferredExternalEditor,
   type RequestUserInputSettings,
   type AgentPromptSettings,
@@ -609,80 +605,9 @@ function normalizeAppPreferences(input: AppPreferences): AppPreferences {
         : DEFAULT_ARTIFACT_DIRECTORY,
     approvalMode: normalizeApprovalMode(input.approvalMode),
     networkAccess: input.networkAccess !== false,
-    externalInstructions: normalizeExternalInstructions(input.externalInstructions),
+    externalInstructions: normalizeExternalInstructionsSettings(input.externalInstructions),
     ambientAgentResources: normalizeAmbientAgentResources(input.ambientAgentResources),
   };
-}
-
-function normalizeExternalInstructions(
-  input: ExternalInstructionsSettings | undefined,
-): ExternalInstructionsSettings {
-  return {
-    globalRoots: normalizeExternalInstructionGlobalRoots(input?.globalRoots),
-    globalControls: normalizeExternalInstructionControls(input?.globalControls),
-    workspaceControls: Object.fromEntries(
-      Object.entries(input?.workspaceControls ?? {})
-        .map(([workspaceKey, controls]) => [
-          workspaceKey.trim(),
-          normalizeExternalInstructionControls(controls),
-        ])
-        .filter(([workspaceKey]) => Boolean(workspaceKey)),
-    ),
-  };
-}
-
-function normalizeExternalInstructionGlobalRoots(
-  roots: readonly ExternalInstructionGlobalRootSetting[] | undefined,
-): ExternalInstructionGlobalRootSetting[] {
-  const byId = new Map(
-    (roots ?? []).map((root) => [typeof root.id === "string" ? root.id.trim() : "", root]),
-  );
-  const builtins = DEFAULT_EXTERNAL_INSTRUCTION_GLOBAL_ROOTS.map((root) => {
-    const input = byId.get(root.id);
-    return {
-      ...root,
-      path: typeof input?.path === "string" && input.path.trim() ? input.path.trim() : root.path,
-      enabled: typeof input?.enabled === "boolean" ? input.enabled : root.enabled,
-    };
-  });
-  const custom = (roots ?? [])
-    .filter((root) => root.kind === "custom")
-    .map((root) => ({
-      id: typeof root.id === "string" ? root.id.trim() : "",
-      kind: "custom" as const,
-      label: typeof root.label === "string" && root.label.trim() ? root.label.trim() : "Custom",
-      path: typeof root.path === "string" ? root.path.trim() : "",
-      enabled: root.enabled !== false,
-    }))
-    .filter((root) => root.id && root.path);
-  return [...builtins, ...custom];
-}
-
-function normalizeExternalInstructionControls(
-  input: Record<string, ExternalInstructionControl> | undefined,
-): Record<string, ExternalInstructionControl> {
-  const controls: Record<string, ExternalInstructionControl> = {};
-  for (const [rawPath, control] of Object.entries(input ?? {})) {
-    const path = rawPath.trim();
-    if (!path) continue;
-    const actors = normalizeExternalInstructionActors(control.actors);
-    controls[path] = {
-      enabled: control.enabled !== false,
-      actors,
-    };
-  }
-  return controls;
-}
-
-function normalizeExternalInstructionActors(input: readonly unknown[]): ExternalInstructionActor[] {
-  const allowed = new Set<ExternalInstructionActor>(DEFAULT_EXTERNAL_INSTRUCTION_ACTORS);
-  return [
-    ...new Set(
-      input.filter((actor): actor is ExternalInstructionActor =>
-        allowed.has(actor as ExternalInstructionActor),
-      ),
-    ),
-  ].toSorted();
 }
 
 function normalizeAmbientAgentResources(

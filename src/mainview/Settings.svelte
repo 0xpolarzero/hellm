@@ -23,7 +23,6 @@
 	type Props = {
 		runtime: ChatRuntime;
 		workspaceId?: string | null;
-		onProviderAuthChanged?: (providerId: string) => void | Promise<void>;
 		onAppAppearanceChanged?: (appearance: AppAppearance) => void;
 	};
 
@@ -32,7 +31,6 @@
 	let {
 		runtime,
 		workspaceId,
-		onProviderAuthChanged,
 		onAppAppearanceChanged,
 	}: Props = $props();
 
@@ -72,10 +70,6 @@
 		} finally {
 			appPreferencesLoading = false;
 		}
-	}
-
-	async function notifyAuthChanged(providerId: string) {
-		await onProviderAuthChanged?.(providerId);
 	}
 
 	function setTimedSaveMessage(providerId: string, message: string, timeoutMs: number) {
@@ -280,7 +274,6 @@
 		try {
 			await runtime.setProviderApiKey({ providerId, apiKey });
 			editingProvider = null;
-			await notifyAuthChanged(providerId);
 			setTimedSaveMessage(providerId, "Saved", 2000);
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "Failed";
@@ -296,7 +289,6 @@
 		try {
 			const result = await runtime.startOAuth({ providerId });
 			if (result.ok) {
-				await notifyAuthChanged(providerId);
 				setTimedSaveMessage(providerId, "Connected", 3000);
 			} else {
 				saveMessage[providerId] = result.error ?? "OAuth failed";
@@ -317,7 +309,6 @@
 		try {
 			await runtime.removeProviderAuth({ providerId });
 			confirmingProviderRemoval = null;
-			await notifyAuthChanged(providerId);
 			setTimedSaveMessage(providerId, "Removed", 2000);
 		} catch (err) {
 			saveMessage[providerId] = err instanceof Error ? err.message : "Failed to remove provider";

@@ -126,8 +126,11 @@
 
 	async function refreshAppAppearance() {
 		try {
-			const preferences = await rpc.request.getAppPreferences();
-			setAppAppearance(preferences.appAppearance);
+			const result = await rpc.request.fetchStateReadModel({ kind: "appPreferences" });
+			if (result.kind !== "appPreferences") {
+				throw new Error(`Expected appPreferences; received ${result.kind}.`);
+			}
+			setAppAppearance(result.value.appearance);
 		} catch (error) {
 			console.error("Failed to load app appearance:", error);
 			setAppAppearance("system");
@@ -154,9 +157,6 @@
 				},
 				onWorkspaceLayoutPersist: (state) => {
 					void syncOpenWorkspaceLayouts(workspaceTab.workspaceId, state, tab);
-				},
-				onMissingProviderAccess: () => {
-					void runtime.openSurface({ surface: "settings" }, { kind: "focused-panel" });
 				},
 			},
 			undefined,
@@ -442,10 +442,6 @@
 		void persistWorkspaceTabs();
 	}
 
-	async function handleProviderAuthChanged(providerId: string) {
-		await Promise.all(tabs.map((tab) => tab.runtime.syncProviderAuth(providerId)));
-	}
-
 	onMount(() => {
 		setAppAppearance("system");
 		void restoreWorkspaceTabs();
@@ -485,7 +481,6 @@
 						{#key `${activeTab.workspace.workspaceTabId}:${activeTab.workspace.workspaceId}`}
 							<ChatWorkspace
 								runtime={activeTab.runtime}
-								onProviderAuthChanged={handleProviderAuthChanged}
 								onAppAppearanceChanged={setAppAppearance}
 								workspaceTabs={workspaceTabItems}
 								{activeWorkspaceTabId}

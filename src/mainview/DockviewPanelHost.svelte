@@ -61,7 +61,6 @@
     onOpenWorkspaceInNewTab?: () => void;
     onOpenAgentProfile?: (agentProfileId: string) => void;
     onAgentSettingsChanged?: (settings: AgentSettingsState) => void;
-    onProviderAuthChanged?: (providerId: string) => void | Promise<void>;
     onAppAppearanceChanged?: (appearance: AppAppearance) => void;
   };
 
@@ -77,7 +76,6 @@
     onOpenWorkspaceInNewTab,
     onOpenAgentProfile,
     onAgentSettingsChanged,
-    onProviderAuthChanged,
     onAppAppearanceChanged,
   }: Props = $props();
   let controller = $state<ChatSurfaceController | null>(null);
@@ -699,7 +697,6 @@
   <Settings
     {runtime}
     workspaceId={runtime.workspaceId}
-    {onProviderAuthChanged}
     {onAppAppearanceChanged}
   />
 {:else if pane?.target?.surface === "workflows"}

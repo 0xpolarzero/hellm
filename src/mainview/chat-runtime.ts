@@ -10,11 +10,17 @@ import {
 } from "@mariozechner/pi-ai";
 import type {
   AbsolutePath,
+  AppLogEntryId,
   AttachmentDisplayName,
   Base64String,
+  IsoDateTimeStringSchema,
+  JsonValue,
   MimeType,
+  RuntimeClientRequestId,
+  RuntimeClientSubmissionSource,
   RuntimeAttachmentId,
   RuntimeSubmittedAttachment,
+  WorkflowTaskAttemptId,
   WorkspaceId,
   WorkspaceRelativePath,
 } from "@svvy/core";
@@ -74,6 +80,7 @@ import {
   type DuplicateExtensionRequest,
   type ExtensionsInventoryReadModel,
   type OpenExtensionInstructionFileInEditorRequest,
+  type ProviderAuthReadModel,
   type ProviderAuthInfo,
   type RemoveExtensionInstructionFileRequest,
   type RemoveExtensionEnvOverrideRequest,
@@ -92,6 +99,7 @@ import {
   type WriteCommandStdinRequest,
   type WriteCommandStdinResponse,
 } from "../shared/workspace-contract";
+import type { UpdateAppPreferencesCommandInput } from "@svvy/state";
 import { FileBackedEditConflictError, type FileBackedSaveMode } from "../shared/file-backed-edit";
 import type { GeneratedAgentContextExternalSource } from "../shared/generated-agent-context";
 import type {
@@ -269,6 +277,56 @@ function appPreferencesFromStateReadModel(
         ? (readModel.ambientResources as unknown as AppPreferences["ambientAgentResources"])
         : fallback.ambientAgentResources,
   };
+}
+
+function appPreferencesStateCommandPatch(
+  preferences: AppPreferences,
+): UpdateAppPreferencesCommandInput["patch"] {
+  return {
+    appearance: preferences.appAppearance,
+    externalEditor:
+      preferences.preferredExternalEditor === "system"
+        ? null
+        : preferences.preferredExternalEditor === "custom"
+          ? preferences.customExternalEditorCommand || "custom"
+          : preferences.preferredExternalEditor,
+    artifactDirectory: preferences.artifactDirectory as AbsolutePath,
+    approvalMode: preferences.approvalMode,
+    networkAccess: preferences.networkAccess,
+    externalInstructions: preferences.externalInstructions,
+    ambientResources: preferences.ambientAgentResources as unknown as JsonValue,
+  };
+}
+
+function providerAuthInfosFromStateReadModel(
+  readModel: ProviderAuthReadModel,
+  current: readonly ProviderAuthInfo[],
+): ProviderAuthInfo[] {
+  const currentByProvider = new Map(current.map((info) => [info.provider, info]));
+  return readModel.providers.map((status) => {
+    const fallback = currentByProvider.get(status.providerId);
+    return {
+      provider: status.providerId,
+      hasKey: status.health !== "missing",
+      keyType: fallback?.keyType ?? (status.health === "missing" ? "none" : "apikey"),
+      supportsOAuth: fallback?.supportsOAuth ?? false,
+      authHealth:
+        status.health === "usable"
+          ? "available"
+          : status.health === "expired"
+            ? "oauth-expired"
+            : status.health === "refresh_failed"
+              ? "oauth-refresh-failed"
+              : "missing",
+      expiresAt: status.expiresAt ?? fallback?.expiresAt ?? null,
+      ...(status.issue
+        ? { authError: status.issue }
+        : fallback?.authError
+          ? { authError: fallback.authError }
+          : {}),
+      ...(fallback?.authFailedAt ? { authFailedAt: fallback.authFailedAt } : {}),
+    };
+  });
 }
 
 function notifyReadModelCachesChanged(workspaceId?: string): void {
@@ -626,16 +684,15 @@ export type SurfaceAgent = Agent & {
 export interface ChatRuntimeRpcClient {
   request: {
     rendererReady: typeof rpc.request.rendererReady;
-    getDefaults: typeof rpc.request.getDefaults;
     getAgentSettings: typeof rpc.request.getAgentSettings;
     getAgentContextPreview: typeof rpc.request.getAgentContextPreview;
     getAgentModelChoices: typeof rpc.request.getAgentModelChoices;
     getExtensionsInventory: typeof rpc.request.getExtensionsInventory;
-    getAppPreferences: typeof rpc.request.getAppPreferences;
     fetchStateReadModel: typeof rpc.request.fetchStateReadModel;
     refetchStateReadModels: typeof rpc.request.refetchStateReadModels;
     refetchStateReadModelInvalidation: typeof rpc.request.refetchStateReadModelInvalidation;
     rebaselineStateReadModels: typeof rpc.request.rebaselineStateReadModels;
+    stateAppLogsMarkRead: typeof rpc.request.stateAppLogsMarkRead;
     saveExtensionSnapshot: typeof rpc.request.saveExtensionSnapshot;
     renameExtensionSnapshot: typeof rpc.request.renameExtensionSnapshot;
     deleteExtensionSnapshot: typeof rpc.request.deleteExtensionSnapshot;
@@ -671,18 +728,14 @@ export interface ChatRuntimeRpcClient {
     deleteWorkflowAgent: typeof rpc.request.deleteWorkflowAgent;
     openWorkflowAgentSourceInEditor: typeof rpc.request.openWorkflowAgentSourceInEditor;
     setAgentProfileExtensionUsage: typeof rpc.request.setAgentProfileExtensionUsage;
-    updateAppPreferences: typeof rpc.request.updateAppPreferences;
+    stateAppPreferencesUpdate: typeof rpc.request.stateAppPreferencesUpdate;
     updateRequestUserInputSettings: typeof rpc.request.updateRequestUserInputSettings;
-    getProviderAuthState: typeof rpc.request.getProviderAuthState;
     getOpenWorkspaces: typeof rpc.request.getOpenWorkspaces;
     getWorkspaceInfo: typeof rpc.request.getWorkspaceInfo;
     getWorkspaceUiRestore: typeof rpc.request.getWorkspaceUiRestore;
     setWorkspaceUiRestore: typeof rpc.request.setWorkspaceUiRestore;
     listWorkspaceBranches: typeof rpc.request.listWorkspaceBranches;
     switchWorkspaceBranch: typeof rpc.request.switchWorkspaceBranch;
-    getAppLogs: typeof rpc.request.getAppLogs;
-    getAppLogSummary: typeof rpc.request.getAppLogSummary;
-    markAppLogsSeen: typeof rpc.request.markAppLogsSeen;
     writeClipboardText: typeof rpc.request.writeClipboardText;
     listWorkspacePaths: typeof rpc.request.listWorkspacePaths;
     pickWorkspaceAttachments: typeof rpc.request.pickWorkspaceAttachments;
@@ -695,7 +748,6 @@ export interface ChatRuntimeRpcClient {
     getCommandInspector: typeof rpc.request.getCommandInspector;
     writeCommandStdin: typeof rpc.request.writeCommandStdin;
     listHandlerThreads: typeof rpc.request.listHandlerThreads;
-    getWorkflowTaskAttemptInspector: typeof rpc.request.getWorkflowTaskAttemptInspector;
     getArtifactPreview: typeof rpc.request.getArtifactPreview;
     createSession: typeof rpc.request.createSession;
     openSession: typeof rpc.request.openSession;
@@ -746,7 +798,6 @@ export interface ChatRuntimeOptions {
   initialLayoutId?: WorkspaceLayoutSlotId;
   onActiveLayoutChange?: (layoutId: WorkspaceLayoutSlotId) => void;
   onWorkspaceLayoutPersist?: (state: AppWorkspaceUiRestoreState) => void;
-  onMissingProviderAccess?: (provider: string) => void;
 }
 
 export interface ChatRuntime {
@@ -853,8 +904,6 @@ export interface ChatRuntime {
     scroll: ChatPaneLayoutState["panels"][number]["localState"]["scroll"],
   ) => void;
   sendPromptToTarget: (target: PromptTarget, input: string) => Promise<void>;
-  syncProviderAuth: (providerId: string) => Promise<boolean>;
-  requireProviderAccess: (providerId: string) => Promise<boolean>;
   listOpenWorkspaces: () => Promise<WorkspaceInfoResponse[]>;
   listWorkspaceBranches: () => Promise<WorkspaceBranchInfo[]>;
   switchWorkspaceBranch: (branch: string) => Promise<void>;
@@ -1860,10 +1909,8 @@ export async function createChatRuntime(
   const refreshAgentModelChoices = async (): Promise<AgentModelChoicesResponse> =>
     setAppCache("agentModelChoices", await rpcClient.request.getAgentModelChoices(scoped()))!;
 
-  const refreshProviderAuths = async (): Promise<ProviderAuthInfo[]> => {
-    await rpcClient.request.fetchStateReadModel({ kind: "providerAuth" });
-    return setAppCache("providerAuths", await rpcClient.request.listProviderAuths())!;
-  };
+  const refreshProviderAuths = async (): Promise<ProviderAuthInfo[]> =>
+    setAppCache("providerAuths", await rpcClient.request.listProviderAuths())!;
 
   const refreshExtensionsInventory = async (): Promise<ExtensionsInventoryReadModel> =>
     setWorkspaceCache(
@@ -2049,7 +2096,13 @@ export async function createChatRuntime(
           );
           break;
         case "providerAuth":
-          void refreshProviderAuths().catch(() => undefined);
+          setAppCache(
+            "providerAuths",
+            providerAuthInfosFromStateReadModel(
+              result.value,
+              appReadModelCache.providerAuths ?? [],
+            ),
+          );
           break;
       }
     }
@@ -2310,27 +2363,6 @@ export async function createChatRuntime(
       : undefined;
   };
 
-  const syncProviderAuth = async (providerId: string): Promise<boolean> => {
-    const auth = await rpcClient.request.getProviderAuthState({ providerId });
-    if (auth.connected) {
-      await storage.providerKeys.set(providerId, auth.accountId || "oauth");
-      return true;
-    }
-
-    await storage.providerKeys.delete(providerId).catch((error) => {
-      console.warn(`Failed to clear cached provider auth for ${providerId}:`, error);
-    });
-    return false;
-  };
-
-  const requireProviderAccess = async (providerId: string): Promise<boolean> => {
-    const hasAccess = await syncProviderAuth(providerId);
-    if (!hasAccess) {
-      options.onMissingProviderAccess?.(providerId);
-    }
-    return hasAccess;
-  };
-
   const getCommandInspector = async (
     commandId: string,
     sessionId = getSelectedSessionId(),
@@ -2383,12 +2415,14 @@ export async function createChatRuntime(
       throw new Error("Expected a workspace session before inspecting a workflow task attempt.");
     }
 
-    const inspector = await rpcClient.request.getWorkflowTaskAttemptInspector(
-      scoped({
-        sessionId,
-        workflowTaskAttemptId,
+    const inspector = requireStateReadModel(
+      await rpcClient.request.fetchStateReadModel({
+        kind: "workflowTaskAttemptInspector",
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        workflowTaskAttemptId: workflowTaskAttemptId as WorkflowTaskAttemptId,
       }),
-    );
+      "workflowTaskAttemptInspector",
+    ).value;
     if (!inspector) {
       throw new Error(`Workflow task attempt not found: ${workflowTaskAttemptId}`);
     }
@@ -2504,11 +2538,17 @@ export async function createChatRuntime(
     return paneLayout.panels.find((pane) => !before.has(pane.panelId))?.panelId ?? nextPanelId;
   };
 
-  const [defaults, initialCatalog, initialAppLogSummary] = await Promise.all([
-    rpcClient.request.getDefaults(),
+  const [initialCatalog, initialAppLogSummaryResult] = await Promise.all([
     rpcClient.request.listSessions({ workspaceId: workspaceInfo.workspaceId }),
-    rpcClient.request.getAppLogSummary({ workspaceId: workspaceInfo.workspaceId }),
+    rpcClient.request.fetchStateReadModel({
+      kind: "appLogSummary",
+      workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+    }),
   ]);
+  const initialAppLogSummary = requireStateReadModel(
+    initialAppLogSummaryResult,
+    "appLogSummary",
+  ).value;
   sessions = initialCatalog.sessions;
   sessionNavigation = initialCatalog.navigation;
   requestUserInputRequests = initialCatalog.requestUserInputRequests;
@@ -2520,8 +2560,7 @@ export async function createChatRuntime(
     rendererAppLogSeenSeq,
   );
 
-  const syncProviderAuthPromise = syncProviderAuth(defaults.provider);
-  await syncProviderAuthPromise;
+  await refreshProviderAuths();
   refreshWarmReadModels();
 
   const restoreState = (await rpcClient.request
@@ -3186,9 +3225,22 @@ export async function createChatRuntime(
       if (throughSeq > backendAppLogSummary.seenSeq) {
         const backendThroughSeq = Math.min(throughSeq, backendAppLogSummary.latestSeq);
         if (backendThroughSeq > backendAppLogSummary.seenSeq) {
-          backendAppLogSummary = await rpcClient.request.markAppLogsSeen(
-            scoped({ throughSeq: backendThroughSeq }),
-          );
+          await rpcClient.request.stateAppLogsMarkRead({
+            workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+            entryIds: [`app-log-${backendThroughSeq}` as AppLogEntryId],
+            readAt: new Date().toISOString() as typeof IsoDateTimeStringSchema.Type,
+            clientSubmission: {
+              clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+              source: "desktop" as RuntimeClientSubmissionSource,
+            },
+          });
+          backendAppLogSummary = requireStateReadModel(
+            await rpcClient.request.fetchStateReadModel({
+              kind: "appLogSummary",
+              workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+            }),
+            "appLogSummary",
+          ).value;
         }
       }
       appLogSummary = summarizeRendererAppLogs(
@@ -3424,8 +3476,6 @@ export async function createChatRuntime(
       }
       await controller.sendPrompt({ text, attachments: [] });
     },
-    syncProviderAuth,
-    requireProviderAccess,
     listOpenWorkspaces: () => rpcClient.request.getOpenWorkspaces(),
     listWorkspaceBranches: async () => {
       const result = await rpcClient.request.listWorkspaceBranches(scoped());
@@ -3499,8 +3549,13 @@ export async function createChatRuntime(
     getExtensionsInventory: refreshExtensionsInventory,
     getAppPreferences: refreshAppPreferences,
     updateAppPreferences: async (preferences) => {
-      const state = await rpcClient.request.updateAppPreferences(preferences);
-      setAppCache("agentSettings", state);
+      await rpcClient.request.stateAppPreferencesUpdate({
+        patch: appPreferencesStateCommandPatch(preferences),
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
       const nextPreferences = await refreshAppPreferences();
       void refreshAgentModelChoices().catch(() => undefined);
       void refreshExtensionsInventory().catch(() => undefined);

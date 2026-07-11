@@ -6,9 +6,6 @@ import { IsoDateTimeStringSchema, normalizeDesktopBridgeErrorContract } from "@s
 import { createDesktopApp, type DesktopApp } from "@svvy/desktop";
 import type {
   AbortPromptInput,
-  AbsolutePath,
-  AppLogEntryId,
-  JsonValue,
   ProviderAuthHealth,
   ProviderAuthStatus,
   ProviderId,
@@ -35,7 +32,6 @@ import {
 } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import type {
-  AuthStateResponse,
   ChatRPCSchema,
   ComposerAttachment,
   ComposerMentionKind,
@@ -48,10 +44,8 @@ import type {
 } from "../shared/workspace-contract";
 import {
   DEFAULT_AGENT_SETTINGS,
-  DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
   DEFAULT_WORKFLOW_AGENT_SETTINGS,
-  type AppPreferences,
   type AgentDefaults,
   type WorkflowAgentSettings,
 } from "../shared/agent-settings";
@@ -116,12 +110,7 @@ import {
 } from "./svvyx-extensions-command";
 import { mapAppRuntimeLogSource } from "./app-runtime-log-source";
 import { createMacOsKeychainExtensionEnvSecretStore } from "./extension-env-secret-store";
-import type {
-  AppPreferencesReadModel,
-  ProviderAuthReadModel,
-  StateReadModelRequest,
-  StateReadModelResult,
-} from "@svvy/state";
+import type { ProviderAuthReadModel, StateReadModelRequest, StateReadModelResult } from "@svvy/state";
 
 const DEV_SERVER_PORT = 5173;
 
@@ -384,42 +373,6 @@ function getSessionDefaults(
     thinkingLevel: defaults.reasoningEffort,
     agentProfileId: agentSettings.id,
     agentProfileSettings: agentSettings,
-  };
-}
-
-function createAuthState(provider: string): AuthStateResponse {
-  const state = resolveAuthState(provider);
-  if (!state.connected) {
-    return {
-      connected: false,
-      message: getApiKeyMissingError(provider),
-      authHealth: "missing",
-    };
-  }
-
-  if (!state.usable) {
-    const authHealth =
-      state.keyType === "oauth" && state.refreshFailure
-        ? "oauth-refresh-failed"
-        : state.keyType === "oauth"
-          ? "oauth-expired"
-          : "missing";
-    return {
-      connected: false,
-      accountId: `${provider}-${state.keyType}`,
-      message: getProviderAuthUnavailableMessage(provider),
-      authHealth,
-      expiresAt: state.expiresAt ?? null,
-      authError: state.refreshFailure?.message,
-      authFailedAt: state.refreshFailure?.occurredAt ?? null,
-    };
-  }
-
-  return {
-    connected: true,
-    accountId: `${provider}-${state.keyType}`,
-    authHealth: "available",
-    expiresAt: state.expiresAt ?? null,
   };
 }
 
@@ -925,55 +878,6 @@ function requireStateReadModel<Kind extends StateReadModelResult["kind"]>(
   return result as Extract<StateReadModelResult, { kind: Kind }>;
 }
 
-function appPreferencesFromReadModel(
-  readModel: AppPreferencesReadModel,
-  fallback: AppPreferences = DEFAULT_AGENT_SETTINGS_STATE.appPreferences,
-): AppPreferences {
-  const externalEditor = readModel.externalEditor;
-  const knownEditors = new Set(["system", "code", "cursor", "zed", "sublime"]);
-  return {
-    ...fallback,
-    appAppearance: readModel.appearance,
-    preferredExternalEditor:
-      externalEditor && knownEditors.has(externalEditor)
-        ? (externalEditor as AppPreferences["preferredExternalEditor"])
-        : externalEditor
-          ? "custom"
-          : "system",
-    customExternalEditorCommand:
-      externalEditor && !knownEditors.has(externalEditor)
-        ? externalEditor
-        : fallback.customExternalEditorCommand,
-    artifactDirectory: readModel.artifactDirectory,
-    approvalMode: readModel.approvalMode,
-    networkAccess: readModel.networkAccess,
-    externalInstructions: readModel.externalInstructions,
-    ambientAgentResources:
-      typeof readModel.ambientResources === "object" &&
-      readModel.ambientResources !== null &&
-      !Array.isArray(readModel.ambientResources)
-        ? (readModel.ambientResources as unknown as AppPreferences["ambientAgentResources"])
-        : fallback.ambientAgentResources,
-  };
-}
-
-function appPreferencesPatch(preferences: AppPreferences) {
-  return {
-    appearance: preferences.appAppearance,
-    externalEditor:
-      preferences.preferredExternalEditor === "system"
-        ? null
-        : preferences.preferredExternalEditor === "custom"
-          ? preferences.customExternalEditorCommand || "custom"
-          : preferences.preferredExternalEditor,
-    artifactDirectory: preferences.artifactDirectory as AbsolutePath,
-    approvalMode: preferences.approvalMode,
-    networkAccess: preferences.networkAccess,
-    externalInstructions: preferences.externalInstructions,
-    ambientResources: preferences.ambientAgentResources as unknown as JsonValue,
-  };
-}
-
 function providerHealthFromInfo(info: ProviderAuthInfo): ProviderAuthHealth {
   switch (info.authHealth) {
     case "available":
@@ -1066,27 +970,15 @@ function buildDesktopRpcHandlers(
   facades: ElectrobunRendererApiInput,
   lifecycle: { readonly rendererReady: () => void },
 ): ElectrobunRpcHandlers {
-  const fetchDesktopStateReadModel = async (
+  const fetchDesktopStateReadModel = (
     request: StateReadModelRequest,
-  ): Promise<StateReadModelResult> => {
-    if (request.kind === "providerAuth") {
-      await syncProviderAuthStatusesWithState({
-        refreshOAuth: true,
-        source: "startup_scan",
-        stateCommands: facades.commands.state,
-      });
-    }
-    return facades.state.readModels.fetch(request);
-  };
+  ): Promise<StateReadModelResult> => facades.state.readModels.fetch(request);
 
   return normalizeDesktopBridgeHandlers<ElectrobunRpcHandlers>({
     requests: {
       rendererReady: async () => {
         lifecycle.rendererReady();
         return { ok: true };
-      },
-      getDefaults: async () => {
-        return getDefaultAgentSettings();
       },
       getAgentSettings: async (input) => {
         return getWorkspaceRuntime(input).agentSettingsStore.getState();
@@ -1486,16 +1378,6 @@ function buildDesktopRpcHandlers(
           includeUserExtensions: true,
         });
       },
-      getAppPreferences: async () => {
-        const result = requireStateReadModel(
-          await fetchDesktopStateReadModel({ kind: "appPreferences" }),
-          "appPreferences",
-        );
-        const fallback = (
-          await workspaceRuntimeRegistry.getDefaultWorkspace()
-        ).agentSettingsStore.getState().appPreferences;
-        return appPreferencesFromReadModel(result.value, fallback);
-      },
       fetchStateReadModel: fetchDesktopStateReadModel,
       refetchStateReadModels: async (request) =>
         Promise.all(
@@ -1504,6 +1386,28 @@ function buildDesktopRpcHandlers(
       refetchStateReadModelInvalidation: (request) =>
         facades.state.readModels.refetchInvalidation(request),
       rebaselineStateReadModels: (request) => facades.state.readModels.rebaseline(request),
+      stateAppLogsMarkRead: (request) => facades.commands.state.appLogs.markRead(request),
+      stateAppPreferencesUpdate: async (request) => {
+        const runtime = workspaceRuntimeRegistry.getActiveRuntimeOrNull();
+        runtime?.appLog.info("settings", "App preferences updated.", {
+          appearance: request.patch.appearance,
+          externalEditor: request.patch.externalEditor,
+        });
+        const result = await facades.commands.state.appPreferences.update(request);
+        await workspaceRuntimeRegistry.hydrateStateOwnedAppPreferencesFromStateRows();
+        await workspaceRuntimeRegistry.refreshExternalInstructionSourceInputs(
+          "app-preferences:external-instructions-updated",
+        );
+        const defaultRuntime = await workspaceRuntimeRegistry.getDefaultWorkspace();
+        for (const workspace of workspaceRuntimeRegistry.listOpenWorkspaces()) {
+          if (workspace.workspaceId === defaultRuntime.workspaceId) continue;
+          await workspaceRuntimeRegistry
+            .getRuntime(workspace.workspaceId)
+            .catalog.notifyAppPreferencesChanged();
+        }
+        await defaultRuntime.catalog.notifyAppPreferencesChanged();
+        return result;
+      },
       getGeneratedAgentContextExternalSources: async (input) => {
         return getWorkspaceRuntime(input).catalog.getGeneratedAgentContextExternalSources();
       },
@@ -1741,33 +1645,6 @@ function buildDesktopRpcHandlers(
         });
         return result.settings;
       },
-      updateAppPreferences: async (preferences) => {
-        const runtime = workspaceRuntimeRegistry.getActiveRuntimeOrNull();
-        runtime?.appLog.info("settings", "App preferences updated.", {
-          appAppearance: preferences.appAppearance,
-          preferredExternalEditor: preferences.preferredExternalEditor,
-        });
-        await facades.commands.state.appPreferences.update({
-          patch: appPreferencesPatch(preferences),
-          clientSubmission: rpcClientSubmission("app-preferences:update"),
-        });
-        const statePreferences =
-          await workspaceRuntimeRegistry.hydrateStateOwnedAppPreferencesFromStateRows();
-        const defaultRuntime = await workspaceRuntimeRegistry.getDefaultWorkspace();
-        for (const workspace of workspaceRuntimeRegistry.listOpenWorkspaces()) {
-          if (workspace.workspaceId === defaultRuntime.workspaceId) {
-            continue;
-          }
-          await workspaceRuntimeRegistry
-            .getRuntime(workspace.workspaceId)
-            .catalog.notifyAppPreferencesChanged();
-        }
-        await defaultRuntime.catalog.notifyAppPreferencesChanged();
-        return {
-          ...defaultRuntime.agentSettingsStore.getState(),
-          appPreferences: statePreferences,
-        };
-      },
       updateRequestUserInputSettings: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const settings = stripWorkspaceId(input);
@@ -1777,14 +1654,6 @@ function buildDesktopRpcHandlers(
           timeoutDurationMs: settings.blockingTimeout.durationMs,
         });
         return runtime.catalog.updateRequestUserInputSettings(settings);
-      },
-      getProviderAuthState: async ({
-        providerId,
-      }: {
-        providerId?: string;
-      }): Promise<AuthStateResponse> => {
-        const defaults = getDefaultAgentSettings();
-        return createAuthState(providerId || defaults.provider);
       },
       openWorkspace: async (input: OpenWorkspaceRequest = {}) => {
         const { cwd } = input;
@@ -1856,35 +1725,6 @@ function buildDesktopRpcHandlers(
       },
       switchWorkspaceBranch: (input) => {
         return switchWorkspaceBranch(getWorkspaceRuntime(input), input.branch);
-      },
-      getAppLogs: (query) => {
-        getWorkspaceRuntime(query);
-        return fetchDesktopStateReadModel({
-          kind: "appLogs",
-          workspaceId: query.workspaceId as WorkspaceId,
-          query: stripWorkspaceId(query),
-        }).then((result) => requireStateReadModel(result, "appLogs").value);
-      },
-      getAppLogSummary: (input) => {
-        getWorkspaceRuntime(input);
-        return fetchDesktopStateReadModel({
-          kind: "appLogSummary",
-          workspaceId: input.workspaceId as WorkspaceId,
-        }).then((result) => requireStateReadModel(result, "appLogSummary").value);
-      },
-      markAppLogsSeen: async ({ workspaceId, throughSeq }) => {
-        workspaceRuntimeRegistry.getRuntime(workspaceId);
-        await facades.commands.state.appLogs.markRead({
-          workspaceId: workspaceId as WorkspaceId,
-          entryIds: [`app-log-${throughSeq}` as AppLogEntryId],
-          readAt: nowIso(),
-          clientSubmission: rpcClientSubmission("app-logs:mark-seen"),
-        });
-        const result = await fetchDesktopStateReadModel({
-          kind: "appLogSummary",
-          workspaceId: workspaceId as WorkspaceId,
-        });
-        return requireStateReadModel(result, "appLogSummary").value;
       },
       writeClipboardText: ({ text }) => {
         Utils.clipboardWriteText(text);
@@ -2011,13 +1851,6 @@ function buildDesktopRpcHandlers(
       listHandlerThreads: async (input) => {
         return await getWorkspaceRuntime(input).catalog.listHandlerThreads({
           sessionId: input.sessionId,
-        });
-      },
-      getWorkflowTaskAttemptInspector: async (input) => {
-        const { sessionId, workflowTaskAttemptId } = input;
-        return await getWorkspaceRuntime(input).catalog.getWorkflowTaskAttemptInspector({
-          sessionId,
-          workflowTaskAttemptId,
         });
       },
       getArtifactPreview: async (input) => {

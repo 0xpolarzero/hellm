@@ -3,7 +3,6 @@ import type { PromptHistoryEntry } from "./prompt-history";
 
 const DB_NAME = "svvy-desktop-chat";
 const DB_VERSION = 7;
-const PROVIDER_KEYS_STORE = "provider-keys";
 const CUSTOM_PROVIDERS_STORE = "custom-providers";
 const PROMPT_HISTORY_STORE = "prompt-history";
 
@@ -36,9 +35,6 @@ class IndexedDbKeyValueStore {
         request.addEventListener("success", () => resolve(request.result), { once: true });
         request.addEventListener("upgradeneeded", () => {
           const db = request.result;
-          if (!db.objectStoreNames.contains(PROVIDER_KEYS_STORE)) {
-            db.createObjectStore(PROVIDER_KEYS_STORE);
-          }
           if (!db.objectStoreNames.contains(CUSTOM_PROVIDERS_STORE)) {
             db.createObjectStore(CUSTOM_PROVIDERS_STORE);
           }
@@ -98,30 +94,6 @@ class IndexedDbKeyValueStore {
   }
 }
 
-export class ProviderKeysStore {
-  constructor(private backend: IndexedDbKeyValueStore) {}
-
-  async get(provider: string): Promise<string | null> {
-    return this.backend.get<string>(PROVIDER_KEYS_STORE, provider);
-  }
-
-  async set(provider: string, key: string): Promise<void> {
-    await this.backend.set(PROVIDER_KEYS_STORE, provider, key);
-  }
-
-  async delete(provider: string): Promise<void> {
-    await this.backend.delete(PROVIDER_KEYS_STORE, provider);
-  }
-
-  async list(): Promise<string[]> {
-    return this.backend.keys(PROVIDER_KEYS_STORE);
-  }
-
-  async has(provider: string): Promise<boolean> {
-    return this.backend.has(PROVIDER_KEYS_STORE, provider);
-  }
-}
-
 export class CustomProvidersStore {
   constructor(private backend: IndexedDbKeyValueStore) {}
 
@@ -167,7 +139,6 @@ export class PromptHistoryStore {
 }
 
 export interface ChatStorage {
-  providerKeys: ProviderKeysStore;
   customProviders: CustomProvidersStore;
   promptHistory: PromptHistoryStore;
 }
@@ -175,7 +146,6 @@ export interface ChatStorage {
 export function createChatStorage(): ChatStorage {
   const backend = new IndexedDbKeyValueStore();
   return {
-    providerKeys: new ProviderKeysStore(backend),
     customProviders: new CustomProvidersStore(backend),
     promptHistory: new PromptHistoryStore(backend),
   };

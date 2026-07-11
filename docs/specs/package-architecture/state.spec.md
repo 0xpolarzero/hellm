@@ -625,7 +625,7 @@ type StateReadModelRequest =
     }
   | { kind: "agents"; profileId?: AgentProfileId }
   | { kind: "extensions"; extensionId?: ExtensionId }
-  | { kind: "snippets"; workspaceId?: WorkspaceId; snippetId?: SnippetId }
+  | { kind: "snippets"; workspaceId: WorkspaceId; snippetId?: SnippetId }
   | { kind: "workflowsGenerated"; buildId?: GeneratedPackageBuildId }
   | { kind: "handlerInspector"; workspaceId?: WorkspaceId; threadId: ThreadId }
   | {
@@ -1458,7 +1458,7 @@ type OrchestratorAgentProfileInput = {
 type ThreadHandlerProfileInput = Omit<OrchestratorAgentProfileInput, "followComposer">;
 
 type CreateManagedSnippetCommandInput = {
-  workspaceId?: WorkspaceId;
+  workspaceId: WorkspaceId;
   title: string;
   body: string;
   metadata: SnippetMetadata;
@@ -1474,17 +1474,20 @@ type UpdateManagedSnippetPatch = {
 };
 
 type UpdateManagedSnippetCommandInput = {
+  workspaceId: WorkspaceId;
   snippetId: SnippetId;
   patch: UpdateManagedSnippetPatch;
   clientSubmission?: StateCommandClientSubmission;
 };
 
 type DeleteManagedSnippetCommandInput = {
+  workspaceId: WorkspaceId;
   snippetId: SnippetId;
   clientSubmission?: StateCommandClientSubmission;
 };
 
 type SetSnippetEnabledCommandInput = {
+  workspaceId: WorkspaceId;
   snippetId: SnippetId;
   enabled: boolean;
   clientSubmission?: StateCommandClientSubmission;
@@ -1532,7 +1535,7 @@ receives only commit-scoped facts that cannot be fetched before the write, such 
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `workspaceChrome` | Persist app-global workspace tab order, active tab, known workspace tab records, selected slot.                                                                                                                                                                                                                                                                                            | `@svvy/state` workspace chrome tables                             | Acquiring a workspace runtime, opening a repository picker, closing a runtime, pi session lifecycle, file watching.        |
 | `workspaceLayout` | Persist slot-scoped Dockview snapshot, svvy panel metadata, pane binding, focused pane.                                                                                                                                                                                                                                                                                                    | `@svvy/state` workspace layout tables                             | Rendering Dockview, owning Svelte pane state, creating prompt turns, mutating pi sessions.                                 |
-| `appPreferences`  | Persist appearance, external editor, preferred artifact directory, approval mode, network access, exact schema-backed external-instruction roots/actor controls, and ambient resource settings. App/bootstrap may read the file-backed agent-settings preferences only as a bootstrap seed when no state app-preference row exists; once a state row exists, `@svvy/state` settings rows are authoritative for these fields and the file store is not written as a compatibility mirror. App/bootstrap resolves the preferred artifact directory into `StateLayerConfig.artifactRoot` before acquiring `@svvy/state`; changing the persisted preference affects artifact file effects only after app/bootstrap reacquires the app runtime/state graph. | `@svvy/state` settings tables                                     | Provider OAuth flows, secret entry UI, sandbox launch execution, prompt rebuilding.                                        |
+| `appPreferences`  | Persist appearance, external editor, preferred artifact directory, approval mode, network access, exact schema-backed external-instruction roots/actor controls, and ambient resource settings. External-instruction settings are canonicalized through the public `@svvy/core` contract before commit, so state read models and runtime consumers observe the same builtin roots, trimmed identities/paths, and deterministic actor order. App/bootstrap may read the file-backed agent-settings preferences only as a bootstrap seed when no state app-preference row exists; once a state row exists, `@svvy/state` settings rows are authoritative for these fields and the file store is not written as a compatibility mirror. App/bootstrap resolves the preferred artifact directory into `StateLayerConfig.artifactRoot` before acquiring `@svvy/state`; changing the persisted preference affects artifact file effects only after app/bootstrap reacquires the app runtime/state graph. | `@svvy/state` settings tables                                     | Provider OAuth flows, secret entry UI, sandbox launch execution, prompt rebuilding.                                        |
 | `providerAuth`    | Persist provider credential presence, provider auth status rows, and OAuth result/status facts through state-owned provider auth status rows and secret references coordinated with host/live `SecretStorePort`.                                                                                                                                                                           | `@svvy/state` provider auth tables and secret references          | Live OAuth browser/device flow, model probing, pi provider calls, returning raw secrets.                                   |
 | `extensionEnv`    | Persist app-global non-secret extension env overrides, secret references, and env status facts used by readiness and invocation env resolution.                                                                                                                                                                                                                                            | `@svvy/state` extension env tables and secret references          | Running extension commands, exposing raw secrets, editing extension source manifests, generated package refresh execution. |
 | `agentProfiles`   | Persist orchestrator profile rows, singleton handler profile, orchestrator/handler extension usage, DB-backed external-instruction actor usage/order, and workflow-task actor defaults for newly created workflow task-agent attempts that are not tied to one `.agent.json` source file.                                                                                                  | `@svvy/state` agent/profile and external-instruction usage tables | Workflow-agent `.agent.json` row edits, extension source edits, generated actor-context rendering.                         |
@@ -3461,6 +3464,7 @@ and test edges may consume runtime facade subscriptions directly. All consumers 
 state using ordinary `StateReadModelRequest` values when a committed invalidation arrives.
 
 type CommandInspectorReadModelInput = {
+workspaceId: WorkspaceId;
 commandId: CommandId;
 };
 

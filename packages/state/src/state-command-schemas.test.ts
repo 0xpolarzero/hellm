@@ -3,11 +3,19 @@ import * as Exit from "effect/Exit";
 
 import {
   decodeUnknownMarkAppLogReadCommandInputExit,
+  decodeUnknownCreateManagedSnippetCommandInputExit,
+  decodeUnknownDeleteManagedSnippetCommandInputExit,
   decodeUnknownRecordProviderAuthStatusCommandInputExit,
+  decodeUnknownSetSnippetEnabledCommandInputExit,
   decodeUnknownUpdateAppPreferencesCommandInputExit,
+  decodeUnknownUpdateManagedSnippetCommandInputExit,
+  encodeCreateManagedSnippetCommandInputExit,
+  encodeDeleteManagedSnippetCommandInputExit,
   encodeMarkAppLogReadCommandInputExit,
   encodeRecordProviderAuthStatusCommandInputExit,
+  encodeSetSnippetEnabledCommandInputExit,
   encodeUpdateAppPreferencesCommandInputExit,
+  encodeUpdateManagedSnippetCommandInputExit,
 } from "./state-command-schemas";
 
 describe("@svvy/state command schemas", () => {
@@ -138,5 +146,79 @@ describe("@svvy/state command schemas", () => {
     if (Exit.isSuccess(decoded)) {
       expect(encodeRecordProviderAuthStatusCommandInputExit(decoded.value)).toEqual(decoded);
     }
+  });
+
+  it("requires explicit workspace routing on every managed-snippet command", () => {
+    const create = decodeUnknownCreateManagedSnippetCommandInputExit({
+      workspaceId: "workspace_snippets",
+      title: "Review",
+      body: "Review this file.",
+      metadata: {},
+      enabled: true,
+    });
+    expect(Exit.isSuccess(create)).toBe(true);
+    if (Exit.isSuccess(create)) {
+      expect(encodeCreateManagedSnippetCommandInputExit(create.value)).toEqual(create);
+    }
+    expect(
+      Exit.isFailure(
+        decodeUnknownCreateManagedSnippetCommandInputExit({
+          title: "Review",
+          body: "Review this file.",
+          metadata: {},
+          enabled: true,
+        }),
+      ),
+    ).toBe(true);
+
+    const update = decodeUnknownUpdateManagedSnippetCommandInputExit({
+      workspaceId: "workspace_snippets",
+      snippetId: "snippet_01",
+      patch: { body: "Review this change." },
+    });
+    expect(Exit.isSuccess(update)).toBe(true);
+    if (Exit.isSuccess(update)) {
+      expect(encodeUpdateManagedSnippetCommandInputExit(update.value)).toEqual(update);
+    }
+    expect(
+      Exit.isFailure(
+        decodeUnknownUpdateManagedSnippetCommandInputExit({
+          snippetId: "snippet_01",
+          patch: { body: "Review this change." },
+        }),
+      ),
+    ).toBe(true);
+
+    const remove = decodeUnknownDeleteManagedSnippetCommandInputExit({
+      workspaceId: "workspace_snippets",
+      snippetId: "snippet_01",
+    });
+    expect(Exit.isSuccess(remove)).toBe(true);
+    if (Exit.isSuccess(remove)) {
+      expect(encodeDeleteManagedSnippetCommandInputExit(remove.value)).toEqual(remove);
+    }
+    expect(
+      Exit.isFailure(
+        decodeUnknownDeleteManagedSnippetCommandInputExit({ snippetId: "snippet_01" }),
+      ),
+    ).toBe(true);
+
+    const setEnabled = decodeUnknownSetSnippetEnabledCommandInputExit({
+      workspaceId: "workspace_snippets",
+      snippetId: "snippet_01",
+      enabled: false,
+    });
+    expect(Exit.isSuccess(setEnabled)).toBe(true);
+    if (Exit.isSuccess(setEnabled)) {
+      expect(encodeSetSnippetEnabledCommandInputExit(setEnabled.value)).toEqual(setEnabled);
+    }
+    expect(
+      Exit.isFailure(
+        decodeUnknownSetSnippetEnabledCommandInputExit({
+          snippetId: "snippet_01",
+          enabled: false,
+        }),
+      ),
+    ).toBe(true);
   });
 });

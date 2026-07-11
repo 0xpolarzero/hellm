@@ -10035,7 +10035,10 @@ describe("package boundaries", () => {
       "@svvy/sandbox",
       "@svvy/pi-adapter",
     ];
-    const allowedSharedPackageSubpaths = new Set(["@svvy/state/session-navigation"]);
+    const allowedSharedPackageSubpaths = new Set([
+      "@svvy/state",
+      "@svvy/state/session-navigation",
+    ]);
     const violations = listTypeScriptFiles(sharedSourceRoot).flatMap((file) =>
       isTestFile(file)
         ? []
@@ -10054,6 +10057,26 @@ describe("package boundaries", () => {
     );
 
     expect(violations).toEqual([]);
+
+    const sharedStateRootConsumers = listTypeScriptFiles(sharedSourceRoot)
+      .filter((file) => !isTestFile(file) && readImports(file).includes("@svvy/state"))
+      .map(display);
+    expect(sharedStateRootConsumers).toEqual(["src/shared/workspace-contract.ts"]);
+    expect(
+      readStaticTypeOnlyImportViolations(
+        join(sharedSourceRoot, "workspace-contract.ts"),
+        new Set(["@svvy/state"]),
+      ),
+    ).toEqual([]);
+    expect(
+      readNamedImportNames(join(sharedSourceRoot, "workspace-contract.ts"), "@svvy/state").toSorted(),
+    ).toEqual(
+      [
+        "MarkAppLogReadCommandInput",
+        "StateCommandResult",
+        "UpdateAppPreferencesCommandInput",
+      ].toSorted(),
+    );
   });
 
   it("package manifests declare only the allowed runtime dependencies and no package-local dev dependencies", () => {

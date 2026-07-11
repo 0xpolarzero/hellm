@@ -104,7 +104,6 @@
   type Props = {
     runtime: ChatRuntime;
     shortcutsEnabled?: boolean;
-    onProviderAuthChanged?: (providerId: string) => void | Promise<void>;
     onAppAppearanceChanged?: (appearance: AppAppearance) => void;
     workspaceTabs?: WorkspaceTabStripItem[];
     activeWorkspaceTabId?: string | null;
@@ -122,7 +121,6 @@
   let {
     runtime,
     shortcutsEnabled = true,
-    onProviderAuthChanged,
     onAppAppearanceChanged,
     workspaceTabs = [],
     activeWorkspaceTabId = null,
@@ -1017,25 +1015,6 @@
         syncSurfaceState();
       }
 
-      const hasProviderAccess = await runtime.requireProviderAccess(surface.agent.state.model.provider);
-      if (!hasProviderAccess) {
-        const text = input.text.trim();
-        if (text) {
-          try {
-            const entry = await runtime.storage.promptHistory.append({
-              text,
-              sentAt: Date.now(),
-              workspaceId: runtime.workspaceId,
-              sessionId: surface.target.workspaceSessionId,
-            });
-            promptHistory = [...promptHistory, entry];
-          } catch (error) {
-            console.error("Failed to persist prompt history:", error);
-          }
-        }
-        return false;
-      }
-
       await surface.sendPrompt(input, panelId);
       promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
       return true;
@@ -1649,7 +1628,6 @@
         onFocusPanel={(panelId) => void handleFocusPane(panelId)}
         onOpenModelPicker={(panelId) => void handleOpenPaneModelPicker(panelId)}
         onAgentSettingsChanged={(settings) => (agentSettings = settings)}
-        {onProviderAuthChanged}
         {onAppAppearanceChanged}
         onOpenWorkspace={() => onOpenWorkspace?.()}
         onOpenWorkspaceInNewTab={() => onOpenWorkspaceInNewTab?.()}

@@ -14,6 +14,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  normalizeExternalInstructionsSettings,
+  type ExternalInstructionsSettings,
+} from "@svvy/core";
+import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
@@ -144,41 +148,7 @@ describe("structured session state SQLite persistence", () => {
 
   it("persists exact external-instruction app preferences across restart", () => {
     const first = createSqliteStore();
-    first.store.updateAppPreferences({
-      externalInstructions: {
-        globalRoots: [
-          {
-            id: "custom-docs",
-            kind: "custom",
-            label: "Custom docs",
-            path: "/tmp/custom-docs",
-            enabled: true,
-          },
-        ],
-        globalControls: {
-          "custom-docs/AGENTS.md": {
-            enabled: true,
-            actors: ["orchestrator", "handler"],
-          },
-        },
-        workspaceControls: {
-          workspace_01: {
-            "workspace/CLAUDE.md": {
-              enabled: false,
-              actors: ["workflow-task"],
-            },
-          },
-        },
-      },
-    });
-    closeTrackedStore(first.store);
-
-    const second = createSqliteStore({
-      databasePath: first.databasePath,
-      nowStart: "2026-04-18T12:05:00.000Z",
-    });
-
-    expect(second.store.readAppPreferences().externalInstructions).toEqual({
+    const externalInstructions: ExternalInstructionsSettings = {
       globalRoots: [
         {
           id: "custom-docs",
@@ -202,7 +172,20 @@ describe("structured session state SQLite persistence", () => {
           },
         },
       },
+    };
+    first.store.updateAppPreferences({
+      externalInstructions,
     });
+    closeTrackedStore(first.store);
+
+    const second = createSqliteStore({
+      databasePath: first.databasePath,
+      nowStart: "2026-04-18T12:05:00.000Z",
+    });
+
+    expect(second.store.readAppPreferences().externalInstructions).toEqual(
+      normalizeExternalInstructionsSettings(externalInstructions),
+    );
   });
 
   it("persists session navigation metadata and sidebar collapse state across restart", () => {

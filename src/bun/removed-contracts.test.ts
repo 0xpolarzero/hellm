@@ -11,6 +11,12 @@ describe("retired desktop integration RPC paths", () => {
     const sharedContractSource = await Bun.file(
       `${import.meta.dir}/../shared/workspace-contract.ts`,
     ).text();
+    const chatStorageSource = await Bun.file(
+      `${import.meta.dir}/../mainview/chat-storage.ts`,
+    ).text();
+    const chatWorkspaceSource = await Bun.file(
+      `${import.meta.dir}/../mainview/ChatWorkspace.svelte`,
+    ).text();
     const sessionCatalogSource = await Bun.file(`${import.meta.dir}/session-catalog.ts`).text();
     const directToolsSource = await Bun.file(`${import.meta.dir}/svvy-direct-tools.ts`).text();
 
@@ -19,11 +25,23 @@ describe("retired desktop integration RPC paths", () => {
     expect(indexSource).not.toContain("appLogs.query(stripWorkspaceId(query))");
     expect(indexSource).toContain("facades.commands.state.appPreferences.update");
     expect(indexSource).toContain("stateCommands.providerAuth.recordStatus");
-    expect(indexSource).toContain("facades.commands.state.appLogs.markRead");
+    expect(indexSource).toContain("facades.commands.state.appLogs.markRead(request)");
 
     expect(chatRuntimeSource).toContain("rpcClient.request.fetchStateReadModel");
     expect(chatRuntimeSource).not.toContain("rpcClient.request.getAppLogs(scoped");
     expect(chatRuntimeSource).not.toContain("rpcClient.request.getAppLogSummary(scoped");
+    expect(chatRuntimeSource).not.toContain("rpcClient.request.markAppLogsSeen");
+    expect(sharedContractSource).not.toContain("getAppLogs: {");
+    expect(sharedContractSource).not.toContain("getAppLogSummary: {");
+    expect(sharedContractSource).not.toContain("markAppLogsSeen: {");
+    expect(sharedContractSource).not.toContain("getAppPreferences: {");
+    expect(sharedContractSource).not.toContain("updateAppPreferences: {");
+    expect(sharedContractSource).not.toContain("getProviderAuthState: {");
+    expect(chatRuntimeSource).not.toContain("rpcClient.request.getProviderAuthState");
+    expect(chatRuntimeSource).not.toContain("requireProviderAccess");
+    expect(chatStorageSource).not.toContain("ProviderKeysStore");
+    expect(chatStorageSource).not.toContain("provider-keys");
+    expect(chatWorkspaceSource).not.toContain("requireProviderAccess");
     expect(chatRuntimeSource).not.toContain(
       'setAppCache("appPreferences", await rpcClient.request.getAppPreferences())',
     );
@@ -92,7 +110,6 @@ describe("retired desktop integration RPC paths", () => {
       { channel: "openSnippetExternalSourceInEditor", retirementIncrement: "Increment 10" },
       { channel: "listSessions", retirementIncrement: "Increment 8" },
       { channel: "getCommandInspector", retirementIncrement: "Increment 8" },
-      { channel: "getWorkflowTaskAttemptInspector", retirementIncrement: "Increment 8" },
     ] as const;
 
     expect(

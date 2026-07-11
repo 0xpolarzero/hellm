@@ -2121,6 +2121,14 @@ describe("WorkspaceRuntimeRegistry", () => {
       },
     });
     await registry.hydrateStateOwnedAppPreferencesFromStateRows();
+    const statePreferences = await (
+      await registry.getRendererStateFacade()
+    ).readModels.fetch({
+      kind: "appPreferences",
+    });
+    if (statePreferences.kind !== "appPreferences") {
+      throw new Error("Expected appPreferences read model.");
+    }
 
     expect(registry.getRuntime(runtime.workspaceId)).toBe(runtime);
     expect(runtime.agentSettingsStore.getState().appPreferences.approvalMode).toBe("user");
@@ -2145,6 +2153,27 @@ describe("WorkspaceRuntimeRegistry", () => {
         workspaceControls: {},
       },
     );
+    expect(runtime.agentSettingsStore.getState().appPreferences.externalInstructions).toEqual(
+      statePreferences.value.externalInstructions,
+    );
+  });
+
+  it("refreshes external-instruction watcher inputs for every open workspace", async () => {
+    const cwd = tempWorkspace("external-instruction-watcher-refresh");
+    const registry = createRegistry(cwd);
+    const workspace = await registry.acquireWorkspace(cwd);
+    const runtime = registry["runtimes"].get(workspace.workspaceId);
+    if (!runtime) throw new Error("Expected the workspace runtime to exist.");
+    const reasons: Array<string | undefined> = [];
+    runtime.sourceInvalidationCoordinator.refreshWatchedInputs = async (reason) => {
+      reasons.push(reason);
+    };
+
+    await registry.refreshExternalInstructionSourceInputs(
+      "app-preferences:external-instructions-updated",
+    );
+
+    expect(reasons).toEqual(["app-preferences:external-instructions-updated"]);
   });
 
   it("hydrates authoritative security preferences before a new workspace becomes ready", async () => {

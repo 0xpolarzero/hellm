@@ -16,6 +16,7 @@ import {
   type ComposerAttachment,
   type AppWorkspaceUiRestoreState,
   type AppLogEntry,
+  type AppLogQuery,
   type AppLogReadModel,
   type AppLogSummary,
   type AppLogUpdateMessage,
@@ -47,9 +48,11 @@ import type { WorkspaceDockviewLayoutState, WorkspaceLayoutSlotId } from "./pane
 import {
   DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
+  type AppPreferences,
 } from "../shared/agent-settings";
 import type {
   ExtensionUsageState,
+  IsoDateTimeStringSchema,
   JsonValue,
   ProviderId,
   QueueItemId,
@@ -128,6 +131,8 @@ type FakeRpcHarness = {
   cancelRequests: PromptTarget[];
   requestCounts: {
     listSessions: number;
+    listProviderAuths: number;
+    fetchProviderAuth: number;
     rebaselineStateReadModels: number;
     rendererReady: number;
   };
@@ -142,7 +147,7 @@ type FakeRpcHarness = {
   commandStdinRequests: Array<WorkspaceScoped<WriteCommandStdinRequest>>;
   handlerThreadListRequests: string[];
   workflowTaskAttemptInspectorRequests: Array<{
-    sessionId: string;
+    workspaceId: string;
     workflowTaskAttemptId: string;
   }>;
   requestUserInputAnswerRequests: Array<WorkspaceScoped<RequestUserInputAnswerRequest>>;
@@ -630,22 +635,10 @@ function createRequestUserInputRequest(
 }
 
 function createMemoryStorage(): ChatStorage {
-  const providerKeys = new Map<string, string>();
   const customProviders = new Map<string, CustomProvider>();
   const promptHistory = new Map<string, PromptHistoryEntry[]>();
 
   return {
-    providerKeys: {
-      get: async (provider: string) => providerKeys.get(provider) ?? null,
-      set: async (provider: string, key: string) => {
-        providerKeys.set(provider, key);
-      },
-      delete: async (provider: string) => {
-        providerKeys.delete(provider);
-      },
-      list: async () => Array.from(providerKeys.keys()),
-      has: async (provider: string) => providerKeys.has(provider),
-    },
     customProviders: {
       get: async (id: string) => customProviders.get(id) ?? null,
       set: async (provider: CustomProvider) => {
@@ -732,7 +725,7 @@ function createFakeRpc(input: {
   const commandStdinRequests: Array<WorkspaceScoped<WriteCommandStdinRequest>> = [];
   const handlerThreadListRequests: string[] = [];
   const workflowTaskAttemptInspectorRequests: Array<{
-    sessionId: string;
+    workspaceId: string;
     workflowTaskAttemptId: string;
   }> = [];
   const requestUserInputRequests = structuredClone(input.requestUserInputRequests ?? []);
@@ -752,6 +745,9 @@ function createFakeRpc(input: {
   let appLogEntries: AppLogEntry[] = [];
   let appLogSeenSeq = 0;
   let appGlobalLogs = emptyAppLogReadModel();
+  let persistedAppPreferences: AppPreferences = structuredClone(
+    DEFAULT_AGENT_SETTINGS_STATE.appPreferences,
+  );
   let desktopNotificationSequence = 0;
   let rebaselineResult: StateReadModelBaseline = {
     app: [],
@@ -760,6 +756,8 @@ function createFakeRpc(input: {
   };
   const requestCounts = {
     listSessions: 0,
+    listProviderAuths: 0,
+    fetchProviderAuth: 0,
     rebaselineStateReadModels: 0,
     rendererReady: 0,
   };
@@ -869,6 +867,16 @@ function createFakeRpc(input: {
     };
   };
 
+  const queryAppLogs = (query?: AppLogQuery): AppLogReadModel => {
+    const entries = appLogEntries.filter((entry) => {
+      if (query?.afterSeq !== undefined && entry.seq <= query.afterSeq) return false;
+      if (query?.levels?.length && !query.levels.includes(entry.level)) return false;
+      if (query?.sources?.length && !query.sources.includes(entry.source)) return false;
+      return true;
+    });
+    return { entries: structuredClone(entries), summary: summarizeAppLogs() };
+  };
+
   const emitAppLogUpdate = (payload: AppLogUpdateMessage): void => {
     const known = new Set(appLogEntries.map((entry) => entry.id));
     appLogEntries = [
@@ -925,11 +933,6 @@ function createFakeRpc(input: {
           requestCounts.rendererReady += 1;
           return { ok: true as const };
         },
-        getDefaults: async () => ({
-          provider: "openai",
-          model: "gpt-4o",
-          reasoningEffort: "medium",
-        }),
         getAgentSettings: async () => ({
           ...structuredClone(DEFAULT_AGENT_SETTINGS_STATE),
           agents: {
@@ -982,20 +985,7 @@ function createFakeRpc(input: {
               extensionUsage: {},
             },
           },
-          appPreferences: {
-            appAppearance: "system",
-            preferredExternalEditor: "system",
-            customExternalEditorCommand: "",
-            artifactDirectory: "~/.config/svvy/artifacts",
-            approvalMode: "auto-review",
-            networkAccess: true,
-            externalInstructions: structuredClone(
-              DEFAULT_AGENT_SETTINGS_STATE.appPreferences.externalInstructions,
-            ),
-            ambientAgentResources: structuredClone(
-              DEFAULT_AGENT_SETTINGS_STATE.appPreferences.ambientAgentResources,
-            ),
-          },
+          appPreferences: structuredClone(persistedAppPreferences),
         }),
         getAgentContextPreview: async () => ({
           actor: "orchestrator",
@@ -1031,13 +1021,6 @@ function createFakeRpc(input: {
           reversibleChanges: [],
           snapshots: [],
         }),
-        getAppPreferences: async () => {
-          return (
-            await harness.client.request.getAgentSettings({
-              workspaceId: TEST_WORKSPACE_INFO.workspaceId,
-            })
-          ).appPreferences;
-        },
         fetchStateReadModel: async (request) => {
           switch (request.kind) {
             case "appPreferences": {
@@ -1080,22 +1063,18 @@ function createFakeRpc(input: {
               return {
                 kind: "appLogs",
                 value: request.workspaceId
-                  ? await harness.client.request.getAppLogs({
-                      workspaceId: request.workspaceId,
-                      ...request.query,
-                    })
+                  ? queryAppLogs(request.query)
                   : structuredClone(appGlobalLogs),
               };
             case "appLogSummary":
               return {
                 kind: "appLogSummary",
                 value: request.workspaceId
-                  ? await harness.client.request.getAppLogSummary({
-                      workspaceId: request.workspaceId,
-                    })
+                  ? summarizeAppLogs()
                   : structuredClone(appGlobalLogs.summary),
               };
             case "providerAuth":
+              requestCounts.fetchProviderAuth += 1;
               return {
                 kind: "providerAuth",
                 value: {
@@ -1107,6 +1086,15 @@ function createFakeRpc(input: {
                   ],
                   usableModelProviders: ["openai" as ProviderId],
                 },
+              };
+            case "workflowTaskAttemptInspector":
+              workflowTaskAttemptInspectorRequests.push({
+                workspaceId: request.workspaceId ?? "",
+                workflowTaskAttemptId: request.workflowTaskAttemptId,
+              });
+              return {
+                kind: "workflowTaskAttemptInspector",
+                value: structuredClone(input.workflowTaskAttemptInspector ?? null),
               };
             default:
               throw new Error(`Unsupported state read model in harness: ${request.kind}`);
@@ -1341,12 +1329,53 @@ function createFakeRpc(input: {
           }
           return next;
         },
-        updateAppPreferences: async (preferences) => {
+        stateAppPreferencesUpdate: async (request) => {
+          const externalEditor = request.patch.externalEditor;
+          persistedAppPreferences = {
+            ...persistedAppPreferences,
+            ...(request.patch.appearance !== undefined
+              ? { appAppearance: request.patch.appearance }
+              : {}),
+            ...(externalEditor !== undefined
+              ? externalEditor === null
+                ? { preferredExternalEditor: "system" as const }
+                : ["code", "cursor", "zed", "sublime"].includes(externalEditor)
+                  ? {
+                      preferredExternalEditor:
+                        externalEditor as typeof persistedAppPreferences.preferredExternalEditor,
+                    }
+                  : {
+                      preferredExternalEditor: "custom" as const,
+                      customExternalEditorCommand: externalEditor,
+                    }
+              : {}),
+            ...(request.patch.artifactDirectory !== undefined
+              ? { artifactDirectory: request.patch.artifactDirectory }
+              : {}),
+            ...(request.patch.approvalMode !== undefined
+              ? { approvalMode: request.patch.approvalMode }
+              : {}),
+            ...(request.patch.networkAccess !== undefined
+              ? { networkAccess: request.patch.networkAccess }
+              : {}),
+            ...(request.patch.externalInstructions !== undefined
+              ? { externalInstructions: structuredClone(request.patch.externalInstructions) }
+              : {}),
+            ...(request.patch.ambientResources !== undefined
+              ? {
+                  ambientAgentResources: structuredClone(
+                    request.patch.ambientResources,
+                  ) as unknown as typeof persistedAppPreferences.ambientAgentResources,
+                }
+              : {}),
+          };
           return {
-            ...(await harness.client.request.getAgentSettings({
-              workspaceId: TEST_WORKSPACE_INFO.workspaceId,
-            })),
-            appPreferences: preferences,
+            receipt: {
+              clientRequestId: request.clientSubmission?.clientRequestId ?? null,
+              outcome: "applied",
+              committedAt: new Date(0).toISOString() as typeof IsoDateTimeStringSchema.Type,
+              stateRevision: 1 as StateRevision,
+            },
           };
         },
         updateRequestUserInputSettings: async ({ workspaceId, ...settings }) => {
@@ -1355,7 +1384,6 @@ function createFakeRpc(input: {
             requestUserInput: settings,
           };
         },
-        getProviderAuthState: async () => ({ connected: true, accountId: "openai-oauth" }),
         getWorkspaceInfo: async () => structuredClone(workspaceInfo),
         getWorkspaceUiRestore: async ({ workspaceId }) =>
           structuredClone(workspaceUiRestore.get(workspaceId) ?? null),
@@ -1385,26 +1413,21 @@ function createFakeRpc(input: {
           workspaceInfo = { ...workspaceInfo, branch };
           return { ok: true, workspace: structuredClone(workspaceInfo) };
         },
-        getAppLogs: async (query) => {
-          const scopedQuery = query ?? {
-            workspaceId: TEST_WORKSPACE_INFO.workspaceId,
-          };
-          const entries = appLogEntries.filter((entry) => {
-            if (scopedQuery.afterSeq !== undefined && entry.seq <= scopedQuery.afterSeq)
-              return false;
-            if (scopedQuery.levels?.length && !scopedQuery.levels.includes(entry.level))
-              return false;
-            if (scopedQuery.sources?.length && !scopedQuery.sources.includes(entry.source))
-              return false;
-            return true;
-          });
-          return { entries: structuredClone(entries), summary: summarizeAppLogs() };
-        },
-        getAppLogSummary: async () => summarizeAppLogs(),
-        markAppLogsSeen: async ({ throughSeq }) => {
+        stateAppLogsMarkRead: async (request) => {
+          const throughSeq = request.entryIds.reduce((highest, entryId) => {
+            const match = /^app-log-(\d+)$/.exec(entryId);
+            return Math.max(highest, match ? Number(match[1]) : 0);
+          }, 0);
           appLogSeenRequests.push(throughSeq);
           appLogSeenSeq = Math.max(appLogSeenSeq, throughSeq);
-          return summarizeAppLogs();
+          return {
+            receipt: {
+              clientRequestId: request.clientSubmission.clientRequestId ?? null,
+              outcome: "applied",
+              committedAt: request.readAt,
+              stateRevision: 1 as StateRevision,
+            },
+          };
         },
         writeClipboardText: async () => ({ ok: true }),
         listWorkspacePaths: async () => [
@@ -1513,16 +1536,6 @@ function createFakeRpc(input: {
           handlerThreadListRequests.push(sessionId);
           return structuredClone(
             input.handlerThreads ?? [createHandlerThreadSummary(`thread-for-${sessionId}`)],
-          );
-        },
-        getWorkflowTaskAttemptInspector: async ({ sessionId, workflowTaskAttemptId }) => {
-          workflowTaskAttemptInspectorRequests.push({
-            sessionId,
-            workflowTaskAttemptId,
-          });
-          return structuredClone(
-            input.workflowTaskAttemptInspector ??
-              createWorkflowTaskAttemptInspector(workflowTaskAttemptId),
           );
         },
         getArtifactPreview: async ({ sessionId, artifactId }) => ({
@@ -2230,16 +2243,19 @@ function createFakeRpc(input: {
           });
           return { ok: true };
         },
-        listProviderAuths: async () => [
-          {
-            provider: "openai",
-            hasKey: true,
-            keyType: "oauth",
-            supportsOAuth: true,
-            authHealth: "available",
-            expiresAt: null,
-          },
-        ],
+        listProviderAuths: async () => {
+          requestCounts.listProviderAuths += 1;
+          return [
+            {
+              provider: "openai",
+              hasKey: true,
+              keyType: "oauth",
+              supportsOAuth: true,
+              authHealth: "available",
+              expiresAt: null,
+            },
+          ];
+        },
         setProviderApiKey: async () => ({ ok: true }),
         startOAuth: async () => ({ ok: true }),
         removeProviderAuth: async () => ({ ok: true }),
@@ -4197,7 +4213,10 @@ describe("createChatRuntime", () => {
     ]);
     expect(harness.handlerThreadListRequests).toEqual(["session-2"]);
     expect(harness.workflowTaskAttemptInspectorRequests).toEqual([
-      { sessionId: "session-2", workflowTaskAttemptId: "workflow-task-attempt-77" },
+      {
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+        workflowTaskAttemptId: "workflow-task-attempt-77",
+      },
     ]);
 
     runtime.dispose();
@@ -5655,6 +5674,33 @@ describe("createChatRuntime", () => {
       },
     });
 
+    runtime.dispose();
+  });
+
+  it("applies provider-auth invalidations without triggering another status-sync read", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    const runtime = await createRuntime(harness);
+    await waitFor(() => harness.requestCounts.listProviderAuths >= 2);
+    const listingsBeforeInvalidation = harness.requestCounts.listProviderAuths;
+
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 1 as never,
+      scope: { kind: "app" },
+      invalidation: { scope: "app", invalidation: { model: "providerAuth" } },
+    });
+
+    await waitFor(() => harness.requestCounts.fetchProviderAuth === 1);
+    expect(harness.requestCounts.listProviderAuths).toBe(listingsBeforeInvalidation);
+    expect(runtime.providerAuthsSnapshot).toEqual([
+      expect.objectContaining({
+        provider: "openai",
+        hasKey: true,
+        supportsOAuth: true,
+        authHealth: "available",
+      }),
+    ]);
     runtime.dispose();
   });
 

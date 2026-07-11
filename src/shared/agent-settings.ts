@@ -9,6 +9,7 @@ export {
   DEFAULT_EXTERNAL_INSTRUCTION_ACTORS,
   DEFAULT_EXTERNAL_INSTRUCTION_GLOBAL_ROOTS,
   DEFAULT_EXTERNAL_INSTRUCTIONS,
+  normalizeExternalInstructionsSettings,
 } from "@svvy/core";
 export type {
   ExternalInstructionActor,

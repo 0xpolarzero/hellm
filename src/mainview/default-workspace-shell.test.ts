@@ -244,8 +244,9 @@ describe("default workspace renderer shell", () => {
 
     expect(contractSource).toContain("export interface WorkspaceScopedRequest");
     expect(contractSource).toContain("workspaceId: string;");
-    expect(contractSource).toContain("getAppPreferences: {\n        params: undefined;");
-    expect(contractSource).toContain("updateAppPreferences: {\n        params: AppPreferences;");
+    expect(contractSource).not.toContain("getAppPreferences: {\n        params: undefined;");
+    expect(contractSource).not.toContain("updateAppPreferences: {\n        params: AppPreferences;");
+    expect(contractSource).toContain("stateAppPreferencesUpdate: {");
     expect(contractSource).toContain("getAppWorkspaceTabs: {\n        params: undefined;");
     expect(contractSource).toContain(
       "setAppWorkspaceTabs: {\n        params: AppWorkspaceTabsState;",
@@ -255,16 +256,17 @@ describe("default workspace renderer shell", () => {
     expect(contractSource).toContain(
       "getWorkflowsGenerated: {\n        params: WorkspaceScopedRequest;",
     );
-    expect(contractSource).toContain(
-      "getAppLogs: {\n        params: WorkspaceScoped<AppLogQuery>;",
-    );
+    expect(contractSource).not.toContain("getAppLogs: {");
+    expect(contractSource).not.toContain("getAppLogSummary: {");
+    expect(contractSource).not.toContain("markAppLogsSeen: {");
+    expect(contractSource).toContain("stateAppLogsMarkRead: {");
     expect(contractSource).not.toContain("params: WorkspaceScoped<AppLogQuery> | undefined;");
     expect(contractSource).toContain("listSessions: {\n        params: WorkspaceScopedRequest;");
 
     expect(routingSource).toContain("return registry.getRuntime(input.workspaceId);");
     expect(routingSource).not.toContain("getActiveRuntime");
     expect(routingSource).not.toContain("process.cwd");
-    expect(bunIndexSource).toContain('fetchDesktopStateReadModel({\n          kind: "appLogs"');
+    expect(bunIndexSource).toContain("facades.commands.state.appLogs.markRead(request)");
     expect(bunIndexSource).not.toContain("workspaceRuntimeRegistry.getActiveRuntime()");
   });
 
@@ -1426,10 +1428,13 @@ describe("default workspace renderer shell", () => {
     );
     expect(providerApiKeyFormSource).toContain("formState.current.isDirty");
     expect(providerApiKeyFormSource).toContain("!hasUnsavedChanges");
-    expect(appSource).toContain("await rpc.request.getAppPreferences()");
-    expect(appSource).not.toContain("getAppPreferences({ workspaceId:");
-    expect(contractSource).toContain("getAppPreferences: {\n        params: undefined;");
-    expect(contractSource).toContain("updateAppPreferences: {\n        params: AppPreferences;");
+    expect(appSource).toContain(
+      'await rpc.request.fetchStateReadModel({ kind: "appPreferences" })',
+    );
+    expect(appSource).not.toContain("rpc.request.getAppPreferences");
+    expect(contractSource).not.toContain("getAppPreferences: {");
+    expect(contractSource).not.toContain("updateAppPreferences: {");
+    expect(contractSource).toContain("stateAppPreferencesUpdate: {");
   });
 
   it("feeds static workspace panes from warm runtime read-model snapshots", async () => {

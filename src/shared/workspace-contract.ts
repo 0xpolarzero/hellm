@@ -1,7 +1,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Message, UserMessage } from "@mariozechner/pi-ai";
 import type {
-  AgentDefaults,
   AgentProfileId,
   AgentProfileSettings,
   AgentSettingsState,
@@ -73,6 +72,11 @@ import type {
   WorkspaceTabId,
 } from "@svvy/core";
 import { COMPOSER_ATTACHMENT_TEXT_SIGNATURE_PREFIX } from "@svvy/core";
+import type {
+  MarkAppLogReadCommandInput,
+  StateCommandResult,
+  UpdateAppPreferencesCommandInput,
+} from "@svvy/state";
 
 export type {
   AppLogEntry,
@@ -154,6 +158,7 @@ export interface SurfaceQueuedMessagesReadModelRequest {
 
 export interface CommandInspectorReadModelRequest {
   kind: "commandInspector";
+  workspaceId: WorkspaceId;
   commandId: CommandId;
 }
 
@@ -183,7 +188,7 @@ export interface ExtensionsReadModelRequest {
 
 export interface SnippetsStateReadModelRequest {
   kind: "snippets";
-  workspaceId?: WorkspaceId;
+  workspaceId: WorkspaceId;
   snippetId?: string;
 }
 
@@ -1031,20 +1036,6 @@ export interface WorkspaceSyncMessage {
 
 export interface CancelPromptRequest {
   target: PromptTarget;
-}
-
-export interface ProviderAuthStateRequest {
-  providerId?: string;
-}
-
-export interface AuthStateResponse {
-  connected: boolean;
-  accountId?: string;
-  message?: string;
-  authHealth?: "missing" | "available" | "oauth-expired" | "oauth-refresh-failed";
-  expiresAt?: string | null;
-  authError?: string;
-  authFailedAt?: string | null;
 }
 
 export type WorkspaceKind = "default" | "user";
@@ -2031,17 +2022,9 @@ export interface ChatRPCSchema {
         params: undefined;
         response: { ok: true };
       };
-      getDefaults: {
-        params: undefined;
-        response: AgentDefaults;
-      };
       getAgentSettings: {
         params: WorkspaceScopedRequest;
         response: AgentSettingsState;
-      };
-      getAppPreferences: {
-        params: undefined;
-        response: AppPreferences;
       };
       fetchStateReadModel: {
         params: StateReadModelRequest;
@@ -2058,6 +2041,14 @@ export interface ChatRPCSchema {
       rebaselineStateReadModels: {
         params: StateReadModelRebaselineRequest;
         response: StateReadModelBaseline;
+      };
+      stateAppLogsMarkRead: {
+        params: MarkAppLogReadCommandInput;
+        response: StateCommandResult;
+      };
+      stateAppPreferencesUpdate: {
+        params: UpdateAppPreferencesCommandInput;
+        response: StateCommandResult;
       };
       getGeneratedAgentContextExternalSources: {
         params: WorkspaceScopedRequest;
@@ -2211,17 +2202,9 @@ export interface ChatRPCSchema {
         params: RemoveExtensionEnvOverrideRequest;
         response: ExtensionsInventoryReadModel;
       };
-      updateAppPreferences: {
-        params: AppPreferences;
-        response: AgentSettingsState;
-      };
       updateRequestUserInputSettings: {
         params: WorkspaceScoped<RequestUserInputSettings>;
         response: AgentSettingsState;
-      };
-      getProviderAuthState: {
-        params: ProviderAuthStateRequest;
-        response: AuthStateResponse;
       };
       openWorkspace: {
         params: OpenWorkspaceRequest;
@@ -2271,18 +2254,6 @@ export interface ChatRPCSchema {
         params: WorkspaceScoped<SwitchWorkspaceBranchRequest>;
         response: SwitchWorkspaceBranchResponse;
       };
-      getAppLogs: {
-        params: WorkspaceScoped<AppLogQuery>;
-        response: AppLogReadModel;
-      };
-      getAppLogSummary: {
-        params: WorkspaceScopedRequest;
-        response: AppLogSummary;
-      };
-      markAppLogsSeen: {
-        params: WorkspaceScoped<{ throughSeq: number }>;
-        response: AppLogSummary;
-      };
       writeClipboardText: {
         params: WriteClipboardTextRequest;
         response: WorkspaceMutationResponse;
@@ -2330,10 +2301,6 @@ export interface ChatRPCSchema {
       listHandlerThreads: {
         params: WorkspaceScoped<{ sessionId: string }>;
         response: WorkspaceHandlerThreadSummary[];
-      };
-      getWorkflowTaskAttemptInspector: {
-        params: WorkspaceScoped<{ sessionId: string; workflowTaskAttemptId: string }>;
-        response: WorkspaceWorkflowTaskAttemptInspector | null;
       };
       getArtifactPreview: {
         params: WorkspaceScoped<{ sessionId: string; artifactId: string }>;

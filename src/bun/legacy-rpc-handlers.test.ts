@@ -8,15 +8,12 @@ const DESKTOP_LIFECYCLE_REQUESTS = [
 ] as const satisfies readonly ChatRpcRequestName[];
 
 const FACADE_BACKED_REQUESTS = [
-  "getAppPreferences",
   "fetchStateReadModel",
   "refetchStateReadModels",
   "refetchStateReadModelInvalidation",
   "rebaselineStateReadModels",
-  "updateAppPreferences",
-  "getAppLogs",
-  "getAppLogSummary",
-  "markAppLogsSeen",
+  "stateAppLogsMarkRead",
+  "stateAppPreferencesUpdate",
   "writeCommandStdin",
   "sendPrompt",
   "deleteQueuedSurfaceMessage",
@@ -34,7 +31,6 @@ const FACADE_BACKED_REQUESTS = [
 const LEGACY_HANDLER_RETIREMENT_INCREMENT = 10 as const;
 
 const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
-  "getDefaults",
   "getAgentSettings",
   "getGeneratedAgentContextExternalSources",
   "getSnippets",
@@ -75,7 +71,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "setExtensionEnvOverride",
   "removeExtensionEnvOverride",
   "updateRequestUserInputSettings",
-  "getProviderAuthState",
   "openWorkspace",
   "getOpenWorkspaces",
   "getDefaultWorkspace",
@@ -99,7 +94,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "listSessions",
   "getCommandInspector",
   "listHandlerThreads",
-  "getWorkflowTaskAttemptInspector",
   "getArtifactPreview",
   "createSession",
   "openSession",

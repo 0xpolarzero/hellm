@@ -296,7 +296,11 @@ export const StateReadModelRequestSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("surfaceSummary"), target: Schema.Json }),
   Schema.Struct({ kind: Schema.Literal("surfaceComposer"), target: Schema.Json }),
   Schema.Struct({ kind: Schema.Literal("surfaceQueuedMessages"), target: Schema.Json }),
-  Schema.Struct({ kind: Schema.Literal("commandInspector"), commandId: Schema.String }),
+  Schema.Struct({
+    kind: Schema.Literal("commandInspector"),
+    workspaceId: Schema.String,
+    commandId: Schema.String,
+  }),
   Schema.Struct({
     kind: Schema.Literal("requestInput"),
     workspaceId: Schema.optionalKey(Schema.String),
@@ -319,7 +323,7 @@ export const StateReadModelRequestSchema = Schema.Union([
   }),
   Schema.Struct({
     kind: Schema.Literal("snippets"),
-    workspaceId: Schema.optionalKey(Schema.String),
+    workspaceId: Schema.String,
     snippetId: Schema.optionalKey(Schema.String),
   }),
   Schema.Struct({
@@ -398,6 +402,7 @@ export interface SurfaceQueuedMessagesReadModelRequest {
 
 export interface CommandInspectorReadModelRequest {
   kind: "commandInspector";
+  workspaceId: WorkspaceIdType;
   commandId: CommandId;
 }
 
@@ -427,7 +432,7 @@ export interface ExtensionsReadModelRequest {
 
 export interface SnippetsReadModelRequest {
   kind: "snippets";
-  workspaceId?: WorkspaceIdType;
+  workspaceId: WorkspaceIdType;
   snippetId?: string;
 }
 
@@ -1971,8 +1976,10 @@ function readModelWorkspaceId(request: StateReadModelRequest): WorkspaceIdType |
     case "appLogSummary":
     case "providerAuth":
     case "sessionNavigation":
+    case "commandInspector":
     case "requestInput":
     case "approvals":
+    case "snippets":
     case "handlerInspector":
     case "workflowTaskAttemptInspector":
       return request.workspaceId;
@@ -2295,7 +2302,9 @@ function buildExtensionsReadModel(
 
 function buildSnippetsReadModel(
   state: StructuredSessionState["Service"],
-  request: SnippetsReadModelRequest,
+  request: Omit<SnippetsReadModelRequest, "workspaceId"> & {
+    workspaceId?: WorkspaceIdType;
+  },
 ): Effect.Effect<SnippetsReadModel, StateContractError> {
   return state.listSnippets(request.workspaceId ? { workspaceId: request.workspaceId } : {}).pipe(
     Effect.map((rows) => {
@@ -3174,7 +3183,7 @@ function stateCommandsFromState(state: {
       createManaged: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeCreateManagedSnippetInput(commandInput);
-          const workspaceId = (decoded.workspaceId ?? "workspace_state_root") as WorkspaceIdType;
+          const workspaceId = decoded.workspaceId;
           const structuredSession = yield* state.structuredSession(decoded.workspaceId);
           const clientRequestId = decoded.clientSubmission?.clientRequestId;
           const receiptKey = `stateCommands.snippets.createManaged:${workspaceId}:${decoded.title}:${clientRequestId ?? "single-shot"}`;
@@ -3205,15 +3214,15 @@ function stateCommandsFromState(state: {
       updateManaged: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeUpdateManagedSnippetInput(commandInput);
-          const structuredSession = yield* state.structuredSession(undefined);
+          const structuredSession = yield* state.structuredSession(decoded.workspaceId);
           return yield* commitStructuredCommand(
             receipts,
             "stateCommands.snippets.updateManaged",
             decoded,
-            decoded.snippetId,
+            `${decoded.workspaceId}:${decoded.snippetId}`,
             () => structuredSession.updateManagedSnippet(decoded),
             snippetStateInvalidations(
-              structuredSession.workspaceId as WorkspaceIdType,
+              decoded.workspaceId,
               decoded.snippetId,
             ),
           );
@@ -3221,15 +3230,15 @@ function stateCommandsFromState(state: {
       deleteManaged: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeDeleteManagedSnippetInput(commandInput);
-          const structuredSession = yield* state.structuredSession(undefined);
+          const structuredSession = yield* state.structuredSession(decoded.workspaceId);
           return yield* commitStructuredCommand(
             receipts,
             "stateCommands.snippets.deleteManaged",
             decoded,
-            decoded.snippetId,
+            `${decoded.workspaceId}:${decoded.snippetId}`,
             () => structuredSession.deleteManagedSnippet(decoded),
             snippetStateInvalidations(
-              structuredSession.workspaceId as WorkspaceIdType,
+              decoded.workspaceId,
               decoded.snippetId,
             ),
           );
@@ -3237,15 +3246,15 @@ function stateCommandsFromState(state: {
       setEnabled: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeSetSnippetEnabledInput(commandInput);
-          const structuredSession = yield* state.structuredSession(undefined);
+          const structuredSession = yield* state.structuredSession(decoded.workspaceId);
           return yield* commitStructuredCommand(
             receipts,
             "stateCommands.snippets.setEnabled",
             decoded,
-            decoded.snippetId,
+            `${decoded.workspaceId}:${decoded.snippetId}`,
             () => structuredSession.setSnippetEnabled(decoded),
             snippetStateInvalidations(
-              structuredSession.workspaceId as WorkspaceIdType,
+              decoded.workspaceId,
               decoded.snippetId,
             ),
           );

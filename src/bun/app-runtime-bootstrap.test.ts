@@ -44,7 +44,11 @@ import { createAppRuntimeBootstrap, type AppRuntimeBootstrap } from "./app-runti
 import { createAppLogger } from "./app-logger";
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
 import { createTestSandboxHostSupport } from "./sandbox-host-support.test-support";
-import { DEFAULT_AGENT_SETTINGS_STATE, type AppPreferences } from "../shared/agent-settings";
+import {
+  DEFAULT_AGENT_SETTINGS_STATE,
+  normalizeExternalInstructionsSettings,
+  type AppPreferences,
+} from "../shared/agent-settings";
 
 const tempDirs: string[] = [];
 const openStores: StructuredSessionStateStore[] = [];
@@ -449,7 +453,9 @@ describe("app runtime bootstrap", () => {
       if (result.kind !== "appPreferences") {
         throw new Error("Expected appPreferences read model.");
       }
-      expect(result.value.externalInstructions).toEqual(externalInstructions);
+      expect(result.value.externalInstructions).toEqual(
+        normalizeExternalInstructionsSettings(externalInstructions),
+      );
     } finally {
       await bootstrap.dispose();
     }

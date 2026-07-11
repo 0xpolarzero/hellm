@@ -11,6 +11,7 @@ import {
   AbsolutePath,
   DEFAULT_EXTERNAL_INSTRUCTIONS,
   IsoDateTimeStringSchema,
+  normalizeExternalInstructionsSettings,
   ProviderAuthStatusStatePort,
   RuntimeWorkspaceStatePort,
   SandboxPolicySource,
@@ -23,6 +24,7 @@ import type {
   AgentProfileId,
   ExtensionId,
   ExtensionEnvName,
+  ExternalInstructionsSettings,
   GeneratedPackageBuildId,
   ModelId,
   RuntimeClientRequestId,
@@ -45,6 +47,7 @@ import {
   createStateCommandsFacade,
   createStateFacade,
   layer,
+  stateCommandsFromRouter,
   stateReadModelsFromRouter,
   type StateReadModelResult,
 } from "./state-facade";
@@ -649,6 +652,31 @@ describe("State app-log facade slice", () => {
   it("updates app preferences through the final command facade", async () => {
     const published: StateCommandPostCommitNotificationInput[] = [];
     const managedRuntime = ManagedRuntime.make(stateLayerWithNotifications(published));
+    const externalInstructions: ExternalInstructionsSettings = {
+      globalRoots: [
+        {
+          id: "custom-docs",
+          kind: "custom",
+          label: "Custom docs",
+          path: "/tmp/custom-docs",
+          enabled: true,
+        },
+      ],
+      globalControls: {
+        "custom-docs/AGENTS.md": {
+          enabled: true,
+          actors: ["orchestrator", "handler"],
+        },
+      },
+      workspaceControls: {
+        workspace_state_root: {
+          "workspace/CLAUDE.md": {
+            enabled: false,
+            actors: ["workflow-task"],
+          },
+        },
+      },
+    };
 
     try {
       const commands = createStateCommandsFacade(managedRuntime);
@@ -659,31 +687,7 @@ describe("State app-log facade slice", () => {
           artifactDirectory: "/tmp/svvy-custom-artifacts" as typeof AbsolutePath.Type,
           approvalMode: "user",
           networkAccess: false,
-          externalInstructions: {
-            globalRoots: [
-              {
-                id: "custom-docs",
-                kind: "custom",
-                label: "Custom docs",
-                path: "/tmp/custom-docs",
-                enabled: true,
-              },
-            ],
-            globalControls: {
-              "custom-docs/AGENTS.md": {
-                enabled: true,
-                actors: ["orchestrator", "handler"],
-              },
-            },
-            workspaceControls: {
-              workspace_state_root: {
-                "workspace/CLAUDE.md": {
-                  enabled: false,
-                  actors: ["workflow-task"],
-                },
-              },
-            },
-          },
+          externalInstructions,
           ambientResources: { skills: true, commands: false },
         },
         clientSubmission: {
@@ -724,31 +728,7 @@ describe("State app-log facade slice", () => {
         artifactDirectory: "/tmp/svvy-custom-artifacts",
         approvalMode: "user",
         networkAccess: false,
-        externalInstructions: {
-          globalRoots: [
-            {
-              id: "custom-docs",
-              kind: "custom",
-              label: "Custom docs",
-              path: "/tmp/custom-docs",
-              enabled: true,
-            },
-          ],
-          globalControls: {
-            "custom-docs/AGENTS.md": {
-              enabled: true,
-              actors: ["orchestrator", "handler"],
-            },
-          },
-          workspaceControls: {
-            workspace_state_root: {
-              "workspace/CLAUDE.md": {
-                enabled: false,
-                actors: ["workflow-task"],
-              },
-            },
-          },
-        },
+        externalInstructions: normalizeExternalInstructionsSettings(externalInstructions),
         ambientResources: { skills: true, commands: false },
         updatedAt: "1970-01-01T00:00:00.000Z",
         revision: 1,
@@ -1496,7 +1476,11 @@ describe("State read-model kind expansion", () => {
       });
 
       const commandInspector = await runTestEffect(
-        readModels.fetch({ kind: "commandInspector", commandId: command.id as CommandId }),
+        readModels.fetch({
+          kind: "commandInspector",
+          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+          commandId: command.id as CommandId,
+        }),
       );
       const selectorInspector = buildStructuredCommandInspector(
         store.getSessionState(created.workspaceSessionId),
@@ -1769,6 +1753,169 @@ describe("State read-model kind expansion", () => {
       );
     } finally {
       store.close();
+    }
+  });
+
+  it("routes every managed-snippet mutation by explicit workspace identity", async () => {
+    const makeStore = (workspaceId: WorkspaceId) =>
+      createStructuredSessionStateStore({
+        databasePath: ":memory:",
+        digest: testDigest,
+        idFactory: (prefix) => `${prefix}-${workspaceId}`,
+        now: () => "2026-06-21T12:00:00.000Z",
+        workspace: {
+          id: workspaceId,
+          label: workspaceId,
+          cwd: `/tmp/${workspaceId}` as typeof AbsolutePath.Type,
+          artifactDir: `/tmp/${workspaceId}-artifacts` as typeof AbsolutePath.Type,
+        },
+      });
+    const appGlobalStore = makeStore("workspace_snippets_app_global" as WorkspaceId);
+    const workspaceId = "workspace_snippets_routed" as WorkspaceId;
+    const workspaceStore = makeStore(workspaceId);
+    const appLogStore = createAppLogStore({ now: () => "2026-06-21T12:00:00.000Z" });
+
+    try {
+      const router = createWorkspaceStateRouter({
+        appGlobalStore,
+        workspaceStores: [{ store: workspaceStore }],
+      });
+      const commands = stateCommandsFromRouter({
+        router,
+        appLogs: appLogStateFromStore(appLogStore),
+      });
+      const readModels = stateReadModelsFromRouter({
+        router,
+        appLogs: appLogStateFromStore(appLogStore),
+      });
+      const created = await runTestEffect(
+        commands.snippets.createManaged({
+          workspaceId,
+          title: "Routed snippet",
+          body: "Initial body",
+          metadata: {},
+          enabled: true,
+        }),
+      );
+      const snippetId = created.value.snippetId;
+      const updated = await runTestEffect(
+        commands.snippets.updateManaged({
+          workspaceId,
+          snippetId,
+          patch: { body: "Updated body" },
+        }),
+      );
+      const disabled = await runTestEffect(
+        commands.snippets.setEnabled({ workspaceId, snippetId, enabled: false }),
+      );
+
+      expect(appGlobalStore.listSnippets()).toEqual([]);
+      expect(workspaceStore.listSnippets()).toMatchObject([
+        { id: snippetId, body: "Updated body", enabled: false },
+      ]);
+      expect(
+        await runTestEffect(readModels.fetch({ kind: "snippets", workspaceId })),
+      ).toMatchObject({
+        kind: "snippets",
+        value: {
+          managed: [{ id: snippetId, body: "Updated body", enabled: false }],
+        },
+      });
+      expect([...updated.afterCommit, ...disabled.afterCommit]).toEqual([
+        {
+          scope: "workspace",
+          workspaceId,
+          invalidation: { model: "snippets", ids: [snippetId] },
+        },
+        {
+          scope: "workspace",
+          workspaceId,
+          invalidation: { model: "snippets", ids: [snippetId] },
+        },
+      ]);
+
+      const deleted = await runTestEffect(
+        commands.snippets.deleteManaged({ workspaceId, snippetId }),
+      );
+      expect(workspaceStore.listSnippets()).toEqual([]);
+      expect(deleted.afterCommit).toEqual([
+        {
+          scope: "workspace",
+          workspaceId,
+          invalidation: { model: "snippets", ids: [snippetId] },
+        },
+      ]);
+    } finally {
+      appLogStore.close();
+      workspaceStore.close();
+      appGlobalStore.close();
+    }
+  });
+
+  it("routes command-inspector reads by explicit workspace identity", async () => {
+    const makeStore = (workspaceId: WorkspaceId) => {
+      let nextId = 0;
+      return createStructuredSessionStateStore({
+        databasePath: ":memory:",
+        digest: testDigest,
+        idFactory: (prefix) => `${prefix}-${workspaceId}-${++nextId}`,
+        now: () => "2026-06-21T12:00:00.000Z",
+        workspace: {
+          id: workspaceId,
+          label: workspaceId,
+          cwd: `/tmp/${workspaceId}` as typeof AbsolutePath.Type,
+          artifactDir: `/tmp/${workspaceId}-artifacts` as typeof AbsolutePath.Type,
+        },
+      });
+    };
+    const appGlobalStore = makeStore("workspace_inspector_app_global" as WorkspaceId);
+    const workspaceId = "workspace_inspector_routed" as WorkspaceId;
+    const workspaceStore = makeStore(workspaceId);
+    const appLogStore = createAppLogStore({ now: () => "2026-06-21T12:00:00.000Z" });
+
+    try {
+      const surface = workspaceStore.createOrchestratorSurface({
+        workspaceId,
+        title: "Routed inspector",
+      });
+      const turn = workspaceStore.startTurn({
+        sessionId: surface.workspaceSessionId,
+        surfacePiSessionId: surface.surfacePiSessionId,
+        requestSummary: "Inspect routing",
+      });
+      const command = workspaceStore.createCommand({
+        turnId: turn.id,
+        surfacePiSessionId: surface.surfacePiSessionId,
+        toolName: "exec_command",
+        executor: "orchestrator",
+        visibility: "summary",
+        title: "Inspect routing",
+        summary: "Inspect routing",
+      });
+      const readModels = stateReadModelsFromRouter({
+        router: createWorkspaceStateRouter({
+          appGlobalStore,
+          workspaceStores: [{ store: workspaceStore }],
+        }),
+        appLogs: appLogStateFromStore(appLogStore),
+      });
+
+      const inspector = await runTestEffect(
+        readModels.fetch({
+          kind: "commandInspector",
+          workspaceId,
+          commandId: command.id as CommandId,
+        }),
+      );
+
+      expect(inspector).toMatchObject({
+        kind: "commandInspector",
+        value: { commandId: command.id, toolName: "exec_command" },
+      });
+    } finally {
+      appLogStore.close();
+      workspaceStore.close();
+      appGlobalStore.close();
     }
   });
 });

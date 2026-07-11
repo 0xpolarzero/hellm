@@ -958,6 +958,14 @@ export class WorkspaceRuntimeRegistry {
     }
   }
 
+  async refreshExternalInstructionSourceInputs(reason: string): Promise<void> {
+    await Promise.all(
+      this.workspaceHostRecords().map((runtime) =>
+        runtime.sourceInvalidationCoordinator?.refreshWatchedInputs(reason),
+      ),
+    );
+  }
+
   shutdownApp(reason: "app-shutdown" | "startup-failure" = "app-shutdown"): Promise<void> {
     if (this.appRuntimeShutdownPromise) return this.appRuntimeShutdownPromise;
     const appRuntimeBootstrap = this.appRuntimeBootstrap;

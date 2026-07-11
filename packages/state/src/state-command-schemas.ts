@@ -300,7 +300,7 @@ export const SnippetMetadataSchema = JsonValue;
 export type SnippetMetadata = typeof SnippetMetadataSchema.Type;
 
 export const CreateManagedSnippetCommandInputSchema = Schema.Struct({
-  workspaceId: Schema.optionalKey(WorkspaceId),
+  workspaceId: WorkspaceId,
   title: Schema.String,
   body: Schema.String,
   metadata: SnippetMetadataSchema,
@@ -318,6 +318,7 @@ export const UpdateManagedSnippetPatchSchema = Schema.Struct({
 export type UpdateManagedSnippetPatch = typeof UpdateManagedSnippetPatchSchema.Type;
 
 export const UpdateManagedSnippetCommandInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
   snippetId: SnippetId,
   patch: UpdateManagedSnippetPatchSchema,
   clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
@@ -325,12 +326,14 @@ export const UpdateManagedSnippetCommandInputSchema = Schema.Struct({
 export type UpdateManagedSnippetCommandInput = typeof UpdateManagedSnippetCommandInputSchema.Type;
 
 export const DeleteManagedSnippetCommandInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
   snippetId: SnippetId,
   clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
 });
 export type DeleteManagedSnippetCommandInput = typeof DeleteManagedSnippetCommandInputSchema.Type;
 
 export const SetSnippetEnabledCommandInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
   snippetId: SnippetId,
   enabled: Schema.Boolean,
   clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
