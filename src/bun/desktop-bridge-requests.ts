@@ -2,8 +2,10 @@ import * as Exit from "effect/Exit";
 import type {
   RuntimeClientRequestId,
   RuntimeClientSubmissionSource,
+  RuntimeFacadeErrorContract,
   SubmitMessageInput,
   SubmitMessageResult,
+  WriteCommandStdinInput,
   WriteCommandStdinResult,
   WorkspaceId,
   BoundaryIssue,
@@ -25,7 +27,7 @@ type RuntimeMessagesFacade = {
 };
 
 type RuntimeCommandsFacade = {
-  readonly writeStdin: (input: DesktopWriteCommandStdinRequest) => Promise<WriteCommandStdinResult>;
+  readonly writeStdin: (input: WriteCommandStdinInput) => Promise<WriteCommandStdinResult>;
 };
 
 type FetchStateReadModel = (request: {
@@ -123,15 +125,89 @@ export async function writeCommandStdinFromDesktop(input: {
   const operation = input.operation ?? "desktop.writeCommandStdin";
   const request = decodeDesktopWriteCommandStdinRequest(operation, input.payload);
   try {
-    return await input.runtimeCommands.writeStdin(request);
+    return await input.runtimeCommands.writeStdin({
+      commandId: request.commandId,
+      text: request.text,
+      ...(request.clientSubmission ? { clientSubmission: request.clientSubmission } : {}),
+    });
   } catch (error) {
-    throw desktopBridgeError({
+    throw normalizeCommandStdinFailure(operation, error);
+  }
+}
+
+function normalizeCommandStdinFailure(
+  operation: string,
+  error: unknown,
+): DesktopBridgeErrorContract {
+  const runtimeFailure = readRuntimeFacadeFailure(error);
+  if (
+    runtimeFailure?.reason === "disposed" ||
+    (runtimeFailure?.reason === "typed-failure" &&
+      runtimeFailure.runtimeReason &&
+      ["runtime-shutdown", "runtime-disposed", "runtime-closed"].includes(
+        runtimeFailure.runtimeReason,
+      ))
+  ) {
+    return desktopBridgeError({
       operation,
-      reason: "runtime-facade-failed",
-      message: "Runtime command stdin write failed.",
-      cause: error,
+      reason: "desktop-shutdown",
+      message: "Runtime command stdin is unavailable after desktop shutdown.",
     });
   }
+  if (runtimeFailure?.reason === "typed-failure") {
+    return desktopBridgeError({
+      operation,
+      reason: "runtime-facade-failed",
+      message: "Runtime command stdin was rejected by the runtime.",
+    });
+  }
+  if (runtimeFailure?.reason === "aborted" || runtimeFailure?.reason === "interrupted") {
+    return desktopBridgeError({
+      operation,
+      reason: "runtime-facade-failed",
+      message: "Runtime command stdin did not complete.",
+    });
+  }
+  return desktopBridgeError({
+    operation,
+    reason: "runtime-facade-failed",
+    message: "Runtime command stdin failed unexpectedly.",
+  });
+}
+
+function readRuntimeFacadeFailure(error: unknown): {
+  readonly reason: RuntimeFacadeErrorContract["reason"];
+  readonly runtimeReason?: string;
+} | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+  const candidate = error as Record<string, unknown>;
+  if (candidate.type !== "runtime-facade-error") {
+    return null;
+  }
+  const reason = candidate.reason;
+  if (
+    reason !== "typed-failure" &&
+    reason !== "defect" &&
+    reason !== "interrupted" &&
+    reason !== "aborted" &&
+    reason !== "disposed"
+  ) {
+    return null;
+  }
+  const typedError = candidate.error;
+  const runtimeReason =
+    reason === "typed-failure" &&
+    typedError &&
+    typeof typedError === "object" &&
+    (typedError as Record<string, unknown>)._tag === "RuntimeContractError"
+      ? (typedError as Record<string, unknown>).reason
+      : undefined;
+  return {
+    reason,
+    ...(typeof runtimeReason === "string" ? { runtimeReason } : {}),
+  };
 }
 
 function decodeDesktopSubmitPromptRequest(
