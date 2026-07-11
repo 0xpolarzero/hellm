@@ -390,6 +390,11 @@ true })`, and broad sleep/polling helpers in unit tests.
           descriptor set for the read models it changes, including command inspectors, handler
           thread inspectors, workflow task attempt inspectors, request-input inspectors,
           generated-package/readiness views, workspace chrome/layout, app settings, and app logs.
+      - [x] Route the remaining catalog-owned session, surface-metadata, composer, queue-edit,
+            title, and interrupted-recovery writes through the restricted state-owned mutation
+            adapter, publish its exact committed descriptors through the runtime-owned adapter,
+            and retain unaccepted batches for retry or consumer rebaseline without reporting the
+            durable write as rolled back. Commit(s): `a55a5655a4`.
       - [ ] Generated-package build, failure, refresh-needed, manifest reconciliation, and
             workspace-link status writes return app read-model invalidations for
             `workflowsGenerated` or `extensions` from the committed state-port result.
@@ -1501,20 +1506,21 @@ true })`, and broad sleep/polling helpers in unit tests.
 - [ ] Complete live-tool projection coverage for durable command argument snapshots, stdin receipts,
       retained output artifacts, specialized native-tool arguments, patch previews, and
       approval-state updates.
-  - [ ] Wire durable `command.arg_snapshot` recovery into command rollups and command inspectors so
-        reload surfaces incremental argument history.
+  - [x] Wire durable `command.arg_snapshot` recovery into command rollups and command inspectors so
+        reload surfaces incremental argument history. Commit(s): `a55a5655a4`.
   - [ ] Extend runtime-owned incremental projection to specialized tools: `execute_typescript`
         source, native-control objective/report/question arguments, in-progress `apply_patch`
         patch-preview updates, and approval-state live updates.
-  - [ ] Recover durable accepted `command.stdin` receipts into command rollups and command
+  - [x] Recover durable accepted `command.stdin` receipts into command rollups and command
         inspectors with explicit `stdin.mode`, `stdin.canAttemptWrite`, and ordered
         `stdin.acceptedWrites`, while keeping write admission authoritative in
-        `Runtime.commands.writeStdin(...)`.
-  - [ ] Render the command-inspector stdin composer for running continuable `exec_command` records,
+        `Runtime.commands.writeStdin(...)`. Commit(s): `a55a5655a4`.
+  - [x] Render the command-inspector stdin composer for running continuable `exec_command` records,
         submit through the renderer-safe command stdin action backed by
         `runtime.commands.writeStdin(...)`, show `accepted`, `stdin_closed`, `not_running`, and
         `already_terminal` results, and refetch the inspector after accepted writes without
-        appending transcript text or calling the model-facing `write_stdin` tool.
+        appending transcript text or calling the model-facing `write_stdin` tool. Commit(s):
+        `a55a5655a4`.
   - [ ] Add retained immutable log artifacts for oversized command-family stdout/stderr through the
         package-private `@svvy/runtime` artifact materialization lane, link them to the source
         command through `RuntimeArtifactStatePort`, and keep retained stream text out of stored
@@ -1740,17 +1746,15 @@ This section is governed by `docs/specs/workspace-navigation-core-projection.spe
 - [x] Add session row actions for pin, unpin, archive, and unarchive. Commit(s): `3855fe4`
 - [ ] Keep durable unread state session-level with sidebar timestamp dots, focus-to-read clearing, and session row context-menu actions for mark read or unread, pin, rename, archive, and confirmed delete; pane unread treatment, when present, reads from the same session metadata.
 - [x] Join session summaries, focused panel, and panel-to-surface bindings in one workspace-shell read model without depending on a global active surface. Commit(s): `9a21f87`, `b0ee858`
-- [x] Keep workspace summaries and live transcript patches as separate read-model/renderer-safe
+- [ ] Keep workspace summaries and live transcript patches as separate read-model/renderer-safe
       projection surfaces: workspace summaries come from `@svvy/state` read models, live transcript
       patches come from app/bootstrap-derived renderer-safe surface stream patches, and
-      `@svvy/desktop` caches them only as non-authoritative view state. Commit(s): `9a21f87`,
-      `b0ee858`
-- [x] Render open live-surface registry state from state-backed read models plus
-      app/bootstrap-derived renderer-safe invalidations keyed by `surfacePiSessionId`. Commit(s):
-      `9a21f87`, `b0ee858`
-- [x] Render each live surface from state-backed surface read models plus app/bootstrap-derived
+      `@svvy/desktop` caches them only as non-authoritative view state.
+- [ ] Render open live-surface registry state from state-backed read models plus
+      app/bootstrap-derived renderer-safe invalidations keyed by `surfacePiSessionId`.
+- [ ] Render each live surface from state-backed surface read models plus app/bootstrap-derived
       renderer-safe invalidations and bounded surface stream patches for prompt-lock, model,
-      reasoning, and cancellation lifecycle changes. Commit(s): `9a21f87`, `b0ee858`
+      reasoning, and cancellation lifecycle changes.
 - [x] Render handler-thread rows from structured state in the workspace shell while keeping lifecycle subtitles, active command summaries, running indicators, open-pane treatment, and compact context rails local to the owning row. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
 - [x] Show thread objective, objective state, and row-local derived blocked reason in panel-local thread views. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
 - [x] Render the latest thread episode for an inspected thread while preserving earlier episodes in thread history. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
@@ -1786,34 +1790,34 @@ This section is governed by `docs/specs/command-palette.spec.md`.
 
 This section is governed by `docs/specs/pane-layout.spec.md`.
 
-- [ ] Add `dockview-core` as the workspace layout engine and mount one Dockview workbench instance from the Svelte renderer.
-- [ ] Build the Svelte renderer adapter for Dockview content, tabs, header actions, context menu items, tab-group chips, watermark, and unavailable-surface panels.
-- [ ] Add Settings as a Dockview-bindable pane target and renderer branch.
-- [ ] Persist Dockview serialized layout state plus svvy panel metadata, including panel-to-surface bindings, panel-local state, chrome state, restore state, and minimum panel policy.
-- [ ] Persist fixed workspace layout slots `A`, `B`, and `C` keyed by `(workspaceId, layoutId)`, with the selected slot autosaved on pane changes and empty user-workspace slots rendered as muted but selectable controls pinned at the far right of workspace chrome; default workspace slots use the same persistence model, with an empty selected default-workspace slot seeded by exactly one `Open Workspace` pane.
-- [ ] Keep panel-to-surface bindings separate from live surface runtime state.
+- [x] Add `dockview-core` as the workspace layout engine and mount one Dockview workbench instance from the Svelte renderer. Commit(s): `a55a5655a4`.
+- [x] Build the Svelte renderer adapter for Dockview content, tabs, header actions, context menu items, tab-group chips, watermark, and unavailable-surface panels. Commit(s): `a55a5655a4`.
+- [x] Add Settings as a Dockview-bindable pane target and renderer branch. Commit(s): `a55a5655a4`.
+- [x] Persist Dockview serialized layout state plus svvy panel metadata, including panel-to-surface bindings, panel-local state, chrome state, restore state, and minimum panel policy. Commit(s): `a55a5655a4`.
+- [x] Persist fixed workspace layout slots `A`, `B`, and `C` keyed by `(workspaceId, layoutId)`, with the selected slot autosaved on pane changes and empty user-workspace slots rendered as muted but selectable controls pinned at the far right of workspace chrome; default workspace slots use the same persistence model, with an empty selected default-workspace slot seeded by exactly one `Open Workspace` pane. Commit(s): `a55a5655a4`.
+- [x] Keep panel-to-surface bindings separate from live surface runtime state. Commit(s): `a55a5655a4`.
 - [ ] Support Dockview split, splitter resize, close, tab placement, panel and group drag placement, root-edge placement, edge groups, floating groups, and popout groups through svvy placement commands.
-  - [ ] Preserve tab, root-edge, floating, and popout placement intent through renderer-local commands that submit durable Dockview layout and panel-binding updates to `@svvy/state`; the desktop/Dockview adapter consumes the resulting read models and applies Dockview placement options.
-  - [ ] Expose command-palette placement actions for the current pane's surface into left/right/above/below splits, left/right/top/bottom root edges, floating groups, and popouts through the desktop action registry over Dockview layout state; runtime owns only live surface attach/release lifecycle.
-  - [ ] Derive command-safe Dockview tab-group targets from serialized layout state and expose `pane.place-tab.<groupId>` placement commands through the desktop action registry over Dockview layout state.
+  - [x] Preserve tab, root-edge, floating, and popout placement intent through renderer-local commands that submit durable Dockview layout and panel-binding updates to `@svvy/state`; the desktop/Dockview adapter consumes the resulting read models and applies Dockview placement options. Commit(s): `a55a5655a4`.
+  - [x] Expose command-palette placement actions for the current pane's surface into left/right/above/below splits, left/right/top/bottom root edges, floating groups, and popouts through the desktop action registry over Dockview layout state; runtime owns only live surface attach/release lifecycle. Commit(s): `a55a5655a4`.
+  - [x] Derive command-safe Dockview tab-group targets from serialized layout state and expose `pane.place-tab.<groupId>` placement commands through the desktop action registry over Dockview layout state. Commit(s): `a55a5655a4`.
   - [ ] Add explicit resize commands once the product has a stable command target-selection contract for Dockview-owned groups and splitters.
 - [ ] Configure Dockview drag/drop overlays and `dndEdges`, with svvy policy enforced through `onWillShowOverlay`, `onWillDrop`, `onDidDrop`, and `onUnhandledDragOverEvent`.
-- [ ] Manage explicit open and close semantics for live surfaces independently from Dockview panel focus.
-- [ ] Allow the same interactive surface to be opened in more than one Dockview panel at once.
-- [ ] Keep one underlying live surface controller per `surfacePiSessionId` regardless of panel count.
-- [ ] Persist Dockview layout JSON, panel occupancy, panel-local state, tab-group state, edge-group state, floating/popout state, and panel metadata across app restart.
-  - [ ] Persist and restore static-pane tab, root-edge, floating, and popout placement metadata through workspace UI restore state.
-  - [ ] Restore mixed runtime layout state for serialized Dockview JSON, prompt and static pane bindings, focused panel id, panel-local scroll and density, and edge/floating/popout placement metadata.
+- [x] Manage explicit open and close semantics for live surfaces independently from Dockview panel focus. Commit(s): `a55a5655a4`.
+- [x] Allow the same interactive surface to be opened in more than one Dockview panel at once. Commit(s): `a55a5655a4`.
+- [x] Keep one underlying live surface controller per `surfacePiSessionId` regardless of panel count. Commit(s): `a55a5655a4`.
+- [x] Persist Dockview layout JSON, panel occupancy, panel-local state, tab-group state, edge-group state, floating/popout state, and panel metadata across app restart. Commit(s): `a55a5655a4`.
+  - [x] Persist and restore static-pane tab, root-edge, floating, and popout placement metadata through the state-owned workspace layout slots. Commit(s): `a55a5655a4`.
+  - [x] Restore mixed runtime layout state for serialized Dockview JSON, prompt and static pane bindings, focused panel id, panel-local scroll and density, and edge/floating/popout placement metadata. Commit(s): `a55a5655a4`.
   - [ ] Add mounted Dockview verification that `fromJSON` restores edge and floating groups while preserving svvy's saved focused panel state in the real Svelte adapter.
   - [ ] Verify mounted popout restore through a test harness lane that can observe startup popout
         windows directly, without relying on ordinary panel synchronization from the main window.
-- [ ] Restore the focused Dockview panel on app restart.
-- [ ] Show exact Dockview panel-location indicators in the sidebar for open surfaces, including tab, edge-group, floating, and popout locations.
-- [ ] Show a clear highlight for the currently focused Dockview panel surface.
-- [ ] Define the stored shape for compact thread surfaces inside the workspace shell.
+- [x] Restore the focused Dockview panel on app restart. Commit(s): `a55a5655a4`.
+- [x] Show exact Dockview panel-location indicators in the sidebar for open surfaces, including tab, edge-group, floating, and popout locations. Commit(s): `a55a5655a4`.
+- [x] Show a clear highlight for the currently focused Dockview panel surface. Commit(s): `a55a5655a4`.
+- [x] Define the stored shape for compact thread surfaces inside the workspace shell. Commit(s): `a55a5655a4`.
 - [ ] Render compact thread cards in the workspace shell timeline.
-- [ ] Open a selected handler-thread surface in a chosen Dockview panel as a fully interactive surface.
-- [ ] Keep duplicated panel views of the same surface synchronized while allowing independent scroll position.
+- [x] Open a selected handler-thread surface in a chosen Dockview panel as a fully interactive surface. Commit(s): `a55a5655a4`.
+- [x] Keep duplicated panel views of the same surface synchronized while allowing independent scroll position. Commit(s): `a55a5655a4`.
 
 ## 11. Agents Pane And Agent Profiles
 
@@ -1884,7 +1888,7 @@ This section is governed by `docs/specs/queued-messages.spec.md`.
 - [x] Keep queued-message drag reorder previews local until drop, persist only final changed order, and skip no-op durable reorder writes. Commit(s): `98c73ecbb6`
 - [x] Represent handler reports as durable episode records that schedule typed `thread_report` orchestrator reconciliation notifications; notification dismissal does not roll back the episode or return a handler tool error. Commit(s): 7739c2c824
 - [x] Represent generated agent context refresh as fingerprinted runtime state, apply stale opted-in refreshes after queue claim and before prompt-bearing dispatch, and expose extension-changed/out-of-date recovery UI without renderer-visible context-refresh queue rows. Commit(s): 61ba639d6a
-- [x] Let committed user transcript messages enter composer edit mode with a visible selected-message indicator and a draft-replacement warning, then resend by moving the same pi surface back to the original message's parent state before continuing from the edited user message. Commit(s): `5378dcb`
+- [ ] Let committed user transcript messages enter composer edit mode with a visible selected-message indicator and a draft-replacement warning, then resend by moving the same pi surface back to the original message's parent state before continuing from the edited user message.
 
 ## 14. Agents, Extensions, And Generated Agent Context
 
