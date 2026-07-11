@@ -15,6 +15,14 @@ const emptyBaseline = (): StateReadModelBaseline => ({
   revision: 1 as never,
 });
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 describe("renderer notification store", () => {
   it("uses one desktop notification listener to drive descriptor refetch patches", async () => {
     const listeners = new Set<(payload: DesktopRendererNotification) => void>();
@@ -244,50 +252,128 @@ describe("renderer notification store", () => {
     store.dispose();
   });
 
-  it("does not apply an in-flight refetch after rebaseline resets its lane", async () => {
-    let resolveRefetch!: (value: readonly StateReadModelResult[]) => void;
-    const refetch = new Promise<readonly StateReadModelResult[]>((resolve) => {
-      resolveRefetch = resolve;
-    });
-    const patches: StateReadModelResult[][] = [];
-    const baselines: StateReadModelBaseline[] = [];
+  it("uses one sequence-aware lane for runtime and state-command invalidations", async () => {
+    const listeners = new Set<(payload: DesktopRendererNotification) => void>();
+    const firstRefetch = createDeferred<readonly StateReadModelResult[]>();
+    const secondRefetch = createDeferred<readonly StateReadModelResult[]>();
+    const thirdRefetch = createDeferred<readonly StateReadModelResult[]>();
+    const postBaselineRefetch = createDeferred<readonly StateReadModelResult[]>();
+    const secondRefetchStarted = createDeferred<void>();
+    const thirdRefetchStarted = createDeferred<void>();
+    const postBaselineRefetchStarted = createDeferred<void>();
+    const newerPatchApplied = createDeferred<void>();
+    const postBaselinePatchApplied = createDeferred<void>();
+    const baselineRequested = createDeferred<void>();
+    const baselineResult = createDeferred<StateReadModelBaseline>();
+    const baselineApplied = createDeferred<void>();
+    const refetches: unknown[] = [];
+    const applications: Array<
+      | { kind: "patch"; sequence: number; patch: readonly StateReadModelResult[] }
+      | { kind: "baseline"; baseline: StateReadModelBaseline }
+    > = [];
+    const olderPatch: StateReadModelResult[] = [
+      { kind: "appPreferences", value: { appearance: "dark" } as never },
+    ];
+    const newerPatch: StateReadModelResult[] = [
+      { kind: "appPreferences", value: { appearance: "light" } as never },
+    ];
+    const preBaselinePatch: StateReadModelResult[] = [
+      { kind: "appPreferences", value: { appearance: "dark" } as never },
+    ];
+    const postBaselinePatch: StateReadModelResult[] = [
+      { kind: "appPreferences", value: { appearance: "system" } as never },
+    ];
+    const authoritativeBaseline = emptyBaseline();
     const store = createRendererNotificationStore({
       workspaceId,
       rpcClient: {
         request: {
-          refetchStateReadModelInvalidation: async () => refetch,
-          rebaselineStateReadModels: async () => emptyBaseline(),
+          refetchStateReadModelInvalidation: (input) => {
+            refetches.push(input);
+            if (refetches.length === 1) return firstRefetch.promise;
+            if (refetches.length === 2) {
+              secondRefetchStarted.resolve();
+              return secondRefetch.promise;
+            }
+            if (refetches.length === 3) {
+              thirdRefetchStarted.resolve();
+              return thirdRefetch.promise;
+            }
+            postBaselineRefetchStarted.resolve();
+            return postBaselineRefetch.promise;
+          },
+          rebaselineStateReadModels: () => {
+            baselineRequested.resolve();
+            return baselineResult.promise;
+          },
         },
-        addMessageListener: () => {},
-        removeMessageListener: () => {},
+        addMessageListener: (_messageName, listener) => listeners.add(listener),
+        removeMessageListener: (_messageName, listener) => listeners.delete(listener),
       },
-      applyReadModelPatch: (patch) => patches.push([...patch]),
-      applyReadModelBaseline: (baseline) => baselines.push(baseline),
+      applyReadModelPatch: (patch, context) => {
+        applications.push({ kind: "patch", sequence: context.sequence, patch });
+        if (context.sequence === 2) newerPatchApplied.resolve();
+        if (patch === postBaselinePatch) postBaselinePatchApplied.resolve();
+      },
+      applyReadModelBaseline: (baseline) => {
+        applications.push({ kind: "baseline", baseline });
+        baselineApplied.resolve();
+      },
     });
 
-    store.handle({
+    const listener = [...listeners][0]!;
+    const runtimeInvalidation: DesktopRendererNotification = {
       kind: "read-model-changed",
       eventGenerationId: "generation-1" as never,
       sequence: 1 as never,
-      scope: { kind: "workspace", workspaceId },
-      invalidation: {
-        scope: "workspace",
-        workspaceId,
-        invalidation: { model: "sessionNavigation" },
-      },
-    });
-    store.handle({
+      scope: { kind: "app" },
+      invalidation: { scope: "app", invalidation: { model: "appPreferences" } },
+    };
+    // Committed state commands and ordinary runtime work deliberately converge on this
+    // renderer-safe shape; origin is not part of the public desktop contract.
+    const stateCommandInvalidation: DesktopRendererNotification = {
+      ...runtimeInvalidation,
+      sequence: 2 as never,
+    };
+    listener(runtimeInvalidation);
+    listener(stateCommandInvalidation);
+
+    expect(refetches).toHaveLength(1);
+    firstRefetch.resolve(olderPatch);
+    await secondRefetchStarted.promise;
+    expect(applications).toEqual([]);
+
+    secondRefetch.resolve(newerPatch);
+    await newerPatchApplied.promise;
+    expect(applications).toEqual([{ kind: "patch", sequence: 2, patch: newerPatch }]);
+
+    listener({ ...runtimeInvalidation, sequence: 3 as never });
+    await thirdRefetchStarted.promise;
+    listener({
       kind: "read-model-rebaseline-required",
       reason: "event-sequence-gap",
       rebaselineRequired: true,
-      scope: { kind: "workspace", workspaceId },
+      scope: { kind: "app" },
     });
-    await waitFor(() => baselines.length === 1);
+    await baselineRequested.promise;
+    baselineResult.resolve(authoritativeBaseline);
+    await baselineApplied.promise;
 
-    resolveRefetch([{ kind: "sessionNavigation", value: {} as never }]);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    thirdRefetch.resolve(preBaselinePatch);
+    listener({
+      ...runtimeInvalidation,
+      eventGenerationId: "generation-2" as never,
+      sequence: 1 as never,
+    });
+    await postBaselineRefetchStarted.promise;
+    postBaselineRefetch.resolve(postBaselinePatch);
+    await postBaselinePatchApplied.promise;
 
-    expect(patches).toEqual([]);
+    expect(applications).toEqual([
+      { kind: "patch", sequence: 2, patch: newerPatch },
+      { kind: "baseline", baseline: authoritativeBaseline },
+      { kind: "patch", sequence: 1, patch: postBaselinePatch },
+    ]);
     store.dispose();
   });
 });
