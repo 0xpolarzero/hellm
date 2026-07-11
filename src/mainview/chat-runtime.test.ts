@@ -21,7 +21,6 @@ import {
   type AppLogUpdateMessage,
   type ConversationSurfaceSnapshot,
   type DesktopRendererNotification,
-  type ExtensionCliRequirementActionUpdateMessage,
   type PromptTarget,
   type RendererTelemetryRequest,
   type RequestUserInputAnswerRequest,
@@ -32,7 +31,6 @@ import {
   type WorkspaceCommandInspector,
   type WriteCommandStdinRequest,
   type WriteCommandStdinResponse,
-  type WorkspaceHandlerThreadInspector,
   type WorkspaceHandlerThreadSummary,
   type WorkspaceRuntimeApprovalRequest,
   type WorkspaceRequestUserInputRequest,
@@ -46,10 +44,6 @@ import type { ComposerSnippetMention, SentSnippetProvenance } from "../shared/sn
 import type { PromptHistoryEntry } from "./prompt-history";
 import type { ChatRuntimeRpcClient } from "./chat-runtime";
 import type { WorkspaceDockviewLayoutState, WorkspaceLayoutSlotId } from "./pane-layout";
-import {
-  getGeneratedAgentContextContentKey,
-  type GeneratedAgentContextState,
-} from "../shared/generated-agent-context";
 import {
   DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
@@ -144,13 +138,9 @@ type FakeRpcHarness = {
   emitDesktopNotification: (payload: DesktopRendererNotification) => void;
   setRebaselineResult: (baseline: StateReadModelBaseline) => void;
   setAppGlobalLogs: (readModel: AppLogReadModel) => void;
-  emitExtensionCliRequirementActionUpdate: (
-    payload: ExtensionCliRequirementActionUpdateMessage,
-  ) => void;
   commandInspectorRequests: Array<{ sessionId: string; commandId: string }>;
   commandStdinRequests: Array<WorkspaceScoped<WriteCommandStdinRequest>>;
   handlerThreadListRequests: string[];
-  handlerThreadInspectorRequests: Array<{ sessionId: string; threadId: string }>;
   workflowTaskAttemptInspectorRequests: Array<{
     sessionId: string;
     workflowTaskAttemptId: string;
@@ -533,52 +523,6 @@ function createHandlerThreadSummary(threadId = "thread-1"): WorkspaceHandlerThre
   };
 }
 
-function createHandlerThreadInspector(threadId = "thread-1"): WorkspaceHandlerThreadInspector {
-  return {
-    ...createHandlerThreadSummary(threadId),
-    commandRollups: [],
-    workflowRuns: [
-      {
-        workflowRunId: "workflow-1",
-        workflowName: "parser_regression",
-        status: "completed",
-        summary: "Parser workflow completed.",
-        updatedAt: "2026-04-10T10:04:30.000Z",
-        artifacts: [],
-      },
-    ],
-    workflowTaskAttempts: [
-      {
-        workflowTaskAttemptId: "workflow-task-attempt-1",
-        workflowRunId: "workflow-1",
-        smithersRunId: "smithers-run-1",
-        nodeId: "assistant",
-        iteration: 0,
-        attempt: 1,
-        title: "assistant",
-        kind: "agent",
-        status: "completed",
-        summary: "Transcript probe completed.",
-        updatedAt: "2026-04-10T10:03:30.000Z",
-        commandCount: 1,
-        artifactCount: 0,
-        transcriptMessageCount: 2,
-        contextBudget: null,
-      },
-    ],
-    episodes: [
-      {
-        episodeId: "episode-1",
-        kind: "change",
-        title: "Latest report",
-        summary: "Patched the parser transitions and added regression coverage.",
-        createdAt: "2026-04-10T10:04:00.000Z",
-      },
-    ],
-    artifacts: [],
-  };
-}
-
 function createWorkflowTaskAttemptInspector(
   workflowTaskAttemptId = "workflow-task-attempt-1",
 ): WorkspaceWorkflowTaskAttemptInspector {
@@ -757,7 +701,6 @@ function createFakeRpc(input: {
   commandInspector?: WorkspaceCommandInspector;
   commandStdinResponse?: WriteCommandStdinResponse;
   handlerThreads?: WorkspaceHandlerThreadSummary[];
-  handlerThreadInspector?: WorkspaceHandlerThreadInspector;
   workflowTaskAttemptInspector?: WorkspaceWorkflowTaskAttemptInspector;
   requestUserInputRequests?: WorkspaceRequestUserInputRequest[];
   runtimeApprovalRequests?: WorkspaceRuntimeApprovalRequest[];
@@ -765,9 +708,6 @@ function createFakeRpc(input: {
   const workspaceSyncListeners = new Set<(payload: WorkspaceSyncMessage) => void>();
   const surfaceSyncListeners = new Set<(payload: SurfaceSyncMessage) => void>();
   const desktopNotificationListeners = new Set<(payload: DesktopRendererNotification) => void>();
-  const extensionCliRequirementActionUpdateListeners = new Set<
-    (payload: ExtensionCliRequirementActionUpdateMessage) => void
-  >();
   const summaries = new Map(
     input.sessions.map((summary) => [summary.id, structuredClone(summary)]),
   );
@@ -791,7 +731,6 @@ function createFakeRpc(input: {
   const commandInspectorRequests: Array<{ sessionId: string; commandId: string }> = [];
   const commandStdinRequests: Array<WorkspaceScoped<WriteCommandStdinRequest>> = [];
   const handlerThreadListRequests: string[] = [];
-  const handlerThreadInspectorRequests: Array<{ sessionId: string; threadId: string }> = [];
   const workflowTaskAttemptInspectorRequests: Array<{
     sessionId: string;
     workflowTaskAttemptId: string;
@@ -957,14 +896,6 @@ function createFakeRpc(input: {
     }
   };
 
-  const emitExtensionCliRequirementActionUpdate = (
-    payload: ExtensionCliRequirementActionUpdateMessage,
-  ): void => {
-    for (const listener of extensionCliRequirementActionUpdateListeners) {
-      listener(structuredClone(payload));
-    }
-  };
-
   const emitAssistantStream = (
     target: PromptTarget,
     text: string,
@@ -985,30 +916,6 @@ function createFakeRpc(input: {
       target: cloneTarget(target),
       snapshot: structuredClone(record.snapshot),
     });
-  };
-
-  let generatedAgentContextState: GeneratedAgentContextState = {
-    version: 1,
-    revision: 1,
-    updatedAt: new Date(0).toISOString(),
-    instructionBlocks: {},
-    actorRecipes: {
-      orchestrator: {
-        actor: "orchestrator",
-        instructionBlockIds: [],
-        generatedSectionIds: ["execute-typescript"],
-      },
-      handler: {
-        actor: "handler",
-        instructionBlockIds: [],
-        generatedSectionIds: ["execute-typescript"],
-      },
-      "workflow-task": {
-        actor: "workflow-task",
-        instructionBlockIds: [],
-        generatedSectionIds: ["execute-typescript"],
-      },
-    },
   };
 
   const harness: FakeRpcHarness = {
@@ -1234,11 +1141,6 @@ function createFakeRpc(input: {
           requestCounts.rebaselineStateReadModels += 1;
           return structuredClone(rebaselineResult);
         },
-        revertExtensionChange: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
-        }),
         saveExtensionSnapshot: async () => ({
           extensions: [],
           reversibleChanges: [],
@@ -1284,20 +1186,6 @@ function createFakeRpc(input: {
           reversibleChanges: [],
           snapshots: [],
         }),
-        runExtensionCliRequirementAction: async () => ({
-          runId: "test-cli-run",
-          inventory: {
-            extensions: [],
-            reversibleChanges: [],
-            snapshots: [],
-          },
-          command: "npm install -g example-cli@1.0.0",
-          status: "success",
-          exitCode: 0,
-          signal: null,
-          stdout: "",
-          stderr: "",
-        }),
         setExtensionTypescriptApi: async () => ({
           extensions: [],
           reversibleChanges: [],
@@ -1324,11 +1212,6 @@ function createFakeRpc(input: {
           snapshots: [],
         }),
         configureExtensionInstructionFile: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
-        }),
-        reorderExtensionInstructionFiles: async () => ({
           extensions: [],
           reversibleChanges: [],
           snapshots: [],
@@ -1363,37 +1246,6 @@ function createFakeRpc(input: {
           reversibleChanges: [],
           snapshots: [],
         }),
-        getGeneratedAgentContext: async () => structuredClone(generatedAgentContextState),
-        getGeneratedAgentContextDefaults: async () => structuredClone(generatedAgentContextState),
-        updateGeneratedAgentContext: async ({ state }) => {
-          generatedAgentContextState = structuredClone(state);
-          return structuredClone(generatedAgentContextState);
-        },
-        resetGeneratedAgentContext: async () => {
-          generatedAgentContextState = {
-            ...generatedAgentContextState,
-            revision: generatedAgentContextState.revision + 1,
-            updatedAt: new Date().toISOString(),
-          };
-          return structuredClone(generatedAgentContextState);
-        },
-        listGeneratedAgentContextSnapshots: async () => [],
-        createGeneratedAgentContextSnapshot: async ({ name }) => ({
-          id: "snapshot-1",
-          name,
-          createdAt: new Date().toISOString(),
-          revision: generatedAgentContextState.revision,
-          contentKey: getGeneratedAgentContextContentKey(generatedAgentContextState),
-        }),
-        renameGeneratedAgentContextSnapshot: async ({ snapshotId, name }) => ({
-          id: snapshotId,
-          name,
-          createdAt: new Date().toISOString(),
-          revision: generatedAgentContextState.revision,
-          contentKey: getGeneratedAgentContextContentKey(generatedAgentContextState),
-        }),
-        restoreGeneratedAgentContextSnapshot: async () =>
-          structuredClone(generatedAgentContextState),
         getOpenWorkspaces: async () => [structuredClone(TEST_WORKSPACE_INFO)],
         updateAgentProfile: async ({ profile, workspaceId }) => {
           const next = await harness.client.request.getAgentSettings({ workspaceId });
@@ -1596,11 +1448,6 @@ function createFakeRpc(input: {
           editor: "system",
           path,
         }),
-        getGeneratedAgentContextEntries: async () => ({
-          orchestrator: [],
-          handler: [],
-          "workflow-task": [],
-        }),
         getGeneratedAgentContextExternalSources: async () => [],
         getSnippets: async () => ({ managed: [], discovered: [], snippets: [] }),
         createManagedSnippet: async ({ title, body, description, argumentHint }) => ({
@@ -1667,12 +1514,6 @@ function createFakeRpc(input: {
             input.handlerThreads ?? [createHandlerThreadSummary(`thread-for-${sessionId}`)],
           );
         },
-        getHandlerThreadInspector: async ({ sessionId, threadId }) => {
-          handlerThreadInspectorRequests.push({ sessionId, threadId });
-          return structuredClone(
-            input.handlerThreadInspector ?? createHandlerThreadInspector(threadId),
-          );
-        },
         getWorkflowTaskAttemptInspector: async ({ sessionId, workflowTaskAttemptId }) => {
           workflowTaskAttemptInspectorRequests.push({
             sessionId,
@@ -1708,10 +1549,6 @@ function createFakeRpc(input: {
           record.retainCount += 1;
           openedTargets.push(cloneTarget(record.snapshot.target));
           return structuredClone(record.snapshot);
-        },
-        recordSessionOpened: async ({ sessionId }) => {
-          openedTargets.push(cloneTarget(createOrchestratorTarget(sessionId)));
-          return { ok: true };
         },
         openSurface: async ({ target }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
@@ -1838,10 +1675,6 @@ function createFakeRpc(input: {
               summary.lastReadAt = "2026-04-10T10:11:00.000Z";
             });
           }
-          return { ok: true };
-        },
-        setArchivedGroupCollapsed: async ({ collapsed }) => {
-          archivedGroupCollapsed = collapsed;
           return { ok: true };
         },
         setSessionNavigationSectionState: async ({ section, collapsed }) => {
@@ -2425,11 +2258,6 @@ function createFakeRpc(input: {
           );
           return;
         }
-        if (messageName === "sendExtensionCliRequirementActionUpdate") {
-          extensionCliRequirementActionUpdateListeners.add(
-            listener as (payload: ExtensionCliRequirementActionUpdateMessage) => void,
-          );
-        }
       },
       removeMessageListener: (messageName: string, listener: unknown) => {
         if (messageName === "sendWorkspaceSync") {
@@ -2446,11 +2274,6 @@ function createFakeRpc(input: {
           );
           return;
         }
-        if (messageName === "sendExtensionCliRequirementActionUpdate") {
-          extensionCliRequirementActionUpdateListeners.delete(
-            listener as (payload: ExtensionCliRequirementActionUpdateMessage) => void,
-          );
-        }
       },
     },
     openedTargets,
@@ -2464,7 +2287,6 @@ function createFakeRpc(input: {
     commandInspectorRequests,
     commandStdinRequests,
     handlerThreadListRequests,
-    handlerThreadInspectorRequests,
     workflowTaskAttemptInspectorRequests,
     requestUserInputAnswerRequests,
     runtimeApprovalAnswerRequests,
@@ -2490,7 +2312,6 @@ function createFakeRpc(input: {
     setAppGlobalLogs: (readModel) => {
       appGlobalLogs = structuredClone(readModel);
     },
-    emitExtensionCliRequirementActionUpdate,
     getRetainCount: (surfacePiSessionId) => surfaces.get(surfacePiSessionId)?.retainCount ?? 0,
     getSurfaceSnapshot: (surfacePiSessionId) =>
       structuredClone(getSurfaceRecord(surfacePiSessionId).snapshot),
@@ -4335,7 +4156,6 @@ describe("createChatRuntime", () => {
   it("uses the focused pane session by default for inspectors", async () => {
     const commandInspector = createCommandInspector("command-77");
     const handlerThreads = [createHandlerThreadSummary("thread-77")];
-    const handlerThreadInspector = createHandlerThreadInspector("thread-77");
     const workflowTaskAttemptInspector = createWorkflowTaskAttemptInspector(
       "workflow-task-attempt-77",
     );
@@ -4356,7 +4176,6 @@ describe("createChatRuntime", () => {
       ],
       commandInspector,
       handlerThreads,
-      handlerThreadInspector,
       workflowTaskAttemptInspector,
     });
 
@@ -4365,22 +4184,17 @@ describe("createChatRuntime", () => {
 
     const detail = await runtime.getCommandInspector("command-77");
     const threads = await runtime.listHandlerThreads();
-    const threadDetail = await runtime.getHandlerThreadInspector("thread-77");
     const workflowTaskAttemptDetail = await runtime.getWorkflowTaskAttemptInspector(
       "workflow-task-attempt-77",
     );
 
     expect(detail).toEqual(commandInspector);
     expect(threads).toEqual(handlerThreads);
-    expect(threadDetail).toEqual(handlerThreadInspector);
     expect(workflowTaskAttemptDetail).toEqual(workflowTaskAttemptInspector);
     expect(harness.commandInspectorRequests).toEqual([
       { sessionId: "session-2", commandId: "command-77" },
     ]);
     expect(harness.handlerThreadListRequests).toEqual(["session-2"]);
-    expect(harness.handlerThreadInspectorRequests).toEqual([
-      { sessionId: "session-2", threadId: "thread-77" },
-    ]);
     expect(harness.workflowTaskAttemptInspectorRequests).toEqual([
       { sessionId: "session-2", workflowTaskAttemptId: "workflow-task-attempt-77" },
     ]);
@@ -4506,7 +4320,7 @@ describe("createChatRuntime", () => {
     ]);
 
     await runtime.archiveSession("session-2");
-    await runtime.setArchivedGroupCollapsed(false);
+    await runtime.setSessionNavigationSectionState("archived", { collapsed: false });
 
     expect(runtime.sessionNavigation.pinnedSessions).toEqual([]);
     expect(runtime.sessionNavigation.archived.collapsed).toBe(false);
@@ -6039,50 +5853,6 @@ describe("createChatRuntime", () => {
 
     expect(runtime.appLogSummary.unread.total).toBe(0);
 
-    runtime.dispose();
-  });
-
-  it("delivers extension CLI requirement action updates for the active workspace only", async () => {
-    const harness = createFakeRpc({
-      sessions: [createSummary("session-1", "Orchestrator", "main reply")],
-      surfaces: [
-        createSurfaceSnapshot({
-          target: createOrchestratorTarget("session-1"),
-          messages: [assistantMessage("main reply")],
-        }),
-      ],
-    });
-    const runtime = await createRuntime(harness);
-    const updates: ExtensionCliRequirementActionUpdateMessage[] = [];
-    const unsubscribe = runtime.subscribeExtensionCliRequirementActionUpdate((payload) => {
-      updates.push(payload);
-    });
-
-    const update: ExtensionCliRequirementActionUpdateMessage = {
-      workspaceId: TEST_WORKSPACE_INFO.workspaceId,
-      runId: "run-1",
-      extensionId: "cx",
-      requirementId: "cx-cli",
-      action: "install",
-      command: "npm install -g cx-cli@0.7.1",
-      status: "output",
-      at: "2026-05-13T10:00:00.000Z",
-      outputEvent: {
-        eventId: "run-1:1",
-        at: "2026-05-13T10:00:00.000Z",
-        stream: "stdout",
-        source: "extension-cli",
-        text: "installing\n",
-      },
-    };
-    harness.emitExtensionCliRequirementActionUpdate({
-      ...update,
-      workspaceId: "workspace:other",
-    });
-    harness.emitExtensionCliRequirementActionUpdate(update);
-
-    expect(updates).toEqual([update]);
-    unsubscribe();
     runtime.dispose();
   });
 });

@@ -981,10 +981,6 @@
     await runSessionMutation(() => runtime.markSessionRead(session.id));
   }
 
-  async function handleToggleArchivedGroup(collapsed: boolean) {
-    await runSessionMutation(() => runtime.setArchivedGroupCollapsed(collapsed));
-  }
-
   async function handleUpdateSessionNavigationSectionState(
     section: "pinned" | "active" | "archived",
     state: { collapsed?: boolean; sizePx?: number },
@@ -1606,7 +1602,6 @@
           onDeleteSession={handleDeleteSession}
           onMarkSessionUnread={handleMarkSessionUnread}
           onMarkSessionRead={handleMarkSessionRead}
-          onToggleArchivedGroup={handleToggleArchivedGroup}
           onUpdateSessionNavigationSectionState={handleUpdateSessionNavigationSectionState}
           onOpenSearch={() => openPalette("search")}
           onOpenCommandPalette={() => openPalette("commands")}

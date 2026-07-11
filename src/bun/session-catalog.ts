@@ -103,7 +103,6 @@ import type {
   WorkspaceSessionNavigationReadModel,
   WorkspaceSyncMessage,
   WorkspaceCommandInspector,
-  WorkspaceHandlerThreadInspector,
   WorkspaceHandlerThreadSummary,
   WorkspaceSessionSummary,
   WorkspaceWorkflowTaskAttemptInspector,
@@ -111,13 +110,7 @@ import type {
   AgentContextPreviewExtension,
   AgentContextPreviewResponse,
 } from "../shared/workspace-contract";
-import type {
-  GeneratedAgentContextActor,
-  GeneratedAgentContextExternalSource,
-  GeneratedAgentContextEntry,
-  GeneratedAgentContextSnapshotSummary,
-  GeneratedAgentContextState,
-} from "../shared/generated-agent-context";
+import type { GeneratedAgentContextExternalSource } from "../shared/generated-agent-context";
 import { getGeneratedAgentContextContentKey } from "../shared/generated-agent-context";
 import {
   DEFAULT_AGENT_SETTINGS,
@@ -148,7 +141,6 @@ import {
 import { layerSandboxPolicySource } from "@svvy/state";
 import {
   buildStructuredCommandInspector,
-  buildStructuredHandlerThreadInspector,
   buildStructuredHandlerThreadSummaries,
   buildStructuredArtifactLink,
   buildStructuredSessionSummaryProjection,
@@ -202,11 +194,7 @@ import {
   createThreadFollowupTool,
   createThreadRequestReportTool,
 } from "./thread-orchestration-tools";
-import {
-  buildGeneratedAgentContextEntries,
-  buildSystemPrompt,
-  createDefaultGeneratedAgentContextState,
-} from "./default-system-prompt";
+import { buildSystemPrompt } from "./default-system-prompt";
 import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
 import { buildNativeToolSchemasJson } from "@svvy/extensions";
 import {
@@ -774,10 +762,6 @@ export class WorkspaceSessionCatalog {
     this.appLogListener = listener;
   }
 
-  getGeneratedAgentContextState(): GeneratedAgentContextState {
-    return this.generatedAgentContextStore.getState();
-  }
-
   getRuntimeExtensionContextImpactState(): RuntimeExtensionContextImpactStateFacade {
     return this.runtimeExtensionContextImpactState;
   }
@@ -892,16 +876,6 @@ export class WorkspaceSessionCatalog {
     ).value;
   }
 
-  getDefaultGeneratedAgentContextState(): GeneratedAgentContextState {
-    return createDefaultGeneratedAgentContextState();
-  }
-
-  updateGeneratedAgentContextState(state: GeneratedAgentContextState): GeneratedAgentContextState {
-    const next = this.generatedAgentContextStore.updateState(state);
-    void this.emitOpenSurfacePromptBindingUpdates();
-    return next;
-  }
-
   updateRequestUserInputSettings(settings: RequestUserInputSettings): AgentSettingsState {
     const next = this.agentSettingsStore.setRequestUserInput(settings);
     this.requestUserInputRuntime.setSettings(next.requestUserInput);
@@ -921,52 +895,6 @@ export class WorkspaceSessionCatalog {
 
   async notifySourceInputsChanged(_reason: string): Promise<void> {
     await this.emitOpenSurfacePromptBindingUpdates();
-  }
-
-  resetGeneratedAgentContextState(): GeneratedAgentContextState {
-    const next = this.generatedAgentContextStore.resetState();
-    void this.emitOpenSurfacePromptBindingUpdates();
-    return next;
-  }
-
-  listGeneratedAgentContextSnapshots(): GeneratedAgentContextSnapshotSummary[] {
-    return this.generatedAgentContextStore.listSnapshots();
-  }
-
-  createGeneratedAgentContextSnapshot(name: string): GeneratedAgentContextSnapshotSummary {
-    return this.generatedAgentContextStore.createSnapshot(name);
-  }
-
-  renameGeneratedAgentContextSnapshot(
-    snapshotId: string,
-    name: string,
-  ): GeneratedAgentContextSnapshotSummary {
-    return this.generatedAgentContextStore.renameSnapshot(snapshotId, name);
-  }
-
-  restoreGeneratedAgentContextSnapshot(snapshotId: string): GeneratedAgentContextState {
-    const next = this.generatedAgentContextStore.restoreSnapshot(snapshotId);
-    void this.emitOpenSurfacePromptBindingUpdates();
-    return next;
-  }
-
-  getGeneratedAgentContextEntries() {
-    const state = this.generatedAgentContextStore.getState();
-    const materialize = (
-      actor: GeneratedAgentContextActor,
-      entries: GeneratedAgentContextEntry[],
-    ) => entries.map((entry) => this.materializeGeneratedPromptEntry(actor, entry));
-    return {
-      orchestrator: materialize(
-        "orchestrator",
-        buildGeneratedAgentContextEntries("orchestrator", state),
-      ),
-      handler: materialize("handler", buildGeneratedAgentContextEntries("handler", state)),
-      "workflow-task": materialize(
-        "workflow-task",
-        buildGeneratedAgentContextEntries("workflow-task", state),
-      ),
-    };
   }
 
   async getAgentContextPreview(
@@ -1175,37 +1103,6 @@ export class WorkspaceSessionCatalog {
     });
   }
 
-  private materializeGeneratedPromptEntry(
-    actor: GeneratedAgentContextActor,
-    entry: GeneratedAgentContextEntry,
-  ): GeneratedAgentContextEntry {
-    const relativePath = join(".svvy", "generated", "agent-context", actor, `${entry.id}.md`);
-    const absolutePath = join(this.cwd, relativePath);
-    mkdirSync(dirname(absolutePath), { recursive: true });
-    writeFileSync(
-      absolutePath,
-      [
-        `# ${entry.title}`,
-        "",
-        `Actor: ${actor}`,
-        `Generated part: ${entry.id}`,
-        "",
-        "Generated by svvy from current runtime settings and contracts.",
-        "Edit the owning app/runtime source or settings, not this file.",
-        "",
-        "```text",
-        entry.content,
-        "```",
-        "",
-      ].join("\n"),
-    );
-    return {
-      ...entry,
-      source: relativePath.replaceAll("\\", "/"),
-      sourcePath: relativePath.replaceAll("\\", "/"),
-    };
-  }
-
   buildOrchestratorSystemPrompt(
     settings: Pick<AgentProfileSettings, "extensionUsage" | "extensionOrder">,
     extensionState = this.resolveProfileExtensionState("orchestrator", settings),
@@ -1327,23 +1224,6 @@ export class WorkspaceSessionCatalog {
     return buildStructuredHandlerThreadSummaries(snapshot);
   }
 
-  async getHandlerThreadInspector(input: {
-    sessionId: string;
-    threadId: string;
-  }): Promise<WorkspaceHandlerThreadInspector> {
-    const snapshot = await this.getDerivedStructuredSnapshot(input.sessionId);
-    if (!snapshot) {
-      throw new Error(`Structured session not found: ${input.sessionId}`);
-    }
-
-    const inspector = buildStructuredHandlerThreadInspector(snapshot, input.threadId);
-    if (!inspector) {
-      throw new Error(`Delegated handler thread not found: ${input.threadId}`);
-    }
-
-    return inspector;
-  }
-
   async getWorkflowTaskAttemptInspector(input: {
     sessionId: string;
     workflowTaskAttemptId: string;
@@ -1462,14 +1342,6 @@ export class WorkspaceSessionCatalog {
       return { ok: true };
     }
     this.structuredSessionStore.markSessionRead({ sessionId });
-    await this.emitWorkspaceSync("workspace.updated");
-    return { ok: true };
-  }
-
-  async setArchivedGroupCollapsed(input: {
-    collapsed: boolean;
-  }): Promise<WorkspaceMutationResponse> {
-    this.structuredSessionStore.setArchivedGroupCollapsed(input);
     await this.emitWorkspaceSync("workspace.updated");
     return { ok: true };
   }
@@ -1950,54 +1822,6 @@ export class WorkspaceSessionCatalog {
     });
     await this.emitWorkspaceSync("structured.updated");
     return { ok: true };
-  }
-
-  async recordExtensionRevertProductEvent(input: {
-    target: PromptTarget;
-    changeId: string;
-    revertChangeId?: string | null;
-    extensionId?: string | null;
-    resultKind?: string | null;
-    autoBuildStatus?: string | null;
-  }): Promise<boolean> {
-    const resolvedTarget = this.tryResolvePromptTargetForSurfacePiSessionId(
-      input.target.surfacePiSessionId,
-    );
-    if (
-      !resolvedTarget ||
-      resolvedTarget.workspaceSessionId !== input.target.workspaceSessionId ||
-      resolvedTarget.surface !== input.target.surface ||
-      resolvedTarget.threadId !== input.target.threadId
-    ) {
-      return false;
-    }
-
-    const extensionLabel = input.extensionId ? ` for ${input.extensionId}` : "";
-    const summary = `User reverted extension ${input.resultKind ?? "change"} ${input.changeId}${extensionLabel}.`;
-    this.structuredSessionStore.recordLifecycleEvent({
-      sessionId: resolvedTarget.workspaceSessionId,
-      kind: "Extension change reverted",
-      subjectKind:
-        resolvedTarget.surface === "handler" && resolvedTarget.threadId ? "thread" : "session",
-      subjectId:
-        resolvedTarget.surface === "handler" && resolvedTarget.threadId
-          ? resolvedTarget.threadId
-          : resolvedTarget.workspaceSessionId,
-      data: {
-        surface: resolvedTarget.surface,
-        surfacePiSessionId: resolvedTarget.surfacePiSessionId,
-        ...(resolvedTarget.threadId ? { threadId: resolvedTarget.threadId } : {}),
-        title: "Extension change reverted",
-        summary,
-        changeId: input.changeId,
-        ...(input.revertChangeId ? { revertChangeId: input.revertChangeId } : {}),
-        ...(input.extensionId ? { extensionId: input.extensionId } : {}),
-        ...(input.resultKind ? { resultKind: input.resultKind } : {}),
-        ...(input.autoBuildStatus ? { autoBuildStatus: input.autoBuildStatus } : {}),
-      },
-    });
-    await this.emitWorkspaceSync("structured.updated");
-    return true;
   }
 
   private async abortManagedSurfaceForDelete(session: ManagedSession): Promise<void> {

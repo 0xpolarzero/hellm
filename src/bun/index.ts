@@ -39,8 +39,6 @@ import type {
   ChatRPCSchema,
   ComposerAttachment,
   ComposerMentionKind,
-  ExtensionCliRequirementAction,
-  ExtensionCliRequirementActionUpdateMessage,
   ImportComposerAttachmentInput,
   OpenWorkspaceRequest,
   ProviderAuthInfo,
@@ -132,7 +130,6 @@ const DEV_SERVER_WAIT_TIMEOUT_MS = 15_000;
 const extensionEnvSecretStore = createMacOsKeychainExtensionEnvSecretStore();
 const DEV_SERVER_POLL_INTERVAL_MS = 250;
 const DEFAULT_RPC_TIMEOUT_MS = 120000;
-const EXTENSION_CLI_REQUIREMENT_OUTPUT_LIMIT = 20000;
 const ENV_FILES = [".env.local", ".env"];
 const PREFERRED_PROVIDERS = ["zai", "openai", "anthropic", "google"];
 const PREFERRED_MODEL_FRAGMENTS = [
@@ -239,136 +236,6 @@ async function runWorkspaceExtensionsCommand(runtime: WorkspaceRuntime, command:
     envSecretStore: extensionEnvSecretStore,
     extensionContextImpactState: runtime.catalog.getRuntimeExtensionContextImpactState(),
     extensionsRoot: runtime.catalog.getExtensionsRoot(),
-  });
-}
-
-function truncateExtensionCliOutput(output: string): string {
-  if (output.length <= EXTENSION_CLI_REQUIREMENT_OUTPUT_LIMIT) return output;
-  return `${output.slice(0, EXTENSION_CLI_REQUIREMENT_OUTPUT_LIMIT)}\n[output truncated]`;
-}
-
-async function runExtensionCliRequirementCommand(
-  runtime: WorkspaceRuntime,
-  input: {
-    runId: string;
-    workspaceId: string;
-    extensionId: string;
-    requirementId: string;
-    action: ExtensionCliRequirementAction;
-    command: string;
-    onUpdate: (message: ExtensionCliRequirementActionUpdateMessage) => void;
-  },
-) {
-  const timeoutMs = Math.max(10_000, getRpcRequestTimeoutMs() - 5_000);
-  let outputEventIndex = 0;
-  const publish = (
-    update: Omit<
-      ExtensionCliRequirementActionUpdateMessage,
-      "workspaceId" | "runId" | "extensionId" | "requirementId" | "action" | "command" | "at"
-    >,
-  ) => {
-    input.onUpdate({
-      workspaceId: input.workspaceId,
-      runId: input.runId,
-      extensionId: input.extensionId,
-      requirementId: input.requirementId,
-      action: input.action,
-      command: input.command,
-      at: new Date().toISOString(),
-      ...update,
-    });
-  };
-
-  publish({ status: "started" });
-
-  return new Promise<{
-    exitCode: number | null;
-    signal: string | null;
-    stdout: string;
-    stderr: string;
-  }>((fulfill, reject) => {
-    const child = spawn(input.command, {
-      cwd: runtime.cwd,
-      env: process.env,
-      shell: true,
-      windowsHide: true,
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    let settled = false;
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      child.kill("SIGTERM");
-      const text = `Command timed out after ${Math.round(timeoutMs / 1000)}s.`;
-      stderr.push(Buffer.from(text));
-      publish({
-        status: "output",
-        outputEvent: {
-          eventId: `${input.runId}:${++outputEventIndex}`,
-          at: new Date().toISOString(),
-          stream: "stderr",
-          source: "extension-cli",
-          text,
-        },
-      });
-    }, timeoutMs);
-
-    child.stdout?.on("data", (chunk: Buffer) => {
-      const text = chunk.toString("utf8");
-      stdout.push(chunk);
-      publish({
-        status: "output",
-        outputEvent: {
-          eventId: `${input.runId}:${++outputEventIndex}`,
-          at: new Date().toISOString(),
-          stream: "stdout",
-          source: "extension-cli",
-          text,
-        },
-      });
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      const text = chunk.toString("utf8");
-      stderr.push(chunk);
-      publish({
-        status: "output",
-        outputEvent: {
-          eventId: `${input.runId}:${++outputEventIndex}`,
-          at: new Date().toISOString(),
-          stream: "stderr",
-          source: "extension-cli",
-          text,
-        },
-      });
-    });
-    child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      publish({
-        status: "failed",
-        exitCode: null,
-        signal: null,
-        error: error.message,
-      });
-      reject(error);
-    });
-    child.on("close", (exitCode, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      publish({
-        status: exitCode === 0 ? "success" : "failed",
-        exitCode,
-        signal,
-      });
-      fulfill({
-        exitCode,
-        signal,
-        stdout: truncateExtensionCliOutput(Buffer.concat(stdout).toString("utf8")),
-        stderr: truncateExtensionCliOutput(Buffer.concat(stderr).toString("utf8")),
-      });
-    });
   });
 }
 
@@ -1241,51 +1108,6 @@ function buildDesktopRpcHandlers(
         const runtime = getWorkspaceRuntime(input);
         return readWorkspaceExtensionsInventory(runtime);
       },
-      revertExtensionChange: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        if (!/^chg_[a-z0-9]+_[a-f0-9-]+$/i.test(input.changeId)) {
-          throw new Error(`Invalid extension change id: ${input.changeId}`);
-        }
-        const result = await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions revert ${input.changeId} --json`,
-        );
-        const output = result.output as {
-          changeId?: unknown;
-          result?: {
-            autoBuild?: { status?: unknown } | null;
-            extensionId?: unknown;
-            kind?: unknown;
-          };
-        };
-        const revertChangeId = typeof output.changeId === "string" ? output.changeId : null;
-        const extensionId =
-          typeof output.result?.extensionId === "string" ? output.result.extensionId : null;
-        const resultKind = typeof output.result?.kind === "string" ? output.result.kind : null;
-        const autoBuildStatus =
-          typeof output.result?.autoBuild?.status === "string"
-            ? output.result.autoBuild.status
-            : null;
-        const recordedConversationEvent = input.owningSurface
-          ? await runtime.catalog.recordExtensionRevertProductEvent({
-              target: input.owningSurface,
-              changeId: input.changeId,
-              revertChangeId,
-              extensionId,
-              resultKind,
-              autoBuildStatus,
-            })
-          : false;
-        runtime.appLog.info("settings", "Extension change reverted from UI.", {
-          changeId: input.changeId,
-          revertChangeId,
-          extensionId,
-          resultKind,
-          autoBuildStatus,
-          recordedConversationEvent,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
       saveExtensionSnapshot: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const name = input.name.trim();
@@ -1400,89 +1222,6 @@ function buildDesktopRpcHandlers(
         });
         return readWorkspaceExtensionsInventory(runtime);
       },
-      runExtensionCliRequirementAction: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const inventory = await readWorkspaceExtensionsInventory(runtime);
-        const extension = inventory.extensions.find((item) => item.id === input.extensionId);
-        if (!extension) {
-          throw new Error(`Unknown extension: ${input.extensionId}`);
-        }
-        const requirement = extension.requirements.cliRequirements.find(
-          (item) => item.id === input.requirementId,
-        );
-        if (!requirement) {
-          throw new Error(
-            `Unknown CLI requirement ${input.requirementId} for extension ${input.extensionId}.`,
-          );
-        }
-        const command =
-          input.action === "install"
-            ? requirement.status === "missing"
-              ? requirement.installCommand
-              : null
-            : requirement.updateAvailable
-              ? requirement.updateCommand
-              : null;
-        if (!command) {
-          throw new Error(
-            `CLI requirement ${requirement.id} does not have a ${input.action} command available.`,
-          );
-        }
-
-        runtime.appLog.info("settings", "Extension CLI requirement action started from UI.", {
-          extensionId: extension.id,
-          requirementId: requirement.id,
-          action: input.action,
-          command,
-        });
-        const result = await runExtensionCliRequirementCommand(runtime, {
-          runId: input.runId,
-          workspaceId: input.workspaceId,
-          extensionId: extension.id,
-          requirementId: requirement.id,
-          action: input.action,
-          command,
-          onUpdate: (message) => {
-            void sendLegacyRendererMessage(
-              "sendExtensionCliRequirementActionUpdate",
-              message,
-              "Unable to send extension CLI requirement update to the main view.",
-            );
-          },
-        });
-        const status = result.exitCode === 0 ? "success" : "failed";
-        const logDetails = {
-          extensionId: extension.id,
-          requirementId: requirement.id,
-          action: input.action,
-          command,
-          exitCode: result.exitCode,
-          signal: result.signal,
-        };
-        if (status === "success") {
-          runtime.appLog.info(
-            "settings",
-            "Extension CLI requirement action completed from UI.",
-            logDetails,
-          );
-        } else {
-          runtime.appLog.error(
-            "settings",
-            "Extension CLI requirement action failed from UI.",
-            logDetails,
-          );
-        }
-        return {
-          runId: input.runId,
-          inventory: await readWorkspaceExtensionsInventory(runtime),
-          command,
-          status,
-          exitCode: result.exitCode,
-          signal: result.signal,
-          stdout: result.stdout,
-          stderr: result.stderr,
-        };
-      },
       setExtensionTypescriptApi: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         await runWorkspaceExtensionsCommand(
@@ -1558,21 +1297,6 @@ function buildDesktopRpcHandlers(
           extensionId: input.extensionId,
           name: input.name,
           bypassed: input.bypassed,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      reorderExtensionInstructionFiles: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const fileArgs = input.names
-          .map((name) => `--file ${quoteSvvyxCommandArg(name)}`)
-          .join(" ");
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions instructions reorder ${quoteSvvyxCommandArg(input.extensionId)} ${fileArgs} --json`,
-        );
-        runtime.appLog.info("settings", "Extension instruction files reordered from UI.", {
-          extensionId: input.extensionId,
-          count: input.names.length,
         });
         return readWorkspaceExtensionsInventory(runtime);
       },
@@ -1778,65 +1502,6 @@ function buildDesktopRpcHandlers(
       refetchStateReadModelInvalidation: (request) =>
         facades.state.readModels.refetchInvalidation(request),
       rebaselineStateReadModels: (request) => facades.state.readModels.rebaseline(request),
-      getGeneratedAgentContext: async (input) => {
-        return getWorkspaceRuntime(input).catalog.getGeneratedAgentContextState();
-      },
-      getGeneratedAgentContextDefaults: async (input) => {
-        return getWorkspaceRuntime(input).catalog.getDefaultGeneratedAgentContextState();
-      },
-      updateGeneratedAgentContext: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { state } = input;
-        const next = runtime.catalog.updateGeneratedAgentContextState(state);
-        runtime.appLog.info("settings", "Generated agent context updated.", {
-          revision: next.revision,
-        });
-        return next;
-      },
-      resetGeneratedAgentContext: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const next = runtime.catalog.resetGeneratedAgentContextState();
-        runtime.appLog.info("settings", "Generated agent context reset.", {
-          revision: next.revision,
-        });
-        return next;
-      },
-      listGeneratedAgentContextSnapshots: async (input) => {
-        return getWorkspaceRuntime(input).catalog.listGeneratedAgentContextSnapshots();
-      },
-      createGeneratedAgentContextSnapshot: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { name } = input;
-        const snapshot = runtime.catalog.createGeneratedAgentContextSnapshot(name);
-        runtime.appLog.info("settings", "Generated agent context snapshot created.", {
-          snapshotId: snapshot.id,
-          name: snapshot.name,
-        });
-        return snapshot;
-      },
-      renameGeneratedAgentContextSnapshot: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { snapshotId, name } = input;
-        const snapshot = runtime.catalog.renameGeneratedAgentContextSnapshot(snapshotId, name);
-        runtime.appLog.info("settings", "Generated agent context snapshot renamed.", {
-          snapshotId: snapshot.id,
-          name: snapshot.name,
-        });
-        return snapshot;
-      },
-      restoreGeneratedAgentContextSnapshot: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { snapshotId } = input;
-        const next = runtime.catalog.restoreGeneratedAgentContextSnapshot(snapshotId);
-        runtime.appLog.info("settings", "Generated agent context snapshot loaded.", {
-          snapshotId,
-          revision: next.revision,
-        });
-        return next;
-      },
-      getGeneratedAgentContextEntries: async (input) => {
-        return getWorkspaceRuntime(input).catalog.getGeneratedAgentContextEntries();
-      },
       getGeneratedAgentContextExternalSources: async (input) => {
         return getWorkspaceRuntime(input).catalog.getGeneratedAgentContextExternalSources();
       },
@@ -2346,13 +2011,6 @@ function buildDesktopRpcHandlers(
           sessionId: input.sessionId,
         });
       },
-      getHandlerThreadInspector: async (input) => {
-        const { sessionId, threadId } = input;
-        return await getWorkspaceRuntime(input).catalog.getHandlerThreadInspector({
-          sessionId,
-          threadId,
-        });
-      },
       getWorkflowTaskAttemptInspector: async (input) => {
         const { sessionId, workflowTaskAttemptId } = input;
         return await getWorkspaceRuntime(input).catalog.getWorkflowTaskAttemptInspector({
@@ -2396,14 +2054,6 @@ function buildDesktopRpcHandlers(
           workspaceSessionId: sessionId,
         });
         return session;
-      },
-      recordSessionOpened: async (input) => {
-        getWorkspaceRuntime(input);
-        const { sessionId } = input;
-        recordDevBrowserToolsEvent("session.opened", {
-          sessionId,
-        });
-        return { ok: true };
       },
       openSurface: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -2550,13 +2200,6 @@ function buildDesktopRpcHandlers(
         if (sessionId) {
           recordDevBrowserToolsEvent("session.focused", { sessionId });
         }
-        return result;
-      },
-      setArchivedGroupCollapsed: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { collapsed } = input;
-        const result = await runtime.catalog.setArchivedGroupCollapsed({ collapsed });
-        recordDevBrowserToolsEvent("session.archived-group.toggled", { collapsed });
         return result;
       },
       setSessionNavigationSectionState: async (input) => {

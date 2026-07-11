@@ -21,17 +21,7 @@ import type {
   WorkspaceSessionNavigationSectionState,
 } from "@svvy/core";
 import type { ComposerSnippetMention, SentSnippetProvenance } from "./snippets";
-import type {
-  GeneratedAgentContextActor,
-  CreateGeneratedAgentContextSnapshotRequest,
-  GeneratedAgentContextExternalSource,
-  GeneratedAgentContextEntry,
-  GeneratedAgentContextSnapshotSummary,
-  GeneratedAgentContextState,
-  RenameGeneratedAgentContextSnapshotRequest,
-  RestoreGeneratedAgentContextSnapshotRequest,
-  UpdateGeneratedAgentContextRequest,
-} from "./generated-agent-context";
+import type { GeneratedAgentContextExternalSource } from "./generated-agent-context";
 import type {
   CreateManagedSnippetRequest,
   DeleteManagedSnippetRequest,
@@ -752,16 +742,6 @@ export interface ExtensionsInventoryReadModel {
   snapshots: ExtensionSnapshotReadModel[];
 }
 
-export interface RevertExtensionChangeRequest extends WorkspaceScopedRequest {
-  changeId: string;
-  owningSurface?: {
-    workspaceSessionId: string;
-    surface: PromptSurfaceKind;
-    surfacePiSessionId: string;
-    threadId?: string;
-  };
-}
-
 export interface SaveExtensionSnapshotRequest extends WorkspaceScopedRequest {
   name: string;
 }
@@ -803,43 +783,6 @@ export interface BuildExtensionRequest extends WorkspaceScopedRequest {
   extensionId: string;
 }
 
-export type ExtensionCliRequirementAction = "install" | "update";
-
-export interface RunExtensionCliRequirementActionRequest extends WorkspaceScopedRequest {
-  runId: string;
-  extensionId: string;
-  requirementId: string;
-  action: ExtensionCliRequirementAction;
-}
-
-export interface RunExtensionCliRequirementActionResponse {
-  runId: string;
-  inventory: ExtensionsInventoryReadModel;
-  command: string;
-  status: "success" | "failed";
-  exitCode: number | null;
-  signal: string | null;
-  stdout: string;
-  stderr: string;
-}
-
-export type ExtensionCliRequirementActionUpdateStatus = "started" | "output" | "success" | "failed";
-
-export interface ExtensionCliRequirementActionUpdateMessage {
-  workspaceId: string;
-  runId: string;
-  extensionId: string;
-  requirementId: string;
-  action: ExtensionCliRequirementAction;
-  command: string;
-  status: ExtensionCliRequirementActionUpdateStatus;
-  at: string;
-  outputEvent?: WorkspaceCommandOutputEvent;
-  exitCode?: number | null;
-  signal?: string | null;
-  error?: string | null;
-}
-
 export interface SetExtensionTypescriptApiRequest extends WorkspaceScopedRequest {
   extensionId: string;
   enabled: boolean;
@@ -869,11 +812,6 @@ export interface ConfigureExtensionInstructionFileRequest extends WorkspaceScope
   extensionId: string;
   name: string;
   bypassed: boolean;
-}
-
-export interface ReorderExtensionInstructionFilesRequest extends WorkspaceScopedRequest {
-  extensionId: string;
-  names: string[];
 }
 
 export interface UpdateExtensionInstructionFileRequest extends WorkspaceScopedRequest {
@@ -2120,42 +2058,6 @@ export interface ChatRPCSchema {
         params: StateReadModelRebaselineRequest;
         response: StateReadModelBaseline;
       };
-      getGeneratedAgentContext: {
-        params: WorkspaceScopedRequest;
-        response: GeneratedAgentContextState;
-      };
-      getGeneratedAgentContextDefaults: {
-        params: WorkspaceScopedRequest;
-        response: GeneratedAgentContextState;
-      };
-      updateGeneratedAgentContext: {
-        params: WorkspaceScoped<UpdateGeneratedAgentContextRequest>;
-        response: GeneratedAgentContextState;
-      };
-      resetGeneratedAgentContext: {
-        params: WorkspaceScopedRequest;
-        response: GeneratedAgentContextState;
-      };
-      listGeneratedAgentContextSnapshots: {
-        params: WorkspaceScopedRequest;
-        response: GeneratedAgentContextSnapshotSummary[];
-      };
-      createGeneratedAgentContextSnapshot: {
-        params: WorkspaceScoped<CreateGeneratedAgentContextSnapshotRequest>;
-        response: GeneratedAgentContextSnapshotSummary;
-      };
-      renameGeneratedAgentContextSnapshot: {
-        params: WorkspaceScoped<RenameGeneratedAgentContextSnapshotRequest>;
-        response: GeneratedAgentContextSnapshotSummary;
-      };
-      restoreGeneratedAgentContextSnapshot: {
-        params: WorkspaceScoped<RestoreGeneratedAgentContextSnapshotRequest>;
-        response: GeneratedAgentContextState;
-      };
-      getGeneratedAgentContextEntries: {
-        params: WorkspaceScopedRequest;
-        response: Record<GeneratedAgentContextActor, GeneratedAgentContextEntry[]>;
-      };
       getGeneratedAgentContextExternalSources: {
         params: WorkspaceScopedRequest;
         response: GeneratedAgentContextExternalSource[];
@@ -2224,10 +2126,6 @@ export interface ChatRPCSchema {
         params: WorkspaceScopedRequest;
         response: ExtensionsInventoryReadModel;
       };
-      revertExtensionChange: {
-        params: RevertExtensionChangeRequest;
-        response: ExtensionsInventoryReadModel;
-      };
       saveExtensionSnapshot: {
         params: SaveExtensionSnapshotRequest;
         response: ExtensionsInventoryReadModel;
@@ -2264,10 +2162,6 @@ export interface ChatRPCSchema {
         params: BuildExtensionRequest;
         response: ExtensionsInventoryReadModel;
       };
-      runExtensionCliRequirementAction: {
-        params: RunExtensionCliRequirementActionRequest;
-        response: RunExtensionCliRequirementActionResponse;
-      };
       setExtensionTypescriptApi: {
         params: SetExtensionTypescriptApiRequest;
         response: ExtensionsInventoryReadModel;
@@ -2290,10 +2184,6 @@ export interface ChatRPCSchema {
       };
       configureExtensionInstructionFile: {
         params: ConfigureExtensionInstructionFileRequest;
-        response: ExtensionsInventoryReadModel;
-      };
-      reorderExtensionInstructionFiles: {
-        params: ReorderExtensionInstructionFilesRequest;
         response: ExtensionsInventoryReadModel;
       };
       updateExtensionInstructionFile: {
@@ -2440,10 +2330,6 @@ export interface ChatRPCSchema {
         params: WorkspaceScoped<{ sessionId: string }>;
         response: WorkspaceHandlerThreadSummary[];
       };
-      getHandlerThreadInspector: {
-        params: WorkspaceScoped<{ sessionId: string; threadId: string }>;
-        response: WorkspaceHandlerThreadInspector | null;
-      };
       getWorkflowTaskAttemptInspector: {
         params: WorkspaceScoped<{ sessionId: string; workflowTaskAttemptId: string }>;
         response: WorkspaceWorkflowTaskAttemptInspector | null;
@@ -2459,10 +2345,6 @@ export interface ChatRPCSchema {
       openSession: {
         params: WorkspaceScoped<OpenSessionRequest>;
         response: ConversationSurfaceSnapshot;
-      };
-      recordSessionOpened: {
-        params: WorkspaceScoped<OpenSessionRequest>;
-        response: WorkspaceMutationResponse;
       };
       openSurface: {
         params: WorkspaceScoped<OpenSurfaceRequest>;
@@ -2510,10 +2392,6 @@ export interface ChatRPCSchema {
       };
       recordFocusedSession: {
         params: WorkspaceScoped<{ sessionId: string | null; surfacePiSessionId?: string | null }>;
-        response: WorkspaceMutationResponse;
-      };
-      setArchivedGroupCollapsed: {
-        params: WorkspaceScoped<{ collapsed: boolean }>;
         response: WorkspaceMutationResponse;
       };
       setSessionNavigationSectionState: {
@@ -2613,7 +2491,6 @@ export interface ChatRPCSchema {
       sendWorkspaceSync: WorkspaceSyncMessage;
       sendSurfaceSync: SurfaceSyncMessage;
       sendDesktopNotification: DesktopRendererNotification;
-      sendExtensionCliRequirementActionUpdate: ExtensionCliRequirementActionUpdateMessage;
       sendAppMenuAction: { action: AppMenuAction };
     };
   };

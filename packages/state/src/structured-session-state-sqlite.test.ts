@@ -151,7 +151,7 @@ describe("structured session state SQLite persistence", () => {
     first.store.setSessionPinned({ sessionId: "session-navigation", pinned: true });
     first.store.setSessionArchived({ sessionId: "session-navigation", archived: true });
     first.store.markSessionUnread({ sessionId: "session-navigation", reason: "manual" });
-    first.store.setArchivedGroupCollapsed({ collapsed: false });
+    first.store.setSessionNavigationSectionState({ section: "archived", collapsed: false });
     closeTrackedStore(first.store);
 
     const second = createSqliteStore({

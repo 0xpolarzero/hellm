@@ -233,10 +233,8 @@ describe("default workspace renderer shell", () => {
     expect(runtimeSource).toContain("getWorkspaceUiRestore(scoped())");
     expect(runtimeSource).toContain("getAppLogs: refreshAppLogs");
     expect(runtimeSource).toContain("rpcClient.request.getWorkflowsGenerated(scoped())");
-    expect(runtimeSource).toContain("rpcClient.request.getGeneratedAgentContext(scoped())");
-    expect(runtimeSource).toContain(
-      "rpcClient.request.updateGeneratedAgentContext(scoped(request))",
-    );
+    expect(runtimeSource).not.toContain("rpcClient.request.getGeneratedAgentContext(scoped())");
+    expect(runtimeSource).not.toContain("rpcClient.request.updateGeneratedAgentContext");
     expect(runtimeSource).toContain("rpcClient.request.getSnippets(scoped())");
     expect(runtimeSource).toContain("rpcClient.request.listSessions(scoped())");
     expect(runtimeSource).toContain('fetchStateReadModel({ kind: "appPreferences" })');
@@ -252,12 +250,8 @@ describe("default workspace renderer shell", () => {
     expect(contractSource).toContain(
       "setAppWorkspaceTabs: {\n        params: AppWorkspaceTabsState;",
     );
-    expect(contractSource).toContain(
-      "getGeneratedAgentContext: {\n        params: WorkspaceScopedRequest;",
-    );
-    expect(contractSource).toContain(
-      "updateGeneratedAgentContext: {\n        params: WorkspaceScoped<UpdateGeneratedAgentContextRequest>;",
-    );
+    expect(contractSource).not.toContain("getGeneratedAgentContext: {");
+    expect(contractSource).not.toContain("updateGeneratedAgentContext: {");
     expect(contractSource).toContain(
       "getWorkflowsGenerated: {\n        params: WorkspaceScopedRequest;",
     );
@@ -881,10 +875,6 @@ describe("default workspace renderer shell", () => {
       new URL("./ExtensionInstructionFileEditor.svelte", import.meta.url),
       "utf8",
     );
-    const commandOutputPanelSource = await readFile(
-      new URL("./CommandOutputPanel.svelte", import.meta.url),
-      "utf8",
-    );
     const sourceMetadataTextAreaSource = await readFile(
       new URL("./ui/SourceMetadataTextArea.svelte", import.meta.url),
       "utf8",
@@ -902,7 +892,7 @@ describe("default workspace renderer shell", () => {
     expect(contractSource).toContain("externalInstruction?:");
     expect(contractSource).toContain("EXTERNAL_INSTRUCTION_UNREADABLE");
     expect(contractSource).toContain("getExtensionsInventory");
-    expect(contractSource).toContain("revertExtensionChange");
+    expect(contractSource).not.toContain("revertExtensionChange");
     expect(contractSource).toContain("saveExtensionSnapshot");
     expect(contractSource).toContain("renameExtensionSnapshot");
     expect(contractSource).toContain("deleteExtensionSnapshot");
@@ -928,7 +918,7 @@ describe("default workspace renderer shell", () => {
     expect(runtimeSource).toContain("getExtensionsInventory");
     expect(runtimeSource).toContain("getAppPreferences");
     expect(runtimeSource).toContain("updateAppPreferences");
-    expect(runtimeSource).toContain("revertExtensionChange");
+    expect(runtimeSource).not.toContain("revertExtensionChange");
     expect(runtimeSource).toContain("saveExtensionSnapshot");
     expect(runtimeSource).toContain("renameExtensionSnapshot");
     expect(runtimeSource).toContain("deleteExtensionSnapshot");
@@ -1026,18 +1016,18 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("updateAvailable");
     expect(extensionsPaneSource).toContain("installCommand");
     expect(extensionsPaneSource).toContain("updateCommand");
-    expect(contractSource).toContain("runExtensionCliRequirementAction");
-    expect(contractSource).toContain("ExtensionCliRequirementActionUpdateMessage");
-    expect(contractSource).toContain("sendExtensionCliRequirementActionUpdate");
-    expect(runtimeSource).toContain("runExtensionCliRequirementAction");
-    expect(runtimeSource).toContain("subscribeExtensionCliRequirementActionUpdate");
-    expect(extensionsPaneSource).toContain("runtime.runExtensionCliRequirementAction");
-    expect(extensionsPaneSource).toContain("runId");
-    expect(extensionsPaneSource).toContain("runtime.subscribeExtensionCliRequirementActionUpdate");
-    expect(extensionsPaneSource).toContain("CommandOutputPanel");
-    expect(extensionsPaneSource).toContain("closeCliRequirementLivePanel");
-    expect(commandOutputPanelSource).toContain("Waiting for output...");
-    expect(commandOutputPanelSource).toContain("onClose");
+    expect(contractSource).not.toContain("runExtensionCliRequirementAction");
+    expect(contractSource).not.toContain("ExtensionCliRequirementActionUpdateMessage");
+    expect(contractSource).not.toContain("sendExtensionCliRequirementActionUpdate");
+    expect(runtimeSource).not.toContain("runExtensionCliRequirementAction");
+    expect(runtimeSource).not.toContain("subscribeExtensionCliRequirementActionUpdate");
+    expect(extensionsPaneSource).not.toContain("runtime.runExtensionCliRequirementAction");
+    expect(extensionsPaneSource).not.toContain(
+      "runtime.subscribeExtensionCliRequirementActionUpdate",
+    );
+    expect(extensionsPaneSource).not.toContain("CommandOutputPanel");
+    expect(extensionsPaneSource).not.toContain("extension-cli-command-action");
+    expect(extensionsPaneSource).toContain("Shell: <code>{command}</code>");
     expect(extensionsPaneSource).not.toContain("copyCliCommand");
     expect(extensionsPaneSource).not.toContain(
       'extension.cliRequirements.map((requirement) => requirement.binary).join(", ")}</code>',

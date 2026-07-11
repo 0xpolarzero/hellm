@@ -1193,7 +1193,6 @@ export interface StructuredSessionStateStore {
   }): void;
   markSessionRead(input: { sessionId: string }): void;
   getWorkspaceSidebarState(): StructuredWorkspaceSidebarState;
-  setArchivedGroupCollapsed(input: { collapsed: boolean }): StructuredWorkspaceSidebarState;
   setSessionNavigationSectionState(input: {
     section: "pinned" | "active" | "archived";
     collapsed?: boolean;
@@ -5676,13 +5675,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     }
 
     return this.mapWorkspaceSidebarState(row);
-  }
-
-  setArchivedGroupCollapsed(input: { collapsed: boolean }): StructuredWorkspaceSidebarState {
-    return this.setSessionNavigationSectionState({
-      section: "archived",
-      collapsed: input.collapsed,
-    });
   }
 
   setSessionNavigationSectionState(input: {

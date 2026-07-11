@@ -234,8 +234,8 @@ only when the capability and its tests are present.
   - [x] Wire user-extension instruction lifecycle change records through `svvyx extensions revert <change-id> --json`, with exact after-state conflict detection, `extension_files` revert output, manifest-path reporting for config-only changes, follow-up change records, and focused command tests.
   - [x] Run the existing build path after successful instruction lifecycle reverts and project success or blocked auto-build results in `extension_files` output, while preserving exact-conflict failures without building.
   - [x] Add the durable dependency approval request ledger for revert-triggered auto-build pauses.
-  - [x] Wire UI reversible change cards to the same lifecycle change records, with the Extensions inventory read model projecting recorded change ids, the Extensions pane submitting revert intent through the bootstrap-provided runtime facade's Extension Managing revert path, and the pane refreshing authoritative inventory state from `@svvy/state` read models after the runtime notification.
-  - [x] Add conversation-owned product event projection for UI-triggered extension reverts once the owning conversation surface is available to the Extensions pane route.
+  - [ ] Wire UI reversible change cards to the same lifecycle change records, with the Extensions inventory read model projecting recorded change ids, the Extensions pane submitting revert intent through the bootstrap-provided runtime facade's Extension Managing revert path, and the pane refreshing authoritative inventory state from `@svvy/state` read models after the runtime notification.
+  - [ ] Add conversation-owned product event projection for UI-triggered extension reverts once the owning conversation surface is available to the Extensions pane route.
 - [x] Split extension build result into `contextReady` and `runtimeReady`; missing required env may keep `contextReady: true` while producing `runtimeReady: false`. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
 - [x] Make missing or unknown required CLI status fail build before dependency installation and generator scripts, while detected installed versions remain available and become the current generator version. Sources: `docs/specs/extension/extension_managing.extension.spec.md`.
   - [x] Keep missing/unknown required CLI requirements as structured build failures before staging promotion, dependency approval, or generator execution, while detected installed versions succeed and surface update metadata.
@@ -272,7 +272,7 @@ only when the capability and its tests are present.
 - [x] Let extensions declare required command providers with binary name, optional package name, default target version, version-check command, and reusable exact-version install/update command template. Sources: `docs/features.ts`, `docs/specs/extension/extension_managing.extension.spec.md`.
 - [x] Report missing, unknown, available, detected/current/latest versions, and update-available status through Extension Managing inspect/build and the Extensions UI. Sources: `docs/features.ts`.
 - [x] Fail build with ordinary structured errors when a required CLI is missing or unknown, while using the detected installed version when a global PATH binary is available. Sources: `docs/features.ts`.
-- [ ] Extension CLI installation/update is split by initiator: the Extensions UI has no
+- [x] Extension CLI installation/update is split by initiator: the Extensions UI has no
       user-clicked install/update admission surface without a lifecycle-complete runtime-owned
       dependency-action command path with exact contracts, approval linkage, sandbox launch policy,
       subprocess lifetime, command facts, readiness refresh, and tests; agent-initiated setup

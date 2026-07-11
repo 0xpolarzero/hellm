@@ -1916,7 +1916,7 @@ This section is governed by `docs/specs/extensions-and-tools.spec.md`, `docs/spe
       source files.
 - [ ] Route user `svvyx` dispatcher planning through `@svvy/extensions`; runtime owns command
       execution, approval/sandbox lanes, command facts, state commits, and invalidation publication.
-- [ ] Project builtin extension CLI readiness into the Extensions pane from the same Extension Managing inspect/build readiness facts, including missing, unknown, available, detected/current/default/latest versions, update-available status, and install/update command facts without renderer-side CLI probing.
+- [ ] Project builtin extension CLI readiness into the Extensions pane from the same Extension Managing inspect/build readiness facts, including missing, unknown, available, detected/current/default/latest versions, update-available status, and read-only Shell install/update command guidance without renderer-side CLI probing or renderer-triggered admission.
 - [ ] Project reversible Extension Managing change cards into the Extensions pane from the same lifecycle, usage, and delete change records used by `svvyx extensions revert <change-id> --json`, with UI-triggered reverts submitted through the bootstrap-provided runtime facade's Extension Managing revert path and refreshed from `@svvy/state` read models.
 - [ ] Dispatch built user `svvyx` extensions through the runtime-owned Shell command lifecycle:
       `svvyx ...` resolves active build manifests through the `@svvy/extensions` svvyx dispatch

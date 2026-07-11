@@ -297,7 +297,9 @@ describe("structured session state write API", () => {
       2,
     );
 
-    expect(store.setArchivedGroupCollapsed({ collapsed: false })).toEqual({
+    expect(
+      store.setSessionNavigationSectionState({ section: "archived", collapsed: false }),
+    ).toEqual({
       pinnedGroupCollapsed: false,
       pinnedGroupSizePx: 150,
       activeGroupCollapsed: false,

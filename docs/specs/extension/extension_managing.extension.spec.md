@@ -1469,7 +1469,7 @@ facts, readiness refresh, public error mapping, and tests.
 Agent-initiated installs are still ordinary Shell work. The manifest stores one reusable
 exact-version template; inspect and build-error output resolve `{{version}}` before returning the
 status object. Missing requirements resolve the template with `defaultVersion`. Update actions
-resolve it with the UI- or agent-selected target version.
+resolve it with an explicitly selected Shell target version.
 
 `usage` is the global agent/profile usage configuration for the inspected extension. It is useful in
 Extension Managing because the command is a management surface. Native `list_extensions` must not
@@ -2360,7 +2360,7 @@ Missing CLI example:
       "updateCommand": null
     },
     "nextSteps": [
-      "Use the Extensions UI Install action, or run the install command from Shell when an agent is handling setup.",
+      "After explicit user confirmation, run the install command from Shell.",
       "Rerun `svvyx extensions build web --json` after installation."
     ]
   }
@@ -2394,7 +2394,7 @@ Different installed version example:
   },
   "nextSteps": [
     "Use the detected CLI for generated instructions until the user or an agent chooses to update.",
-    "Use the Extensions UI Update action, or run the update command from Shell when an agent is handling setup."
+    "After explicit user confirmation, run the update command from Shell."
   ]
 }
 ```

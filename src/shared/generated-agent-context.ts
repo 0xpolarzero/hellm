@@ -68,31 +68,6 @@ export interface GeneratedAgentContextState {
   actorRecipes: Record<GeneratedAgentContextActor, GeneratedAgentContextActorRecipe>;
 }
 
-export interface UpdateGeneratedAgentContextRequest {
-  state: GeneratedAgentContextState;
-}
-
-export interface GeneratedAgentContextSnapshotSummary {
-  id: string;
-  name: string;
-  createdAt: string;
-  revision: number;
-  contentKey: string;
-}
-
-export interface CreateGeneratedAgentContextSnapshotRequest {
-  name: string;
-}
-
-export interface RenameGeneratedAgentContextSnapshotRequest {
-  snapshotId: string;
-  name: string;
-}
-
-export interface RestoreGeneratedAgentContextSnapshotRequest {
-  snapshotId: string;
-}
-
 export function getGeneratedAgentContextContentKey(state: GeneratedAgentContextState): string {
   return JSON.stringify(
     sortGeneratedAgentContextValue({

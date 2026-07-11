@@ -45,7 +45,6 @@ import {
   type WorkspaceCommandInspector,
   type WorkspacePathIndexEntry,
   type SvvyUserMessage,
-  type WorkspaceHandlerThreadInspector,
   type WorkspaceHandlerThreadSummary,
   type WorkspaceArtifactPreview,
   type AnswerRuntimeApprovalRequest,
@@ -73,7 +72,6 @@ import {
   type DeleteExtensionRequest,
   type DesktopRendererCommand,
   type DuplicateExtensionRequest,
-  type ExtensionCliRequirementActionUpdateMessage,
   type ExtensionsInventoryReadModel,
   type OpenExtensionInstructionFileInEditorRequest,
   type ProviderAuthInfo,
@@ -81,10 +79,7 @@ import {
   type RemoveExtensionEnvOverrideRequest,
   type RemoveExtensionEnvSecretRequest,
   type ReorderExtensionDefaultsRequest,
-  type ReorderExtensionInstructionFilesRequest,
   type ResetExtensionRequest,
-  type RunExtensionCliRequirementActionRequest,
-  type RunExtensionCliRequirementActionResponse,
   type SetAgentProfileExtensionUsageRequest,
   type SetExtensionDefaultUsageRequest,
   type SetExtensionEnvOverrideRequest,
@@ -98,14 +93,7 @@ import {
   type WriteCommandStdinResponse,
 } from "../shared/workspace-contract";
 import { FileBackedEditConflictError, type FileBackedSaveMode } from "../shared/file-backed-edit";
-import type {
-  GeneratedAgentContextActor,
-  GeneratedAgentContextExternalSource,
-  GeneratedAgentContextEntry,
-  GeneratedAgentContextSnapshotSummary,
-  GeneratedAgentContextState,
-  UpdateGeneratedAgentContextRequest,
-} from "../shared/generated-agent-context";
+import type { GeneratedAgentContextExternalSource } from "../shared/generated-agent-context";
 import type {
   ComposerSnippetMention,
   CreateManagedSnippetRequest,
@@ -647,7 +635,6 @@ export interface ChatRuntimeRpcClient {
     refetchStateReadModels: typeof rpc.request.refetchStateReadModels;
     refetchStateReadModelInvalidation: typeof rpc.request.refetchStateReadModelInvalidation;
     rebaselineStateReadModels: typeof rpc.request.rebaselineStateReadModels;
-    revertExtensionChange: typeof rpc.request.revertExtensionChange;
     saveExtensionSnapshot: typeof rpc.request.saveExtensionSnapshot;
     renameExtensionSnapshot: typeof rpc.request.renameExtensionSnapshot;
     deleteExtensionSnapshot: typeof rpc.request.deleteExtensionSnapshot;
@@ -657,28 +644,18 @@ export interface ChatRuntimeRpcClient {
     deleteExtension: typeof rpc.request.deleteExtension;
     resetExtension: typeof rpc.request.resetExtension;
     buildExtension: typeof rpc.request.buildExtension;
-    runExtensionCliRequirementAction: typeof rpc.request.runExtensionCliRequirementAction;
     setExtensionTypescriptApi: typeof rpc.request.setExtensionTypescriptApi;
     setExtensionDefaultUsage: typeof rpc.request.setExtensionDefaultUsage;
     reorderExtensionDefaults: typeof rpc.request.reorderExtensionDefaults;
     addExtensionInstructionFile: typeof rpc.request.addExtensionInstructionFile;
     removeExtensionInstructionFile: typeof rpc.request.removeExtensionInstructionFile;
     configureExtensionInstructionFile: typeof rpc.request.configureExtensionInstructionFile;
-    reorderExtensionInstructionFiles: typeof rpc.request.reorderExtensionInstructionFiles;
     updateExtensionInstructionFile: typeof rpc.request.updateExtensionInstructionFile;
     openExtensionInstructionFileInEditor: typeof rpc.request.openExtensionInstructionFileInEditor;
     setExtensionEnvSecret: typeof rpc.request.setExtensionEnvSecret;
     removeExtensionEnvSecret: typeof rpc.request.removeExtensionEnvSecret;
     setExtensionEnvOverride: typeof rpc.request.setExtensionEnvOverride;
     removeExtensionEnvOverride: typeof rpc.request.removeExtensionEnvOverride;
-    getGeneratedAgentContext: typeof rpc.request.getGeneratedAgentContext;
-    getGeneratedAgentContextDefaults: typeof rpc.request.getGeneratedAgentContextDefaults;
-    updateGeneratedAgentContext: typeof rpc.request.updateGeneratedAgentContext;
-    resetGeneratedAgentContext: typeof rpc.request.resetGeneratedAgentContext;
-    listGeneratedAgentContextSnapshots: typeof rpc.request.listGeneratedAgentContextSnapshots;
-    createGeneratedAgentContextSnapshot: typeof rpc.request.createGeneratedAgentContextSnapshot;
-    renameGeneratedAgentContextSnapshot: typeof rpc.request.renameGeneratedAgentContextSnapshot;
-    restoreGeneratedAgentContextSnapshot: typeof rpc.request.restoreGeneratedAgentContextSnapshot;
     getGeneratedAgentContextExternalSources: typeof rpc.request.getGeneratedAgentContextExternalSources;
     getSnippets: typeof rpc.request.getSnippets;
     createManagedSnippet: typeof rpc.request.createManagedSnippet;
@@ -713,17 +690,14 @@ export interface ChatRuntimeRpcClient {
     getWorkflowsGenerated: typeof rpc.request.getWorkflowsGenerated;
     openWorkspaceSourceInEditor: typeof rpc.request.openWorkspaceSourceInEditor;
     openGeneratedAgentContextExternalSourceInEditor: typeof rpc.request.openGeneratedAgentContextExternalSourceInEditor;
-    getGeneratedAgentContextEntries: typeof rpc.request.getGeneratedAgentContextEntries;
     listSessions: typeof rpc.request.listSessions;
     getCommandInspector: typeof rpc.request.getCommandInspector;
     writeCommandStdin: typeof rpc.request.writeCommandStdin;
     listHandlerThreads: typeof rpc.request.listHandlerThreads;
-    getHandlerThreadInspector: typeof rpc.request.getHandlerThreadInspector;
     getWorkflowTaskAttemptInspector: typeof rpc.request.getWorkflowTaskAttemptInspector;
     getArtifactPreview: typeof rpc.request.getArtifactPreview;
     createSession: typeof rpc.request.createSession;
     openSession: typeof rpc.request.openSession;
-    recordSessionOpened: typeof rpc.request.recordSessionOpened;
     openSurface: typeof rpc.request.openSurface;
     closeSurface: typeof rpc.request.closeSurface;
     renameSession: typeof rpc.request.renameSession;
@@ -736,7 +710,6 @@ export interface ChatRuntimeRpcClient {
     markSessionUnread: typeof rpc.request.markSessionUnread;
     markSessionRead: typeof rpc.request.markSessionRead;
     recordFocusedSession: typeof rpc.request.recordFocusedSession;
-    setArchivedGroupCollapsed: typeof rpc.request.setArchivedGroupCollapsed;
     setSessionNavigationSectionState: typeof rpc.request.setSessionNavigationSectionState;
     sendPrompt: typeof rpc.request.sendPrompt;
     recordRendererTelemetry: typeof rpc.request.recordRendererTelemetry;
@@ -804,9 +777,6 @@ export interface ChatRuntime {
   markRendererReady: () => Promise<void>;
   subscribe: (listener: ChatRuntimeListener) => () => void;
   subscribeAppLogUpdate: (listener: (payload: AppLogUpdateMessage) => void) => () => void;
-  subscribeExtensionCliRequirementActionUpdate: (
-    listener: (payload: ExtensionCliRequirementActionUpdateMessage) => void,
-  ) => () => void;
   subscribeRendererCommand: (listener: (command: DesktopRendererCommand) => void) => () => void;
   subscribeAppMenuAction: (listener: (action: AppMenuAction) => void) => () => void;
   listSessions: () => Promise<WorkspaceSessionSummary[]>;
@@ -832,10 +802,6 @@ export interface ChatRuntime {
   ) => Promise<WorkspaceCommandInspector>;
   writeCommandStdin: (request: WriteCommandStdinRequest) => Promise<WriteCommandStdinResponse>;
   listHandlerThreads: (sessionId?: string) => Promise<WorkspaceHandlerThreadSummary[]>;
-  getHandlerThreadInspector: (
-    threadId: string,
-    sessionId?: string,
-  ) => Promise<WorkspaceHandlerThreadInspector>;
   getWorkflowTaskAttemptInspector: (
     workflowTaskAttemptId: string,
     sessionId?: string,
@@ -877,7 +843,6 @@ export interface ChatRuntime {
   unarchiveSession: (sessionId: string) => Promise<void>;
   markSessionUnread: (sessionId: string) => Promise<void>;
   markSessionRead: (sessionId: string) => Promise<void>;
-  setArchivedGroupCollapsed: (collapsed: boolean) => Promise<void>;
   setSessionNavigationSectionState: (
     section: "pinned" | "active" | "archived",
     state: { collapsed?: boolean; sizePx?: number },
@@ -899,11 +864,6 @@ export interface ChatRuntime {
   getWorkflowsGenerated: () => Promise<WorkspaceWorkflowsGeneratedReadModel>;
   openWorkspaceSourceInEditor: (path: string) => Promise<boolean>;
   openGeneratedAgentContextExternalSourceInEditor: (path: string) => Promise<boolean>;
-  getGeneratedAgentContext: () => Promise<GeneratedAgentContextState>;
-  getGeneratedAgentContextDefaults: () => Promise<GeneratedAgentContextState>;
-  getGeneratedAgentContextEntries: () => Promise<
-    Record<GeneratedAgentContextActor, GeneratedAgentContextEntry[]>
-  >;
   getGeneratedAgentContextExternalSources: () => Promise<GeneratedAgentContextExternalSource[]>;
   getAgentSettings: () => Promise<AgentSettingsState>;
   getAgentContextPreview: (
@@ -917,7 +877,6 @@ export interface ChatRuntime {
   getExtensionsInventory: () => Promise<ExtensionsInventoryReadModel>;
   getAppPreferences: () => Promise<AppPreferences>;
   updateAppPreferences: (preferences: AppPreferences) => Promise<AppPreferences>;
-  revertExtensionChange: (changeId: string) => Promise<ExtensionsInventoryReadModel>;
   saveExtensionSnapshot: (name: string) => Promise<ExtensionsInventoryReadModel>;
   renameExtensionSnapshot: (
     snapshotId: string,
@@ -940,9 +899,6 @@ export interface ChatRuntime {
   buildExtension: (
     input: Omit<BuildExtensionRequest, "workspaceId">,
   ) => Promise<ExtensionsInventoryReadModel>;
-  runExtensionCliRequirementAction: (
-    input: Omit<RunExtensionCliRequirementActionRequest, "workspaceId">,
-  ) => Promise<RunExtensionCliRequirementActionResponse>;
   setExtensionTypescriptApi: (
     input: Omit<SetExtensionTypescriptApiRequest, "workspaceId">,
   ) => Promise<ExtensionsInventoryReadModel>;
@@ -960,9 +916,6 @@ export interface ChatRuntime {
   ) => Promise<ExtensionsInventoryReadModel>;
   configureExtensionInstructionFile: (
     input: Omit<ConfigureExtensionInstructionFileRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
-  reorderExtensionInstructionFiles: (
-    input: Omit<ReorderExtensionInstructionFilesRequest, "workspaceId">,
   ) => Promise<ExtensionsInventoryReadModel>;
   updateExtensionInstructionFile: (
     input: Omit<UpdateExtensionInstructionFileRequest, "workspaceId">,
@@ -998,19 +951,6 @@ export interface ChatRuntime {
   updateRequestUserInputSettings: (
     settings: RequestUserInputSettings,
   ) => Promise<AgentSettingsState>;
-  updateGeneratedAgentContext: (
-    request: UpdateGeneratedAgentContextRequest,
-  ) => Promise<GeneratedAgentContextState>;
-  resetGeneratedAgentContext: () => Promise<GeneratedAgentContextState>;
-  listGeneratedAgentContextSnapshots: () => Promise<GeneratedAgentContextSnapshotSummary[]>;
-  createGeneratedAgentContextSnapshot: (
-    name: string,
-  ) => Promise<GeneratedAgentContextSnapshotSummary>;
-  renameGeneratedAgentContextSnapshot: (
-    snapshotId: string,
-    name: string,
-  ) => Promise<GeneratedAgentContextSnapshotSummary>;
-  restoreGeneratedAgentContextSnapshot: (snapshotId: string) => Promise<GeneratedAgentContextState>;
   getSnippets: () => Promise<SnippetsReadModel>;
   createManagedSnippet: (input: CreateManagedSnippetRequest) => Promise<ManagedSnippet>;
   updateManagedSnippet: (input: UpdateManagedSnippetRequest) => Promise<ManagedSnippet>;
@@ -1835,9 +1775,6 @@ export async function createChatRuntime(
   const storage = storageOverride ?? initializeStorage();
   const listeners = new Set<ChatRuntimeListener>();
   const appLogUpdateListeners = new Set<(payload: AppLogUpdateMessage) => void>();
-  const extensionCliRequirementActionUpdateListeners = new Set<
-    (payload: ExtensionCliRequirementActionUpdateMessage) => void
-  >();
   const rendererCommandListeners = new Set<(command: DesktopRendererCommand) => void>();
   const surfaceControllers = new Map<string, ChatSurfaceControllerInternal>();
   let sessions: WorkspaceSessionSummary[] = [];
@@ -2372,12 +2309,6 @@ export async function createChatRuntime(
       : undefined;
   };
 
-  const getFocusedPromptTarget = (): PromptTarget | null => {
-    const focusedTarget =
-      paneLayout.panels.find((pane) => pane.panelId === paneLayout.focusedPanelId)?.binding ?? null;
-    return isPromptTarget(focusedTarget) ? normalizePromptTarget(focusedTarget) : null;
-  };
-
   const syncProviderAuth = async (providerId: string): Promise<boolean> => {
     const auth = await rpcClient.request.getProviderAuthState({ providerId });
     if (auth.connected) {
@@ -2441,27 +2372,6 @@ export async function createChatRuntime(
     }
 
     return await rpcClient.request.listHandlerThreads(scoped({ sessionId }));
-  };
-
-  const getHandlerThreadInspector = async (
-    threadId: string,
-    sessionId = getSelectedSessionId(),
-  ): Promise<WorkspaceHandlerThreadInspector> => {
-    if (!sessionId) {
-      throw new Error("Expected a workspace session before inspecting a handler thread.");
-    }
-
-    const inspector = await rpcClient.request.getHandlerThreadInspector(
-      scoped({
-        sessionId,
-        threadId,
-      }),
-    );
-    if (!inspector) {
-      throw new Error(`Delegated handler thread not found: ${threadId}`);
-    }
-
-    return inspector;
   };
 
   const getWorkflowTaskAttemptInspector = async (
@@ -2872,17 +2782,6 @@ export async function createChatRuntime(
     emit();
   };
 
-  const extensionCliRequirementActionUpdateListener = (
-    payload: ExtensionCliRequirementActionUpdateMessage,
-  ) => {
-    if (payload.workspaceId !== workspaceInfo.workspaceId) {
-      return;
-    }
-    for (const listener of extensionCliRequirementActionUpdateListeners) {
-      listener(payload);
-    }
-  };
-
   const rendererNotificationStore = createRendererNotificationStore({
     rpcClient,
     workspaceId: workspaceInfo.workspaceId as WorkspaceId,
@@ -2898,10 +2797,6 @@ export async function createChatRuntime(
 
   rpcClient.addMessageListener("sendWorkspaceSync", workspaceSyncListener);
   rpcClient.addMessageListener("sendSurfaceSync", surfaceSyncListener);
-  rpcClient.addMessageListener(
-    "sendExtensionCliRequirementActionUpdate",
-    extensionCliRequirementActionUpdateListener,
-  );
   recordFocusedSession();
 
   const recordRendererTelemetry = (event: RendererTelemetryEvent): void => {
@@ -3050,15 +2945,10 @@ export async function createChatRuntime(
       rendererNotificationStore.dispose();
       rpcClient.removeMessageListener("sendWorkspaceSync", workspaceSyncListener);
       rpcClient.removeMessageListener("sendSurfaceSync", surfaceSyncListener);
-      rpcClient.removeMessageListener(
-        "sendExtensionCliRequirementActionUpdate",
-        extensionCliRequirementActionUpdateListener,
-      );
       for (const controller of surfaceControllers.values()) {
         controller.dispose();
       }
       appLogUpdateListeners.clear();
-      extensionCliRequirementActionUpdateListeners.clear();
       rendererCommandListeners.clear();
       listeners.clear();
     },
@@ -3093,12 +2983,6 @@ export async function createChatRuntime(
       appLogUpdateListeners.add(listener);
       return () => {
         appLogUpdateListeners.delete(listener);
-      };
-    },
-    subscribeExtensionCliRequirementActionUpdate: (listener) => {
-      extensionCliRequirementActionUpdateListeners.add(listener);
-      return () => {
-        extensionCliRequirementActionUpdateListeners.delete(listener);
       };
     },
     subscribeRendererCommand: (listener) => {
@@ -3239,7 +3123,6 @@ export async function createChatRuntime(
     getCommandInspector,
     writeCommandStdin,
     listHandlerThreads,
-    getHandlerThreadInspector,
     getWorkflowTaskAttemptInspector,
     getArtifactPreview,
     getRequestUserInputRequests: () => structuredClone(requestUserInputRequests),
@@ -3365,7 +3248,6 @@ export async function createChatRuntime(
           return;
         }
         bindPaneToExistingController(nextPaneId, existingController);
-        void rpcClient.request.recordSessionOpened(scoped({ sessionId }));
         return;
       }
 
@@ -3521,10 +3403,6 @@ export async function createChatRuntime(
       lastRecordedFocusedSurfacePiSessionId = undefined;
       await refreshSessions();
     },
-    setArchivedGroupCollapsed: async (collapsed) => {
-      await rpcClient.request.setArchivedGroupCollapsed(scoped({ collapsed }));
-      await refreshSessions();
-    },
     setSessionNavigationSectionState: async (section, state) => {
       await rpcClient.request.setSessionNavigationSectionState(scoped({ section, ...state }));
       await refreshSessions();
@@ -3628,16 +3506,6 @@ export async function createChatRuntime(
       void refreshExternalInstructionSources().catch(() => undefined);
       return nextPreferences;
     },
-    revertExtensionChange: async (changeId) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.revertExtensionChange(
-          scoped({
-            changeId,
-            ...(getFocusedPromptTarget() ? { owningSurface: getFocusedPromptTarget()! } : {}),
-          }),
-        ),
-      )!,
     saveExtensionSnapshot: async (name) =>
       setWorkspaceCache(
         "extensionsInventory",
@@ -3683,11 +3551,6 @@ export async function createChatRuntime(
         "extensionsInventory",
         await rpcClient.request.buildExtension(scoped(input)),
       )!,
-    runExtensionCliRequirementAction: async (input) => {
-      const result = await rpcClient.request.runExtensionCliRequirementAction(scoped(input));
-      setWorkspaceCache("extensionsInventory", result.inventory);
-      return result;
-    },
     setExtensionTypescriptApi: async (input) =>
       setWorkspaceCache(
         "extensionsInventory",
@@ -3717,11 +3580,6 @@ export async function createChatRuntime(
       setWorkspaceCache(
         "extensionsInventory",
         await rpcClient.request.configureExtensionInstructionFile(scoped(input)),
-      )!,
-    reorderExtensionInstructionFiles: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.reorderExtensionInstructionFiles(scoped(input)),
       )!,
     updateExtensionInstructionFile: async (input) =>
       setWorkspaceCache(
@@ -3795,23 +3653,7 @@ export async function createChatRuntime(
         "agentSettings",
         await rpcClient.request.updateRequestUserInputSettings(scoped(settings)),
       )!,
-    getGeneratedAgentContext: () => rpcClient.request.getGeneratedAgentContext(scoped()),
-    getGeneratedAgentContextDefaults: () =>
-      rpcClient.request.getGeneratedAgentContextDefaults(scoped()),
-    getGeneratedAgentContextEntries: () =>
-      rpcClient.request.getGeneratedAgentContextEntries(scoped()),
     getGeneratedAgentContextExternalSources: refreshExternalInstructionSources,
-    updateGeneratedAgentContext: (request) =>
-      rpcClient.request.updateGeneratedAgentContext(scoped(request)),
-    resetGeneratedAgentContext: () => rpcClient.request.resetGeneratedAgentContext(scoped()),
-    listGeneratedAgentContextSnapshots: () =>
-      rpcClient.request.listGeneratedAgentContextSnapshots(scoped()),
-    createGeneratedAgentContextSnapshot: (name) =>
-      rpcClient.request.createGeneratedAgentContextSnapshot(scoped({ name })),
-    renameGeneratedAgentContextSnapshot: (snapshotId, name) =>
-      rpcClient.request.renameGeneratedAgentContextSnapshot(scoped({ snapshotId, name })),
-    restoreGeneratedAgentContextSnapshot: (snapshotId) =>
-      rpcClient.request.restoreGeneratedAgentContextSnapshot(scoped({ snapshotId })),
     getSnippets: refreshSnippets,
     createManagedSnippet: async (input) => {
       const created = await rpcClient.request.createManagedSnippet(scoped(input));

@@ -432,26 +432,6 @@ function getCustomTool(surface: ManagedSurfaceRecord, name: string) {
   return tool;
 }
 
-function appendGeneratedAgentContextMarker(catalog: WorkspaceSessionCatalog, marker: string): void {
-  const state = catalog.getGeneratedAgentContextState();
-  const block = Object.values(state.instructionBlocks)[0];
-  if (!block) {
-    throw new Error("Expected default generated agent context instruction block.");
-  }
-  catalog.updateGeneratedAgentContextState({
-    ...state,
-    revision: state.revision + 1,
-    updatedAt: new Date().toISOString(),
-    instructionBlocks: {
-      ...state.instructionBlocks,
-      [block.id]: {
-        ...block,
-        body: `${block.body}\n\n${marker}`,
-      },
-    },
-  });
-}
-
 async function closeSurface(catalog: WorkspaceSessionCatalog, target: PromptTarget): Promise<void> {
   const closeSurfaceFn = (
     catalog as unknown as {
@@ -626,23 +606,6 @@ describe("WorkspaceSessionCatalog", () => {
     } finally {
       store.createOrchestratorSurface = createOrchestratorSurface;
     }
-  });
-
-  it("writes generated agent context entries into workspace-owned files", () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-
-    const entries = catalog.getGeneratedAgentContextEntries();
-    const webContext = entries.orchestrator.find((entry) => entry.id === "web-context");
-
-    expect(webContext?.sourcePath).toBe(
-      ".svvy/generated/agent-context/orchestrator/web-context.md",
-    );
-    expect(webContext?.source).toBe(".svvy/generated/agent-context/orchestrator/web-context.md");
-    expect(existsSync(join(cwd, webContext!.sourcePath))).toBe(true);
-    expect(readFileSync(join(cwd, webContext!.sourcePath), "utf8")).toContain(
-      "Loaded extension: Web.",
-    );
   });
 
   it("writes generated actor prompt aggregates into the app-global extension cache", async () => {
@@ -1328,47 +1291,6 @@ describe("WorkspaceSessionCatalog", () => {
         result.sessions.some((session) => session.id === created.target.workspaceSessionId),
       ).toBe(true);
       expect("activeSessionId" in (result as unknown as Record<string, unknown>)).toBe(false);
-    } finally {
-      await catalog.dispose();
-    }
-  });
-
-  it("records UI-triggered extension revert product events on the owning conversation", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-
-    try {
-      const created = await catalog.createSession({ title: "Extension Revert" }, DEFAULTS);
-      const recorded = await catalog.recordExtensionRevertProductEvent({
-        target: created.target,
-        changeId: "chg_linear_00000000-0000-4000-8000-000000000001",
-        revertChangeId: "chg_linear_00000000-0000-4000-8000-000000000002",
-        extensionId: "linear",
-        resultKind: "extension_files",
-        autoBuildStatus: "succeeded",
-      });
-
-      expect(recorded).toBe(true);
-      expect((await catalog.listSessions()).sessions[0]?.productEvents).toEqual([
-        expect.objectContaining({
-          title: "Extension change reverted",
-          summary:
-            "User reverted extension extension_files chg_linear_00000000-0000-4000-8000-000000000001 for linear.",
-          subject: {
-            kind: "session",
-            id: created.target.workspaceSessionId,
-          },
-          details: expect.objectContaining({
-            surface: "orchestrator",
-            surfacePiSessionId: created.target.surfacePiSessionId,
-            changeId: "chg_linear_00000000-0000-4000-8000-000000000001",
-            revertChangeId: "chg_linear_00000000-0000-4000-8000-000000000002",
-            extensionId: "linear",
-            resultKind: "extension_files",
-            autoBuildStatus: "succeeded",
-          }),
-        }),
-      ]);
     } finally {
       await catalog.dispose();
     }
@@ -2420,40 +2342,6 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("emits a stale prompt binding update when generated agent context changes", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    const surfaceSyncs: SurfaceSyncMessage[] = [];
-    catalog.setSurfaceSyncListener((payload) => {
-      surfaceSyncs.push(payload);
-    });
-
-    try {
-      const created = await catalog.createSession({ title: "Context Sync" }, DEFAULTS);
-      expect(created.promptBinding?.stale).toBe(false);
-
-      appendGeneratedAgentContextMarker(catalog, "Fresh prompt marker for live sync.");
-
-      await waitFor(() =>
-        surfaceSyncs.some(
-          (payload) =>
-            payload.target.surfacePiSessionId === created.target.surfacePiSessionId &&
-            payload.snapshot?.promptBinding?.stale === true,
-        ),
-      );
-
-      const update = surfaceSyncs.findLast(
-        (payload) => payload.target.surfacePiSessionId === created.target.surfacePiSessionId,
-      );
-      expect(update?.snapshot?.promptBinding?.stale).toBe(true);
-      expect(update?.snapshot?.promptBinding?.currentRevision).toBe(
-        catalog.getGeneratedAgentContextState().revision,
-      );
-    } finally {
-      await catalog.dispose();
-    }
-  });
-
   it("emits a stale prompt binding update when Request User Input mode changes", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
@@ -2503,7 +2391,7 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("clears the live stale prompt binding when context returns to the bound prompt", async () => {
+  it("clears the live stale prompt binding when request-input settings return to the bound prompt", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
     const surfaceSyncs: SurfaceSyncMessage[] = [];
@@ -2512,9 +2400,14 @@ describe("WorkspaceSessionCatalog", () => {
     });
 
     try {
-      const created = await catalog.createSession({ title: "Context Revert" }, DEFAULTS);
-      const originalPromptState = catalog.getGeneratedAgentContextState();
-      appendGeneratedAgentContextMarker(catalog, "Temporary prompt marker for live revert.");
+      const created = await catalog.createSession({ title: "Request Input Revert" }, DEFAULTS);
+      catalog.updateRequestUserInputSettings({
+        mode: "blocking",
+        blockingTimeout: {
+          enabled: true,
+          durationMs: 300_000,
+        },
+      });
 
       await waitFor(() =>
         surfaceSyncs.some(
@@ -2524,7 +2417,7 @@ describe("WorkspaceSessionCatalog", () => {
         ),
       );
 
-      catalog.updateGeneratedAgentContextState(originalPromptState);
+      catalog.updateRequestUserInputSettings(DEFAULT_AGENT_SETTINGS_STATE.requestUserInput);
 
       await waitFor(() => {
         const latest = surfaceSyncs.findLast(
@@ -2537,8 +2430,8 @@ describe("WorkspaceSessionCatalog", () => {
         (payload) => payload.target.surfacePiSessionId === created.target.surfacePiSessionId,
       );
       expect(update?.snapshot?.promptBinding?.stale).toBe(false);
-      expect(update?.snapshot?.promptBinding?.currentRevision).toBe(
-        catalog.getGeneratedAgentContextState().revision,
+      expect(update?.snapshot?.promptBinding?.boundFingerprint).toBe(
+        update?.snapshot?.promptBinding?.currentFingerprint,
       );
       expect(update?.snapshot?.promptBinding?.boundSystemPrompt).toBe(
         update?.snapshot?.promptBinding?.currentSystemPrompt,

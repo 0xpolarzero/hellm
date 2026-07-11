@@ -92,7 +92,6 @@ describe("retired desktop integration RPC paths", () => {
       { channel: "openSnippetExternalSourceInEditor", retirementIncrement: "Increment 10" },
       { channel: "listSessions", retirementIncrement: "Increment 8" },
       { channel: "getCommandInspector", retirementIncrement: "Increment 8" },
-      { channel: "getHandlerThreadInspector", retirementIncrement: "Increment 8" },
       { channel: "getWorkflowTaskAttemptInspector", retirementIncrement: "Increment 8" },
     ] as const;
 
@@ -103,6 +102,18 @@ describe("retired desktop integration RPC paths", () => {
       expect(sharedContractSource).toContain(`${channel}: {`);
       expect(chatRuntimeSource).toContain(`rpcClient.request.${channel}`);
       expect(backendSource).toContain(`${channel}:`);
+    }
+
+    for (const channel of [
+      "getHandlerThreadInspector",
+      "recordSessionOpened",
+      "revertExtensionChange",
+      "reorderExtensionInstructionFiles",
+      "setArchivedGroupCollapsed",
+    ]) {
+      expect(sharedContractSource).not.toContain(`${channel}: {`);
+      expect(chatRuntimeSource).not.toContain(`rpcClient.request.${channel}`);
+      expect(backendSource).not.toContain(`${channel}:`);
     }
   });
 });

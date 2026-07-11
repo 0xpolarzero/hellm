@@ -36,15 +36,6 @@ const LEGACY_HANDLER_RETIREMENT_INCREMENT = 10 as const;
 const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "getDefaults",
   "getAgentSettings",
-  "getGeneratedAgentContext",
-  "getGeneratedAgentContextDefaults",
-  "updateGeneratedAgentContext",
-  "resetGeneratedAgentContext",
-  "listGeneratedAgentContextSnapshots",
-  "createGeneratedAgentContextSnapshot",
-  "renameGeneratedAgentContextSnapshot",
-  "restoreGeneratedAgentContextSnapshot",
-  "getGeneratedAgentContextEntries",
   "getGeneratedAgentContextExternalSources",
   "getSnippets",
   "createManagedSnippet",
@@ -62,7 +53,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "getAgentContextPreview",
   "getAgentModelChoices",
   "getExtensionsInventory",
-  "revertExtensionChange",
   "saveExtensionSnapshot",
   "renameExtensionSnapshot",
   "deleteExtensionSnapshot",
@@ -72,14 +62,12 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "deleteExtension",
   "resetExtension",
   "buildExtension",
-  "runExtensionCliRequirementAction",
   "setExtensionTypescriptApi",
   "setExtensionDefaultUsage",
   "reorderExtensionDefaults",
   "addExtensionInstructionFile",
   "removeExtensionInstructionFile",
   "configureExtensionInstructionFile",
-  "reorderExtensionInstructionFiles",
   "updateExtensionInstructionFile",
   "openExtensionInstructionFileInEditor",
   "setExtensionEnvSecret",
@@ -111,12 +99,10 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "listSessions",
   "getCommandInspector",
   "listHandlerThreads",
-  "getHandlerThreadInspector",
   "getWorkflowTaskAttemptInspector",
   "getArtifactPreview",
   "createSession",
   "openSession",
-  "recordSessionOpened",
   "openSurface",
   "closeSurface",
   "renameSession",
@@ -129,7 +115,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "markSessionUnread",
   "markSessionRead",
   "recordFocusedSession",
-  "setArchivedGroupCollapsed",
   "setSessionNavigationSectionState",
   "recordRendererTelemetry",
   "updateComposerDraft",
@@ -187,12 +172,7 @@ describe("legacy RPC handler seam", () => {
       ...LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10,
     ];
 
-    for (const channel of [
-      "sendWorkspaceSync",
-      "sendSurfaceSync",
-      "sendExtensionCliRequirementActionUpdate",
-      "sendAppMenuAction",
-    ] as const) {
+    for (const channel of ["sendWorkspaceSync", "sendSurfaceSync", "sendAppMenuAction"] as const) {
       expect(classifiedRequests).not.toContain(channel);
       expect(syncSeamSource).toContain(`channel: "${channel}"`);
       expect(syncSeamSource).toContain("retiresInIncrement: 10");

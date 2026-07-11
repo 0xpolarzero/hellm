@@ -1,11 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "bun:test";
-import {
-  buildSystemPrompt,
-  createDefaultGeneratedAgentContextState,
-} from "./default-system-prompt";
+import { buildSystemPrompt } from "./default-system-prompt";
 import { createGeneratedAgentContextStore } from "./generated-agent-context-store";
 
 const tempDirs: string[] = [];
@@ -36,61 +33,22 @@ describe("generated agent context store", () => {
     );
   });
 
-  it("persists updates and reset restores the seeded default", () => {
+  it("reloads an existing generated context file for prompt composition", () => {
     const agentDir = createTempAgentDir();
-    const store = createGeneratedAgentContextStore({ agentDir });
-    const state = store.getState();
-    const updated = structuredClone(state);
-    updated.instructionBlocks.common!.body = "Use the persisted generated agent context.";
-
-    const saved = store.updateState(updated);
-    expect(saved.revision).toBe(2);
-    expect(buildSystemPrompt("orchestrator", { generatedAgentContextState: saved })).toContain(
-      "Use the persisted generated agent context.",
+    const persisted = structuredClone(createGeneratedAgentContextStore({ agentDir }).getState());
+    persisted.revision = 7;
+    persisted.instructionBlocks.common!.body = "Persisted generated context marker.";
+    writeFileSync(
+      join(agentDir, "generated-agent-context.json"),
+      `${JSON.stringify(persisted, null, 2)}\n`,
     );
 
-    const reloaded = createGeneratedAgentContextStore({ agentDir });
-    expect(reloaded.getState().instructionBlocks.common!.body).toBe(
-      "Use the persisted generated agent context.",
+    const reloaded = createGeneratedAgentContextStore({ agentDir }).getState();
+
+    expect(reloaded.revision).toBe(7);
+    expect(buildSystemPrompt("orchestrator", { generatedAgentContextState: reloaded })).toContain(
+      "Persisted generated context marker.",
     );
-
-    const reset = store.resetState();
-    expect(reset).toEqual(
-      createDefaultGeneratedAgentContextState(reset.updatedAt, saved.revision + 1),
-    );
-    expect(buildSystemPrompt("orchestrator", { generatedAgentContextState: reset })).toBe(
-      buildSystemPrompt("orchestrator"),
-    );
-  });
-
-  it("creates, renames, and restores named snapshots", () => {
-    const agentDir = createTempAgentDir();
-    const store = createGeneratedAgentContextStore({ agentDir });
-    const initial = store.getState();
-    const changed = structuredClone(initial);
-    changed.instructionBlocks.common!.body = "Snapshot this instruction.";
-    const saved = store.updateState(changed);
-
-    const snapshot = store.createSnapshot("Stable prompt");
-    expect(snapshot.name).toBe("Stable prompt");
-    expect(snapshot.revision).toBe(saved.revision);
-    expect(store.listSnapshots()).toEqual([snapshot]);
-
-    const renamed = store.renameSnapshot(snapshot.id, "Release prompt");
-    expect(renamed.name).toBe("Release prompt");
-    expect(store.listSnapshots()[0]?.name).toBe("Release prompt");
-
-    const next = structuredClone(saved);
-    next.instructionBlocks.common!.body = "A later autosaved edit.";
-    store.updateState(next);
-
-    const restored = store.restoreSnapshot(snapshot.id);
-    expect(restored.revision).toBe(4);
-    expect(restored.instructionBlocks.common!.body).toBe("Snapshot this instruction.");
-
-    const reloaded = createGeneratedAgentContextStore({ agentDir });
-    expect(reloaded.listSnapshots()[0]?.name).toBe("Release prompt");
-    expect(reloaded.getState().instructionBlocks.common!.body).toBe("Snapshot this instruction.");
   });
 
   it("does not expose the removed prompt library contract names", () => {

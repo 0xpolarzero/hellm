@@ -8118,7 +8118,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         extensionId: "web",
         cli: tinyfishStatus({ status: "missing" }),
         nextSteps: [
-          "Use the Extensions UI Install action, or run the install command from Shell when an agent is handling setup.",
+          "After explicit user confirmation, run the install command from Shell.",
           "Rerun `svvyx extensions build web --json` after installation.",
         ],
       },
@@ -8239,7 +8239,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     expect(output.requirements.cliRequirements).toEqual([available]);
     expect(output.nextSteps).toEqual([
       "Use the detected CLI for generated instructions until the user or an agent chooses to update.",
-      "Use the Extensions UI Update action, or run the update command from Shell when an agent is handling setup.",
+      "After explicit user confirmation, run the update command from Shell.",
     ]);
     expect(existsSync(join(buildRoot, "web", "current"))).toBe(true);
   });
@@ -8268,7 +8268,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       "npm install -g @tiny-fish/cli@0.1.6",
     );
     expect((missing.output as any).error.nextSteps).toContain(
-      "Use the Extensions UI Install action, or run the install command from Shell when an agent is handling setup.",
+      "After explicit user confirmation, run the install command from Shell.",
     );
 
     const updateable = await runSvvyxExtensionsCommand({

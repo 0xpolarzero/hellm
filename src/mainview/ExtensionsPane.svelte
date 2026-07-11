@@ -23,14 +23,11 @@
   import { DEFAULT_EXTERNAL_INSTRUCTION_ACTORS } from "../shared/agent-settings";
   import type {
     AgentContextPreviewResponse,
-    ExtensionCliRequirementAction,
-    ExtensionCliRequirementActionUpdateMessage,
     ExtensionCliRequirementReadiness,
     ExtensionEnvRequirementReadiness,
     ExtensionInventoryItemReadModel,
     ExtensionSnapshotReadModel,
     ExtensionsInventoryReadModel,
-    WorkspaceCommandOutputEvent,
   } from "../shared/workspace-contract";
   import type { ExtensionInterfaceKind } from "@svvy/core";
   import type { ChatRuntime } from "./chat-runtime";
@@ -41,7 +38,6 @@
   import OpenExternalButton from "./ui/OpenExternalButton.svelte";
   import Tooltip from "./ui/Tooltip.svelte";
   import { dismissConfirmation } from "./ui/dismiss-confirmation";
-  import CommandOutputPanel from "./CommandOutputPanel.svelte";
   import ExtensionEnvValueForm from "./ExtensionEnvValueForm.svelte";
   import ExtensionGeneratedFileViewer from "./ExtensionGeneratedFileViewer.svelte";
   import ExtensionInstructionFileEditor from "./ExtensionInstructionFileEditor.svelte";
@@ -85,22 +81,6 @@
   let expandedToolingIds = $state<Set<string>>(new Set());
   let extensionFilter = $state<"all" | ExtensionInterfaceKind>("all");
   let pendingExtensionActions = $state<Set<string>>(new Set());
-  let cliRequirementActionResults = $state<Record<string, { message: string }>>({});
-  type CliRequirementLivePanel = {
-    runId: string;
-    extensionId: string;
-    requirementId: string;
-    action: ExtensionCliRequirementAction;
-    binary: string;
-    command: string;
-    status: ExtensionCliRequirementActionUpdateMessage["status"];
-    events: WorkspaceCommandOutputEvent[];
-    exitCode: number | null;
-    signal: string | null;
-    error: string | null;
-  };
-  let cliRequirementLivePanels = $state<Record<string, CliRequirementLivePanel>>({});
-  let closedCliRequirementRunIds = $state<Set<string>>(new Set());
   let extensionInventoryMutationGeneration = 0;
   let appliedExtensionInventoryMutationGeneration = 0;
   let extensionInventoryNeedsSettledRefresh = false;
@@ -235,22 +215,6 @@
 
   function instructionDeleteKey(extensionId: string, name: string): string {
     return `${extensionId}:${name}`;
-  }
-
-  function cliRequirementResultKey(extensionId: string, requirementId: string): string {
-    return `${extensionId}:${requirementId}`;
-  }
-
-  function cliRequirementLivePanelKey(extensionId: string, requirementId: string): string {
-    return `${extensionId}:${requirementId}`;
-  }
-
-  function cliRequirementActionKey(
-    extensionId: string,
-    requirementId: string,
-    action: ExtensionCliRequirementAction,
-  ): string {
-    return `cli:${action}:${extensionId}:${requirementId}`;
   }
 
   function buildRequiredExtensions(): ExtensionInventoryItemReadModel[] {
@@ -770,174 +734,6 @@
     return null;
   }
 
-  function cliRequirementAction(
-    requirement: ExtensionCliRequirementReadiness,
-  ): ExtensionCliRequirementAction | null {
-    if (requirement.status === "missing" && requirement.installCommand) return "install";
-    if (requirement.updateAvailable && requirement.updateCommand) return "update";
-    return null;
-  }
-
-  function cliRequirementActionLabel(requirement: ExtensionCliRequirementReadiness): string {
-    if (requirement.status === "missing") return "Install";
-    if (requirement.updateAvailable) return "Update";
-    return "Ready";
-  }
-
-  function cliRequirementPendingLabel(action: ExtensionCliRequirementAction): string {
-    return action === "install" ? "Installing..." : "Updating...";
-  }
-
-  function createCliRequirementRunId(): string {
-    return globalThis.crypto?.randomUUID?.() ?? `cli-${Date.now()}-${Math.random()}`;
-  }
-
-  function cliRequirementRunStatusLabel(panel: CliRequirementLivePanel): string {
-    if (panel.status === "started" || panel.status === "output") {
-      return panel.action === "install" ? "Installing" : "Updating";
-    }
-    if (panel.status === "success") {
-      return panel.action === "install" ? "Installed" : "Updated";
-    }
-    if (panel.exitCode !== null) {
-      return `Failed (${panel.exitCode})`;
-    }
-    return panel.signal ? `Failed (${panel.signal})` : "Failed";
-  }
-
-  function cliRequirementRunTone(panel: CliRequirementLivePanel): "running" | "success" | "danger" {
-    if (panel.status === "success") return "success";
-    if (panel.status === "failed") return "danger";
-    return "running";
-  }
-
-  function closeCliRequirementLivePanel(extensionId: string, requirementId: string): void {
-    const key = cliRequirementLivePanelKey(extensionId, requirementId);
-    const panel = cliRequirementLivePanels[key];
-    if (panel) {
-      closedCliRequirementRunIds = new Set([...closedCliRequirementRunIds, panel.runId]);
-    }
-    const next = { ...cliRequirementLivePanels };
-    delete next[key];
-    cliRequirementLivePanels = next;
-  }
-
-  function applyCliRequirementActionUpdate(
-    update: ExtensionCliRequirementActionUpdateMessage,
-  ): void {
-    if (closedCliRequirementRunIds.has(update.runId)) return;
-    const key = cliRequirementLivePanelKey(update.extensionId, update.requirementId);
-    const existing = cliRequirementLivePanels[key];
-    const binary =
-      extensionsInventory?.extensions
-        .find((extension) => extension.id === update.extensionId)
-        ?.requirements.cliRequirements.find((requirement) => requirement.id === update.requirementId)
-        ?.binary ?? update.requirementId;
-    const events = update.outputEvent
-      ? [...(existing?.events ?? []), update.outputEvent].slice(-80)
-      : (existing?.events ?? []);
-
-    cliRequirementLivePanels = {
-      ...cliRequirementLivePanels,
-      [key]: {
-        runId: update.runId,
-        extensionId: update.extensionId,
-        requirementId: update.requirementId,
-        action: update.action,
-        binary: existing?.binary ?? binary,
-        command: update.command,
-        status: update.status,
-        events,
-        exitCode: update.exitCode ?? existing?.exitCode ?? null,
-        signal: update.signal ?? existing?.signal ?? null,
-        error: update.error ?? existing?.error ?? null,
-      },
-    };
-  }
-
-  function cliRequirementOutputSummary(stdout: string, stderr: string): string {
-    const output = `${stderr}\n${stdout}`
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .at(0);
-    if (!output) return "";
-    return output.length > 160 ? `${output.slice(0, 157)}...` : output;
-  }
-
-  async function runCliRequirementAction(
-    extensionId: string,
-    requirement: ExtensionCliRequirementReadiness,
-  ): Promise<void> {
-    const action = cliRequirementAction(requirement);
-    if (!action) return;
-    const actionKey = cliRequirementActionKey(extensionId, requirement.id, action);
-    if (isExtensionActionPending(actionKey)) return;
-    const resultKey = cliRequirementResultKey(extensionId, requirement.id);
-    const runId = createCliRequirementRunId();
-    closedCliRequirementRunIds.delete(runId);
-    closedCliRequirementRunIds = new Set(closedCliRequirementRunIds);
-    const command = cliRequirementCommand(requirement) ?? "";
-    cliRequirementLivePanels = {
-      ...cliRequirementLivePanels,
-      [cliRequirementLivePanelKey(extensionId, requirement.id)]: {
-        runId,
-        extensionId,
-        requirementId: requirement.id,
-        action,
-        binary: requirement.binary,
-        command,
-        status: "started",
-        events: [],
-        exitCode: null,
-        signal: null,
-        error: null,
-      },
-    };
-    startExtensionAction(actionKey);
-    inventoryError = null;
-    const clearedActionResults = { ...cliRequirementActionResults };
-    delete clearedActionResults[resultKey];
-    cliRequirementActionResults = clearedActionResults;
-    try {
-      const result = await runtime.runExtensionCliRequirementAction({
-        runId,
-        extensionId,
-        requirementId: requirement.id,
-        action,
-      });
-      extensionsInventory = result.inventory;
-      extensionInventoryNeedsSettledRefresh = true;
-      const summary = cliRequirementOutputSummary(result.stdout, result.stderr);
-      if (result.status === "success") {
-        const nextActionResults = { ...cliRequirementActionResults };
-        delete nextActionResults[resultKey];
-        cliRequirementActionResults = nextActionResults;
-      } else {
-        cliRequirementActionResults = {
-          ...cliRequirementActionResults,
-          [resultKey]: {
-            message: `${requirement.binary} ${action} failed${
-              result.exitCode === null ? "" : ` (${result.exitCode})`
-            }${summary ? `: ${summary}` : "."}`,
-          },
-        };
-      }
-    } catch (error) {
-      cliRequirementActionResults = {
-        ...cliRequirementActionResults,
-        [resultKey]: {
-          message:
-            error instanceof Error
-              ? error.message
-              : `Unable to ${action} ${requirement.binary}.`,
-        },
-      };
-    } finally {
-      finishExtensionAction(actionKey);
-    }
-  }
-
   function declaredCliRequirementBinaries(extension: ExtensionInventoryItemReadModel): string[] {
     return extension.requirements.cliRequirements.map((requirement) => requirement.binary);
   }
@@ -1354,14 +1150,10 @@
 
   onMount(() => {
     const unsubscribeRuntime = runtime.subscribe(syncRuntimeSnapshots);
-    const unsubscribeCliUpdates = runtime.subscribeExtensionCliRequirementActionUpdate(
-      applyCliRequirementActionUpdate,
-    );
     void loadSettings();
     void loadAppPreferences();
     void loadExtensionsInventory();
     return () => {
-      unsubscribeCliUpdates();
       unsubscribeRuntime();
     };
   });
@@ -1898,49 +1690,16 @@
             <div class="extension-cli-requirements" aria-label={`${extension.title} CLI readiness`}>
               {#each cliRequirements as requirement (requirement.id)}
                 {@const command = cliRequirementCommand(requirement)}
-                {@const action = cliRequirementAction(requirement)}
-                {@const actionKey = action ? cliRequirementActionKey(extension.id, requirement.id, action) : null}
-                {@const actionPending = actionKey ? isExtensionActionPending(actionKey) : false}
-                {@const actionResult = cliRequirementActionResults[cliRequirementResultKey(extension.id, requirement.id)]}
-                {@const livePanel = cliRequirementLivePanels[cliRequirementLivePanelKey(extension.id, requirement.id)]}
                 <div class="extension-cli-requirement">
                   <div class="extension-cli-requirement-main">
                     <Badge tone={cliRequirementTone(requirement)}>
                       {cliRequirementLabel(requirement)}
                     </Badge>
                     <span>{cliRequirementVersions(requirement)}</span>
-                    {#if command && action}
-                      <Tooltip label={command}>
-                        <button
-                          type="button"
-                          class="extension-cli-command-action"
-                          disabled={actionPending}
-                          aria-busy={actionPending}
-                          onclick={() => void runCliRequirementAction(extension.id, requirement)}
-                        >
-                          <TerminalIcon size={12} aria-hidden="true" />
-                          {actionPending ? cliRequirementPendingLabel(action) : cliRequirementActionLabel(requirement)}
-                        </button>
-                      </Tooltip>
-                    {/if}
-                    {#if actionResult}
-                      <span class="extension-cli-action-result">
-                        {actionResult.message}
-                      </span>
+                    {#if command}
+                      <span class="extension-cli-command">Shell: <code>{command}</code></span>
                     {/if}
                   </div>
-                  {#if livePanel}
-                    <CommandOutputPanel
-                      title={`${livePanel.binary} ${livePanel.action}`}
-                      command={livePanel.command}
-                      events={livePanel.events}
-                      status={cliRequirementRunStatusLabel(livePanel)}
-                      tone={cliRequirementRunTone(livePanel)}
-                      closeLabel={`Close ${livePanel.binary} install output`}
-                      onClose={() =>
-                        closeCliRequirementLivePanel(extension.id, requirement.id)}
-                    />
-                  {/if}
                 </div>
               {/each}
             </div>
@@ -2609,8 +2368,7 @@
     min-width: 0;
   }
 
-  .extension-status-action,
-  .extension-cli-command-action {
+  .extension-status-action {
     display: inline-grid;
     grid-auto-flow: column;
     grid-auto-columns: max-content;
@@ -2632,21 +2390,17 @@
   }
 
   .extension-status-action:hover:not(:disabled),
-  .extension-status-action:focus-visible:not(:disabled),
-  .extension-cli-command-action:hover:not(:disabled),
-  .extension-cli-command-action:focus-visible:not(:disabled) {
+  .extension-status-action:focus-visible:not(:disabled) {
     outline: none;
     background: var(--ui-hover-bg);
     color: var(--ui-text-primary);
   }
 
-  .extension-status-action:focus-visible,
-  .extension-cli-command-action:focus-visible {
+  .extension-status-action:focus-visible {
     box-shadow: var(--ui-focus-ring);
   }
 
-  .extension-status-action:disabled,
-  .extension-cli-command-action:disabled {
+  .extension-status-action:disabled {
     cursor: default;
     opacity: 0.58;
   }
@@ -3041,12 +2795,6 @@
   .extension-cli-error {
     color: var(--ui-text-tertiary);
     font-size: 0.72rem;
-  }
-
-  .extension-cli-action-result {
-    color: var(--ui-danger);
-    max-width: 100%;
-    overflow-wrap: anywhere;
   }
 
   .extension-cli-requirement code {

@@ -2689,11 +2689,11 @@ async function runBuildCommand(
         cli: blockingCli,
         nextSteps: missing
           ? [
-              "Use the Extensions UI Install action, or run the install command from Shell when an agent is handling setup.",
+              "After explicit user confirmation, run the install command from Shell.",
               `Rerun \`svvyx extensions build ${extension.id} --json\` after installation.`,
             ]
           : [
-              "Inspect the CLI manually, or repair it from the Extensions UI or Shell.",
+              "Inspect the CLI manually, then repair it from Shell after explicit user confirmation.",
               `Rerun \`svvyx extensions build ${extension.id} --json\` after repair.`,
             ],
       },
@@ -3052,7 +3052,7 @@ async function runBuildCommand(
       ? {
           nextSteps: [
             "Use the detected CLI for generated instructions until the user or an agent chooses to update.",
-            "Use the Extensions UI Update action, or run the update command from Shell when an agent is handling setup.",
+            "After explicit user confirmation, run the update command from Shell.",
           ],
         }
       : {}),

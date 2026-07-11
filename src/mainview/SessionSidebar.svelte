@@ -82,7 +82,6 @@
     onDeleteSession: (session: WorkspaceSessionSummary) => void;
     onMarkSessionUnread: (session: WorkspaceSessionSummary) => void;
     onMarkSessionRead: (session: WorkspaceSessionSummary) => void;
-    onToggleArchivedGroup: (collapsed: boolean) => void;
     onUpdateSessionNavigationSectionState: (
       section: WorkspaceSessionNavigationSectionId,
       state: { collapsed?: boolean; sizePx?: number },
@@ -125,7 +124,6 @@
     onDeleteSession,
     onMarkSessionUnread,
     onMarkSessionRead,
-    onToggleArchivedGroup,
     onUpdateSessionNavigationSectionState,
     onOpenSearch,
     onOpenCommandPalette,
@@ -593,10 +591,6 @@
 
   function toggleSessionSection(section: WorkspaceSessionNavigationSectionId) {
     const collapsed = !isSessionSectionCollapsed(section);
-    if (section === "archived") {
-      onToggleArchivedGroup(collapsed);
-      return;
-    }
     onUpdateSessionNavigationSectionState(section, { collapsed });
   }
 </script>
