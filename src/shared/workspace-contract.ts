@@ -32,6 +32,7 @@ import type {
 import type { AppMenuAction } from "./shortcut-registry";
 import type {
   AnswerRequestInputResult,
+  AnswerRuntimeApprovalResult,
   ArtifactId,
   AppLogLevel,
   AppLogQuery,
@@ -57,6 +58,7 @@ import type {
   RuntimeClientSubmissionMetadata,
   StateInvalidationDescriptor,
   StateStoredError,
+  SetRequestInputTimerPausedResult,
   StateRevision,
   SnippetId,
   SurfacePiSessionId,
@@ -1026,8 +1028,6 @@ export interface WorkspaceSyncMessage {
   reason: "workspace.updated" | "structured.updated" | "artifact.open";
   sessions: WorkspaceSessionSummary[];
   navigation: WorkspaceSessionNavigationReadModel;
-  requestUserInputRequests: WorkspaceRequestUserInputRequest[];
-  runtimeApprovalRequests: WorkspaceRuntimeApprovalRequest[];
   artifactOpenRequest?: {
     workspaceSessionId: string;
     artifactId: string;
@@ -1749,12 +1749,9 @@ export interface RequestUserInputAnswerRequest {
   clientSubmission?: PromptClientSubmissionMetadata;
 }
 
-export interface RequestUserInputAnswerResponse extends SurfaceMutationResponse {
-  requestId: AnswerRequestInputResult["requestId"];
-  questionId: AnswerRequestInputResult["questionId"];
-  status: AnswerRequestInputResult["status"];
-  delivery: AnswerRequestInputResult["delivery"];
-}
+export type RequestUserInputAnswerResponse = AnswerRequestInputResult;
+export type RuntimeApprovalAnswerResponse = AnswerRuntimeApprovalResult;
+export type RequestInputTimerPauseResponse = SetRequestInputTimerPausedResult;
 
 export interface SetRequestUserInputTimerPausedRequest {
   surfacePiSessionId: string;
@@ -1868,8 +1865,6 @@ export interface SurfaceSyncMessage {
 export interface ListSessionsResponse {
   sessions: WorkspaceSessionSummary[];
   navigation: WorkspaceSessionNavigationReadModel;
-  requestUserInputRequests: WorkspaceRequestUserInputRequest[];
-  runtimeApprovalRequests: WorkspaceRuntimeApprovalRequest[];
 }
 
 export interface CreateSessionRequest {
@@ -2408,11 +2403,11 @@ export interface ChatRPCSchema {
       };
       answerRuntimeApprovalRequest: {
         params: WorkspaceScoped<AnswerRuntimeApprovalRequest>;
-        response: SurfaceMutationResponse;
+        response: RuntimeApprovalAnswerResponse;
       };
       setRequestUserInputTimerPaused: {
         params: WorkspaceScoped<SetRequestUserInputTimerPausedRequest>;
-        response: WorkspaceMutationResponse;
+        response: RequestInputTimerPauseResponse;
       };
       setExtensionContextAutoUpdate: {
         params: WorkspaceScoped<SetExtensionContextAutoUpdateRequest>;

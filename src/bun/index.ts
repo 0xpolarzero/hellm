@@ -2187,10 +2187,6 @@ function buildDesktopRpcHandlers(
               }
             : {}),
         });
-        const result = runtime.catalog.getRequestInputSurfaceMutationResponse({
-          surfacePiSessionId: input.surfacePiSessionId,
-          requestId: input.requestId,
-        });
         runtime.appLog.info("prompt", "Request user input answered.", {
           surfacePiSessionId: input.surfacePiSessionId,
           requestId: input.requestId,
@@ -2200,31 +2196,24 @@ function buildDesktopRpcHandlers(
           answerStatus: answerResult.status,
           answerDeliveryKind: answerResult.delivery.kind,
         });
-        return {
-          ...result,
-          requestId: answerResult.requestId,
-          questionId: answerResult.questionId,
-          status: answerResult.status,
-          delivery: answerResult.delivery,
-        };
+        return answerResult;
       },
       answerRuntimeApprovalRequest: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        await facades.runtime.approvals.answer({
+        const answerResult = await facades.runtime.approvals.answer({
           approvalId: input.requestId as RuntimeApprovalId,
           decision: input.approved ? "approved" : "denied",
           ...(input.reason === undefined ? {} : { reason: input.reason ?? "" }),
         });
-        const result = await runtime.catalog.afterRuntimeApprovalAnswered(input);
         runtime.appLog.info("direct-tool", "Runtime approval request answered.", {
           requestId: input.requestId,
           approved: input.approved,
         });
-        return result;
+        return answerResult;
       },
       setRequestUserInputTimerPaused: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        await facades.runtime.requestInput.setTimerPaused({
+        const result = await facades.runtime.requestInput.setTimerPaused({
           surfacePiSessionId: input.surfacePiSessionId as SurfacePiSessionId,
           requestId: input.requestId as RequestInputRequestId,
           paused: input.paused,
@@ -2241,7 +2230,7 @@ function buildDesktopRpcHandlers(
           requestId: input.requestId,
           paused: input.paused,
         });
-        return { ok: true };
+        return result;
       },
       setExtensionContextAutoUpdate: async (input) => {
         const runtime = getWorkspaceRuntime(input);

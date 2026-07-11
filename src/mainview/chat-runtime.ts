@@ -1932,6 +1932,32 @@ export async function createChatRuntime(
   const refreshSnippets = async (): Promise<SnippetsReadModel> =>
     setWorkspaceCache("snippets", await rpcClient.request.getSnippets(scoped()))!;
 
+  const refreshRequestInput = async (): Promise<WorkspaceRequestUserInputRequest[]> => {
+    const result = requireStateReadModel(
+      await rpcClient.request.fetchStateReadModel({
+        kind: "requestInput",
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+      }),
+      "requestInput",
+    );
+    requestUserInputRequests = structuredClone([...result.value.requests]);
+    emit();
+    return structuredClone(requestUserInputRequests);
+  };
+
+  const refreshApprovals = async (): Promise<WorkspaceRuntimeApprovalRequest[]> => {
+    const result = requireStateReadModel(
+      await rpcClient.request.fetchStateReadModel({
+        kind: "approvals",
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+      }),
+      "approvals",
+    );
+    runtimeApprovalRequests = structuredClone([...result.value.requests]);
+    emit();
+    return structuredClone(runtimeApprovalRequests);
+  };
+
   const refreshAppLogs = async (query?: AppLogQuery): Promise<AppLogReadModel> => {
     const backendReadModel = requireStateReadModel(
       await rpcClient.request.fetchStateReadModel({
@@ -2320,8 +2346,6 @@ export async function createChatRuntime(
     const response = await rpcClient.request.listSessions(scoped());
     sessions = response.sessions;
     sessionNavigation = response.navigation;
-    requestUserInputRequests = response.requestUserInputRequests;
-    runtimeApprovalRequests = response.runtimeApprovalRequests;
     emit();
     return sessions;
   };
@@ -2544,10 +2568,23 @@ export async function createChatRuntime(
     return paneLayout.panels.find((pane) => !before.has(pane.panelId))?.panelId ?? nextPanelId;
   };
 
-  const [initialCatalog, initialAppLogSummaryResult] = await Promise.all([
+  const [
+    initialCatalog,
+    initialAppLogSummaryResult,
+    initialRequestInputResult,
+    initialApprovalsResult,
+  ] = await Promise.all([
     rpcClient.request.listSessions({ workspaceId: workspaceInfo.workspaceId }),
     rpcClient.request.fetchStateReadModel({
       kind: "appLogSummary",
+      workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+    }),
+    rpcClient.request.fetchStateReadModel({
+      kind: "requestInput",
+      workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+    }),
+    rpcClient.request.fetchStateReadModel({
+      kind: "approvals",
       workspaceId: workspaceInfo.workspaceId as WorkspaceId,
     }),
   ]);
@@ -2555,10 +2592,15 @@ export async function createChatRuntime(
     initialAppLogSummaryResult,
     "appLogSummary",
   ).value;
+  const initialRequestInput = requireStateReadModel(
+    initialRequestInputResult,
+    "requestInput",
+  ).value;
+  const initialApprovals = requireStateReadModel(initialApprovalsResult, "approvals").value;
   sessions = initialCatalog.sessions;
   sessionNavigation = initialCatalog.navigation;
-  requestUserInputRequests = initialCatalog.requestUserInputRequests;
-  runtimeApprovalRequests = initialCatalog.runtimeApprovalRequests;
+  requestUserInputRequests = structuredClone([...initialRequestInput.requests]);
+  runtimeApprovalRequests = structuredClone([...initialApprovals.requests]);
   backendAppLogSummary = initialAppLogSummary;
   appLogSummary = summarizeRendererAppLogs(
     backendAppLogSummary,
@@ -2774,8 +2816,6 @@ export async function createChatRuntime(
     }
     sessions = payload.sessions;
     sessionNavigation = payload.navigation;
-    requestUserInputRequests = payload.requestUserInputRequests;
-    runtimeApprovalRequests = payload.runtimeApprovalRequests;
     if (payload.reason === "artifact.open" && payload.artifactOpenRequest) {
       openStaticWorkspacePane({
         workspaceSessionId: payload.artifactOpenRequest.workspaceSessionId,
@@ -3182,10 +3222,7 @@ export async function createChatRuntime(
             : {}),
         }),
       );
-      if (response.snapshot) {
-        upsertSurfaceController(response.snapshot);
-      }
-      await refreshSessions();
+      await refreshRequestInput();
       return response;
     },
     setRequestUserInputTimerPaused: async (request) => {
@@ -3197,14 +3234,11 @@ export async function createChatRuntime(
             : {}),
         }),
       );
-      await refreshSessions();
+      await refreshRequestInput();
     },
     answerRuntimeApprovalRequest: async (request) => {
-      const response = await rpcClient.request.answerRuntimeApprovalRequest(scoped(request));
-      if (response.snapshot) {
-        upsertSurfaceController(response.snapshot);
-      }
-      await refreshSessions();
+      await rpcClient.request.answerRuntimeApprovalRequest(scoped(request));
+      await refreshApprovals();
     },
     getAppLogs: refreshAppLogs,
     getAppLogSummary: async () => {

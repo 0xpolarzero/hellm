@@ -51,6 +51,15 @@ describe("retired desktop integration RPC paths", () => {
     expect(chatRuntimeSource).not.toContain(
       'setAppCache("appPreferences", await rpcClient.request.getAppPreferences())',
     );
+    expect(chatRuntimeSource).toContain('kind: "requestInput"');
+    expect(chatRuntimeSource).toContain('kind: "approvals"');
+    expect(sharedContractSource).not.toContain(
+      "navigation: WorkspaceSessionNavigationReadModel;\n  requestUserInputRequests:",
+    );
+    expect(sessionCatalogSource).not.toContain("buildWorkspaceRequestUserInputRequests");
+    expect(sessionCatalogSource).not.toContain("buildWorkspaceRuntimeApprovalRequests");
+    expect(sessionCatalogSource).not.toContain("getRequestInputSurfaceMutationResponse");
+    expect(sessionCatalogSource).not.toContain("afterRuntimeApprovalAnswered");
 
     expect(sharedContractSource).toContain("StateReadModelInvalidationRefetchRequest");
     expect(sharedContractSource).toContain("StateInvalidationDescriptor");

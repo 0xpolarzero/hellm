@@ -51,6 +51,7 @@ import {
   type AppPreferences,
 } from "../shared/agent-settings";
 import type {
+  CommandId,
   ExtensionUsageState,
   IsoDateTimeStringSchema,
   JsonValue,
@@ -58,6 +59,7 @@ import type {
   QueueItemId,
   RequestInputQuestionId,
   RequestInputRequestId,
+  RuntimeApprovalId,
   StateRevision,
 } from "@svvy/core";
 import { buildWorkspaceSessionNavigation } from "../shared/session-navigation";
@@ -753,8 +755,6 @@ function createFakeRpc(input: {
     workspaceId: string;
     workflowTaskAttemptId: string;
   }> = [];
-  const requestUserInputRequests = structuredClone(input.requestUserInputRequests ?? []);
-  const runtimeApprovalRequests = structuredClone(input.runtimeApprovalRequests ?? []);
   let requestInputReadModelRequests = structuredClone(input.requestUserInputRequests ?? []);
   let approvalsReadModelRequests = structuredClone(input.runtimeApprovalRequests ?? []);
   const requestUserInputAnswerRequests: Array<WorkspaceScoped<RequestUserInputAnswerRequest>> = [];
@@ -797,15 +797,6 @@ function createFakeRpc(input: {
   const listNavigation = () =>
     buildWorkspaceSessionNavigation(listSessions(), archivedGroupCollapsed);
 
-  const listRequestUserInputRequests = (): WorkspaceRequestUserInputRequest[] =>
-    structuredClone(
-      requestUserInputRequests.filter(
-        (request) => request.status === "open" || request.status === "completed",
-      ),
-    );
-  const listRuntimeApprovalRequests = (): WorkspaceRuntimeApprovalRequest[] =>
-    structuredClone(runtimeApprovalRequests.filter((request) => request.status === "pending"));
-
   const getSurfaceRecord = (surfacePiSessionId: string): SurfaceRecord => {
     const record = surfaces.get(surfacePiSessionId) ?? null;
     if (!record) {
@@ -835,8 +826,6 @@ function createFakeRpc(input: {
       reason,
       sessions: listSessions(),
       navigation: listNavigation(),
-      requestUserInputRequests: listRequestUserInputRequests(),
-      runtimeApprovalRequests: listRuntimeApprovalRequests(),
       ...extra,
     };
     for (const listener of workspaceSyncListeners) {
@@ -1122,7 +1111,11 @@ function createFakeRpc(input: {
             case "approvals":
               return {
                 kind: "approvals",
-                value: { requests: structuredClone(approvalsReadModelRequests) },
+                value: {
+                  requests: structuredClone(
+                    approvalsReadModelRequests.filter((request) => request.status === "pending"),
+                  ),
+                },
               };
             case "workflowTaskAttemptInspector":
               workflowTaskAttemptInspectorRequests.push({
@@ -1567,8 +1560,6 @@ function createFakeRpc(input: {
           return {
             sessions: listSessions(),
             navigation: listNavigation(),
-            requestUserInputRequests: listRequestUserInputRequests(),
-            runtimeApprovalRequests: listRuntimeApprovalRequests(),
           };
         },
         getCommandInspector: async ({ sessionId, commandId }) => {
@@ -2068,7 +2059,7 @@ function createFakeRpc(input: {
         },
         answerRequestUserInput: async (request) => {
           requestUserInputAnswerRequests.push(structuredClone(request));
-          for (const inputRequest of requestUserInputRequests) {
+          for (const inputRequest of requestInputReadModelRequests) {
             if (inputRequest.requestId !== request.requestId) {
               continue;
             }
@@ -2118,9 +2109,6 @@ function createFakeRpc(input: {
             emitWorkspaceSync("structured.updated");
           });
           return {
-            ok: true,
-            target: cloneTarget(target),
-            snapshot: structuredClone(surfaceRecord.snapshot),
             requestId: request.requestId as RequestInputRequestId,
             questionId: request.questionId as RequestInputQuestionId,
             status: "recorded",
@@ -2136,7 +2124,7 @@ function createFakeRpc(input: {
             requestId: request.requestId,
             approved: request.approved,
           });
-          for (const approvalRequest of runtimeApprovalRequests) {
+          for (const approvalRequest of approvalsReadModelRequests) {
             if (approvalRequest.requestId !== request.requestId) {
               continue;
             }
@@ -2144,19 +2132,15 @@ function createFakeRpc(input: {
             approvalRequest.completedAt = "2026-04-10T10:13:00.000Z";
           }
           emitWorkspaceSync("structured.updated");
-          const target = surfaces.values().next().value?.snapshot.target ?? {
-            workspaceSessionId: "session-1",
-            surface: "orchestrator",
-            surfacePiSessionId: "session-1",
-          };
           return {
-            ok: true,
-            target: cloneTarget(target),
+            approvalId: request.requestId as RuntimeApprovalId,
+            commandId: "command-approved" as CommandId,
+            status: request.approved ? ("approved" as const) : ("denied" as const),
           };
         },
         setRequestUserInputTimerPaused: async (request) => {
           requestUserInputTimerRequests.push(structuredClone(request));
-          for (const inputRequest of requestUserInputRequests) {
+          for (const inputRequest of requestInputReadModelRequests) {
             if (inputRequest.requestId !== request.requestId || !inputRequest.timeout) {
               continue;
             }
@@ -2174,7 +2158,7 @@ function createFakeRpc(input: {
                   expiresAt: "2026-04-10T10:14:30.000Z",
                 };
           }
-          return { ok: true };
+          return { requestId: request.requestId as RequestInputRequestId };
         },
         setExtensionContextAutoUpdate: async ({ target, enabled }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);

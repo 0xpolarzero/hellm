@@ -96,8 +96,6 @@ import type {
   UpdateComposerDraftRequest,
   WorkspaceMutationResponse,
   WorkspaceArtifactPreview,
-  WorkspaceRequestUserInputRequest,
-  WorkspaceRuntimeApprovalRequest,
   RequestUserInputAnswerRequest,
   SetRequestUserInputTimerPausedRequest,
   WorkspaceSessionNavigationReadModel,
@@ -1142,8 +1140,6 @@ export class WorkspaceSessionCatalog {
         ...navigation.archived.sessions,
       ],
       navigation,
-      requestUserInputRequests: this.buildWorkspaceRequestUserInputRequests(),
-      runtimeApprovalRequests: this.buildWorkspaceRuntimeApprovalRequests(),
     };
   }
 
@@ -1761,51 +1757,6 @@ export class WorkspaceSessionCatalog {
     }
     const snapshot = await this.emitQueuedSurfaceUpdate(target);
     return { ok: true, target: structuredClone(target), snapshot };
-  }
-
-  getRequestInputSurfaceMutationResponse(input: {
-    surfacePiSessionId: string;
-    requestId: string;
-  }): { ok: boolean; target: PromptTarget } {
-    const request = this.structuredSessionStore.getRequestUserInputRequest(input.requestId);
-    if (request.surfacePiSessionId !== input.surfacePiSessionId) {
-      throw new Error("Request user input request does not belong to the target surface.");
-    }
-    const target = this.resolvePromptTargetForSurfacePiSessionId(request.surfacePiSessionId);
-    if (target.workspaceSessionId !== request.sessionId) {
-      throw new Error("Request user input request is not bound to a known workspace session.");
-    }
-    return { ok: true, target: structuredClone(target) };
-  }
-
-  async afterRequestInputTimerPaused(_input: { requestId: string }): Promise<{ ok: boolean }> {
-    await this.emitWorkspaceSync("structured.updated");
-    return { ok: true };
-  }
-
-  async afterRuntimeApprovalAnswered(input: {
-    approved: boolean;
-    reason?: string | null;
-    requestId: string;
-  }): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
-    const request = this.structuredSessionStore.getRuntimeApprovalRequest(input.requestId);
-    const target = this.resolvePromptTargetForSurfacePiSessionId(request.surfacePiSessionId);
-    const session = this.managedSurfaces.get(target.surfacePiSessionId);
-    if (!session) {
-      await this.emitWorkspaceSync("structured.updated");
-      return { ok: true, target };
-    }
-    await this.emitSurfaceSync({
-      session,
-      reason: "surface.updated",
-      target,
-    });
-    await this.emitWorkspaceSync("structured.updated");
-    return {
-      ok: true,
-      target,
-      snapshot: await this.buildSurfaceSnapshot(session, target),
-    };
   }
 
   async setRequestUserInputTimerPaused(
@@ -2801,8 +2752,6 @@ export class WorkspaceSessionCatalog {
         reason,
         sessions: payload.sessions,
         navigation: payload.navigation,
-        requestUserInputRequests: this.buildWorkspaceRequestUserInputRequests(),
-        runtimeApprovalRequests: this.buildWorkspaceRuntimeApprovalRequests(),
         ...extra,
       });
       return true;
@@ -2813,79 +2762,6 @@ export class WorkspaceSessionCatalog {
       console.error("Failed to emit workspace sync payload:", error);
       return false;
     }
-  }
-
-  private buildWorkspaceRequestUserInputRequests(): WorkspaceRequestUserInputRequest[] {
-    return this.structuredSessionStore
-      .listSessionStates()
-      .flatMap((snapshot) =>
-        snapshot.requestUserInputRequests
-          .filter((request) => request.status === "open" || request.status === "completed")
-          .map((request) => {
-            const thread = request.threadId
-              ? (snapshot.threads.find((candidate) => candidate.id === request.threadId) ?? null)
-              : null;
-            return {
-              requestId: request.requestId,
-              workspaceSessionId: request.sessionId,
-              surfacePiSessionId: request.surfacePiSessionId,
-              threadId: request.threadId,
-              ownerTitle: thread?.title ?? snapshot.pi.title,
-              variant: request.variant,
-              status: request.status,
-              createdAt: request.createdAt,
-              completedAt: request.completedAt,
-              timeout: request.timeout ? { ...request.timeout } : null,
-              questions: request.questions.map((question) => ({
-                questionId: question.questionId,
-                ordinal: question.ordinal,
-                title: question.title,
-                question: question.question,
-                defaultAnswer: structuredClone(question.defaultAnswer),
-                choices: question.choices.map((choice) => ({ ...choice })),
-                status: question.status,
-              })),
-            };
-          }),
-      )
-      .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
-  }
-
-  private buildWorkspaceRuntimeApprovalRequests(): WorkspaceRuntimeApprovalRequest[] {
-    return this.structuredSessionStore
-      .listSessionStates()
-      .flatMap((snapshot) =>
-        (snapshot.runtimeApprovalRequests ?? [])
-          .filter((request) => request.status === "pending")
-          .map((request) => {
-            const thread = request.threadId
-              ? (snapshot.threads.find((candidate) => candidate.id === request.threadId) ?? null)
-              : null;
-            return {
-              requestId: request.requestId,
-              workspaceSessionId: request.sessionId,
-              surfacePiSessionId: request.surfacePiSessionId,
-              threadId: request.threadId,
-              ownerTitle: thread?.title ?? snapshot.pi.title,
-              toolName: request.toolName,
-              approvalMode: request.approvalMode,
-              cwd: request.cwd,
-              command: request.command,
-              commandFamily: request.commandFamily,
-              snippetArtifactId: request.snippetArtifactId,
-              status: request.status,
-              createdAt: request.createdAt,
-              completedAt: request.completedAt,
-              summary:
-                request.toolName === "exec_command" && request.command
-                  ? `Run command: ${request.command}`
-                  : request.toolName === "apply_patch"
-                    ? "Apply patch"
-                    : "Run TypeScript",
-            };
-          }),
-      )
-      .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
   private async emitSurfaceClosed(target: PromptTarget): Promise<void> {
