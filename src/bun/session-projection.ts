@@ -9,6 +9,7 @@ interface SessionSummaryBase {
   id: string;
   createdAt: Date | string;
   messageCount: number;
+  parentSessionFile?: string;
 }
 
 export interface ActiveSessionProjectionSource extends SessionSummaryBase {
@@ -28,6 +29,7 @@ export interface SessionInfoProjectionSource {
   created: Date | string;
   modified: Date | string;
   messageCount: number;
+  parentSessionPath?: string;
 }
 
 function normalizeText(value: string | undefined, limit: number): string {
@@ -35,6 +37,14 @@ function normalizeText(value: string | undefined, limit: number): string {
   if (!collapsed) return "";
   if (collapsed.length <= limit) return collapsed;
   return `${collapsed.slice(0, limit - 1).trimEnd()}…`;
+}
+
+export function getSessionParentId(parentSessionFile: string | undefined): string | undefined {
+  if (!parentSessionFile) return undefined;
+
+  const normalized = parentSessionFile.replace(/\\/g, "/");
+  const match = normalized.match(/_([^/]+)\.jsonl$/);
+  return match?.[1];
 }
 
 function flattenMessageText(message: AgentMessage | undefined): string {
@@ -172,9 +182,11 @@ function buildWorkspaceSessionSummary(
   },
 ): WorkspaceSessionSummary {
   const createdAt = new Date(source.createdAt);
+  const parentSessionId = getSessionParentId(source.parentSessionFile);
 
   return {
     id: source.id,
+    ...(parentSessionId ? { parentSessionId } : {}),
     title: options.title,
     preview: options.preview,
     createdAt: createdAt.toISOString(),
@@ -203,6 +215,7 @@ export function projectWorkspaceSessionSummaryFromInfo(
       id: source.id,
       createdAt: source.created,
       messageCount: source.messageCount,
+      parentSessionFile: source.parentSessionPath,
     },
     {
       title: getSessionTitle(source),

@@ -368,6 +368,7 @@ export type SessionNavigationTitleGeneration =
 export const SessionNavigationSummarySchema = Schema.Struct({
   ...WorkspaceSessionNavigationSummarySchema.fields,
   id: WorkspaceSessionId,
+  parentSessionId: Schema.optionalKey(WorkspaceSessionId),
   title: Schema.String,
   preview: Schema.String,
   createdAt: IsoDateTimeStringSchema,

@@ -41,6 +41,7 @@ const detailedReadModel = {
   activeSessions: [
     {
       id: "session_navigation",
+      parentSessionId: "session_parent",
       title: "Inspect navigation",
       preview: "Workflow is running.",
       createdAt: at,
@@ -159,5 +160,15 @@ describe("session navigation renderer contract", () => {
       true,
     );
     expect(Exit.isFailure(decodeUnknownSessionNavigationReadModelExit(sessionFileLeak))).toBe(true);
+  });
+
+  it("carries renderer-safe fork lineage without exposing pi session paths", () => {
+    const decoded = decodeUnknownSessionNavigationReadModelExit(detailedReadModel);
+
+    expect(Exit.isSuccess(decoded)).toBe(true);
+    if (Exit.isSuccess(decoded)) {
+      expect(String(decoded.value.activeSessions[0]?.parentSessionId)).toBe("session_parent");
+      expect("parentSessionFile" in decoded.value.activeSessions[0]!).toBe(false);
+    }
   });
 });

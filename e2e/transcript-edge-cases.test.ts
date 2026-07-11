@@ -85,6 +85,16 @@ async function launchEdgeCaseApp<T>(fn: (app: SvvyApp) => Promise<T>): Promise<T
   );
 }
 
+async function openSession(page: SvvyApp["page"], title: string): Promise<void> {
+  await page
+    .locator(".session-main")
+    .filter({
+      has: page.locator("strong").filter({ hasText: title }),
+    })
+    .first()
+    .click({ force: true });
+}
+
 async function waitForExactText(
   locator: {
     textContent(): Promise<string | null>;
@@ -108,6 +118,7 @@ async function waitForExactText(
 
 test("renders seeded transcript timestamps, tool error states, and reasoning fallbacks", async () => {
   await launchEdgeCaseApp(async ({ page }) => {
+    await openSession(page, SESSION_TITLE);
     await waitForExactText(page.locator("[data-testid=active-surface-title]"), SESSION_TITLE);
 
     const times = page.locator("time");

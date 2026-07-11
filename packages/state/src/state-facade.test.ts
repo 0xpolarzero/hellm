@@ -1265,6 +1265,10 @@ describe("State read-model kind expansion", () => {
         workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
         title: "Expanded read models",
       });
+      store.upsertPiSession({
+        ...store.getSessionState(created.workspaceSessionId).pi,
+        parentSessionId: "session_state_facade_parent",
+      });
       store.setComposerDraft({
         sessionId: created.workspaceSessionId,
         surfacePiSessionId: created.surfacePiSessionId,
@@ -1593,6 +1597,7 @@ describe("State read-model kind expansion", () => {
         value: {
           activeSessions: [
             {
+              parentSessionId: "session_state_facade_parent",
               title: "draft text",
               preview: "Command finished",
               status: "running",

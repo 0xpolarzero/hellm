@@ -7,7 +7,9 @@ import { createHomeDir, ensureBuilt, withSvvyApp, type SvvyApp } from "./harness
 import {
   assistantTextMessage,
   getTestSessionDir,
+  getTestWorkspaceId,
   seedSessions,
+  STRUCTURED_SESSION_DB_FILENAME,
   type SeedSessionInput,
   userMessage,
 } from "./support";
@@ -15,7 +17,6 @@ import {
 setDefaultTimeout(120_000);
 
 const TIMESTAMP = Date.parse("2026-04-10T12:00:00.000Z");
-const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v6.sqlite";
 const testDigest = {
   sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
 };
@@ -73,7 +74,7 @@ async function seedStructuredCommandInspector(input: {
     databasePath: join(sessionDir, STRUCTURED_SESSION_DB_FILENAME),
     digest: testDigest,
     workspace: {
-      id: input.workspaceDir,
+      id: getTestWorkspaceId(input.workspaceDir),
       label: basename(input.workspaceDir),
       cwd: input.workspaceDir,
     },
@@ -280,6 +281,10 @@ test("renders parent command rollups and opens nested child detail after reload"
         sessions,
       },
       async ({ page }) => {
+        await page
+          .locator(".session-main")
+          .filter({ has: page.getByText("Command Inspector Session", { exact: true }) })
+          .click({ force: true });
         await waitForVisible(page.getByText("Structured command state is available."));
         await assertCommandInspectorSurface(page);
       },

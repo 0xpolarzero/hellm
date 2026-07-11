@@ -29,10 +29,7 @@
   import type { ChatRuntime } from "./chat-runtime";
   import type { ChatSurfaceController } from "./chat-runtime";
   import type { QueuedPrompt } from "./chat-runtime";
-  import {
-    type AgentSettingsState,
-    type AppAppearance,
-  } from "../shared/agent-settings";
+  import type { AgentSettingsState, AppAppearance } from "../shared/agent-settings";
   import {
     extensionUsageItems as buildExtensionUsageItems,
     type AgentContextActor,
@@ -52,7 +49,6 @@
   type Props = {
     runtime: ChatRuntime;
     panelId: string;
-    agentSettings?: AgentSettingsState | null;
     onOpenModelPicker: (panelId: string) => void;
     openingWorkspace?: boolean;
     openWorkspaceError?: string | null;
@@ -66,7 +62,6 @@
   let {
     runtime,
     panelId,
-    agentSettings = null,
     onOpenModelPicker,
     openingWorkspace = false,
     openWorkspaceError = null,
@@ -173,16 +168,17 @@
     }
     return usage;
   });
-  const composerExtensionUsageItems = $derived<ExtensionUsageControlItem[]>(
-    buildExtensionUsageItems({
+  const composerExtensionUsageItems = $derived.by<ExtensionUsageControlItem[]>(() => {
+    void controllerRevision;
+    return buildExtensionUsageItems({
       actor: composerExtensionActor,
       profileId: controller?.agentProfileId ?? "composer-surface",
       usage: composerExtensionUsage,
       extensionInventoryItems: runtime.extensionsInventorySnapshot?.extensions ?? [],
       inventoryDefaults: runtime.extensionsInventorySnapshot?.defaults ?? null,
-      networkAccess: agentSettings?.appPreferences.networkAccess ?? true,
-    }),
-  );
+      networkAccess: runtime.agentSettingsSnapshot?.appPreferences.networkAccess ?? true,
+    });
+  });
   const hasSurfaceMetadata = $derived(
     Boolean(promptBinding?.stale || activeSystemPrompt),
   );
@@ -679,7 +675,6 @@
   <AgentsPane
     {runtime}
     {panelId}
-    initialSettings={agentSettings}
     targetAgentProfileId={pane.target.targetAgentProfileId}
     targetView={pane.target.view}
     onSettingsChanged={onAgentSettingsChanged}

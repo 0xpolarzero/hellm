@@ -1,16 +1,25 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { createStructuredSessionStateStore } from "@svvy/state/structured-session-state";
 import { createHomeDir, ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 import {
   assistantTextMessage,
   getTestSessionDir,
+  getTestWorkspaceId,
   seedSessions,
+  STRUCTURED_SESSION_DB_FILENAME,
   type SeedSessionInput,
   userMessage,
 } from "./support";
 
 setDefaultTimeout(90_000);
+
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 beforeAll(async () => {
   await ensureBuilt();
@@ -28,7 +37,7 @@ async function withHomeDir<T>(fn: (homeDir: string) => Promise<T>): Promise<T> {
 async function waitForShell(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("button", { name: "Open settings" }).waitFor({ state: "visible" });
   await page.locator(".session-sidebar").waitFor({ state: "visible" });
-  await page.locator("[data-testid=active-surface-title]").waitFor({ state: "visible" });
+  await page.locator('[data-testid="dockview-workbench"]').waitFor({ state: "visible" });
 }
 
 async function sessionTitles(page: SvvyApp["page"]): Promise<string[]> {
@@ -52,6 +61,14 @@ async function expectBootState(
   },
 ): Promise<void> {
   await waitForShell(page);
+  await page
+    .locator("[data-testid=active-surface-title]")
+    .filter({ hasText: expected.surfaceTitle ?? expected.activeTitle })
+    .waitFor({ state: "visible" });
+  await page
+    .locator('.session-item [aria-current="true"] strong')
+    .filter({ hasText: expected.activeTitle })
+    .waitFor({ state: "visible" });
   expect(await page.locator("[data-testid=active-surface-title]").textContent()).toBe(
     expected.surfaceTitle ?? expected.activeTitle,
   );
@@ -60,6 +77,32 @@ async function expectBootState(
   expect(await page.locator('.session-item [aria-current="true"] strong').textContent()).toBe(
     expected.activeTitle,
   );
+}
+
+async function expectBlankLayout(page: SvvyApp["page"]): Promise<void> {
+  await waitForShell(page);
+  await page.locator('[data-testid="dockview-watermark"]').waitFor({ state: "visible" });
+  expect(await page.locator('[data-testid="workspace-pane"]').count()).toBe(0);
+  expect(await page.locator("[data-testid=active-surface-title]").count()).toBe(0);
+  expect(await page.locator('.session-item [aria-current="true"]').count()).toBe(0);
+  expect((await page.locator('[data-testid="dockview-watermark"]').textContent()) ?? "").toContain(
+    "No panes open",
+  );
+}
+
+async function expectBlankBootState(page: SvvyApp["page"]): Promise<void> {
+  await expectBlankLayout(page);
+  expect(await page.locator(".session-item").count()).toBe(0);
+  expect(await sessionTitles(page)).toEqual([]);
+}
+
+async function openSession(page: SvvyApp["page"], title: string): Promise<void> {
+  const session = page
+    .locator(".session-main")
+    .filter({ has: page.locator("strong").filter({ hasText: title }) })
+    .first();
+  await session.waitFor({ state: "visible" });
+  await session.click({ force: true });
 }
 
 async function writeCorruptedSessionFile(
@@ -72,7 +115,7 @@ async function writeCorruptedSessionFile(
   await writeFile(join(sessionDir, filename), "{this is not valid json\n", "utf8");
 }
 
-test("a corrupted session file does not crash boot and falls back to a fresh session", async () => {
+test("a corrupted session file does not crash boot and leaves the workspace blank", async () => {
   await withHomeDir(async (homeDir) => {
     await withSvvyApp(
       {
@@ -82,21 +125,13 @@ test("a corrupted session file does not crash boot and falls back to a fresh ses
         },
       },
       async ({ page }) => {
-        await expectBootState(page, {
-          titles: ["New orchestrator"],
-          activeTitle: "New orchestrator",
-          surfaceTitle: "New orchestrator",
-        });
+        await expectBlankBootState(page);
         expect(await page.locator('[aria-label="Forked session"]').count()).toBe(0);
       },
     );
 
     await withSvvyApp({ homeDir }, async ({ page }) => {
-      await expectBootState(page, {
-        titles: ["New orchestrator"],
-        activeTitle: "New orchestrator",
-        surfaceTitle: "New orchestrator",
-      });
+      await expectBlankBootState(page);
     });
   });
 });
@@ -134,9 +169,29 @@ test("an orphaned forked session still opens, stays labeled as a fork, and remai
           );
 
           await rm(seeded[0].file, { force: true });
+          const canonicalWorkspace = realpathSync.native(workspaceDir);
+          const store = createStructuredSessionStateStore({
+            databasePath: join(
+              getTestSessionDir(launchHomeDir, canonicalWorkspace),
+              STRUCTURED_SESSION_DB_FILENAME,
+            ),
+            digest: testDigest,
+            workspace: {
+              id: getTestWorkspaceId(canonicalWorkspace),
+              label: basename(canonicalWorkspace),
+              cwd: canonicalWorkspace,
+            },
+          });
+          try {
+            store.deleteSessionState(seeded[0].id);
+          } finally {
+            store.close();
+          }
         },
       },
       async ({ page }) => {
+        await expectBlankLayout(page);
+        await openSession(page, orphanTitle);
         await expectBootState(page, {
           titles: [orphanTitle],
           activeTitle: orphanTitle,
@@ -155,7 +210,7 @@ test("an orphaned forked session still opens, stays labeled as a fork, and remai
   });
 });
 
-test("a workspace with many sessions still boots and the newest session is active", async () => {
+test("a workspace with many sessions restores the explicitly opened newest session", async () => {
   await withHomeDir(async (homeDir) => {
     const totalSessions = 18;
     const baseTimestamp = Date.now() - totalSessions * 1_000;
@@ -188,6 +243,8 @@ test("a workspace with many sessions still boots and the newest session is activ
         },
       },
       async ({ page }) => {
+        await expectBlankLayout(page);
+        await openSession(page, newestTitle);
         await expectBootState(page, {
           titles: expectedTitles,
           activeTitle: newestTitle,

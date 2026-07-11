@@ -2,18 +2,24 @@ import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { basename, join } from "node:path";
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import type { JsonValue, WorkspaceId, WorkspacePaneId } from "@svvy/core";
+import type { JsonValue, WorkspacePaneId } from "@svvy/core";
 import type { SaveWorkspaceLayoutSlotCommandInput } from "@svvy/state";
 import { createStructuredSessionStateStore } from "@svvy/state/structured-session-state";
 import type { SerializedDockview } from "dockview-core";
 import { connect, type Page } from "electrobun-browser-tools";
 import { ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
-import { assistantTextMessage, getTestSessionDir, seedSessions, userMessage } from "./support";
+import {
+  assistantTextMessage,
+  getTestSessionDir,
+  getTestWorkspaceId,
+  seedSessions,
+  STRUCTURED_SESSION_DB_FILENAME,
+  userMessage,
+} from "./support";
 
 setDefaultTimeout(120_000);
 
 const PANE_LAYOUT_BRIDGE_TIMEOUT_MS = 10_000;
-const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v6.sqlite";
 const testDigest = {
   sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
 };
@@ -89,14 +95,22 @@ async function clickSessionByTitle(page: Page, title: string): Promise<void> {
       has: page.locator("strong").filter({ hasText: title }),
     })
     .first();
-  await sessionButton.waitFor({ state: "visible" });
+  try {
+    await sessionButton.waitFor({ state: "visible" });
+  } catch (error) {
+    const sessionSidebarText = ((await page.locator(".session-sidebar").textContent()) ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const bodyText = ((await page.locator("body").textContent()) ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 1_000);
+    throw new Error(
+      `Session ${JSON.stringify(title)} was not visible. Sidebar: ${JSON.stringify(sessionSidebarText)}. Body: ${JSON.stringify(bodyText)}`,
+      { cause: error },
+    );
+  }
   await sessionButton.click({ force: true });
-}
-
-function workspaceIdFor(workspaceDir: string): WorkspaceId {
-  const canonicalWorkspace = realpathSync.native(workspaceDir);
-  const hash = createHash("sha256").update(canonicalWorkspace).digest("hex").slice(0, 24);
-  return `workspace:${hash}` as WorkspaceId;
 }
 
 function seedWorkspaceLayoutSlot(
@@ -105,7 +119,7 @@ function seedWorkspaceLayoutSlot(
   slot: Omit<SaveWorkspaceLayoutSlotCommandInput, "workspaceId" | "clientSubmission">,
 ): void {
   const canonicalWorkspace = realpathSync.native(workspaceDir);
-  const workspaceId = workspaceIdFor(canonicalWorkspace);
+  const workspaceId = getTestWorkspaceId(canonicalWorkspace);
   const store = createStructuredSessionStateStore({
     databasePath: join(
       getTestSessionDir(homeDir, canonicalWorkspace),
@@ -240,8 +254,8 @@ test("opens, duplicates, resizes, and closes Dockview panels without custom pane
       const page = await createPaneLayoutPage(app);
       await waitForDockviewShell(page);
 
-      await waitForWorkspacePaneCount(page, 1);
-      await waitForDockviewTabCount(page, 1);
+      await waitForWorkspacePaneCount(page, 0);
+      await waitForDockviewTabCount(page, 0);
       await clickSessionByTitle(page, "Dockview Layout Seed");
       await waitForWorkspacePaneCount(page, 1);
       await waitForDockviewTabCount(page, 1);
@@ -307,8 +321,8 @@ test("opens session and workspace-scoped surface panes without unavailable Dockv
       const page = await createPaneLayoutPage(app);
       await waitForDockviewShell(page);
 
-      await waitForWorkspacePaneCount(page, 1);
-      await waitForDockviewTabCount(page, 1);
+      await waitForWorkspacePaneCount(page, 0);
+      await waitForDockviewTabCount(page, 0);
       const openedSessionTitle = "First Pane Target";
       await clickSessionByTitle(page, openedSessionTitle);
       await waitForWorkspacePaneCount(page, 1);

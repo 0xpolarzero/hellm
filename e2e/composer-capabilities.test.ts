@@ -125,6 +125,7 @@ async function waitForModelLabel(
 
 test("typing @ opens the workspace mention picker without arrow-key recovery", async () => {
   await runApp(createEnv(), async ({ page }) => {
+    await page.getByRole("button", { name: "Create a new orchestrator" }).click({ force: true });
     const composer = page.locator(
       'textarea[placeholder="Ask svvy to inspect the repo, make a change, or delegate work."]',
     );
@@ -158,6 +159,7 @@ test("model picker stays scoped to configured providers and updates the composer
       ZAI_API_KEY: "test-zai-key",
     }),
     async ({ page }) => {
+      await page.getByRole("button", { name: "Create a new orchestrator" }).click({ force: true });
       await openReasoningMenu(page);
       const menu = page.getByRole("listbox", { name: "Thinking level" });
       expect(await menu.getByRole("option", { name: /^xhigh$/i }).count()).toBe(0);

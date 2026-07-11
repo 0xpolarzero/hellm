@@ -34,7 +34,6 @@
     openingWorkspace?: boolean;
     openWorkspaceError?: string | null;
     recentWorkspaces?: WorkspaceTabInfo[];
-    agentSettings?: AgentSettingsState | null;
     onFocusPanel: (panelId: string) => void;
     onOpenModelPicker: (panelId: string) => void;
     onAgentSettingsChanged?: (settings: AgentSettingsState) => void;
@@ -52,7 +51,6 @@
     openingWorkspace = false,
     openWorkspaceError = null,
     recentWorkspaces = [],
-    agentSettings = null,
     onFocusPanel,
     onOpenModelPicker,
     onAgentSettingsChanged,
@@ -69,7 +67,6 @@
   let observedDockviewWidth = 0;
   let observedDockviewHeight = 0;
   let unsubscribeRuntime: (() => void) | null = null;
-  let panelHostRefreshKeys = new Map<string, string>();
   let appliedDockviewLayoutSignature: string | null = null;
   const tabRenderers = new Set<SurfaceTabRenderer>();
   const headerRenderers = new Set<SurfaceHeaderActionsRenderer>();
@@ -90,43 +87,46 @@
     init(params: GroupPanelPartInitParameters): void {
       this.element.className = "dockview-surface-content";
       this.panelId = params.api.id;
+      const panelId = this.panelId;
       this.component = mount(DockviewPanelHost, {
         target: this.element,
         props: {
-          runtime,
-          panelId: this.panelId,
-          agentSettings,
-          onOpenModelPicker,
-          onAgentSettingsChanged,
-          openingWorkspace,
-          openWorkspaceError,
-          recentWorkspaces,
-          onOpenWorkspace,
-          onOpenWorkspaceInNewTab,
-          onAppAppearanceChanged,
+          get runtime() {
+            return runtime;
+          },
+          get panelId() {
+            return panelId;
+          },
+          get onOpenModelPicker() {
+            return onOpenModelPicker;
+          },
+          get onAgentSettingsChanged() {
+            return onAgentSettingsChanged;
+          },
+          get openingWorkspace() {
+            return openingWorkspace;
+          },
+          get openWorkspaceError() {
+            return openWorkspaceError;
+          },
+          get recentWorkspaces() {
+            return recentWorkspaces;
+          },
+          get onOpenWorkspace() {
+            return onOpenWorkspace;
+          },
+          get onOpenWorkspaceInNewTab() {
+            return onOpenWorkspaceInNewTab;
+          },
+          get onAppAppearanceChanged() {
+            return onAppAppearanceChanged;
+          },
         },
       }) as Record<string, unknown>;
     }
 
     update(): void {
-      if (!this.component) return;
-      unmount(this.component);
-      this.component = mount(DockviewPanelHost, {
-        target: this.element,
-        props: {
-          runtime,
-          panelId: this.panelId,
-          agentSettings,
-          onOpenModelPicker,
-          onAgentSettingsChanged,
-          openingWorkspace,
-          openWorkspaceError,
-          recentWorkspaces,
-          onOpenWorkspace,
-          onOpenWorkspaceInNewTab,
-          onAppAppearanceChanged,
-        },
-      }) as Record<string, unknown>;
+      return;
     }
 
     dispose(): void {
@@ -596,7 +596,6 @@
     try {
       dockview.fromJSON(layout, { reuseExistingPanels: true });
       appliedDockviewLayoutSignature = signature;
-      panelHostRefreshKeys = new Map();
       syncDockviewPanels();
     } catch {
       syncDockviewPanels();
@@ -696,12 +695,6 @@
     return surface === "orchestrator" || surface === "handler" ? "always" : "onlyWhenVisible";
   }
 
-  function getPanelHostRefreshKey(): string {
-    return JSON.stringify({
-      agentSettingsReady: Boolean(agentSettings),
-    });
-  }
-
   function syncDockviewPanels(): void {
     if (!dockview) return;
     const nextPanels = runtimePanels();
@@ -711,7 +704,6 @@
     try {
       for (const panel of nextPanels) {
         const existingPanel = getDockviewPanel(panel.panelId);
-        const hostRefreshKey = getPanelHostRefreshKey();
         if (!existingPanel) {
           const addedPanel = dockview.addPanel({
             id: panel.panelId,
@@ -727,14 +719,9 @@
           if (panel.placement?.kind === "popout") {
             void dockview.addPopoutGroup(addedPanel, { position: panel.placement.box });
           }
-          panelHostRefreshKeys.set(panel.panelId, hostRefreshKey);
         } else {
           existingPanel.setTitle(panel.chrome?.title ?? "Surface");
           existingPanel.setRenderer(getPanelRenderer(panel));
-          if (panelHostRefreshKeys.get(panel.panelId) !== hostRefreshKey) {
-            existingPanel.update({ params: { hostRefreshKey } });
-            panelHostRefreshKeys.set(panel.panelId, hostRefreshKey);
-          }
         }
       }
       for (const panel of dockview.panels) {
@@ -742,7 +729,6 @@
           const preserveFinalEmptyGroup =
             nextPanels.length === 0 && dockview.totalPanels === 1 && dockview.groups.length === 1;
           dockview.removePanel(panel, { removeEmptyGroup: !preserveFinalEmptyGroup });
-          panelHostRefreshKeys.delete(panel.id);
         }
       }
       const focused = nextFocusedPanelId ? getDockviewPanel(nextFocusedPanelId) : undefined;
@@ -806,7 +792,6 @@
     void panels;
     void dockviewLayout;
     void focusedPanelId;
-    void agentSettings;
     syncDockviewPanels();
     applySerializedDockviewLayout(dockviewLayout);
     refreshSurfaceTabs();

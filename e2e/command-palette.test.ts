@@ -202,6 +202,16 @@ async function waitForMainTitle(page: SvvyApp["page"], expected: string): Promis
   throw new Error(`Timed out waiting for main title "${expected}". Last text was "${lastText}".`);
 }
 
+async function openSession(page: SvvyApp["page"], title: string): Promise<void> {
+  await page
+    .locator(".session-main")
+    .filter({
+      has: page.locator("strong").filter({ hasText: title }),
+    })
+    .first()
+    .click({ force: true });
+}
+
 async function waitForPaneCount(
   page: SvvyApp["page"],
   expectedCount: number,
@@ -234,6 +244,7 @@ async function launchWithPaletteSessions(fn: (app: SvvyApp) => Promise<void>): P
 test("Cmd+Shift+P opens with command prefix and routes session commands through workspace navigation", async () => {
   await launchWithPaletteSessions(async ({ page }) => {
     await waitForSessionRows(page, 2);
+    await openSession(page, "Beta Palette");
     await waitForMainTitle(page, "Beta Palette");
 
     await openActionsPalette(page);

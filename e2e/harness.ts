@@ -256,13 +256,7 @@ async function waitForWorkspaceChrome(page: Page): Promise<void> {
     try {
       const settingsVisible = await page.getByRole("button", { name: "Open settings" }).isVisible();
       const workbenchVisible = await page.locator('[data-testid="dockview-workbench"]').isVisible();
-      const paneVisible = await page
-        .locator(
-          '.dockview-chat-panel[data-testid="workspace-pane"], [data-testid="open-workspace-panel"]',
-        )
-        .first()
-        .isVisible();
-      if (settingsVisible && workbenchVisible && paneVisible) {
+      if (settingsVisible && workbenchVisible) {
         return;
       }
       const bodyText = ((await page.locator("body").textContent()) ?? "")
@@ -271,7 +265,6 @@ async function waitForWorkspaceChrome(page: Page): Promise<void> {
         .slice(0, 500);
       lastDiagnostics = JSON.stringify({
         bodyText,
-        paneVisible,
         settingsVisible,
         workbenchVisible,
       });

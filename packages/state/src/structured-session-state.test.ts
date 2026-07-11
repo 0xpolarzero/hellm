@@ -88,6 +88,23 @@ describe("structured session state write API", () => {
     expect([...STRUCTURED_TURN_DECISIONS]).toEqual(["pending", ...RUNTIME_TURN_DECISIONS]);
   });
 
+  it("persists renderer-safe parent session identity for fork navigation", () => {
+    const store = createStore();
+    store.upsertPiSession({
+      sessionId: "session-fork-child",
+      parentSessionId: "session-fork-parent",
+      title: "Fork child",
+      messageCount: 1,
+      status: "idle",
+      createdAt: "2026-04-18T08:55:00.000Z",
+      updatedAt: "2026-04-18T08:56:00.000Z",
+    });
+
+    expect(store.getSessionState("session-fork-child").pi.parentSessionId).toBe(
+      "session-fork-parent",
+    );
+  });
+
   it("persists app chrome identity and atomic workspace slots without tab-scoped layout copies", () => {
     const store = createStore();
     const workspaceId = store.workspaceId as WorkspaceId;

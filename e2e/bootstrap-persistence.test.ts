@@ -73,6 +73,14 @@ async function expectBootState(
     surfaceTitle?: string;
   },
 ) {
+  await page
+    .locator("[data-testid=active-surface-title]")
+    .filter({ hasText: expected.surfaceTitle ?? expected.activeTitle })
+    .waitFor({ state: "visible" });
+  await page
+    .locator('.session-item [aria-current="true"] strong')
+    .filter({ hasText: expected.activeTitle })
+    .waitFor({ state: "visible" });
   expect(await page.locator(".session-item").count()).toBe(expected.titles.length);
   expect(await sessionTitles(page)).toEqual(expected.titles);
   expect(await text(page, "[data-testid=active-surface-title]")).toBe(
@@ -81,28 +89,49 @@ async function expectBootState(
   expect(await text(page, '.session-item [aria-current="true"] strong')).toBe(expected.activeTitle);
 }
 
-test("a clean isolated home dir boots the shell and creates one session", async () => {
+async function expectBlankLayout(page: Awaited<ReturnType<typeof launchSvvyApp>>["page"]) {
+  await page.locator('[data-testid="dockview-watermark"]').waitFor({ state: "visible" });
+  expect(await page.locator('[data-testid="workspace-pane"]').count()).toBe(0);
+  expect(await page.locator("[data-testid=active-surface-title]").count()).toBe(0);
+  expect(await page.locator('.session-item [aria-current="true"]').count()).toBe(0);
+  expect((await page.locator('[data-testid="dockview-watermark"]').textContent()) ?? "").toContain(
+    "No panes open",
+  );
+}
+
+async function expectBlankBootState(page: Awaited<ReturnType<typeof launchSvvyApp>>["page"]) {
+  await expectBlankLayout(page);
+  expect(await page.locator(".session-item").count()).toBe(0);
+  expect(await sessionTitles(page)).toEqual([]);
+}
+
+async function openSession(page: Awaited<ReturnType<typeof launchSvvyApp>>["page"], title: string) {
+  const session = page
+    .locator(".session-main")
+    .filter({ has: page.locator("strong").filter({ hasText: title }) })
+    .first();
+  await session.waitFor({ state: "visible" });
+  await session.click({ force: true });
+}
+
+test("a clean isolated home dir boots the shell with a blank workspace", async () => {
   await withHomeDir(async (homeDir) => {
     const app = await launchSvvyApp({ homeDir });
     try {
       const chrome = await expectWorkspaceChrome(app.page);
       expect(chrome.workspaceLabel).not.toBe("");
-      await expectBootState(app.page, {
-        titles: ["New orchestrator"],
-        activeTitle: "New orchestrator",
-        surfaceTitle: "New orchestrator",
-      });
+      await expectBlankBootState(app.page);
 
       const sidebarContext = await text(app.page, ".sidebar-sections");
-      expect(sidebarContext).toContain("Sessions 1");
-      expect(await app.page.locator(".session-item [aria-current='true']").count()).toBe(1);
+      expect(sidebarContext).toContain("Sessions 0");
+      expect(await app.page.locator(".session-item [aria-current='true']").count()).toBe(0);
     } finally {
       await app.close();
     }
   });
 });
 
-test("seeded sessions are hydrated on boot and the newest one opens first", async () => {
+test("seeded sessions are hydrated on boot and the newest one opens explicitly", async () => {
   await withHomeDir(async (homeDir) => {
     const base = Date.now() - 60_000;
     await seedSessions(
@@ -144,6 +173,8 @@ test("seeded sessions are hydrated on boot and the newest one opens first", asyn
     try {
       const chrome = await expectWorkspaceChrome(app.page);
       expect(chrome.workspaceLabel).not.toBe("");
+      await expectBlankLayout(app.page);
+      await openSession(app.page, "Forked child");
       await expectBootState(app.page, {
         titles: ["Forked child", "Failed session", "Older session"],
         activeTitle: "Forked child",
@@ -214,6 +245,8 @@ test("relaunching the same seeded home dir keeps session data stable", async () 
     const firstLaunch = await launchSvvyApp({ homeDir });
     try {
       firstChrome = await expectWorkspaceChrome(firstLaunch.page);
+      await expectBlankLayout(firstLaunch.page);
+      await openSession(firstLaunch.page, "Forked child");
       await expectBootState(firstLaunch.page, {
         titles: expectedTitles,
         activeTitle: "Forked child",

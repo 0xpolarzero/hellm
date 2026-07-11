@@ -56,6 +56,14 @@ test("renders the integrated workspace tab counters and selectable A/B/C layout 
       }
       expect(layoutLabels).toEqual(["A", "B", "C"]);
       expect((await page.locator(".workspace-layout-tab.active").textContent())?.trim()).toBe("A");
+      expect(await page.locator(".workspace-layout-tab.initialized").count()).toBe(0);
+      expect(await page.locator(".workspace-layout-tab.empty").count()).toBe(3);
+
+      await page
+        .locator(".session-main")
+        .filter({ has: page.getByText("Header Beta", { exact: true }) })
+        .click({ force: true });
+      await page.locator('[data-testid="workspace-pane"]').waitFor({ state: "visible" });
       expect((await page.locator(".workspace-layout-tab.initialized").textContent())?.trim()).toBe(
         "A",
       );

@@ -30,7 +30,7 @@ async function withWorkspaceDir<T>(
 async function waitForWorkspaceChrome(page: SvvyApp["page"]): Promise<void> {
   await page.getByRole("button", { name: "Open settings" }).waitFor({ state: "visible" });
   await page.locator(".workspace-titlebar").waitFor({ state: "visible" });
-  await page.locator(".composer-shell").waitFor({ state: "visible" });
+  await page.getByTestId("dockview-workbench").waitFor({ state: "visible" });
 }
 
 async function currentText(page: SvvyApp["page"], selector: string): Promise<string> {
@@ -42,6 +42,10 @@ test("default provider and model bootstrap from Bun-side defaults", async () => 
     const app = await launchSvvyApp({ workspaceDir });
     try {
       await waitForWorkspaceChrome(app.page);
+      await app.page
+        .getByRole("button", { name: "Create a new orchestrator" })
+        .click({ force: true });
+      await app.page.locator(".composer-shell").waitFor({ state: "visible" });
 
       expect(await currentText(app.page, ".model-control .compact-combobox-label")).toBe(
         "GLM-5-Turbo",

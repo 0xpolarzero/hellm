@@ -434,6 +434,7 @@ export interface StructuredSnippetRecord {
 
 export interface StructuredPiSessionRecord {
   sessionId: string;
+  parentSessionId?: string | null;
   title: string;
   provider?: string;
   model?: string;
@@ -1909,6 +1910,7 @@ export const layerStructuredSessionState = (options: CreateStructuredSessionStat
 
 type SessionRow = {
   session_id: string;
+  parent_session_id: string | null;
   title: string;
   provider: string | null;
   model: string | null;
@@ -4629,6 +4631,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .query(
         `INSERT OR REPLACE INTO session (
            session_id,
+           parent_session_id,
            title,
            provider,
            model,
@@ -4662,10 +4665,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            wait_reason,
            wait_resume_when,
            wait_since
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         pi.sessionId,
+        pi.parentSessionId === undefined
+          ? (existing?.parent_session_id ?? null)
+          : pi.parentSessionId,
         pi.title,
         pi.provider ?? null,
         pi.model ?? null,
@@ -11026,6 +11032,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+    if (row.parent_session_id !== null) record.parentSessionId = row.parent_session_id;
     if (row.provider !== null) record.provider = row.provider;
     if (row.model !== null) record.model = row.model;
     if (row.reasoning_effort !== null) record.reasoningEffort = row.reasoning_effort;
@@ -11942,6 +11949,7 @@ function initializeSchema(db: Database): void {
 
     CREATE TABLE IF NOT EXISTS session (
       session_id TEXT PRIMARY KEY,
+      parent_session_id TEXT,
       title TEXT NOT NULL,
       provider TEXT,
       model TEXT,

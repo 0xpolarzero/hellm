@@ -75,4 +75,35 @@ describe("Dockview workspace chrome", () => {
     expect(dockviewSource).not.toContain("flushSync");
     expect(dockviewSource).not.toContain("runtimeShellEmpty");
   });
+
+  it("keeps mounted panel hosts stable across Dockview updates", async () => {
+    const dockviewSource = await readFile(
+      new URL("./DockviewWorkspace.svelte", import.meta.url),
+      "utf8",
+    );
+
+    expect(dockviewSource).toContain("update(): void {\n      return;\n    }");
+    expect(dockviewSource).not.toContain("panelHostRefreshKeys");
+    expect(dockviewSource).not.toContain("getPanelHostRefreshKey");
+    expect(dockviewSource).not.toContain("existingPanel.update");
+  });
+
+  it("keeps mounted panel host props reactive without remounting", async () => {
+    const dockviewSource = await readFile(
+      new URL("./DockviewWorkspace.svelte", import.meta.url),
+      "utf8",
+    );
+
+    for (const prop of [
+      "runtime",
+      "openingWorkspace",
+      "openWorkspaceError",
+      "recentWorkspaces",
+      "onOpenWorkspace",
+      "onOpenWorkspaceInNewTab",
+    ]) {
+      expect(dockviewSource).toContain(`get ${prop}()`);
+    }
+    expect(dockviewSource).not.toContain("unmount(this.component);\n      this.component = mount");
+  });
 });

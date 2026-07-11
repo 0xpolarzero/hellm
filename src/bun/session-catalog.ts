@@ -224,7 +224,7 @@ import {
   type RunTaskAgentBridgeServer,
 } from "./smithers-runtime/task-agent-bridge-server";
 
-export const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v6.sqlite";
+export const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v7.sqlite";
 
 function deleteSessionFileLikePi(sessionPath: string): void {
   if (!existsSync(sessionPath)) {
@@ -2177,6 +2177,7 @@ export class WorkspaceSessionCatalog {
     const header = session.session.sessionManager.getHeader();
     return projectWorkspaceSessionSummary({
       id: session.sessionId,
+      parentSessionFile: header?.parentSession,
       name: session.session.sessionManager.getSessionName(),
       firstMessage: undefined,
       createdAt: header?.timestamp ?? new Date().toISOString(),
@@ -2203,6 +2204,7 @@ export class WorkspaceSessionCatalog {
 
     return {
       ...baseSummary,
+      ...(snapshot.pi.parentSessionId ? { parentSessionId: snapshot.pi.parentSessionId } : {}),
       provider: snapshot.pi.provider,
       modelId: snapshot.pi.model,
       thinkingLevel: snapshot.pi.reasoningEffort,
@@ -3256,6 +3258,7 @@ export class WorkspaceSessionCatalog {
   private projectSummaryFromSessionInfo(info: WorkspaceSessionInfo): WorkspaceSessionSummary {
     return projectWorkspaceSessionSummaryFromInfo({
       id: info.id,
+      parentSessionPath: info.parentSessionPath,
       name: info.name,
       firstMessage: info.firstMessage,
       created: info.created,
@@ -3275,6 +3278,7 @@ export class WorkspaceSessionCatalog {
       const snapshot = this.getStructuredSnapshot(summary.id);
       return this.catalogStateMutations.upsertPiSession({
         sessionId: summary.id,
+        parentSessionId: summary.parentSessionId,
         title: summary.title,
         provider: summary.provider ?? snapshot?.pi.provider,
         model: summary.modelId ?? snapshot?.pi.model,
@@ -3316,6 +3320,7 @@ export class WorkspaceSessionCatalog {
       state.agents.orchestrators[0];
     return this.catalogStateMutations.upsertPiSession({
       sessionId: summary.id,
+      parentSessionId: summary.parentSessionId,
       title: summary.title,
       provider: session.provider,
       model: session.model,

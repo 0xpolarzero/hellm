@@ -505,7 +505,7 @@ Rules:
 - every workspace store materializes exactly one empty `A`, `B`, and `C` row; the first save with a
   bound product pane latches `initialized` to `true`, and later empty full replacements do not clear
   that latch
-- the canonical SQLite state file is `structured-session-state-v6.sqlite`; chrome and layout have
+- the canonical SQLite state file is `structured-session-state-v7.sqlite`; chrome and layout have
   no old-schema import, JSON fallback, migration fixture, compatibility alias, or dual-write path
 
 ### Workspace Lifecycle Facade
@@ -805,7 +805,7 @@ E2E tests:
 - choosing a repository from the first panel opens it in that same tab
 - opening a repository in a new tab preserves the default tab
 - duplicate same-cwd tabs, including default workspace tabs, share sessions, app logs, and durable layout slots keyed by `(workspaceId, layoutId)` while each tab keeps only its active layout choice
-- layout restore fixtures seed the authoritative `structured-session-state-v6.sqlite` through the
+- layout restore fixtures seed the authoritative `structured-session-state-v7.sqlite` through the
   state store or exact state commands; they do not write renderer restore JSON or exercise a legacy
   schema migration
 

@@ -2075,6 +2075,9 @@ function sessionNavigationSummary(snapshot: StructuredSessionSnapshot, composerD
   const title = durableTitle || provisionalTitle || snapshot.pi.title;
   const summary = {
     id: snapshot.session.id,
+    ...(snapshot.pi.parentSessionId
+      ? { parentSessionId: snapshot.pi.parentSessionId as WorkspaceSessionId }
+      : {}),
     title,
     preview: projection.preview || title,
     createdAt: snapshot.pi.createdAt,

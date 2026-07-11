@@ -106,7 +106,7 @@ async function waitForText(
   throw new Error(`Timed out waiting for text "${expected}". Last text was "${lastText}".`);
 }
 
-test("renders seeded sessions in recency order, projects the fork badge, and switches the active session", async () => {
+test("renders seeded sessions in recency order, projects the fork badge, and opens selected sessions", async () => {
   await launchWithSessions(
     [
       {
@@ -145,6 +145,7 @@ test("renders seeded sessions in recency order, projects the fork badge, and swi
         "Gamma Fork",
         "Alpha Review",
       ]);
+      await clickSessionByTitle(page, "Track beta branch");
       await expectMainTitle(page, "Track beta branch");
       await expectActiveSessionTitle(page, "Track beta branch");
       expect(await page.locator('[aria-label="Forked session"]').count()).toBe(1);

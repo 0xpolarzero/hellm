@@ -1617,7 +1617,6 @@
         {openingWorkspace}
         openWorkspaceError={openWorkspaceError}
         recentWorkspaces={knownWorkspaces}
-        {agentSettings}
         onFocusPanel={(panelId) => void handleFocusPane(panelId)}
         onOpenModelPicker={(panelId) => void handleOpenPaneModelPicker(panelId)}
         onAgentSettingsChanged={(settings) => (agentSettings = settings)}

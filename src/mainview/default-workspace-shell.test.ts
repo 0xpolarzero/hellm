@@ -364,9 +364,10 @@ describe("default workspace renderer shell", () => {
       "utf8",
     );
 
-    expect(dockviewSource).toContain("getPanelHostRefreshKey");
+    expect(dockviewSource).not.toContain("getPanelHostRefreshKey");
     expect(dockviewSource).not.toContain("binding: panel.binding");
-    expect(dockviewSource).toContain("existingPanel.update");
+    expect(dockviewSource).not.toContain("existingPanel.update");
+    expect(dockviewSource).toContain("update(): void {\n      return;\n    }");
     expect(dockviewSource).toContain("existingPanel.setRenderer");
   });
 

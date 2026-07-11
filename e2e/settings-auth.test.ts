@@ -41,7 +41,7 @@ function mixedAuthState() {
       credentials: {
         refresh: "anthropic-refresh-token",
         access: "anthropic-access-token",
-        expires: Date.now() + 60_000,
+        expires: Date.now() + 3_600_000,
       } satisfies OAuthCredentials,
     },
     openai: {

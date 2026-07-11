@@ -102,6 +102,16 @@ async function launchSeededApp<T>(
   }
 }
 
+async function openSession(page: SvvyApp["page"], title: string): Promise<void> {
+  await page
+    .locator(".session-main")
+    .filter({
+      has: page.locator("strong").filter({ hasText: title }),
+    })
+    .first()
+    .click({ force: true });
+}
+
 test("transcript rendering projects assistant metadata, tool cards, tool results, and reasoning", async () => {
   const reportCall = toolCall("execute_typescript", {
     typescriptCode: "return { artifact: 'report.html' };",
@@ -137,6 +147,7 @@ test("transcript rendering projects assistant metadata, tool cards, tool results
       sessions,
     },
     async ({ page }) => {
+      await openSession(page, "Transcript Runtime");
       await page.getByText("Seed the transcript runtime surface.").waitFor({ state: "visible" });
       await page.getByText("I will create the report and explain the reasoning.").waitFor({
         state: "visible",
@@ -199,6 +210,7 @@ test("transcript rendering shows execute_typescript bodies on tool cards", async
       sessions,
     },
     async ({ page }) => {
+      await openSession(page, "Execute Typescript Transcript");
       await page.getByText("Inspect the working directory.").waitFor({ state: "visible" });
       await page.getByText("I will inspect the directory through execute_typescript.").waitFor({
         state: "visible",

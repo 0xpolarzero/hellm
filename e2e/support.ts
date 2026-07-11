@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type {
   AssistantMessage,
@@ -13,6 +14,8 @@ import type {
   UserMessage,
 } from "@mariozechner/pi-ai";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
+import type { WorkspaceId } from "@svvy/core";
+import { createStructuredSessionStateStore } from "@svvy/state/structured-session-state";
 import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
 import { DEFAULT_AGENT_SETTINGS } from "../src/shared/agent-settings";
 import { createAppLogStore, type AppendAppLogEntry } from "../packages/state/src/app-log-store";
@@ -22,6 +25,12 @@ export function resolveAppWorkspaceDir(rootDir = process.cwd()): string {
 }
 
 export const ROOT_WORKSPACE_DIR = resolveAppWorkspaceDir();
+
+export const STRUCTURED_SESSION_DB_FILENAME = "structured-session-state-v7.sqlite";
+
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 const ZERO_USAGE: Usage = {
   input: 0,
@@ -157,11 +166,18 @@ function readEnvFileValue(filePath: string, key: string): string | null {
 }
 
 export function getTestSessionDir(homeDir: string, workspaceDir = ROOT_WORKSPACE_DIR): string {
+  const canonicalWorkspace = realpathSync.native(workspaceDir);
   return join(
     getTestAgentDir(homeDir),
     "sessions",
-    `--${workspaceDir.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`,
+    `--${canonicalWorkspace.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`,
   );
+}
+
+export function getTestWorkspaceId(workspaceDir: string): WorkspaceId {
+  const canonicalWorkspace = realpathSync.native(workspaceDir);
+  const hash = createHash("sha256").update(canonicalWorkspace).digest("hex").slice(0, 24);
+  return `workspace:${hash}` as WorkspaceId;
 }
 
 export function getTestWorkspaceRuntimeDir(
@@ -218,14 +234,20 @@ export async function seedSessions(
   sessions: SeedSessionInput[],
   workspaceDir = ROOT_WORKSPACE_DIR,
 ): Promise<SeededSession[]> {
-  const sessionDir = getTestSessionDir(homeDir, workspaceDir);
+  const canonicalWorkspace = realpathSync.native(workspaceDir);
+  const sessionDir = getTestSessionDir(homeDir, canonicalWorkspace);
+  let structuredNow = new Date(
+    sessions
+      .flatMap((session) => session.messages.map((message) => message.timestamp))
+      .find((timestamp): timestamp is number => typeof timestamp === "number") ?? Date.now(),
+  ).toISOString();
   await mkdir(sessionDir, { recursive: true });
 
   const seededSessions: SeededSession[] = [];
   const seededByKey = new Map<string, SeededSession>();
 
   for (const [index, session] of sessions.entries()) {
-    const manager = SessionManager.create(workspaceDir, sessionDir);
+    const manager = SessionManager.create(canonicalWorkspace, sessionDir);
     if (session.parentKey) {
       const parent = seededByKey.get(session.parentKey);
       if (!parent) {
@@ -255,6 +277,65 @@ export async function seedSessions(
     };
     seededSessions.push(seededSession);
     seededByKey.set(seededSession.key, seededSession);
+  }
+
+  const store = createStructuredSessionStateStore({
+    databasePath: join(sessionDir, STRUCTURED_SESSION_DB_FILENAME),
+    digest: testDigest,
+    now: () => structuredNow,
+    workspace: {
+      id: getTestWorkspaceId(canonicalWorkspace),
+      label: basename(canonicalWorkspace),
+      cwd: canonicalWorkspace,
+    },
+  });
+  try {
+    for (const [index, session] of sessions.entries()) {
+      const seeded = seededSessions[index];
+      if (!seeded) continue;
+      const timestamps = session.messages
+        .map((message) => message.timestamp)
+        .filter((timestamp): timestamp is number => typeof timestamp === "number");
+      const createdAt = new Date(timestamps[0] ?? Date.now()).toISOString();
+      const updatedAt = new Date(timestamps.at(-1) ?? timestamps[0] ?? Date.now()).toISOString();
+      const parentSessionId = session.parentKey
+        ? seededByKey.get(session.parentKey)?.id
+        : undefined;
+      store.upsertPiSession({
+        sessionId: seeded.id,
+        ...(parentSessionId ? { parentSessionId } : {}),
+        title: session.title?.trim() || "New orchestrator",
+        titleAutoFrozen: Boolean(session.title?.trim()),
+        titleManualOverride: Boolean(session.title?.trim()),
+        provider: session.provider ?? DEFAULT_AGENT_SETTINGS.provider,
+        model: session.model ?? DEFAULT_AGENT_SETTINGS.model,
+        reasoningEffort: session.thinkingLevel ?? DEFAULT_AGENT_SETTINGS.reasoningEffort,
+        messageCount: session.messages.length,
+        status: "idle",
+        createdAt,
+        updatedAt,
+      });
+      for (const message of session.messages) {
+        if (message.role !== "user") continue;
+        structuredNow =
+          typeof message.timestamp === "number"
+            ? new Date(message.timestamp).toISOString()
+            : updatedAt;
+        const requestSummary = message.content
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n")
+          .trim();
+        const turn = store.startTurn({
+          sessionId: seeded.id,
+          surfacePiSessionId: seeded.id,
+          requestSummary,
+        });
+        store.finishTurn({ turnId: turn.id, status: "completed" });
+      }
+    }
+  } finally {
+    store.close();
   }
 
   return seededSessions;

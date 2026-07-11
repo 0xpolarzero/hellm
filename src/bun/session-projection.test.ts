@@ -156,10 +156,12 @@ describe("session projection", () => {
       created: "2026-04-10T10:00:00.000Z",
       modified: "2026-04-10T10:05:00.000Z",
       messageCount: 2,
+      parentSessionPath: "/tmp/2026-04-10T09-00-00_session-parent.jsonl",
     });
 
     expect(summary).toEqual({
       id: "session-2",
+      parentSessionId: "session-parent",
       title: "Trace the parser regression and fix it.",
       preview: "Trace the parser regression and fix it.",
       createdAt: "2026-04-10T10:00:00.000Z",

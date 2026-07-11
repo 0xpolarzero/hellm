@@ -122,8 +122,21 @@ function workspaceShellArtifactSession(): SeedSessionInput {
 
 async function waitForShellChrome(page: Page): Promise<void> {
   await page.locator(".workspace-titlebar").waitFor({ state: "visible" });
-  await page.locator(".composer-shell").waitFor({ state: "visible" });
+  await page.getByTestId("dockview-workbench").waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Open settings" }).waitFor({ state: "visible" });
+}
+
+async function createNewOrchestrator(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Create a new orchestrator" }).click({ force: true });
+  await page.locator(".composer-shell").waitFor({ state: "visible" });
+}
+
+async function openSession(page: Page, title: string): Promise<void> {
+  await page
+    .locator(".session-main")
+    .filter({ has: page.getByText(title, { exact: true }) })
+    .click({ force: true });
+  await page.locator(".composer-shell").waitFor({ state: "visible" });
 }
 
 async function currentWindowFrame(app: SvvyApp): Promise<{ width: number; height: number }> {
@@ -137,6 +150,7 @@ test("keeps the workspace chrome visible while toggling the sidebar and opening 
     expect(frame.width).toBeLessThan(DESKTOP_SPLIT_BREAKPOINT);
 
     await waitForShellChrome(app.page);
+    await createNewOrchestrator(app.page);
     expect((await app.page.locator(".workspace-titlebar-title").textContent())?.trim()).toBe(
       "svvy",
     );
@@ -192,6 +206,7 @@ test("keeps obsolete artifact overlay surfaces out of the redesigned shell", asy
       expect(frame.width).toBeLessThan(DESKTOP_SPLIT_BREAKPOINT);
 
       await waitForShellChrome(app.page);
+      await openSession(app.page, "Workspace shell artifact");
       expect(
         (await app.page.locator("[data-testid=active-surface-title]").textContent())?.trim(),
       ).toBe("Workspace shell artifact");
