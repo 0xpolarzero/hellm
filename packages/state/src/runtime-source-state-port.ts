@@ -78,6 +78,10 @@ export function runtimeSourceStatePortFromStructuredSessionState(
       state
         .recordRuntimeSourceScan(input)
         .pipe(Effect.map((record) => mutationResult(record, sourceScanInvalidations(record)))),
+    reconcileDiscoveredHostSnippets: (input) =>
+      state
+        .reconcileDiscoveredHostSnippets(input)
+        .pipe(Effect.map((record) => mutationResult(record, sourceScanInvalidations(record)))),
     recordObservedSourceDeletion: (input) =>
       state
         .recordObservedRuntimeSourceDeletion({

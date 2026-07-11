@@ -20,6 +20,7 @@ import { RuntimeContractError, StateContractError, type AbsolutePath } from "@sv
 import type {
   RecordRuntimeSourceDiagnosticInput,
   RecordRuntimeSourceScanInput,
+  ReconcileDiscoveredHostSnippetsInput,
   StateInvalidationDescriptor,
   StateMutationResult,
   SourceInvalidationHint,
@@ -27,6 +28,7 @@ import type {
 } from "@svvy/core";
 import {
   RuntimeSourceInvalidationCoordinator,
+  buildWorkspaceSourceWatchInputs,
   layerRuntimeSourceInvalidationCoordinator,
   type SourceInvalidationEvent,
   type SourceInvalidationHost,
@@ -34,6 +36,180 @@ import {
 } from "./source-invalidation-coordinator";
 
 describe("runtime source invalidation coordinator", () => {
+  it.effect(
+    "discovers canonical host snippets before publishing their committed invalidation",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* tempRoot("runtime-host-snippet-reconcile");
+          const workspace = join(root, "workspace");
+          const claudeNested = join(root, ".claude", "commands", "nested");
+          const claudeFile = join(claudeNested, "review.md");
+          const piRoot = join(root, ".pi", "agent", "prompts");
+          const piFile = join(piRoot, "plan.md");
+          const ignoredPiFile = join(piRoot, "nested", "ignored.md");
+          const unreadableDirectories = new Set<string>();
+          const unreadableFiles = new Set<string>();
+          const workspaceId = "workspace_host_snippets" as WorkspaceId;
+          const reconciliations: ReconcileDiscoveredHostSnippetsInput[] = [];
+          const order: string[] = [];
+          const baseHost = testHost(root);
+          const host: SourceInvalidationHost = {
+            ...baseHost,
+            fileSystem: {
+              ...baseHost.fileSystem,
+              readDirectory: (path) => {
+                if (unreadableDirectories.has(path)) throw new Error("directory permission denied");
+                return baseHost.fileSystem.readDirectory(path);
+              },
+              readFileString: (path) => {
+                if (unreadableFiles.has(path)) throw new Error("file permission denied");
+                return baseHost.fileSystem.readFileString(path);
+              },
+            },
+          };
+
+          yield* Effect.sync(() => {
+            mkdirSync(claudeNested, { recursive: true });
+            mkdirSync(join(piRoot, "nested"), { recursive: true });
+            mkdirSync(workspace, { recursive: true });
+            writeFileSync(
+              claudeFile,
+              "---\ndescription: Review a change\nargument-hint: path\n---\nReview $1",
+            );
+            writeFileSync(piFile, "Plan this");
+            writeFileSync(ignoredPiFile, "Ignore nested pi prompts");
+          });
+
+          yield* Effect.gen(function* () {
+            const coordinator = yield* RuntimeSourceInvalidationCoordinator;
+            const first = reconciliations[0];
+            assert.ok(first);
+            assert.deepStrictEqual(
+              first.observedSnippets.map(({ source, scope, path, title }) => ({
+                source,
+                scope,
+                path,
+                title,
+              })),
+              [
+                { source: "claude", scope: "user", path: claudeFile, title: "nested/review" },
+                { source: "pi", scope: "user", path: piFile, title: "plan" },
+              ],
+            );
+            assert.deepStrictEqual(first.observedSnippets[0]?.metadata, {
+              description: "Review a change",
+              argumentHint: "path",
+            });
+            assert.strictEqual(
+              first.observedSnippets.some(({ path }) => path === ignoredPiFile),
+              false,
+            );
+            assert.ok(order.indexOf("host-snippets-commit") < order.indexOf("notify"));
+
+            yield* Effect.sync(() => {
+              unreadableDirectories.add(claudeNested);
+              unreadableFiles.add(piFile);
+            });
+            const event = yield* coordinator.reconcile({
+              domains: ["host_snippets"],
+              reason: "manual",
+            });
+            const second = reconciliations[1];
+            assert.ok(second);
+            assert.deepStrictEqual(second.unreadableRoots, [
+              { source: "claude", scope: "user", path: claudeNested as AbsolutePath },
+            ]);
+            assert.deepStrictEqual(second.unreadableSnippets, [
+              { source: "pi", scope: "user", path: piFile as AbsolutePath },
+            ]);
+            assert.deepStrictEqual(
+              second.diagnostics.map(({ code, path }) => ({ code, path })),
+              [
+                {
+                  code: "host_snippet.directory_unreadable",
+                  path: claudeNested as AbsolutePath,
+                },
+                { code: "host_snippet.file_unreadable", path: piFile as AbsolutePath },
+              ],
+            );
+            assert.deepStrictEqual(event?.afterCommit, [
+              {
+                scope: "workspace",
+                workspaceId,
+                invalidation: { model: "snippets" },
+              },
+            ]);
+          }).pipe(
+            Effect.provide(
+              layerRuntimeSourceInvalidationCoordinator({
+                ...testCoordinatorOptions(
+                  root,
+                  buildWorkspaceSourceWatchInputs({ cwd: workspace, host }),
+                ),
+                host,
+                sourceScanRecorder: {
+                  scope: {
+                    kind: "workspace",
+                    workspaceId,
+                  },
+                  statePort: {
+                    ...unusedHostSnippetReconcileStatePort,
+                    recordSourceScan: (input) =>
+                      Effect.sync(() => {
+                        order.push(`scan-commit:${input.domain}`);
+                        return stateMutation({
+                          scope: input.scope,
+                          scopeKey: "workspace:workspace_host_snippets",
+                          domain: input.domain,
+                          sourceFingerprint: input.sourceFingerprint,
+                          diagnostics: input.diagnostics,
+                          lastObservedPath: null,
+                          lastObservationKind: "scan" as const,
+                          observedAt: input.scannedAt,
+                          createdAt: input.scannedAt,
+                          updatedAt: input.scannedAt,
+                        });
+                      }),
+                    reconcileDiscoveredHostSnippets: (input) =>
+                      Effect.sync(() => {
+                        reconciliations.push(input);
+                        order.push("host-snippets-commit");
+                        return stateMutation(
+                          {
+                            scope: input.scope,
+                            scopeKey: "workspace:workspace_host_snippets",
+                            domain: "host_snippets" as const,
+                            sourceFingerprint: input.sourceFingerprint,
+                            diagnostics: input.diagnostics,
+                            lastObservedPath: null,
+                            lastObservationKind: "scan" as const,
+                            observedAt: input.scannedAt,
+                            createdAt: input.scannedAt,
+                            updatedAt: input.scannedAt,
+                          },
+                          [
+                            {
+                              scope: "workspace",
+                              workspaceId: input.scope.workspaceId,
+                              invalidation: { model: "snippets" },
+                            },
+                          ],
+                        );
+                      }),
+                  },
+                },
+                onDomainsChanged: () =>
+                  Effect.sync(() => {
+                    order.push("notify");
+                  }),
+              }),
+            ),
+          );
+        }),
+      ),
+  );
+
   it.effect("runs deterministic reconcile without notifying the watcher callback", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -132,6 +308,7 @@ describe("runtime source invalidation coordinator", () => {
               sourceScanRecorder: {
                 scope: { kind: "app-global" },
                 statePort: {
+                  ...unusedHostSnippetReconcileStatePort,
                   recordSourceScan: (input) =>
                     Effect.sync(() => {
                       recordedScans.push(input);
@@ -274,6 +451,7 @@ describe("runtime source invalidation coordinator", () => {
                 sourceScanRecorder: {
                   scope: { kind: "app-global" },
                   statePort: {
+                    ...unusedHostSnippetReconcileStatePort,
                     recordSourceScan: (input) =>
                       Effect.succeed(
                         stateMutation({
@@ -485,6 +663,7 @@ describe("runtime source invalidation coordinator", () => {
               sourceScanRecorder: {
                 scope: { kind: "workspace", workspaceId },
                 statePort: {
+                  ...unusedHostSnippetReconcileStatePort,
                   recordSourceScan: (input) =>
                     Effect.gen(function* () {
                       recordedScans.push(input);
@@ -595,6 +774,7 @@ describe("runtime source invalidation coordinator", () => {
               sourceScanRecorder: {
                 scope: { kind: "workspace", workspaceId },
                 statePort: {
+                  ...unusedHostSnippetReconcileStatePort,
                   recordSourceScan: (input) =>
                     Effect.gen(function* () {
                       recordedScans.push(input);
@@ -719,6 +899,7 @@ describe("runtime source invalidation coordinator", () => {
               sourceScanRecorder: {
                 scope: { kind: "workspace", workspaceId },
                 statePort: {
+                  ...unusedHostSnippetReconcileStatePort,
                   recordSourceScan: (input) =>
                     Effect.gen(function* () {
                       recordedScans.push(input);
@@ -1230,6 +1411,7 @@ describe("runtime source invalidation coordinator", () => {
               sourceScanRecorder: {
                 scope: { kind: "workspace", workspaceId },
                 statePort: {
+                  ...unusedHostSnippetReconcileStatePort,
                   recordSourceScan: (input) =>
                     Effect.sync(() => {
                       recordedScans.push(input);
@@ -1285,6 +1467,10 @@ function stateMutation<T>(
 ): StateMutationResult<T> {
   return { value, afterCommit };
 }
+
+const unusedHostSnippetReconcileStatePort = {
+  reconcileDiscoveredHostSnippets: () => Effect.die("Unexpected host snippet reconciliation."),
+};
 
 function testCoordinatorOptions(homeDir: string, inputs: readonly SourceWatchInput[]) {
   return {

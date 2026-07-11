@@ -44,6 +44,7 @@ describe("source invalidation coordinator", () => {
     expect(inputs).toContainEqual(
       expect.objectContaining({
         domain: "host_snippets",
+        hostSnippet: { source: "claude", scope: "workspace" },
         kind: "directory",
         path: join(root, "workspace", ".claude", "commands"),
       }),
@@ -106,6 +107,23 @@ describe("source invalidation coordinator", () => {
         path: join(workspace, "CLAUDE.md"),
       }),
     );
+  });
+
+  it("labels Claude roots recursive and pi roots non-recursive for authoritative discovery", () => {
+    const root = tempRoot("host-snippet-inputs");
+    const inputs = buildWorkspaceSourceWatchInputs({
+      cwd: join(root, "workspace"),
+      host: testHost(root),
+    }).filter((input) => input.domain === "host_snippets");
+
+    expect(
+      inputs.map(({ hostSnippet, recursive }) => ({ hostSnippet, recursive: recursive === true })),
+    ).toEqual([
+      { hostSnippet: { source: "claude", scope: "user" }, recursive: true },
+      { hostSnippet: { source: "pi", scope: "user" }, recursive: false },
+      { hostSnippet: { source: "claude", scope: "workspace" }, recursive: true },
+      { hostSnippet: { source: "pi", scope: "workspace" }, recursive: false },
+    ]);
   });
 });
 

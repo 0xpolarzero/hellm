@@ -427,6 +427,10 @@ source facts are keyed by `(SourceInvalidationScope, sourceKind, sourceId)` for 
 source edits. Runtime source scan facts are keyed by `(SourceInvalidationScope, SourceDomain)` for
 deterministic source reconciliation and include committed fingerprint, diagnostics, last observed
 deletion path, observation kind, and observation timestamp. Core owns the schemas and port method contracts;
+`ReconcileDiscoveredHostSnippetsInputSchema` carries one workspace scan's exact-schema Claude/pi
+observations, unreadable file identities, unreadable root identities, source-root fingerprints, and
+diagnostics. Discovered identity is `(source, user-or-workspace scope, canonical absolute path)`;
+managed `svvy` is not a valid discovered source.
 `@svvy/state` owns SQLite persistence and descriptor derivation, while `@svvy/runtime` owns file
 watching, scans, generated-package refresh, generated-context refresh, recovery scheduling, and
 runtime event publication.

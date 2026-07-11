@@ -1,19 +1,23 @@
 import type {
   ComposerSnippetMention,
+  DiscoveredSnippetScope,
+  DiscoveredSnippetSource,
   SentSnippetProvenance,
   SnippetMetadata,
-  SnippetSource,
 } from "@svvy/core";
 
 export type {
   ComposerSnippetMention,
+  DiscoveredSnippetScope,
+  DiscoveredSnippetSource,
   SentSnippetProvenance,
   SnippetMetadata,
   SnippetSource,
 } from "@svvy/core";
+export { parseSnippetMarkdown } from "@svvy/core";
 
-export type ExternalSnippetSource = Exclude<SnippetSource, "svvy">;
-export type SnippetScope = "user" | "workspace";
+export type ExternalSnippetSource = DiscoveredSnippetSource;
+export type SnippetScope = DiscoveredSnippetScope;
 
 export interface DiscoveredSnippet {
   id: string;
@@ -69,37 +73,6 @@ export interface DeleteManagedSnippetRequest {
 export interface SetSnippetEnabledRequest {
   snippetId: string;
   enabled: boolean;
-}
-
-export function parseSnippetMarkdown(markdown: string): {
-  body: string;
-  metadata: SnippetMetadata;
-} {
-  const normalized = markdown.replace(/^\uFEFF/, "");
-  if (!normalized.startsWith("---\n") && !normalized.startsWith("---\r\n")) {
-    return {
-      body: normalized,
-      metadata: emptySnippetMetadata(),
-    };
-  }
-
-  const lineBreak = normalized.startsWith("---\r\n") ? "\r\n" : "\n";
-  const lines = normalized.split(lineBreak);
-  const closingIndex = lines.findIndex(
-    (line, index) => index > 0 && (line === "---" || line === "..."),
-  );
-  if (closingIndex < 0) {
-    return {
-      body: normalized,
-      metadata: emptySnippetMetadata(),
-    };
-  }
-
-  const frontmatter = lines.slice(1, closingIndex).join("\n");
-  return {
-    body: lines.slice(closingIndex + 1).join(lineBreak),
-    metadata: parseSnippetMetadata(frontmatter),
-  };
 }
 
 export function expandSnippetBody(body: string, args: readonly string[]): string {
@@ -221,41 +194,4 @@ export function hashSnippetBody(body: string): string {
     hash = Math.imul(hash, 0x01000193);
   }
   return `fnv1a32:${(hash >>> 0).toString(16).padStart(8, "0")}`;
-}
-
-function emptySnippetMetadata(): SnippetMetadata {
-  return {
-    description: null,
-    argumentHint: null,
-  };
-}
-
-function parseSnippetMetadata(frontmatter: string): SnippetMetadata {
-  const metadata = {
-    description: null as string | null,
-    argumentHint: null as string | null,
-  };
-  for (const line of frontmatter.split(/\r?\n/)) {
-    const match = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
-    if (!match) continue;
-    const key = match[1];
-    const value = parseYamlStringScalar(match[2] ?? "");
-    if (key === "description") {
-      metadata.description = value;
-    } else if (key === "argument-hint") {
-      metadata.argumentHint = value;
-    }
-  }
-  return metadata;
-}
-
-function parseYamlStringScalar(value: string): string {
-  const trimmed = value.trim();
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1);
-  }
-  return trimmed;
 }

@@ -2518,6 +2518,16 @@ process-local queues, debouncers, coalescing maps, watcher close handles, and sc
 and scheduling machinery. Lost watcher events cannot lose product work because each coordinator
 also supports deterministic `reconcile(...)` and startup/recovery scans.
 
+For workspace `host_snippets` scans, each configured watch input carries its authoritative host
+source (`claude` or `pi`) and discovery scope (`user` or `workspace`). Runtime enumerates Claude
+roots recursively and pi roots non-recursively, canonicalizes every absolute file identity, parses
+Markdown frontmatter through the core-owned snippet parser, and calls
+`RuntimeSourceStatePort.reconcileDiscoveredHostSnippets(...)` instead of recording a fingerprint-only
+scan. A missing path is deletion evidence; a path or directory that still exists but cannot be read
+is diagnostic/retention evidence. Runtime therefore passes unreadable file and root identities to
+state so the previous row remains active until a readable scan can authoritatively replace or delete
+it. Runtime emits the returned `snippets` invalidation only after that atomic reconciliation commit.
+
 Watcher/debounce, generated-package refresh, and workspace-link repair services use the worker rules
 from `effect-v4.spec.md`: bounded process-local queues, keyed coalescing by source domain/scope or
 workspace/package, deterministic `drain(...)` / `drainKey(...)` test handles, adopted

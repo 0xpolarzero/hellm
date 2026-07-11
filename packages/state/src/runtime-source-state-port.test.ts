@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import {
+  discoveredHostSnippetId,
   RuntimeSourceStatePort,
   StateContractError,
   type AbsolutePath,
@@ -300,6 +301,222 @@ describe("RuntimeSourceStatePort", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("atomically reconciles discovered host snippets while preserving user enablement", async () => {
+    const store = createStructuredSessionStateStore({ workspace });
+    const port = runtimeSourceStatePortFromStore(store);
+    const managed = store.createManagedSnippet({
+      workspaceId: workspace.id as WorkspaceId,
+      title: "Managed review",
+      body: "Managed body",
+      metadata: { description: null, argumentHint: null },
+      enabled: true,
+    });
+    const claudePath = path(`${workspace.cwd}/.claude/commands/review.md`);
+    const piPath = path(`${workspace.cwd}/.pi/prompts/plan.md`);
+    const claudeId = discoveredHostSnippetId({
+      source: "claude",
+      scope: "workspace",
+      path: claudePath,
+    });
+
+    const first = await runTestEffect(
+      port.reconcileDiscoveredHostSnippets({
+        scope: { kind: "workspace", workspaceId: brandedWorkspaceId },
+        sourceFingerprint: "host_snippets_fingerprint_01",
+        sourceRoots: [
+          {
+            sourceRoot: path(`${workspace.cwd}/.claude/commands`),
+            rootFingerprint: "claude_root_01",
+          },
+          {
+            sourceRoot: path(`${workspace.cwd}/.pi/prompts`),
+            rootFingerprint: "pi_root_01",
+          },
+        ],
+        observedSnippets: [
+          {
+            source: "claude",
+            scope: "workspace",
+            path: claudePath,
+            title: "review",
+            body: "Review $1",
+            metadata: { description: "Review a change", argumentHint: "path" },
+          },
+          {
+            source: "pi",
+            scope: "workspace",
+            path: piPath,
+            title: "plan",
+            body: "Plan this",
+            metadata: { description: null, argumentHint: null },
+          },
+        ],
+        unreadableSnippets: [],
+        unreadableRoots: [],
+        diagnostics: [],
+        scannedAt: observedAt("2026-04-18T14:00:00.000Z"),
+      }),
+    );
+    store.setSnippetEnabled({
+      workspaceId: brandedWorkspaceId,
+      snippetId: claudeId,
+      enabled: false,
+    });
+
+    const unreadable = await runTestEffect(
+      port.reconcileDiscoveredHostSnippets({
+        scope: { kind: "workspace", workspaceId: brandedWorkspaceId },
+        sourceFingerprint: "host_snippets_fingerprint_02",
+        sourceRoots: [
+          {
+            sourceRoot: path(`${workspace.cwd}/.claude/commands`),
+            rootFingerprint: "claude_root_unreadable",
+          },
+          {
+            sourceRoot: path(`${workspace.cwd}/.pi/prompts`),
+            rootFingerprint: "pi_root_missing",
+          },
+        ],
+        observedSnippets: [],
+        unreadableSnippets: [{ source: "claude", scope: "workspace", path: claudePath }],
+        unreadableRoots: [],
+        diagnostics: [
+          {
+            severity: "error",
+            code: "host_snippet.file_unreadable",
+            message: "Host snippet could not be read.",
+            path: claudePath,
+          },
+        ],
+        scannedAt: observedAt("2026-04-18T14:01:00.000Z"),
+      }),
+    );
+    expect(store.listSnippets({ workspaceId: workspace.id })).toMatchObject([
+      { id: claudeId, source: "claude", body: "Review $1", enabled: false },
+      { id: managed.id, source: "svvy", body: "Managed body", enabled: true },
+    ]);
+
+    await runTestEffect(
+      port.reconcileDiscoveredHostSnippets({
+        scope: { kind: "workspace", workspaceId: brandedWorkspaceId },
+        sourceFingerprint: "host_snippets_fingerprint_03",
+        sourceRoots: [],
+        observedSnippets: [],
+        unreadableSnippets: [],
+        unreadableRoots: [],
+        diagnostics: [],
+        scannedAt: observedAt("2026-04-18T14:02:00.000Z"),
+      }),
+    );
+    expect(store.listSnippets({ workspaceId: workspace.id })).toMatchObject([
+      { id: managed.id, source: "svvy", body: "Managed body", enabled: true },
+    ]);
+
+    await runTestEffect(
+      port.reconcileDiscoveredHostSnippets({
+        scope: { kind: "workspace", workspaceId: brandedWorkspaceId },
+        sourceFingerprint: "host_snippets_fingerprint_04",
+        sourceRoots: [],
+        observedSnippets: [
+          {
+            source: "claude",
+            scope: "workspace",
+            path: claudePath,
+            title: "review",
+            body: "Review the updated $1",
+            metadata: { description: null, argumentHint: "path" },
+          },
+        ],
+        unreadableSnippets: [],
+        unreadableRoots: [],
+        diagnostics: [],
+        scannedAt: observedAt("2026-04-18T14:03:00.000Z"),
+      }),
+    );
+
+    expect(first.afterCommit).toEqual([
+      {
+        scope: "workspace",
+        workspaceId: brandedWorkspaceId,
+        invalidation: { model: "snippets" },
+      },
+    ]);
+    expect(unreadable.value.diagnostics).toMatchObject([
+      { code: "host_snippet.file_unreadable", path: claudePath },
+    ]);
+    expect(store.listSnippets({ workspaceId: workspace.id })).toMatchObject([
+      {
+        id: claudeId,
+        source: "claude",
+        body: "Review the updated $1",
+        enabled: false,
+      },
+      { id: managed.id, source: "svvy", body: "Managed body", enabled: true },
+    ]);
+    expect(
+      store.readRuntimeSourceRootFingerprint({
+        sourceRoot: path(`${workspace.cwd}/.claude/commands`),
+      }),
+    ).toMatchObject({
+      domain: "host_snippets",
+      rootFingerprint: "claude_root_unreadable",
+      diagnostics: [{ code: "host_snippet.file_unreadable" }],
+    });
+    store.close();
+  });
+
+  it("rolls back host snippet rows and scan facts when a discovered identity collides", async () => {
+    const collisionPath = path(`${workspace.cwd}/.claude/commands/collision.md`);
+    const collisionId = discoveredHostSnippetId({
+      source: "claude",
+      scope: "workspace",
+      path: collisionPath,
+    });
+    const store = createStructuredSessionStateStore({
+      workspace,
+      idFactory: () => collisionId,
+    });
+    store.createManagedSnippet({
+      workspaceId: workspace.id as WorkspaceId,
+      title: "Managed collision",
+      body: "Do not mutate",
+      metadata: { description: null, argumentHint: null },
+      enabled: true,
+    });
+    const revisionBefore = store.readCurrentStateRevision();
+    const port = runtimeSourceStatePortFromStore(store);
+
+    await expect(
+      runTestEffect(
+        port.reconcileDiscoveredHostSnippets({
+          scope: { kind: "workspace", workspaceId: brandedWorkspaceId },
+          sourceFingerprint: "host_snippets_collision",
+          sourceRoots: [],
+          observedSnippets: [
+            {
+              source: "claude",
+              scope: "workspace",
+              path: collisionPath,
+              title: "collision",
+              body: "External body",
+              metadata: { description: null, argumentHint: null },
+            },
+          ],
+          unreadableSnippets: [],
+          unreadableRoots: [],
+          diagnostics: [],
+          scannedAt: observedAt("2026-04-18T14:10:00.000Z"),
+        }),
+      ),
+    ).rejects.toMatchObject({ reason: "conflict" });
+
+    expect(store.readCurrentStateRevision()).toBe(revisionBefore);
+    expect(store.listSnippets({ workspaceId: workspace.id })).toMatchObject([
+      { id: collisionId, source: "svvy", body: "Do not mutate" },
+    ]);
+    store.close();
   });
 
   it("rejects invalid source scan scope/domain pairs at the persistence boundary", () => {

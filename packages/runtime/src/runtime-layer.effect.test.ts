@@ -1164,6 +1164,7 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
           recordSourceSave: () => Effect.die("unused"),
           recordSourceDelete: () => Effect.die("unused"),
           recordSourceScan: () => Effect.die("unused"),
+          reconcileDiscoveredHostSnippets: () => Effect.die("unused"),
           recordObservedSourceDeletion: () => Effect.die("unused"),
           recordSourceDiagnostic: () => Effect.die("unused"),
         }),

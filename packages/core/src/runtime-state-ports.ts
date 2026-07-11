@@ -2,6 +2,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { strictBoundaryParseOptions } from "./boundary-parse-options";
+import {
+  DiscoveredSnippetScopeSchema,
+  DiscoveredSnippetSourceSchema,
+  SnippetMetadataSchema,
+} from "./composer-contracts";
 import type { StateContractError } from "./errors";
 import { SourceScopeDomainInvariant } from "./source-scope-domain-invariant";
 import { ArtifactMetadataRecordSchema, type ArtifactMetadataRecord } from "./artifact-contracts";
@@ -271,6 +276,39 @@ export const RecordRuntimeSourceScanInputSchema = Schema.Struct({
 }).pipe(Schema.check(SourceScopeDomainInvariant));
 export type RecordRuntimeSourceScanInput = typeof RecordRuntimeSourceScanInputSchema.Type;
 
+export const DiscoveredHostSnippetIdentitySchema = Schema.Struct({
+  source: DiscoveredSnippetSourceSchema,
+  scope: DiscoveredSnippetScopeSchema,
+  path: AbsolutePath,
+});
+export type DiscoveredHostSnippetIdentityInput = typeof DiscoveredHostSnippetIdentitySchema.Type;
+
+export const DiscoveredHostSnippetObservationSchema = Schema.Struct({
+  source: DiscoveredSnippetSourceSchema,
+  scope: DiscoveredSnippetScopeSchema,
+  path: AbsolutePath,
+  title: Schema.String,
+  body: Schema.String,
+  metadata: SnippetMetadataSchema,
+});
+export type DiscoveredHostSnippetObservation = typeof DiscoveredHostSnippetObservationSchema.Type;
+
+export const ReconcileDiscoveredHostSnippetsInputSchema = Schema.Struct({
+  scope: Schema.Struct({
+    kind: Schema.Literal("workspace"),
+    workspaceId: WorkspaceId,
+  }),
+  sourceFingerprint: Schema.String,
+  sourceRoots: Schema.Array(RuntimeSourceRootFingerprintInputSchema),
+  observedSnippets: Schema.Array(DiscoveredHostSnippetObservationSchema),
+  unreadableSnippets: Schema.Array(DiscoveredHostSnippetIdentitySchema),
+  unreadableRoots: Schema.Array(DiscoveredHostSnippetIdentitySchema),
+  diagnostics: Schema.Array(SourceDiagnosticSchema),
+  scannedAt: IsoDateTimeStringSchema,
+});
+export type ReconcileDiscoveredHostSnippetsInput =
+  typeof ReconcileDiscoveredHostSnippetsInputSchema.Type;
+
 export const RecordObservedRuntimeSourceDeletionInputSchema = Schema.Struct({
   scope: SourceInvalidationScopeSchema,
   domain: SourceDomainSchema,
@@ -305,6 +343,9 @@ export interface RuntimeSourceStatePortService {
   ): Effect.Effect<StateMutationResult<RuntimeSourceFactRecord>, StateContractError>;
   recordSourceScan(
     input: RecordRuntimeSourceScanInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceScanFactRecord>, StateContractError>;
+  reconcileDiscoveredHostSnippets(
+    input: ReconcileDiscoveredHostSnippetsInput,
   ): Effect.Effect<StateMutationResult<RuntimeSourceScanFactRecord>, StateContractError>;
   recordObservedSourceDeletion(
     input: RecordObservedRuntimeSourceDeletionInput,

@@ -7,11 +7,21 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
-import { RuntimeContractError, StateContractError } from "@svvy/core";
+import {
+  parseSnippetMarkdown,
+  RuntimeContractError,
+  StateContractError,
+  type DiscoveredSnippetScope,
+  type DiscoveredSnippetSource,
+} from "@svvy/core";
 import type {
   AbsolutePath,
+  DiscoveredHostSnippetIdentityInput,
+  DiscoveredHostSnippetObservation,
+  ReconcileDiscoveredHostSnippetsInput,
   RecordRuntimeSourceScanInput,
   RuntimeSourceStatePortService,
+  SourceDiagnostic,
   SourceDomain,
   SourceInvalidationHint,
   SourceInvalidationScope,
@@ -28,6 +38,10 @@ export interface SourceWatchInput {
   recursive?: boolean;
   includeExtensions?: readonly string[];
   includeBasenames?: readonly string[];
+  hostSnippet?: {
+    source: DiscoveredSnippetSource;
+    scope: DiscoveredSnippetScope;
+  };
   watchWhenMissing?: boolean;
 }
 
@@ -97,6 +111,12 @@ export interface ExternalInstructionsWatchSettings {
   globalRoots?: readonly ExternalInstructionRootInput[];
 }
 
+type SourceScanRecorderStatePort = Pick<
+  RuntimeSourceStatePortService,
+  "recordSourceScan" | "reconcileDiscoveredHostSnippets"
+> &
+  Partial<Pick<RuntimeSourceStatePortService, "recordSourceDiagnostic">>;
+
 export interface SourceInvalidationCoordinatorOptions {
   debounceMs?: number;
   host: SourceInvalidationHost;
@@ -110,8 +130,7 @@ export interface SourceInvalidationCoordinatorOptions {
   retryMaxDelayMs?: number;
   sourceScanRecorder?: {
     scope: SourceInvalidationScope;
-    statePort: Pick<RuntimeSourceStatePortService, "recordSourceScan"> &
-      Partial<Pick<RuntimeSourceStatePortService, "recordSourceDiagnostic">>;
+    statePort: SourceScanRecorderStatePort;
   };
   watchEnabled?: boolean;
 }
@@ -295,14 +314,25 @@ export function createSourceInvalidationCoordinator(
           let scanCommitted = true;
           if (input.sourceScanRecorder) {
             const scannedAt = DateTime.formatIso(yield* DateTime.now);
-            const recordSourceScan = input.sourceScanRecorder.statePort.recordSourceScan({
-              scope: input.sourceScanRecorder.scope,
-              domain,
-              sourceFingerprint: nextFingerprints[domain],
-              sourceRoots: nextSourceRoots[domain],
-              diagnostics: [],
-              scannedAt: scannedAt as RecordRuntimeSourceScanInput["scannedAt"],
-            });
+            const recordSourceScan =
+              domain === "host_snippets"
+                ? reconcileDiscoveredHostSnippets({
+                    currentInputs,
+                    host,
+                    scannedAt: scannedAt as ReconcileDiscoveredHostSnippetsInput["scannedAt"],
+                    scope: input.sourceScanRecorder.scope,
+                    sourceFingerprint: nextFingerprints[domain],
+                    sourceRoots: nextSourceRoots[domain],
+                    statePort: input.sourceScanRecorder.statePort,
+                  })
+                : input.sourceScanRecorder.statePort.recordSourceScan({
+                    scope: input.sourceScanRecorder.scope,
+                    domain,
+                    sourceFingerprint: nextFingerprints[domain],
+                    sourceRoots: nextSourceRoots[domain],
+                    diagnostics: [],
+                    scannedAt: scannedAt as RecordRuntimeSourceScanInput["scannedAt"],
+                  });
             const retriedRecordSourceScan =
               retryMaxAttempts > 0
                 ? recordSourceScan.pipe(
@@ -549,6 +579,7 @@ export function buildWorkspaceSourceWatchInputs(input: {
       domain: "host_snippets",
       kind: "directory",
       path: host.path.join(host.homeDir, ".claude", "commands"),
+      hostSnippet: { source: "claude", scope: "user" },
       recursive: true,
       includeExtensions: [".md"],
     },
@@ -556,12 +587,14 @@ export function buildWorkspaceSourceWatchInputs(input: {
       domain: "host_snippets",
       kind: "directory",
       path: host.path.join(host.homeDir, ".pi", "agent", "prompts"),
+      hostSnippet: { source: "pi", scope: "user" },
       includeExtensions: [".md"],
     },
     {
       domain: "host_snippets",
       kind: "directory",
       path: host.path.join(input.cwd, ".claude", "commands"),
+      hostSnippet: { source: "claude", scope: "workspace" },
       recursive: true,
       includeExtensions: [".md"],
     },
@@ -569,10 +602,258 @@ export function buildWorkspaceSourceWatchInputs(input: {
       domain: "host_snippets",
       kind: "directory",
       path: host.path.join(input.cwd, ".pi", "prompts"),
+      hostSnippet: { source: "pi", scope: "workspace" },
       includeExtensions: [".md"],
     },
     ...externalInstructionInputs(input.cwd, input.externalInstructions, host),
   ];
+}
+
+interface DiscoveredHostSnippetScan {
+  readonly diagnostics: readonly SourceDiagnostic[];
+  readonly observedSnippets: readonly DiscoveredHostSnippetObservation[];
+  readonly unreadableRoots: readonly DiscoveredHostSnippetIdentityInput[];
+  readonly unreadableSnippets: readonly DiscoveredHostSnippetIdentityInput[];
+}
+
+function reconcileDiscoveredHostSnippets(input: {
+  readonly currentInputs: readonly SourceWatchInput[];
+  readonly host: SourceInvalidationHost;
+  readonly scannedAt: ReconcileDiscoveredHostSnippetsInput["scannedAt"];
+  readonly scope: SourceInvalidationScope;
+  readonly sourceFingerprint: string;
+  readonly sourceRoots: ReconcileDiscoveredHostSnippetsInput["sourceRoots"];
+  readonly statePort: SourceScanRecorderStatePort;
+}) {
+  if (input.scope.kind !== "workspace") {
+    return Effect.fail(
+      new StateContractError({
+        operation: "runtime.sourceInvalidation.reconcileDiscoveredHostSnippets",
+        reason: "invalid-input",
+        message: "Discovered host snippet reconciliation requires workspace-scoped state.",
+      }),
+    );
+  }
+  const scope = input.scope;
+  let discovered: DiscoveredHostSnippetScan;
+  try {
+    discovered = discoverHostSnippets(input.currentInputs, input.host);
+  } catch (cause) {
+    return Effect.fail(
+      cause instanceof StateContractError
+        ? cause
+        : new StateContractError({
+            operation: "runtime.sourceInvalidation.reconcileDiscoveredHostSnippets",
+            reason: "transaction-failed",
+            message:
+              cause instanceof Error
+                ? cause.message
+                : "Host snippet discovery failed before state reconciliation.",
+            cause,
+          }),
+    );
+  }
+  return input.statePort.reconcileDiscoveredHostSnippets({
+    scope,
+    sourceFingerprint: input.sourceFingerprint,
+    sourceRoots: input.sourceRoots,
+    observedSnippets: discovered.observedSnippets,
+    unreadableSnippets: discovered.unreadableSnippets,
+    unreadableRoots: discovered.unreadableRoots,
+    diagnostics: discovered.diagnostics,
+    scannedAt: input.scannedAt,
+  });
+}
+
+function discoverHostSnippets(
+  inputs: readonly SourceWatchInput[],
+  host: SourceInvalidationHost,
+): DiscoveredHostSnippetScan {
+  const diagnostics: SourceDiagnostic[] = [];
+  const observed = new Map<string, DiscoveredHostSnippetObservation>();
+  const unreadableRoots = new Map<string, DiscoveredHostSnippetIdentityInput>();
+  const unreadableSnippets = new Map<string, DiscoveredHostSnippetIdentityInput>();
+  const hostSnippetInputs = inputs.filter((item) => item.domain === "host_snippets");
+
+  for (const sourceInput of hostSnippetInputs) {
+    const identity = sourceInput.hostSnippet;
+    if (!identity || sourceInput.kind !== "directory") {
+      throw new StateContractError({
+        operation: "runtime.sourceInvalidation.discoverHostSnippets",
+        reason: "invalid-input",
+        message: `Host snippet source root ${sourceInput.path} is missing source/scope metadata.`,
+      });
+    }
+    const canonicalRoot = canonicalSourcePath(sourceInput.path, host) as AbsolutePath;
+    let rootExists: boolean;
+    let rootIsDirectory: boolean;
+    try {
+      rootExists = host.fileSystem.exists(canonicalRoot);
+      rootIsDirectory = rootExists && host.fileSystem.isDirectory(canonicalRoot);
+    } catch (error) {
+      retainUnreadableHostSnippetRoot({
+        diagnostics,
+        error,
+        identity,
+        path: canonicalRoot,
+        unreadableRoots,
+      });
+      continue;
+    }
+    if (!rootExists) continue;
+    if (!rootIsDirectory) {
+      retainUnreadableHostSnippetRoot({
+        diagnostics,
+        error: new Error("Configured host snippet root is not a directory."),
+        identity,
+        path: canonicalRoot,
+        unreadableRoots,
+      });
+      continue;
+    }
+
+    const files: AbsolutePath[] = [];
+    collectHostSnippetFiles({
+      diagnostics,
+      directory: canonicalRoot,
+      files,
+      host,
+      identity,
+      recursive: sourceInput.recursive === true,
+      unreadableRoots,
+    });
+    for (const file of files) {
+      const snippetIdentity: DiscoveredHostSnippetIdentityInput = {
+        ...identity,
+        path: file,
+      };
+      let markdown: string;
+      try {
+        if (!host.fileSystem.exists(file) || !host.fileSystem.isFile(file)) continue;
+        markdown = host.fileSystem.readFileString(file);
+      } catch (error) {
+        let stillExists = true;
+        try {
+          stillExists = host.fileSystem.exists(file);
+        } catch {
+          // An existence check that also fails is itself unreadable evidence.
+        }
+        if (!stillExists) continue;
+        unreadableSnippets.set(discoveredHostSnippetIdentityKey(snippetIdentity), snippetIdentity);
+        diagnostics.push({
+          severity: "error",
+          code: "host_snippet.file_unreadable",
+          message: `Host snippet could not be read: ${describeSourceReadError(error)}.`,
+          path: file,
+        });
+        continue;
+      }
+      const parsed = parseSnippetMarkdown(markdown);
+      observed.set(discoveredHostSnippetIdentityKey(snippetIdentity), {
+        ...snippetIdentity,
+        title: discoveredHostSnippetTitle(canonicalRoot, file, identity.source),
+        body: parsed.body,
+        metadata: parsed.metadata,
+      });
+    }
+  }
+
+  const compareIdentity = (
+    left: DiscoveredHostSnippetIdentityInput,
+    right: DiscoveredHostSnippetIdentityInput,
+  ) =>
+    discoveredHostSnippetIdentityKey(left).localeCompare(discoveredHostSnippetIdentityKey(right));
+  return {
+    diagnostics: diagnostics.toSorted((left, right) =>
+      `${left.path ?? ""}:${left.code ?? ""}`.localeCompare(
+        `${right.path ?? ""}:${right.code ?? ""}`,
+      ),
+    ),
+    observedSnippets: [...observed.values()].toSorted(compareIdentity),
+    unreadableRoots: [...unreadableRoots.values()].toSorted(compareIdentity),
+    unreadableSnippets: [...unreadableSnippets.values()].toSorted(compareIdentity),
+  };
+}
+
+function collectHostSnippetFiles(input: {
+  readonly diagnostics: SourceDiagnostic[];
+  readonly directory: AbsolutePath;
+  readonly files: AbsolutePath[];
+  readonly host: SourceInvalidationHost;
+  readonly identity: {
+    readonly source: DiscoveredSnippetSource;
+    readonly scope: DiscoveredSnippetScope;
+  };
+  readonly recursive: boolean;
+  readonly unreadableRoots: Map<string, DiscoveredHostSnippetIdentityInput>;
+}): void {
+  let entries: readonly SourceInvalidationDirectoryEntry[];
+  try {
+    entries = input.host.fileSystem.readDirectory(input.directory);
+  } catch (error) {
+    retainUnreadableHostSnippetRoot({
+      diagnostics: input.diagnostics,
+      error,
+      identity: input.identity,
+      path: input.directory,
+      unreadableRoots: input.unreadableRoots,
+    });
+    return;
+  }
+  for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
+    const path = canonicalSourcePath(
+      input.host.path.join(input.directory, entry.name),
+      input.host,
+    ) as AbsolutePath;
+    if (entry.kind === "directory") {
+      if (input.recursive) {
+        collectHostSnippetFiles({ ...input, directory: path });
+      }
+      continue;
+    }
+    if (entry.kind === "file" && path.endsWith(".md")) {
+      input.files.push(path);
+    }
+  }
+}
+
+function retainUnreadableHostSnippetRoot(input: {
+  readonly diagnostics: SourceDiagnostic[];
+  readonly error: unknown;
+  readonly identity: {
+    readonly source: DiscoveredSnippetSource;
+    readonly scope: DiscoveredSnippetScope;
+  };
+  readonly path: AbsolutePath;
+  readonly unreadableRoots: Map<string, DiscoveredHostSnippetIdentityInput>;
+}): void {
+  const rootIdentity = { ...input.identity, path: input.path };
+  input.unreadableRoots.set(discoveredHostSnippetIdentityKey(rootIdentity), rootIdentity);
+  input.diagnostics.push({
+    severity: "error",
+    code: "host_snippet.directory_unreadable",
+    message: `Host snippet directory could not be read: ${describeSourceReadError(input.error)}.`,
+    path: input.path,
+  });
+}
+
+function discoveredHostSnippetIdentityKey(input: DiscoveredHostSnippetIdentityInput): string {
+  return `${input.source}:${input.scope}:${input.path}`;
+}
+
+function discoveredHostSnippetTitle(
+  root: AbsolutePath,
+  path: AbsolutePath,
+  source: DiscoveredSnippetSource,
+): string {
+  const relativePath = path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
+  const withoutExtension = relativePath.replace(/\.md$/, "");
+  const title = source === "claude" ? withoutExtension : withoutExtension.split(/[\\/]/).at(-1);
+  return title?.trim() || path.split(/[\\/]/).at(-1)?.replace(/\.md$/, "") || "snippet";
+}
+
+function describeSourceReadError(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : "unknown filesystem error";
 }
 
 function isRetryableSourceScanStateError(error: StateContractError): boolean {
@@ -672,7 +953,11 @@ function sourceRootBuildFingerprint(sourceRoot: string, host: SourceInvalidation
   const parts: string[] = [];
   for (const file of files.toSorted((left, right) => left.localeCompare(right))) {
     parts.push(file.slice(sourceRoot.length + 1));
-    parts.push(host.fileSystem.readFileString(file));
+    try {
+      parts.push(host.fileSystem.readFileString(file));
+    } catch (error) {
+      parts.push(`unreadable:${error instanceof Error ? error.message : "unknown"}`);
+    }
   }
   return host.hashStrings(parts);
 }
@@ -958,6 +1243,7 @@ function normalizeInputs(
     if (input.fingerprintChildDirectories !== undefined) {
       item.fingerprintChildDirectories = input.fingerprintChildDirectories;
     }
+    if (input.hostSnippet) item.hostSnippet = { ...input.hostSnippet };
     if (input.recursive !== undefined) item.recursive = input.recursive;
     if (input.watchWhenMissing !== undefined) item.watchWhenMissing = input.watchWhenMissing;
     if (input.includeBasenames) item.includeBasenames = [...input.includeBasenames].toSorted();

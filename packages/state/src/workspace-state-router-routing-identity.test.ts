@@ -80,6 +80,7 @@ const sourceAudit: PortRoutingAudit<RuntimeSourceStatePortService> = {
   recordSourceSave: { via: "explicit-source-scope", inputField: "scope" },
   recordSourceDelete: { via: "explicit-source-scope", inputField: "scope" },
   recordSourceScan: { via: "explicit-source-scope", inputField: "scope" },
+  reconcileDiscoveredHostSnippets: { via: "explicit-source-scope", inputField: "scope" },
   recordObservedSourceDeletion: { via: "explicit-source-scope", inputField: "scope" },
   recordSourceDiagnostic: { via: "explicit-source-scope", inputField: "scope" },
 };
@@ -413,7 +414,7 @@ function createRegistry() {
 }
 
 describe("workspace state router routing-identity audit", () => {
-  it("classifies exactly the fourteen routed state ports and 64 dispatched methods", () => {
+  it("classifies exactly the fourteen routed state ports and 66 dispatched methods", () => {
     const { registry, cleanup } = createRegistry();
     const router = createWorkspaceStateRouter({
       appGlobalStore: makeStore(registry, "workspace_app_global", "appglobal"),
@@ -453,8 +454,8 @@ describe("workspace state router routing-identity audit", () => {
       expect(Object.keys(routerPorts).toSorted()).toEqual(
         auditedPorts.map(([key]) => key).toSorted(),
       );
-      expect(totalMethods).toBe(65);
-      expect(auditRows.length).toBe(65);
+      expect(totalMethods).toBe(66);
+      expect(auditRows.length).toBe(66);
     } finally {
       cleanup();
     }

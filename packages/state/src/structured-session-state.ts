@@ -31,6 +31,8 @@ import {
   type ApplyRuntimeExtensionSnapshotContextImpactInput,
   type ComposerAttachment,
   type ComposerSnippetMention,
+  type DiscoveredSnippetScope,
+  type DiscoveredSnippetSource,
   type CommandId,
   type ExtensionDependencyApprovalIdentity,
   type ExtensionDependencyReadiness,
@@ -62,6 +64,7 @@ import {
   type MarkWorkspaceGeneratedPackageLinksRepairNeededInput,
   type MarkWorkspaceGeneratedPackageLinksRepairNeededResult,
   type RecordProviderAuthStatusInput,
+  type ReconcileDiscoveredHostSnippetsInput,
   type RecordObservedRuntimeSourceDeletionInput,
   type RecordRuntimeSourceDiagnosticInput,
   type RecordRuntimeSourceDeleteInput,
@@ -93,6 +96,7 @@ import {
   type RuntimeTurnDecision,
   SnippetMetadataSchema,
   SnippetSourceSchema,
+  discoveredHostSnippetId,
   type StateRevision,
   strictBoundaryParseOptions,
   type SnippetMetadata,
@@ -1115,6 +1119,9 @@ export interface StructuredSessionStateStore {
   recordRuntimeSourceSave(input: RecordRuntimeSourceSaveInput): RuntimeSourceFactRecord;
   recordRuntimeSourceDelete(input: RecordRuntimeSourceDeleteInput): RuntimeSourceFactRecord;
   recordRuntimeSourceScan(input: RecordRuntimeSourceScanInput): RuntimeSourceScanFactRecord;
+  reconcileDiscoveredHostSnippets(
+    input: ReconcileDiscoveredHostSnippetsInput,
+  ): RuntimeSourceScanFactRecord;
   recordObservedRuntimeSourceDeletion(
     input: RecordObservedRuntimeSourceDeletionInput,
   ): RuntimeSourceScanFactRecord;
@@ -2065,6 +2072,7 @@ type SnippetRow = {
   metadata_json: string;
   enabled: number;
   path: string | null;
+  discovery_scope: string | null;
   created_at: string;
   updated_at: string | null;
   deleted_at: string | null;
@@ -3578,56 +3586,144 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   recordRuntimeSourceScan(input: RecordRuntimeSourceScanInput): RuntimeSourceScanFactRecord {
     assertRuntimeSourceScanScopeMatchesDomain(input);
     return this.db.transaction(() => {
-      const scopeKey = runtimeSourceScopeKey(input.scope);
-      const existing = this.findRuntimeSourceScanFact(input.scope, input.domain);
-      this.db
-        .query(
-          `INSERT INTO runtime_source_scan_fact (
-             scope_kind,
-             scope_workspace_id,
-             scope_key,
-             domain,
-             source_fingerprint,
-             diagnostics_json,
-             last_observed_path,
-             last_observation_kind,
-             observed_at,
-             created_at,
-             updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, NULL, 'scan', ?, ?, ?)
-           ON CONFLICT(scope_key, domain) DO UPDATE SET
-             scope_kind = excluded.scope_kind,
-             scope_workspace_id = excluded.scope_workspace_id,
-             source_fingerprint = excluded.source_fingerprint,
-             diagnostics_json = excluded.diagnostics_json,
-             last_observed_path = NULL,
-             last_observation_kind = 'scan',
-             observed_at = excluded.observed_at,
-             updated_at = excluded.updated_at`,
-        )
-        .run(
-          input.scope.kind,
-          input.scope.kind === "workspace" ? input.scope.workspaceId : null,
-          scopeKey,
-          input.domain,
-          input.sourceFingerprint,
-          JSON.stringify(input.diagnostics),
-          input.scannedAt,
-          existing?.createdAt ?? input.scannedAt,
-          input.scannedAt,
-        );
-      for (const sourceRoot of input.sourceRoots ?? []) {
-        this.upsertRuntimeSourceRootFingerprintFact({
-          scope: input.scope,
-          domain: input.domain,
-          sourceRoot: sourceRoot.sourceRoot,
-          rootFingerprint: sourceRoot.rootFingerprint,
-          diagnostics: input.diagnostics,
-          observedAt: input.scannedAt,
-        });
-      }
+      this.upsertRuntimeSourceScan(input);
       this.bumpStateRevision();
       return this.mustFindRuntimeSourceScanFact(input.scope, input.domain);
+    })();
+  }
+
+  reconcileDiscoveredHostSnippets(
+    input: ReconcileDiscoveredHostSnippetsInput,
+  ): RuntimeSourceScanFactRecord {
+    const operation = "structured-session.reconcileDiscoveredHostSnippets";
+    this.assertSnippetWorkspace(input.scope.workspaceId, operation);
+    const observedIdentities = new Set<string>();
+    const unreadableIdentities = new Set<string>();
+
+    for (const snippet of input.observedSnippets) {
+      assertDiscoveredHostSnippetIdentity(snippet, operation);
+      const identity = discoveredHostSnippetId(snippet);
+      if (observedIdentities.has(identity)) {
+        throw new StateContractError({
+          operation,
+          reason: "invalid-input",
+          message: `Discovered snippet scan contains duplicate identity ${identity}.`,
+        });
+      }
+      observedIdentities.add(identity);
+    }
+    for (const snippet of input.unreadableSnippets) {
+      assertDiscoveredHostSnippetIdentity(snippet, operation);
+      const identity = discoveredHostSnippetId(snippet);
+      if (observedIdentities.has(identity) || unreadableIdentities.has(identity)) {
+        throw new StateContractError({
+          operation,
+          reason: "invalid-input",
+          message: `Discovered snippet scan contains overlapping unreadable identity ${identity}.`,
+        });
+      }
+      unreadableIdentities.add(identity);
+    }
+    for (const root of input.unreadableRoots) {
+      assertDiscoveredHostSnippetIdentity(root, operation);
+    }
+
+    return this.db.transaction(() => {
+      for (const snippet of input.observedSnippets) {
+        const snippetId = discoveredHostSnippetId(snippet);
+        const existing = this.db
+          .query(`SELECT * FROM snippet WHERE snippet_id = ?`)
+          .get(snippetId) as SnippetRow | undefined;
+        if (
+          existing &&
+          (existing.workspace_id !== input.scope.workspaceId || existing.source === "svvy")
+        ) {
+          throw new StateContractError({
+            operation,
+            reason: "conflict",
+            message: `Discovered snippet identity ${snippetId} collides with an unrelated snippet row.`,
+          });
+        }
+        const metadata = decodeSnippetMetadataInput(snippet.metadata, operation);
+        this.db
+          .query(
+            `INSERT INTO snippet (
+               snippet_id, workspace_id, source, title, body, metadata_json,
+               enabled, path, discovery_scope, created_at, updated_at, deleted_at
+             ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, NULL)
+             ON CONFLICT(snippet_id) DO UPDATE SET
+               title = excluded.title,
+               body = excluded.body,
+               metadata_json = excluded.metadata_json,
+               path = excluded.path,
+               discovery_scope = excluded.discovery_scope,
+               updated_at = excluded.updated_at,
+               deleted_at = NULL`,
+          )
+          .run(
+            snippetId,
+            input.scope.workspaceId,
+            snippet.source,
+            normalizeDiscoveredSnippetTitle(snippet.title, operation),
+            snippet.body,
+            JSON.stringify(metadata),
+            snippet.path,
+            snippet.scope,
+            existing?.created_at ?? input.scannedAt,
+            input.scannedAt,
+          );
+      }
+
+      const currentDiscovered = this.db
+        .query(
+          `SELECT * FROM snippet
+           WHERE workspace_id = ? AND source IN ('claude', 'pi') AND deleted_at IS NULL`,
+        )
+        .all(input.scope.workspaceId) as SnippetRow[];
+      for (const current of currentDiscovered) {
+        const discoveryScope = decodeStoredDiscoveredSnippetScope(current.discovery_scope);
+        const identity =
+          discoveryScope && current.path
+            ? discoveredHostSnippetId({
+                source: decodeStoredDiscoveredSnippetSource(current.source),
+                scope: discoveryScope,
+                path: current.path as AbsolutePath,
+              })
+            : null;
+        const retainedByUnreadableRoot = input.unreadableRoots.some(
+          (root) =>
+            root.source === current.source &&
+            root.scope === discoveryScope &&
+            current.path !== null &&
+            isPathInside(current.path, root.path),
+        );
+        if (
+          identity &&
+          (observedIdentities.has(identity) ||
+            unreadableIdentities.has(identity) ||
+            retainedByUnreadableRoot)
+        ) {
+          continue;
+        }
+        this.db
+          .query(
+            `UPDATE snippet
+             SET deleted_at = ?, updated_at = ?
+             WHERE snippet_id = ? AND workspace_id = ? AND source IN ('claude', 'pi')`,
+          )
+          .run(input.scannedAt, input.scannedAt, current.snippet_id, input.scope.workspaceId);
+      }
+
+      this.upsertRuntimeSourceScan({
+        scope: input.scope,
+        domain: "host_snippets",
+        sourceFingerprint: input.sourceFingerprint,
+        sourceRoots: input.sourceRoots,
+        diagnostics: input.diagnostics,
+        scannedAt: input.scannedAt,
+      });
+      this.bumpStateRevision();
+      return this.mustFindRuntimeSourceScanFact(input.scope, "host_snippets");
     })();
   }
 
@@ -4053,6 +4149,57 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         .query(`SELECT * FROM runtime_source_root_fingerprint_fact WHERE source_root = ?`)
         .get(sourceRoot) as RuntimeSourceRootFingerprintFactRow | undefined) ?? null
     );
+  }
+
+  private upsertRuntimeSourceScan(input: RecordRuntimeSourceScanInput): void {
+    const scopeKey = runtimeSourceScopeKey(input.scope);
+    const existing = this.findRuntimeSourceScanFact(input.scope, input.domain);
+    this.db
+      .query(
+        `INSERT INTO runtime_source_scan_fact (
+           scope_kind,
+           scope_workspace_id,
+           scope_key,
+           domain,
+           source_fingerprint,
+           diagnostics_json,
+           last_observed_path,
+           last_observation_kind,
+           observed_at,
+           created_at,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, NULL, 'scan', ?, ?, ?)
+         ON CONFLICT(scope_key, domain) DO UPDATE SET
+           scope_kind = excluded.scope_kind,
+           scope_workspace_id = excluded.scope_workspace_id,
+           source_fingerprint = excluded.source_fingerprint,
+           diagnostics_json = excluded.diagnostics_json,
+           last_observed_path = NULL,
+           last_observation_kind = 'scan',
+           observed_at = excluded.observed_at,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        input.scope.kind,
+        input.scope.kind === "workspace" ? input.scope.workspaceId : null,
+        scopeKey,
+        input.domain,
+        input.sourceFingerprint,
+        JSON.stringify(input.diagnostics),
+        input.scannedAt,
+        existing?.createdAt ?? input.scannedAt,
+        input.scannedAt,
+      );
+    for (const sourceRoot of input.sourceRoots ?? []) {
+      this.upsertRuntimeSourceRootFingerprintFact({
+        scope: input.scope,
+        domain: input.domain,
+        sourceRoot: sourceRoot.sourceRoot,
+        rootFingerprint: sourceRoot.rootFingerprint,
+        diagnostics: input.diagnostics,
+        observedAt: input.scannedAt,
+      });
+    }
   }
 
   private upsertRuntimeSourceRootFingerprintFact(input: {
@@ -11587,6 +11734,7 @@ function initializeSchema(db: Database): void {
       metadata_json TEXT NOT NULL DEFAULT '{"description":null,"argumentHint":null}',
       enabled INTEGER NOT NULL DEFAULT 1,
       path TEXT,
+      discovery_scope TEXT CHECK (discovery_scope IN ('user', 'workspace')),
       created_at TEXT NOT NULL,
       updated_at TEXT,
       deleted_at TEXT
@@ -12193,6 +12341,7 @@ function initializeSchema(db: Database): void {
   ensureColumn(db, "extension_env_override", "value", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "snippet", "enabled", "INTEGER NOT NULL DEFAULT 1");
   ensureColumn(db, "snippet", "path", "TEXT");
+  ensureColumn(db, "snippet", "discovery_scope", "TEXT");
   ensureColumn(db, "snippet", "updated_at", "TEXT");
   ensureColumn(db, "snippet", "deleted_at", "TEXT");
   db.exec(`INSERT INTO state_revision (id, revision) VALUES (1, 0) ON CONFLICT(id) DO NOTHING`);
@@ -12273,6 +12422,13 @@ function initializeSchema(db: Database): void {
     `CREATE INDEX IF NOT EXISTS idx_snippet_workspace_source
      ON snippet (workspace_id, source, title)
      WHERE deleted_at IS NULL`,
+  );
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_snippet_discovered_identity
+     ON snippet (workspace_id, source, discovery_scope, path)
+     WHERE source IN ('claude', 'pi')
+       AND discovery_scope IS NOT NULL
+       AND path IS NOT NULL`,
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_pi_session_reference_session
@@ -12476,6 +12632,49 @@ function normalizeManagedSnippetTitle(title: string, operation: string): string 
   return normalized;
 }
 
+function normalizeDiscoveredSnippetTitle(title: string, operation: string): string {
+  const normalized = title.trim();
+  if (!normalized) {
+    throw new StateContractError({
+      operation,
+      reason: "invalid-input",
+      message: "Discovered snippet title must not be empty.",
+    });
+  }
+  return normalized;
+}
+
+function assertCanonicalDiscoveredSnippetPath(path: string, operation: string): void {
+  if (!isAbsolute(path) || resolve(path) !== path) {
+    throw new StateContractError({
+      operation,
+      reason: "invalid-input",
+      message: `Discovered snippet path must be a canonical absolute path: ${path}.`,
+    });
+  }
+}
+
+function assertDiscoveredHostSnippetIdentity(
+  input: { source: string; scope: string; path: string },
+  operation: string,
+): void {
+  if (input.source !== "claude" && input.source !== "pi") {
+    throw new StateContractError({
+      operation,
+      reason: "invalid-input",
+      message: `Discovered snippet source ${input.source} is unsupported.`,
+    });
+  }
+  if (input.scope !== "user" && input.scope !== "workspace") {
+    throw new StateContractError({
+      operation,
+      reason: "invalid-input",
+      message: `Discovered snippet scope ${input.scope} is unsupported.`,
+    });
+  }
+  assertCanonicalDiscoveredSnippetPath(input.path, operation);
+}
+
 function decodeSnippetMetadataInput(input: unknown, operation: string): SnippetMetadata {
   try {
     return decodeSnippetMetadataContract(input);
@@ -12483,7 +12682,7 @@ function decodeSnippetMetadataInput(input: unknown, operation: string): SnippetM
     throw new StateContractError({
       operation,
       reason: "invalid-input",
-      message: "Managed snippet metadata does not match the snippet metadata contract.",
+      message: "Snippet metadata does not match the snippet metadata contract.",
       cause,
     });
   }
@@ -12513,6 +12712,23 @@ function decodeStoredSnippetSource(value: string): SnippetSource {
       cause,
     });
   }
+}
+
+function decodeStoredDiscoveredSnippetSource(value: string): DiscoveredSnippetSource {
+  const source = decodeStoredSnippetSource(value);
+  if (source === "svvy") {
+    throw new StateContractError({
+      operation: "structured-session.snippet.decode",
+      reason: "decode-failed",
+      message: "Managed snippet source cannot be decoded as a discovered snippet source.",
+    });
+  }
+  return source;
+}
+
+function decodeStoredDiscoveredSnippetScope(value: string | null): DiscoveredSnippetScope | null {
+  if (value === "user" || value === "workspace") return value;
+  return null;
 }
 
 function snippetNotFoundError(

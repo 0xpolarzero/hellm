@@ -58,6 +58,7 @@ import {
   RecordRuntimeSourceDeleteInputSchema,
   RecordRuntimeSourceSaveInputSchema,
   RecordRuntimeSourceScanInputSchema,
+  ReconcileDiscoveredHostSnippetsInputSchema,
   RuntimeSourceRootFingerprintFactRecordSchema,
   RuntimeApprovalRecordSchema,
   RuntimeActorExtensionBindingRecordSchema,
@@ -365,6 +366,32 @@ describe("@svvy/core state-backed port contracts", () => {
       diagnostics: [],
       scannedAt: "2026-06-21T12:37:56.789Z",
     });
+    const hostSnippetReconcile = Schema.decodeUnknownSync(
+      ReconcileDiscoveredHostSnippetsInputSchema,
+    )({
+      scope: { kind: "workspace", workspaceId: "wksp_01" },
+      sourceFingerprint: "host_snippets_fingerprint_01",
+      sourceRoots: [
+        {
+          sourceRoot: "/Users/polarzero/.claude/commands",
+          rootFingerprint: "claude_commands_fingerprint_01",
+        },
+      ],
+      observedSnippets: [
+        {
+          source: "claude",
+          scope: "user",
+          path: "/Users/polarzero/.claude/commands/review.md",
+          title: "review",
+          body: "Review $1",
+          metadata: { description: "Review a change", argumentHint: "path" },
+        },
+      ],
+      unreadableSnippets: [],
+      unreadableRoots: [],
+      diagnostics: [],
+      scannedAt: "2026-06-21T12:37:57.789Z",
+    });
     const deletionInput = Schema.decodeUnknownSync(RecordObservedRuntimeSourceDeletionInputSchema)({
       scope: { kind: "workspace", workspaceId: "wksp_01" },
       domain: "external_instructions",
@@ -394,6 +421,7 @@ describe("@svvy/core state-backed port contracts", () => {
     expect(rootFingerprintRecord.sourceRoot as string).toContain("extensions/sources/user/web");
     expect(scanInput.scope).toEqual({ kind: "app-global" });
     expect(scanInput.sourceRoots?.[0]?.rootFingerprint).toBe("web_source_fingerprint_01");
+    expect(hostSnippetReconcile.observedSnippets[0]?.source).toBe("claude");
     expect(deletionInput.path as string).toContain("AGENTS.md");
     expect(diagnosticInput.diagnostic.code).toBe("external_instruction.unreadable");
   });

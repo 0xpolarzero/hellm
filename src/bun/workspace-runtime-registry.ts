@@ -262,7 +262,7 @@ type AppGlobalHostRecord = {
   appLogs: StateAppLogsFacade;
   sourceStatePort: Pick<
     RuntimeSourceStatePortService,
-    "recordSourceDiagnostic" | "recordSourceScan"
+    "recordSourceDiagnostic" | "recordSourceScan" | "reconcileDiscoveredHostSnippets"
   >;
   dispose(): Promise<void>;
 };
@@ -458,6 +458,11 @@ export class WorkspaceRuntimeRegistry {
             Effect.flatMap(
               Effect.promise(() => this.getAppGlobalHostRecord()),
               (host) => host.sourceStatePort.recordSourceScan(input),
+            ),
+          reconcileDiscoveredHostSnippets: (input) =>
+            Effect.flatMap(
+              Effect.promise(() => this.getAppGlobalHostRecord()),
+              (host) => host.sourceStatePort.reconcileDiscoveredHostSnippets(input),
             ),
           recordSourceDiagnostic: (input) =>
             Effect.flatMap(

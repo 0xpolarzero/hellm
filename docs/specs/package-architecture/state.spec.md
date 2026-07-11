@@ -1062,6 +1062,15 @@ runtime source-invalidation methods for DB/product-state writes. Browser-tool, h
 app-bootstrap, test, and recovery callers may use runtime source-invalidation methods only for the
 file-backed reconciliation domains named by `runtime.spec.md`.
 
+`RuntimeSourceStatePort.reconcileDiscoveredHostSnippets(...)` is the workspace-only state boundary
+for a committed `host_snippets` scan. One SQLite transaction upserts exact core-schema Claude/pi
+rows by `(source, user-or-workspace discovery scope, canonical absolute path)`, revives tombstoned
+rows without resetting their persisted `enabled` value, tombstones missing discovered rows, retains
+rows named as unreadable files or descendants of unreadable roots, records scan diagnostics and
+per-root fingerprints, bumps the state revision once, and returns one workspace `snippets`
+after-commit invalidation. It never updates or tombstones managed `source = "svvy"` rows. Any
+identity collision or invalid observation rolls the entire row/scan/root-fact write back.
+
 `afterCommit` is the field name for Effect state-port mutation results returned inside
 runtime-owned lanes. `StateCommandsFacade` hides those descriptors and returns only the state command
 receipt plus command-specific committed output.
@@ -2485,7 +2494,7 @@ RuntimeSourceStatePort:
 
 - Caller: @svvy/runtime source edit and invalidation workers.
 - Methods: readSourceVersion, recordSourceSave, recordSourceDelete, recordSourceScan,
-  recordObservedSourceDeletion, recordSourceDiagnostic.
+  reconcileDiscoveredHostSnippets, recordObservedSourceDeletion, recordSourceDiagnostic.
 - Rule: this port owns three distinct durable source fact families. Editable source facts are keyed
   by `(sourceInvalidationScope, sourceKind, sourceId)` and support compare-and-swap source edits,
   source deletion facts, and recovery after two-phase file/state work. Runtime source-root
@@ -2497,9 +2506,10 @@ RuntimeSourceStatePort:
   reconciliation work; they are receipts for reconciliation work, not the authoritative current
   source-root fingerprint. `readSourceVersion(...)` is read-only.
   `recordSourceSave(...)` and `recordSourceDelete(...)` are reserved for explicit user-owned
-  source-edit operations. `recordSourceScan(...)`, `recordObservedSourceDeletion(...)`, and
-  `recordSourceDiagnostic(...)` are reserved for runtime-owned deterministic reconciliation and
-  return `StateMutationResult<RuntimeSourceScanFactRecord>`. Every write emits only committed
+  source-edit operations. `recordSourceScan(...)`, `reconcileDiscoveredHostSnippets(...)`,
+  `recordObservedSourceDeletion(...)`, and `recordSourceDiagnostic(...)` are reserved for
+  runtime-owned deterministic reconciliation and return
+  `StateMutationResult<RuntimeSourceScanFactRecord>`. Every write emits only committed
   source/read-model invalidation descriptors derived from the affected source kind or source
   domain plus the committed scope. The port does not infer scope from a bound workspace store, read
   or write file contents, watch files, generate extension packages, build generated context, own
@@ -2523,6 +2533,10 @@ type RuntimeSourceStatePort = {
 
   recordSourceScan(
     input: RecordRuntimeSourceScanInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceScanFactRecord>, StateContractError>;
+
+  reconcileDiscoveredHostSnippets(
+    input: ReconcileDiscoveredHostSnippetsInput,
   ): Effect.Effect<StateMutationResult<RuntimeSourceScanFactRecord>, StateContractError>;
 
   recordObservedSourceDeletion(

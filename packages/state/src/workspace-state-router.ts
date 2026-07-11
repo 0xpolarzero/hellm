@@ -483,6 +483,10 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
       via(resolveScope("recordSourceScan", request.scope), (registered) =>
         registered.ports.source.recordSourceScan(request),
       ),
+    reconcileDiscoveredHostSnippets: (request) =>
+      via(resolveScope("reconcileDiscoveredHostSnippets", request.scope), (registered) =>
+        registered.ports.source.reconcileDiscoveredHostSnippets(request),
+      ),
     recordObservedSourceDeletion: (request) =>
       via(resolveScope("recordObservedSourceDeletion", request.scope), (registered) =>
         registered.ports.source.recordObservedSourceDeletion(request),
