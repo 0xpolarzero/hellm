@@ -3,17 +3,27 @@ import * as Exit from "effect/Exit";
 
 import {
   decodeUnknownMarkAppLogReadCommandInputExit,
+  decodeUnknownMarkSessionReadCommandInputExit,
+  decodeUnknownMarkSessionUnreadCommandInputExit,
   decodeUnknownCreateManagedSnippetCommandInputExit,
   decodeUnknownDeleteManagedSnippetCommandInputExit,
   decodeUnknownRecordProviderAuthStatusCommandInputExit,
   decodeUnknownSetSnippetEnabledCommandInputExit,
+  decodeUnknownSetSessionArchivedCommandInputExit,
+  decodeUnknownSetSessionNavigationSectionStateCommandInputExit,
+  decodeUnknownSetSessionPinnedCommandInputExit,
   decodeUnknownUpdateAppPreferencesCommandInputExit,
   decodeUnknownUpdateManagedSnippetCommandInputExit,
   encodeCreateManagedSnippetCommandInputExit,
   encodeDeleteManagedSnippetCommandInputExit,
   encodeMarkAppLogReadCommandInputExit,
+  encodeMarkSessionReadCommandInputExit,
+  encodeMarkSessionUnreadCommandInputExit,
   encodeRecordProviderAuthStatusCommandInputExit,
   encodeSetSnippetEnabledCommandInputExit,
+  encodeSetSessionArchivedCommandInputExit,
+  encodeSetSessionNavigationSectionStateCommandInputExit,
+  encodeSetSessionPinnedCommandInputExit,
   encodeUpdateAppPreferencesCommandInputExit,
   encodeUpdateManagedSnippetCommandInputExit,
 } from "./state-command-schemas";
@@ -263,5 +273,81 @@ describe("@svvy/state command schemas", () => {
         ),
       ).toBe(true);
     }
+  });
+
+  it("requires explicit workspace routing for exact session navigation commands", () => {
+    const clientSubmission = {
+      clientRequestId: "request_session_navigation",
+      source: "desktop" as const,
+    };
+    const target = {
+      workspaceId: "workspace_navigation",
+      workspaceSessionId: "session_navigation",
+      clientSubmission,
+    };
+    const pinned = decodeUnknownSetSessionPinnedCommandInputExit({ ...target, pinned: true });
+    const archived = decodeUnknownSetSessionArchivedCommandInputExit({
+      ...target,
+      archived: false,
+    });
+    const read = decodeUnknownMarkSessionReadCommandInputExit(target);
+    const unread = decodeUnknownMarkSessionUnreadCommandInputExit(target);
+    expect(Exit.isSuccess(pinned)).toBe(true);
+    expect(Exit.isSuccess(archived)).toBe(true);
+    expect(Exit.isSuccess(read)).toBe(true);
+    expect(Exit.isSuccess(unread)).toBe(true);
+    if (Exit.isSuccess(pinned)) {
+      expect(encodeSetSessionPinnedCommandInputExit(pinned.value)).toEqual(pinned);
+    }
+    if (Exit.isSuccess(archived)) {
+      expect(encodeSetSessionArchivedCommandInputExit(archived.value)).toEqual(archived);
+    }
+    if (Exit.isSuccess(read)) {
+      expect(encodeMarkSessionReadCommandInputExit(read.value)).toEqual(read);
+    }
+    if (Exit.isSuccess(unread)) {
+      expect(encodeMarkSessionUnreadCommandInputExit(unread.value)).toEqual(unread);
+    }
+
+    const { workspaceId: _workspaceId, ...missingWorkspace } = target;
+    for (const decode of [
+      decodeUnknownSetSessionPinnedCommandInputExit,
+      decodeUnknownSetSessionArchivedCommandInputExit,
+      decodeUnknownMarkSessionReadCommandInputExit,
+      decodeUnknownMarkSessionUnreadCommandInputExit,
+    ]) {
+      expect(Exit.isFailure(decode(missingWorkspace))).toBe(true);
+    }
+
+    const section = decodeUnknownSetSessionNavigationSectionStateCommandInputExit({
+      workspaceId: "workspace_navigation",
+      section: "archived",
+      collapsed: false,
+      sizePx: 420.5,
+      clientSubmission,
+    });
+    expect(Exit.isSuccess(section)).toBe(true);
+    if (Exit.isSuccess(section)) {
+      expect(encodeSetSessionNavigationSectionStateCommandInputExit(section.value)).toEqual(
+        section,
+      );
+    }
+    expect(
+      Exit.isFailure(
+        decodeUnknownSetSessionNavigationSectionStateCommandInputExit({
+          workspaceId: "workspace_navigation",
+          section: "archived",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeUnknownSetSessionNavigationSectionStateCommandInputExit({
+          workspaceId: "workspace_navigation",
+          section: "sessions",
+          collapsed: true,
+        }),
+      ),
+    ).toBe(true);
   });
 });

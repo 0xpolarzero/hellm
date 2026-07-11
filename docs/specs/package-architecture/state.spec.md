@@ -267,6 +267,7 @@ export class StateCommands extends Context.Service<
   {
     readonly workspaceChrome: WorkspaceChromeStateCommands;
     readonly workspaceLayout: WorkspaceLayoutStateCommands;
+    readonly sessionNavigation: SessionNavigationStateCommands;
     readonly appLogs: AppLogReadStateCommands;
     readonly appPreferences: AppPreferencesStateCommands;
     readonly providerAuth: ProviderAuthStateCommands;
@@ -744,8 +745,70 @@ type SessionNavigationSummary = WorkspaceSessionNavigationSummary & {
     artifacts: NonNegativeSafeInteger;
     events: NonNegativeSafeInteger;
   };
+  threadIdsByStatus?: {
+    runningHandler: readonly ThreadId[];
+    runningWorkflow: readonly ThreadId[];
+    waiting: readonly ThreadId[];
+    troubleshooting: readonly ThreadId[];
+  };
   threadIds?: readonly ThreadId[];
+  sidebarThreads?: readonly SessionNavigationSidebarHandlerThreadRow[];
+  commandRollups?: readonly SessionNavigationCommandRollup[];
+  productEvents?: readonly SessionNavigationProductEvent[];
+  titleGeneration?: {
+    status: "not-started" | "pending" | "running" | "completed" | "failed" | "cancelled";
+    renameLocked: boolean;
+    autoFrozen: boolean;
+    manualOverride: boolean;
+    triggeredAt: IsoDateTimeString | null;
+    finishedAt: IsoDateTimeString | null;
+    error: string | null;
+  };
 };
+
+type SessionNavigationSidebarHandlerThreadRow = {
+  threadId: ThreadId;
+  surfacePiSessionId: SurfacePiSessionId;
+  title: string;
+  objective: string;
+  status:
+    | "idle"
+    | "running-handler"
+    | "running-workflow"
+    | "waiting"
+    | "troubleshooting"
+    | "completed";
+  subtitle: SessionNavigationSidebarRowSubtitle | null;
+  latestCommandRollup: SessionNavigationCommandRollup | null;
+  updatedAt: IsoDateTimeString;
+  workflows: readonly {
+    workflowRunId: WorkflowRunId;
+    workflowName: string;
+    status: "running" | "waiting" | "continued" | "completed" | "failed" | "cancelled";
+    subtitle: SessionNavigationSidebarRowSubtitle | null;
+    updatedAt: IsoDateTimeString;
+  }[];
+};
+
+type SessionNavigationSidebarRowSubtitle = {
+  badge: "waiting" | "error" | "workflow" | "text";
+  text: string;
+  tone: "muted" | "waiting" | "error";
+};
+```
+
+`SessionNavigationCommandRollup` and `SessionNavigationProductEvent` are the exact core-owned,
+schema-backed renderer DTOs exported with `SessionNavigationSummarySchema` and
+`SessionNavigationReadModelSchema`. Command status is exactly `streaming`, `requested`, `running`,
+`waiting`, `succeeded`, `failed`, or `cancelled`; nullable command ownership/finalization fields
+remain nullable, while optional semantic sections remain omitted when no durable rows exist.
+`SessionNavigationProductEvent.subject.kind` is exactly `session` or `thread`. Session-file and
+parent-session lineage fields are not part of this read model because structured state cannot derive
+them authoritatively. For a pi-only legacy session with no committed structured turn/request summary,
+the exact transcript-derived first/latest-message preview is likewise unavailable; state uses the
+durable projected title fallback and never parses a pi session file to synthesize navigation data.
+
+```ts
 
 type SurfaceSummaryReadModel = {
   target: RuntimeSurfaceTarget;
@@ -923,7 +986,7 @@ state-owned facade contracts named in this table.
 
 | Kind                    | Builder source                                                                                                                                                                                                                                                                                                | Invalidation mapping                                                                                                                                                                               | Root exports                                                                                                                                     | Tests                                                                                                                                                                                     |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sessionNavigation`     | `packages/state/src/state-facade.ts` builds `SessionNavigationReadModel` from the workspace-routed `StructuredSessionState.listSessionStates()` snapshots plus `@svvy/state/session-navigation` `buildWorkspaceSessionNavigation(...)`.                                                                       | Workspace `{ model: "sessionNavigation" }` refetches `sessionNavigation`; renderer startup/manual/runtime rebaseline includes it for workspace scope.                                              | `SessionNavigationReadModelRequest`, `SessionNavigationReadModel`, `SessionNavigationSummary` from `@svvy/state`.                                | `packages/state/src/state-facade.test.ts` "builds first-half renderer read models from structured-session router stores"; `packages/package-boundaries.test.ts` root-export ledger.       |
+| `sessionNavigation`     | `packages/state/src/state-facade.ts` builds and core-schema-validates `SessionNavigationReadModel` from workspace-routed `StructuredSessionState.listSessionStates()`, composer drafts, `buildStructuredSessionSummaryProjection(...)`, `buildStructuredSessionView(...)`, and `@svvy/state/session-navigation` grouping. It includes durable provisional-title/title-generation facts, orchestrator-local status, thread status groups, sidebar thread/workflow rows and subtitles, command rollups, and product events, but no session-file or parent-session facts. | Workspace `{ model: "sessionNavigation" }` refetches `sessionNavigation`; renderer startup/manual/runtime rebaseline includes it for workspace scope.                                              | `SessionNavigationReadModelRequest`, `SessionNavigationReadModel`, `SessionNavigationSummary` from `@svvy/state`; exact nested DTO schemas from `@svvy/core`.                                | `packages/core/src/session-navigation-contracts.test.ts` strict schema golden; `packages/state/src/state-facade.test.ts` structured fixture parity/golden; `packages/package-boundaries.test.ts` root-export ledger.       |
 | `surfaceTranscript`     | `packages/state/src/state-facade.ts` builds the already-authored `SurfaceTranscriptReadModel` from the target session snapshot, committed turns/commands, composer draft, prompt-lock turn state, and queue count.                                                                                            | Workspace `{ model: "surface", ids }` expands to `surfaceTranscript`, `surfaceSummary`, `surfaceComposer`, and `surfaceQueuedMessages` for each addressed surface id.                              | `SurfaceTranscriptReadModelRequest`, `SurfaceTranscriptReadModel` from `@svvy/state`.                                                            | `packages/state/src/state-facade.test.ts` fixture assertion plus `refetchInvalidation` surface expansion coverage; `packages/package-boundaries.test.ts` root-export ledger.              |
 | `surfaceSummary`        | `packages/state/src/state-facade.ts` builds a minimal pane-header surface summary from the target snapshot, active turn, queue count, title, model/provider/reasoning, and bound extension ids.                                                                                                               | Workspace `{ model: "surface", ids }` expands to `surfaceSummary` with the sibling surface slices.                                                                                                 | `SurfaceSummaryReadModelRequest`, `SurfaceSummaryReadModel` from `@svvy/state`.                                                                  | `packages/state/src/state-facade.test.ts`; `packages/package-boundaries.test.ts` root-export ledger.                                                                                      |
 | `surfaceComposer`       | `packages/state/src/state-facade.ts` reads `StructuredSessionState.getComposerDraft(surfacePiSessionId)` and returns durable draft text, attachments, snippet mentions, and update time.                                                                                                                      | Workspace `{ model: "surface", ids }` expands to `surfaceComposer` with the sibling surface slices.                                                                                                | `SurfaceComposerReadModelRequest`, `SurfaceComposerReadModel` from `@svvy/state`.                                                                | `packages/state/src/state-facade.test.ts`; `packages/package-boundaries.test.ts` root-export ledger.                                                                                      |
@@ -1130,6 +1193,28 @@ type StateCommandsFacade = {
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
   };
+  sessionNavigation: {
+    setPinned(
+      input: SetSessionPinnedCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    setArchived(
+      input: SetSessionArchivedCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    markRead(
+      input: MarkSessionReadCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    markUnread(
+      input: MarkSessionUnreadCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    setSectionState(
+      input: SetSessionNavigationSectionStateCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+  };
   appLogs: {
     markRead(
       input: MarkAppLogReadCommandInput,
@@ -1307,6 +1392,36 @@ type SelectWorkspaceTabCommandInput = {
 type SelectWorkspaceLayoutSlotCommandInput = {
   workspaceTabId: WorkspaceTabId;
   layoutId: WorkspaceLayoutSlotId;
+  clientSubmission?: StateCommandClientSubmission;
+};
+
+type SetSessionPinnedCommandInput = {
+  workspaceId: WorkspaceId;
+  workspaceSessionId: WorkspaceSessionId;
+  pinned: boolean;
+  clientSubmission?: StateCommandClientSubmission;
+};
+
+type SetSessionArchivedCommandInput = {
+  workspaceId: WorkspaceId;
+  workspaceSessionId: WorkspaceSessionId;
+  archived: boolean;
+  clientSubmission?: StateCommandClientSubmission;
+};
+
+type MarkSessionReadCommandInput = {
+  workspaceId: WorkspaceId;
+  workspaceSessionId: WorkspaceSessionId;
+  clientSubmission?: StateCommandClientSubmission;
+};
+
+type MarkSessionUnreadCommandInput = MarkSessionReadCommandInput;
+
+type SetSessionNavigationSectionStateCommandInput = {
+  workspaceId: WorkspaceId;
+  section: "pinned" | "active" | "archived";
+  collapsed?: boolean;
+  sizePx?: number;
   clientSubmission?: StateCommandClientSubmission;
 };
 
@@ -1526,6 +1641,24 @@ type SetSnippetEnabledCommandInput = {
 };
 ```
 
+Session-navigation commands always route by explicit `workspaceId`; session-targeted commands also
+require `workspaceSessionId`, and state rejects a session that is absent from that routed workspace
+instead of creating or resolving it from focused renderer state. `setPinned` and `setArchived` use
+one boolean for both directions and preserve the existing invariant that pinning clears archive
+state while archiving clears pin state. `markUnread` is the product-UI manual action and commits
+`unreadReason: "manual"`; runtime remains the only writer of
+`unreadReason: "assistant-turn-finished"`. `setSectionState` requires at least one of `collapsed` or
+`sizePx`; state normalizes the durable size through the existing 64–1000 px integer clamp.
+
+These five state-owned operations return `sessionNavigation` invalidations only, because pin,
+archive, unread, and section-layout facts are absent from `SurfaceSummaryReadModel`. Manual rename
+is deliberately not a state command: the complete product operation must append pi `SessionInfo`
+through the pi session manager before committing the manual title override. The renderer cutover
+therefore requires a typed runtime-owned rename operation; after that atomic operation commits,
+runtime must publish both `sessionNavigation` and the orchestrator `surface` invalidations. State
+does not expose a partial rename/title-override command that could desynchronize pi history and
+structured title facts.
+
 Snippet command and read-model contracts reuse the exact core-owned `SnippetMetadata` and
 `SnippetSource` contracts. Metadata contains only nullable `description` and `argumentHint`; source
 is exactly `svvy`, `claude`, or `pi`, with no generic `host` source or arbitrary JSON metadata.
@@ -1555,8 +1688,8 @@ non-throwing outbound helpers land only when bridge adapters explicitly need the
 domain value to return; method-specific output schemas must land before those outputs cross renderer
 or RPC transport boundaries.
 `StateCommandsFacade` exposes only the finite command groups named in the facade shape above:
-`workspaceChrome`, `workspaceLayout`, `appPreferences`, `providerAuth`, `extensionEnv`,
-`agentProfiles`, `snippets`, and `appLogs`. Provider-auth and extension-env secret schemas are
+`workspaceChrome`, `workspaceLayout`, `sessionNavigation`, `appPreferences`, `providerAuth`,
+`extensionEnv`, `agentProfiles`, `snippets`, and `appLogs`. Provider-auth and extension-env secret schemas are
 trusted user-entry ingress contracts only for the named `providerAuth` and `extensionEnv` methods
 above. No other command group accepts raw secret values.
 Result payloads are encoded before RPC/facade emission; decoded class, redacted, and `DateTime`
@@ -1576,6 +1709,7 @@ receives only commit-scoped facts that cannot be fetched before the write, such 
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `workspaceChrome` | Persist app-global workspace tab order, active tab, known workspace tab records, selected slot.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `@svvy/state` workspace chrome tables                             | Acquiring a workspace runtime, opening a repository picker, closing a runtime, pi session lifecycle, file watching.        |
 | `workspaceLayout` | Persist slot-scoped Dockview snapshot, svvy panel metadata, pane binding, focused pane.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `@svvy/state` workspace layout tables                             | Rendering Dockview, owning Svelte pane state, creating prompt turns, mutating pi sessions.                                 |
+| `sessionNavigation` | Persist explicitly workspace-routed session pin/archive/manual-read state and per-workspace session-section collapsed/size state through the existing structured-session transaction. | `@svvy/state` session navigation and workspace sidebar rows | Session create/open/delete lifecycle, pi `SessionInfo` mutation, partial manual rename/title override, focused-pane routing, or assistant-turn-finished unread policy. |
 | `appPreferences`  | Persist appearance, external editor, preferred artifact directory, approval mode, network access, exact schema-backed external-instruction roots/actor controls, and ambient resource settings. External-instruction settings are canonicalized through the public `@svvy/core` contract before commit, so state read models and runtime consumers observe the same builtin roots, trimmed identities/paths, and deterministic actor order. App/bootstrap may read the file-backed agent-settings preferences only as a bootstrap seed when no state app-preference row exists; once a state row exists, `@svvy/state` settings rows are authoritative for these fields and the file store is not written as a compatibility mirror. App/bootstrap resolves the preferred artifact directory into `StateLayerConfig.artifactRoot` before acquiring `@svvy/state`; changing the persisted preference affects artifact file effects only after app/bootstrap reacquires the app runtime/state graph. | `@svvy/state` settings tables                                     | Provider OAuth flows, secret entry UI, sandbox launch execution, prompt rebuilding.                                        |
 | `providerAuth`    | Persist provider credential presence, provider auth status rows, and OAuth result/status facts through state-owned provider auth status rows and secret references coordinated with host/live `SecretStorePort`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `@svvy/state` provider auth tables and secret references          | Live OAuth browser/device flow, model probing, pi provider calls, returning raw secrets.                                   |
 | `extensionEnv`    | Persist app-global non-secret extension env overrides, secret references, and env status facts used by readiness and invocation env resolution.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `@svvy/state` extension env tables and secret references          | Running extension commands, exposing raw secrets, editing extension source manifests, generated package refresh execution. |
@@ -1589,6 +1723,7 @@ Increment 6 command-group rows:
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `workspaceChrome` | `packages/state/src/state-facade.ts` validates `SetWorkspaceTabsCommandInput`, `SelectWorkspaceTabCommandInput`, and `SelectWorkspaceLayoutSlotCommandInput` through `state-command-schemas.ts` and routes them through `StateCommands.workspaceChrome`.                                                                                                                                                        | Workspace `{ model: "workspaceChromeLayout" }` descriptors for tab/layout mutations.            | `RendererStateCommandsFacade.workspaceChrome` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`. | `packages/state/src/state-facade.test.ts` representative idempotent receipt/descriptor/facade-routing test; `src/bun/renderer-state-facade.test.ts`; `packages/package-boundaries.test.ts`.                                                                        |
 | `workspaceLayout` | `packages/state/src/state-facade.ts` validates `SaveWorkspaceLayoutSnapshotCommandInput`, `UpdateWorkspacePaneCommandInput`, and `CloseWorkspacePaneCommandInput` through `state-command-schemas.ts` and routes them through `StateCommands.workspaceLayout`.                                                                                                                                                   | Workspace `{ model: "workspaceChromeLayout" }` descriptors for layout snapshot/pane mutations.  | `RendererStateCommandsFacade.workspaceLayout` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`. | `packages/state/src/state-facade.test.ts`; `src/bun/renderer-state-facade.test.ts`; `packages/package-boundaries.test.ts`.                                                                                                                                         |
+| `sessionNavigation` | `packages/state/src/state-facade.ts` validates five exact command inputs through `state-command-schemas.ts`, routes by explicit `workspaceId`, verifies session ownership where applicable, and commits through `StructuredSessionState.applySessionNavigationCommand(...)` over the existing pin/archive/read/sidebar methods. | Workspace `{ model: "sessionNavigation" }` only; duplicate replay returns no descriptors. | `StateCommandsFacade.sessionNavigation`; app/bootstrap narrows this group for renderer use during the renderer cutover. | `packages/state/src/state-command-schemas.test.ts` strict routing/shape tests; `packages/state/src/state-facade.test.ts` boolean directions, manual unread, section clamp, duplicate receipt, post-commit publication, and cross-workspace rejection; `packages/package-boundaries.test.ts`. |
 | `extensionEnv`    | `packages/state/src/state-facade.ts` validates non-secret env override command inputs through `state-command-schemas.ts` and routes them through `StateCommands.extensionEnv`; secret values stay behind `SecretStoreMutationPort` and are never read-model payloads.                                                                                                                                           | App `{ model: "extensions", ids: [extensionId] }` descriptors.                                  | `RendererStateCommandsFacade.extensionEnv` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`.    | `packages/state/src/state-facade.test.ts`; `src/bun/renderer-state-facade.test.ts`; `src/bun/removed-contracts.test.ts` legacy channel coverage.                                                                                                                   |
 | `agentProfiles`   | `packages/state/src/state-facade.ts` validates orchestrator/thread-handler profile, extension usage/default, order, and external-instruction usage command inputs through `state-command-schemas.ts` and routes them through `StateCommands.agentProfiles`.                                                                                                                                                     | App `{ model: "agents", ids? }` descriptors.                                                    | `RendererStateCommandsFacade.agentProfiles` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`.   | `packages/state/src/state-facade.test.ts`; `src/bun/renderer-state-facade.test.ts`; `src/bun/removed-contracts.test.ts` legacy channel coverage.                                                                                                                   |
 | `snippets`        | `packages/state/src/state-facade.ts` validates exact core snippet metadata/source contracts and trimmed non-empty managed titles through `state-command-schemas.ts`, routes every request by explicit workspace through `StateCommands.snippets`, and requires managed update/delete targets to exist in that workspace with `source = "svvy"`; `createManaged` returns the committed `snippetId` plus receipt. | Workspace `{ model: "snippets", ids: [snippetId] }` descriptors only after a successful commit. | `RendererStateCommandsFacade.snippets` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`.        | `packages/state/src/state-command-schemas.test.ts`; `packages/state/src/structured-session-state-sqlite.test.ts`; `packages/state/src/state-facade.test.ts`; `src/bun/renderer-state-facade.test.ts`; `src/bun/removed-contracts.test.ts` legacy channel coverage. |

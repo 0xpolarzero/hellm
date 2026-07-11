@@ -1281,6 +1281,43 @@ message-submission boundary avoids duplicated caller-provided identity: runtime 
 surface. Durable queue rows, command rows, runtime events, and read-model invalidations carry the
 resolved `workspaceId` after that validation.
 
+## Session Navigation Read-Model Contract
+
+`@svvy/core/session-navigation-contracts` owns two related schema families. The generic
+`WorkspaceSessionNavigationSummarySchema` / `WorkspaceSessionNavigationReadModelSchema` family
+defines pin, archive, update time, section grouping, collapse state, and durable section size for
+any workspace navigation selector. The renderer-facing `SessionNavigationSummarySchema` /
+`SessionNavigationReadModelSchema` family closes the exact durable session-row DTO consumed through
+the state read facade.
+
+The detailed summary contains the generic navigation fields plus:
+
+- workspace session identity, projected title/preview, created/updated time, message count, and
+  orchestrator-local `idle | running | waiting | error` status
+- unread time/reason/read time, optional provider/model/reasoning display facts, and nullable wait
+  detail
+- durable counts, ordered thread ids, and thread ids grouped as `runningHandler`,
+  `runningWorkflow`, `waiting`, or `troubleshooting`
+- sidebar handler rows with exact handler status, nullable subtitle, nullable latest command rollup,
+  and nested workflow rows with exact Smithers-observed workflow status and nullable subtitle
+- optional command rollups, optional product events, and optional title-generation state
+
+Nested DTO schemas are public because renderer/shared bridge consumers must not import state
+selector implementation types. Command rollups preserve exact optional-versus-null semantics for
+ownership, arguments, facts, errors, semantic sections, and terminal timestamps. Command arguments,
+facts, progress facts, product-event details, and other open structured values are validated as
+JSON at this boundary; state must not cast selector `unknown` values through the core schema.
+Title-generation status is exactly `not-started`, `pending`, `running`, `completed`, `failed`, or
+`cancelled`; trigger/finish/error fields are explicit nullable values.
+
+The detailed contract intentionally omits pi session-file paths and parent-session lineage. Those
+facts are not authoritatively derivable from structured product state and must not be invented by a
+state read model. `decodeUnknownSessionNavigationReadModelEffect` / `Exit` and the matching encode
+helpers use `strictBoundaryParseOptions`, so unknown lifecycle enums, excess lineage fields, and
+non-JSON command data fail the boundary. The generated core public-symbol index records every
+nested schema/type symbol; `packages/core/src/session-navigation-contracts.test.ts` is the strict
+golden/negative contract test.
+
 ## Runtime Prompt Submission Contract
 
 The programmatic runtime submission contract is the stable public submission boundary. Runtime

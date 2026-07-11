@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import {
   AbsolutePath,
+  decodeUnknownSessionNavigationReadModelEffect,
   type AgentProfileId,
   AppLogEntryId,
   type ArtifactId,
@@ -69,6 +70,9 @@ import {
   type RuntimeTurnStatePort,
   type RuntimeWorkspaceStatePort,
   type SandboxPolicySource,
+  SessionNavigationSummarySchema,
+  type SessionNavigationReadModel as CoreSessionNavigationReadModel,
+  type SessionNavigationSummary as CoreSessionNavigationSummary,
   type StateCommandPostCommitNotificationError,
   StateCommandPostCommitNotificationPort,
   type StateCommandReceipt,
@@ -78,6 +82,7 @@ import {
   type StateMutationResult,
   type StateStoredError,
   type StateRevision,
+  strictBoundaryParseOptions,
   type SnippetId,
   type SnippetMetadata,
   type SnippetSource,
@@ -87,8 +92,6 @@ import {
   type WorkflowTaskAttemptId,
   type WorkspacePaneId,
   type WorkspaceSessionId,
-  type WorkspaceSessionNavigationReadModel,
-  type WorkspaceSessionNavigationSummary,
   type WorkspaceTabId,
   type WorkspaceId as WorkspaceIdType,
 } from "@svvy/core";
@@ -106,7 +109,10 @@ import { buildWorkspaceSessionNavigation } from "./session-navigation";
 import {
   buildStructuredCommandInspector,
   buildStructuredHandlerThreadInspector,
+  buildStructuredSessionSummaryProjection,
+  buildStructuredSessionView,
   buildStructuredWorkflowTaskAttemptInspector,
+  hasStructuredSessionFacts,
   type StructuredHandlerThreadInspector,
   type StructuredWorkflowTaskAttemptInspector,
 } from "./structured-session-selectors";
@@ -134,6 +140,8 @@ import {
   decodeUnknownDeleteManagedSnippetCommandInputEffect,
   decodeUnknownDeleteOrchestratorProfileCommandInputEffect,
   decodeUnknownMarkAppLogReadCommandInputEffect,
+  decodeUnknownMarkSessionReadCommandInputEffect,
+  decodeUnknownMarkSessionUnreadCommandInputEffect,
   decodeUnknownMarkVisibleAppLogRangeReadCommandInputEffect,
   decodeUnknownPromoteProfileExtensionDefaultCommandInputEffect,
   decodeUnknownRecordProviderAuthStatusCommandInputEffect,
@@ -146,6 +154,9 @@ import {
   decodeUnknownSetExternalInstructionActorUsageCommandInputEffect,
   decodeUnknownSetExtensionEnvOverrideCommandInputEffect,
   decodeUnknownSetProfileExtensionUsageCommandInputEffect,
+  decodeUnknownSetSessionArchivedCommandInputEffect,
+  decodeUnknownSetSessionNavigationSectionStateCommandInputEffect,
+  decodeUnknownSetSessionPinnedCommandInputEffect,
   decodeUnknownSetSnippetEnabledCommandInputEffect,
   decodeUnknownSetWorkspaceTabsCommandInputEffect,
   decodeUnknownUpdateManagedSnippetCommandInputEffect,
@@ -161,6 +172,8 @@ import {
   type DeleteOrchestratorProfileCommandInput,
   type ClearWorkspaceAppLogUnreadCommandInput,
   type MarkAppLogReadCommandInput,
+  type MarkSessionReadCommandInput,
+  type MarkSessionUnreadCommandInput,
   type MarkVisibleAppLogRangeReadCommandInput,
   type PromoteProfileExtensionDefaultCommandInput,
   type RecordProviderAuthStatusCommandInput,
@@ -173,6 +186,9 @@ import {
   type SetExternalInstructionActorUsageCommandInput,
   type SetExtensionEnvOverrideCommandInput,
   type SetProfileExtensionUsageCommandInput,
+  type SetSessionArchivedCommandInput,
+  type SetSessionNavigationSectionStateCommandInput,
+  type SetSessionPinnedCommandInput,
   type SetSnippetEnabledCommandInput,
   type SetWorkspaceTabsCommandInput,
   type UpdateManagedSnippetCommandInput,
@@ -181,6 +197,11 @@ import {
   type UpdateThreadHandlerProfileCommandInput,
   type UpdateWorkspacePaneCommandInput,
 } from "./state-command-schemas";
+
+const decodeSessionNavigationSummaryProjection = Schema.decodeUnknownEffect(
+  SessionNavigationSummarySchema,
+  strictBoundaryParseOptions,
+);
 
 export interface StateFacadeCallOptions {
   signal?: AbortSignal;
@@ -461,41 +482,9 @@ export interface WorkspaceChromeLayoutReadModelRequest {
   layoutId?: WorkspaceLayoutSlotId;
 }
 
-export type SessionNavigationReadModel =
-  WorkspaceSessionNavigationReadModel<SessionNavigationSummary>;
+export type SessionNavigationReadModel = CoreSessionNavigationReadModel;
 
-export interface SessionNavigationSummary extends WorkspaceSessionNavigationSummary {
-  id: string;
-  title: string;
-  preview: string;
-  createdAt: string;
-  messageCount: number;
-  status: "idle" | "running" | "waiting" | "error";
-  isUnread: boolean;
-  unreadAt: string | null;
-  unreadReason: "assistant-turn-finished" | "manual" | null;
-  lastReadAt: string | null;
-  provider?: string;
-  modelId?: string;
-  thinkingLevel?: string;
-  wait?: {
-    threadId?: string;
-    kind: "user" | "external" | "approval" | "signal" | "timer";
-    reason: string;
-    resumeWhen: string;
-    since: string;
-  } | null;
-  counts?: {
-    turns: number;
-    threads: number;
-    commands: number;
-    episodes: number;
-    workflows: number;
-    artifacts: number;
-    events: number;
-  };
-  threadIds?: string[];
-}
+export type SessionNavigationSummary = CoreSessionNavigationSummary;
 
 export interface SurfaceTranscriptReadModel {
   target: RuntimeSurfaceTarget;
@@ -838,6 +827,24 @@ export interface WorkspaceLayoutStateCommands {
   ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
 }
 
+export interface SessionNavigationStateCommands {
+  setPinned(
+    input: SetSessionPinnedCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  setArchived(
+    input: SetSessionArchivedCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  markRead(
+    input: MarkSessionReadCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  markUnread(
+    input: MarkSessionUnreadCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  setSectionState(
+    input: SetSessionNavigationSectionStateCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+}
+
 export interface ExtensionEnvStateCommands {
   setOverride(
     input: SetExtensionEnvOverrideCommandInput,
@@ -895,6 +902,7 @@ export interface SnippetStateCommands {
 export interface StateCommandsService {
   workspaceChrome: WorkspaceChromeStateCommands;
   workspaceLayout: WorkspaceLayoutStateCommands;
+  sessionNavigation: SessionNavigationStateCommands;
   appLogs: AppLogReadStateCommands;
   appPreferences: AppPreferencesStateCommands;
   providerAuth: ProviderAuthStateCommands;
@@ -951,6 +959,28 @@ export interface StateCommandsFacade {
     ): Promise<StateCommandResult>;
     closePane(
       input: CloseWorkspacePaneCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+  };
+  sessionNavigation: {
+    setPinned(
+      input: SetSessionPinnedCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    setArchived(
+      input: SetSessionArchivedCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    markRead(
+      input: MarkSessionReadCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    markUnread(
+      input: MarkSessionUnreadCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    setSectionState(
+      input: SetSessionNavigationSectionStateCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
   };
@@ -1264,6 +1294,58 @@ export function createStateCommandsFacade(
           Effect.gen(function* () {
             const commands = yield* StateCommands;
             return yield* commands.workspaceLayout.closePane(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+    },
+    sessionNavigation: {
+      setPinned: (input, callOptions) =>
+        run(
+          "stateCommands.sessionNavigation.setPinned",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.sessionNavigation.setPinned(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      setArchived: (input, callOptions) =>
+        run(
+          "stateCommands.sessionNavigation.setArchived",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.sessionNavigation.setArchived(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      markRead: (input, callOptions) =>
+        run(
+          "stateCommands.sessionNavigation.markRead",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.sessionNavigation.markRead(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      markUnread: (input, callOptions) =>
+        run(
+          "stateCommands.sessionNavigation.markUnread",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.sessionNavigation.markUnread(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      setSectionState: (input, callOptions) =>
+        run(
+          "stateCommands.sessionNavigation.setSectionState",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.sessionNavigation.setSectionState(input);
           }),
           input.clientSubmission,
           callOptions,
@@ -2021,49 +2103,59 @@ function buildSessionNavigationReadModel(
   return Effect.gen(function* () {
     const snapshots = yield* state.listSessionStates();
     const sidebarState = yield* state.getWorkspaceSidebarState();
-    const summaries = snapshots.map(sessionNavigationSummary);
+    const summaries = yield* Effect.forEach(snapshots, (snapshot) =>
+      Effect.gen(function* () {
+        const draft = yield* state.getComposerDraft(snapshot.session.orchestratorPiSessionId);
+        return yield* decodeSessionNavigationSummaryProjection(
+          sessionNavigationSummary(snapshot, draft?.text ?? ""),
+        ).pipe(Effect.mapError(sessionNavigationProjectionError));
+      }),
+    );
 
-    return buildWorkspaceSessionNavigation(summaries, sidebarState.archivedGroupCollapsed, {
-      pinned: {
-        collapsed: sidebarState.pinnedGroupCollapsed,
-        sizePx: sidebarState.pinnedGroupSizePx,
+    const navigation = buildWorkspaceSessionNavigation(
+      summaries,
+      sidebarState.archivedGroupCollapsed,
+      {
+        pinned: {
+          collapsed: sidebarState.pinnedGroupCollapsed,
+          sizePx: sidebarState.pinnedGroupSizePx,
+        },
+        active: {
+          collapsed: sidebarState.activeGroupCollapsed,
+          sizePx: sidebarState.activeGroupSizePx,
+        },
+        archived: {
+          collapsed: sidebarState.archivedGroupCollapsed,
+          sizePx: sidebarState.archivedGroupSizePx,
+        },
       },
-      active: {
-        collapsed: sidebarState.activeGroupCollapsed,
-        sizePx: sidebarState.activeGroupSizePx,
-      },
-      archived: {
-        collapsed: sidebarState.archivedGroupCollapsed,
-        sizePx: sidebarState.archivedGroupSizePx,
-      },
-    });
+    );
+
+    return yield* decodeUnknownSessionNavigationReadModelEffect(navigation).pipe(
+      Effect.mapError(sessionNavigationProjectionError),
+    );
   });
 }
 
-function sessionNavigationSummary(snapshot: StructuredSessionSnapshot): SessionNavigationSummary {
-  const orchestratorTurns = snapshot.turns.filter((turn) => turn.threadId === null);
-  const status = deriveSurfaceStatus(snapshot, snapshot.pi.sessionId);
-  const latestTurn = orchestratorTurns.toSorted((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt),
-  )[0];
-  const counts = {
-    turns: snapshot.turns.length,
-    threads: snapshot.threads.length,
-    commands: snapshot.commands.length,
-    episodes: snapshot.episodes.length,
-    workflows: snapshot.workflowRuns.length,
-    artifacts: snapshot.artifacts.length,
-    events: snapshot.events.length,
-  };
-
-  return {
+function sessionNavigationSummary(snapshot: StructuredSessionSnapshot, composerDraftText: string) {
+  const projection = buildStructuredSessionSummaryProjection(snapshot);
+  const view = buildStructuredSessionView(snapshot);
+  const provisionalTitle = sessionNavigationProvisionalTitle(snapshot, composerDraftText);
+  const durableTitle =
+    snapshot.pi.titleManualOverride ||
+    snapshot.pi.titleAutoFrozen ||
+    snapshot.pi.titleGenerationStatus === "completed"
+      ? snapshot.pi.title
+      : null;
+  const title = durableTitle || provisionalTitle || snapshot.pi.title;
+  const summary = {
     id: snapshot.session.id,
-    title: snapshot.pi.title,
-    preview: latestTurn?.requestSummary ?? "",
+    title,
+    preview: projection.preview || title,
     createdAt: snapshot.pi.createdAt,
-    updatedAt: snapshot.pi.updatedAt,
+    updatedAt: projection.updatedAt,
     messageCount: snapshot.pi.messageCount,
-    status,
+    status: projection.status,
     isPinned: snapshot.session.pinnedAt !== null,
     pinnedAt: snapshot.session.pinnedAt,
     isArchived: snapshot.session.archivedAt !== null,
@@ -2075,6 +2167,25 @@ function sessionNavigationSummary(snapshot: StructuredSessionSnapshot): SessionN
     ...(snapshot.pi.provider ? { provider: snapshot.pi.provider } : {}),
     ...(snapshot.pi.model ? { modelId: snapshot.pi.model } : {}),
     ...(snapshot.pi.reasoningEffort ? { thinkingLevel: snapshot.pi.reasoningEffort } : {}),
+    titleGeneration: {
+      status: snapshot.pi.titleGenerationStatus ?? "not-started",
+      renameLocked:
+        snapshot.pi.titleGenerationStatus === "pending" ||
+        snapshot.pi.titleGenerationStatus === "running",
+      autoFrozen: snapshot.pi.titleAutoFrozen ?? false,
+      manualOverride: snapshot.pi.titleManualOverride ?? false,
+      triggeredAt: snapshot.pi.titleGenerationTriggeredAt ?? null,
+      finishedAt: snapshot.pi.titleGenerationFinishedAt ?? null,
+      error: snapshot.pi.titleGenerationError ?? null,
+    },
+  };
+
+  if (!hasStructuredSessionFacts(snapshot)) {
+    return summary;
+  }
+
+  return {
+    ...summary,
     wait: snapshot.session.wait
       ? {
           ...(snapshot.session.wait.owner.kind === "thread"
@@ -2086,9 +2197,43 @@ function sessionNavigationSummary(snapshot: StructuredSessionSnapshot): SessionN
           since: snapshot.session.wait.since,
         }
       : null,
-    counts,
-    threadIds: snapshot.threads.map((thread) => thread.id),
+    counts: projection.counts,
+    threadIdsByStatus: view.threadIdsByStatus,
+    threadIds: projection.threadIds,
+    sidebarThreads: view.sidebarThreads,
+    ...(view.commandRollups.length > 0 ? { commandRollups: view.commandRollups } : {}),
+    ...(view.productEvents.length > 0 ? { productEvents: view.productEvents } : {}),
   };
+}
+
+function sessionNavigationProjectionError(cause: Schema.SchemaError): StateContractError {
+  return new StateContractError({
+    operation: "state.readModels.sessionNavigation",
+    reason: "decode-failed",
+    message: cause.message,
+    cause,
+  });
+}
+
+function sessionNavigationProvisionalTitle(
+  snapshot: StructuredSessionSnapshot,
+  composerDraftText: string,
+): string | null {
+  if (snapshot.pi.titleManualOverride || snapshot.pi.titleGenerationStatus === "completed") {
+    return null;
+  }
+
+  const firstTurnSummary = snapshot.turns[0]?.requestSummary?.trim() ?? "";
+  const sourceText = composerDraftText.trim() || firstTurnSummary;
+  if (!sourceText) {
+    return null;
+  }
+
+  const collapsed = sourceText.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= 72) {
+    return collapsed;
+  }
+  return `${collapsed.slice(0, 71).trimEnd()}…`;
 }
 
 function buildSurfaceTranscriptReadModel(
@@ -3019,6 +3164,101 @@ function stateCommandsFromState(state: {
           );
         }),
     },
+    sessionNavigation: {
+      setPinned: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSetSessionPinnedInput(commandInput);
+          const structuredSession = yield* state.structuredSession(decoded.workspaceId);
+          yield* structuredSession.getSessionState(decoded.workspaceSessionId);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.sessionNavigation.setPinned",
+            decoded,
+            `${decoded.workspaceId}:${decoded.workspaceSessionId}`,
+            () =>
+              structuredSession.applySessionNavigationCommand({
+                kind: "set-pinned",
+                sessionId: decoded.workspaceSessionId,
+                pinned: decoded.pinned,
+              }),
+            sessionNavigationStateInvalidations(decoded.workspaceId),
+          );
+        }),
+      setArchived: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSetSessionArchivedInput(commandInput);
+          const structuredSession = yield* state.structuredSession(decoded.workspaceId);
+          yield* structuredSession.getSessionState(decoded.workspaceSessionId);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.sessionNavigation.setArchived",
+            decoded,
+            `${decoded.workspaceId}:${decoded.workspaceSessionId}`,
+            () =>
+              structuredSession.applySessionNavigationCommand({
+                kind: "set-archived",
+                sessionId: decoded.workspaceSessionId,
+                archived: decoded.archived,
+              }),
+            sessionNavigationStateInvalidations(decoded.workspaceId),
+          );
+        }),
+      markRead: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeMarkSessionReadInput(commandInput);
+          const structuredSession = yield* state.structuredSession(decoded.workspaceId);
+          yield* structuredSession.getSessionState(decoded.workspaceSessionId);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.sessionNavigation.markRead",
+            decoded,
+            `${decoded.workspaceId}:${decoded.workspaceSessionId}`,
+            () =>
+              structuredSession.applySessionNavigationCommand({
+                kind: "mark-read",
+                sessionId: decoded.workspaceSessionId,
+              }),
+            sessionNavigationStateInvalidations(decoded.workspaceId),
+          );
+        }),
+      markUnread: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeMarkSessionUnreadInput(commandInput);
+          const structuredSession = yield* state.structuredSession(decoded.workspaceId);
+          yield* structuredSession.getSessionState(decoded.workspaceSessionId);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.sessionNavigation.markUnread",
+            decoded,
+            `${decoded.workspaceId}:${decoded.workspaceSessionId}`,
+            () =>
+              structuredSession.applySessionNavigationCommand({
+                kind: "mark-unread",
+                sessionId: decoded.workspaceSessionId,
+              }),
+            sessionNavigationStateInvalidations(decoded.workspaceId),
+          );
+        }),
+      setSectionState: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSetSessionNavigationSectionStateInput(commandInput);
+          const structuredSession = yield* state.structuredSession(decoded.workspaceId);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.sessionNavigation.setSectionState",
+            decoded,
+            `${decoded.workspaceId}:${decoded.section}`,
+            () =>
+              structuredSession.applySessionNavigationCommand({
+                kind: "set-section-state",
+                section: decoded.section,
+                ...(decoded.collapsed !== undefined ? { collapsed: decoded.collapsed } : {}),
+                ...(decoded.sizePx !== undefined ? { sizePx: decoded.sizePx } : {}),
+              }),
+            sessionNavigationStateInvalidations(decoded.workspaceId),
+          );
+        }),
+    },
     appLogs: {
       markRead: (commandInput) =>
         Effect.gen(function* () {
@@ -3411,6 +3651,18 @@ function workspaceChromeLayoutInvalidations(
   );
 }
 
+function sessionNavigationStateInvalidations(
+  workspaceId: WorkspaceIdType,
+): readonly StateInvalidationDescriptor[] {
+  return [
+    {
+      scope: "workspace",
+      workspaceId,
+      invalidation: { model: "sessionNavigation" },
+    },
+  ];
+}
+
 function extensionEnvStateInvalidations(
   extensionId: ExtensionId,
 ): readonly StateInvalidationDescriptor[] {
@@ -3650,6 +3902,31 @@ const decodeMarkVisibleAppLogRangeReadInput = (input: unknown) =>
 const decodeClearWorkspaceAppLogUnreadInput = (input: unknown) =>
   decodeUnknownClearWorkspaceAppLogUnreadCommandInputEffect(input).pipe(
     Effect.mapError(commandDecodeError("stateCommands.appLogs.clearWorkspaceUnread")),
+  );
+
+const decodeSetSessionPinnedInput = (input: unknown) =>
+  decodeUnknownSetSessionPinnedCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.sessionNavigation.setPinned")),
+  );
+
+const decodeSetSessionArchivedInput = (input: unknown) =>
+  decodeUnknownSetSessionArchivedCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.sessionNavigation.setArchived")),
+  );
+
+const decodeMarkSessionReadInput = (input: unknown) =>
+  decodeUnknownMarkSessionReadCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.sessionNavigation.markRead")),
+  );
+
+const decodeMarkSessionUnreadInput = (input: unknown) =>
+  decodeUnknownMarkSessionUnreadCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.sessionNavigation.markUnread")),
+  );
+
+const decodeSetSessionNavigationSectionStateInput = (input: unknown) =>
+  decodeUnknownSetSessionNavigationSectionStateCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.sessionNavigation.setSectionState")),
   );
 
 const decodeUpdateAppPreferencesInput = (input: unknown) =>

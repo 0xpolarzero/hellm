@@ -23,6 +23,8 @@ import {
   ThreadId,
   WorkflowTaskAttemptId,
   WorkspacePaneId,
+  WorkspaceSessionId,
+  WorkspaceSessionNavigationSectionIdSchema,
   WorkspaceTabId,
   WorkspaceId,
 } from "@svvy/core";
@@ -119,6 +121,60 @@ export const SelectWorkspaceLayoutSlotCommandInputSchema = Schema.Struct({
 });
 export type SelectWorkspaceLayoutSlotCommandInput =
   typeof SelectWorkspaceLayoutSlotCommandInputSchema.Type;
+
+const SessionNavigationTargetCommandFields = {
+  workspaceId: WorkspaceId,
+  workspaceSessionId: WorkspaceSessionId,
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
+};
+
+export const SetSessionPinnedCommandInputSchema = Schema.Struct({
+  ...SessionNavigationTargetCommandFields,
+  pinned: Schema.Boolean,
+});
+export type SetSessionPinnedCommandInput = typeof SetSessionPinnedCommandInputSchema.Type;
+
+export const SetSessionArchivedCommandInputSchema = Schema.Struct({
+  ...SessionNavigationTargetCommandFields,
+  archived: Schema.Boolean,
+});
+export type SetSessionArchivedCommandInput = typeof SetSessionArchivedCommandInputSchema.Type;
+
+export const MarkSessionReadCommandInputSchema = Schema.Struct({
+  ...SessionNavigationTargetCommandFields,
+});
+export type MarkSessionReadCommandInput = typeof MarkSessionReadCommandInputSchema.Type;
+
+export const MarkSessionUnreadCommandInputSchema = Schema.Struct({
+  ...SessionNavigationTargetCommandFields,
+});
+export type MarkSessionUnreadCommandInput = typeof MarkSessionUnreadCommandInputSchema.Type;
+
+type SessionNavigationSectionStateCommandShape = {
+  readonly collapsed?: boolean | undefined;
+  readonly sizePx?: number | undefined;
+};
+
+const SessionNavigationSectionStateCommandInvariant = Schema.makeFilter(
+  (input: SessionNavigationSectionStateCommandShape) =>
+    input.collapsed !== undefined || input.sizePx !== undefined
+      ? true
+      : {
+          path: ["collapsed"],
+          issue: "session navigation section state must change collapsed or sizePx",
+        },
+  { expected: "a non-empty session navigation section state update" },
+);
+
+export const SetSessionNavigationSectionStateCommandInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  section: WorkspaceSessionNavigationSectionIdSchema,
+  collapsed: Schema.optionalKey(Schema.Boolean),
+  sizePx: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
+}).pipe(Schema.check(SessionNavigationSectionStateCommandInvariant));
+export type SetSessionNavigationSectionStateCommandInput =
+  typeof SetSessionNavigationSectionStateCommandInputSchema.Type;
 
 export const WorkspacePaneMetadataInputSchema = Schema.Union([
   Schema.Struct({
@@ -391,6 +447,93 @@ export const encodeClearWorkspaceAppLogUnreadCommandInputExit = Schema.encodeExi
 );
 export const encodeClearWorkspaceAppLogUnreadCommandInputEffect = Schema.encodeEffect(
   ClearWorkspaceAppLogUnreadCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+
+export const decodeUnknownSetSessionPinnedCommandInputExit = Schema.decodeUnknownExit(
+  SetSessionPinnedCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownSetSessionPinnedCommandInputEffect = Schema.decodeUnknownEffect(
+  SetSessionPinnedCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeSetSessionPinnedCommandInputExit = Schema.encodeExit(
+  SetSessionPinnedCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeSetSessionPinnedCommandInputEffect = Schema.encodeEffect(
+  SetSessionPinnedCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+
+export const decodeUnknownSetSessionArchivedCommandInputExit = Schema.decodeUnknownExit(
+  SetSessionArchivedCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownSetSessionArchivedCommandInputEffect = Schema.decodeUnknownEffect(
+  SetSessionArchivedCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeSetSessionArchivedCommandInputExit = Schema.encodeExit(
+  SetSessionArchivedCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeSetSessionArchivedCommandInputEffect = Schema.encodeEffect(
+  SetSessionArchivedCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+
+export const decodeUnknownMarkSessionReadCommandInputExit = Schema.decodeUnknownExit(
+  MarkSessionReadCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownMarkSessionReadCommandInputEffect = Schema.decodeUnknownEffect(
+  MarkSessionReadCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeMarkSessionReadCommandInputExit = Schema.encodeExit(
+  MarkSessionReadCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeMarkSessionReadCommandInputEffect = Schema.encodeEffect(
+  MarkSessionReadCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+
+export const decodeUnknownMarkSessionUnreadCommandInputExit = Schema.decodeUnknownExit(
+  MarkSessionUnreadCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownMarkSessionUnreadCommandInputEffect = Schema.decodeUnknownEffect(
+  MarkSessionUnreadCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeMarkSessionUnreadCommandInputExit = Schema.encodeExit(
+  MarkSessionUnreadCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeMarkSessionUnreadCommandInputEffect = Schema.encodeEffect(
+  MarkSessionUnreadCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+
+export const decodeUnknownSetSessionNavigationSectionStateCommandInputExit =
+  Schema.decodeUnknownExit(
+    SetSessionNavigationSectionStateCommandInputSchema,
+    strictBoundaryParseOptions,
+  );
+export const decodeUnknownSetSessionNavigationSectionStateCommandInputEffect =
+  Schema.decodeUnknownEffect(
+    SetSessionNavigationSectionStateCommandInputSchema,
+    strictBoundaryParseOptions,
+  );
+export const encodeSetSessionNavigationSectionStateCommandInputExit = Schema.encodeExit(
+  SetSessionNavigationSectionStateCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeSetSessionNavigationSectionStateCommandInputEffect = Schema.encodeEffect(
+  SetSessionNavigationSectionStateCommandInputSchema,
   strictBoundaryParseOptions,
 );
 

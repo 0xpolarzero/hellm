@@ -39,6 +39,23 @@ describe("narrowRendererStateFacade", () => {
         updatePane: async () => ({ receipt: {} }) as never,
         closePane: async () => ({ receipt: {} }) as never,
       },
+      sessionNavigation: {
+        setPinned: async () => {
+          throw new Error("sessionNavigation.setPinned is not exercised by this fixture");
+        },
+        setArchived: async () => {
+          throw new Error("sessionNavigation.setArchived is not exercised by this fixture");
+        },
+        markRead: async () => {
+          throw new Error("sessionNavigation.markRead is not exercised by this fixture");
+        },
+        markUnread: async () => {
+          throw new Error("sessionNavigation.markUnread is not exercised by this fixture");
+        },
+        setSectionState: async () => {
+          throw new Error("sessionNavigation.setSectionState is not exercised by this fixture");
+        },
+      },
       appLogs: {
         markRead: async () => ({ receipt: {} }) as never,
         markVisibleRangeRead: async () => ({ receipt: {} }) as never,

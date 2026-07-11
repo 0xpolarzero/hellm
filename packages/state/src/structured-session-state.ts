@@ -1013,6 +1013,18 @@ export interface StructuredWorkspaceSidebarState {
   updatedAt: string;
 }
 
+export type StructuredSessionNavigationCommandInput =
+  | { kind: "set-pinned"; sessionId: string; pinned: boolean }
+  | { kind: "set-archived"; sessionId: string; archived: boolean }
+  | { kind: "mark-read"; sessionId: string }
+  | { kind: "mark-unread"; sessionId: string }
+  | {
+      kind: "set-section-state";
+      section: "pinned" | "active" | "archived";
+      collapsed?: boolean;
+      sizePx?: number;
+    };
+
 export interface StructuredThreadDetail {
   thread: StructuredThreadRecord;
   childThreads: StructuredThreadRecord[];
@@ -1236,6 +1248,9 @@ export interface StructuredSessionStateStore {
     reason: "assistant-turn-finished" | "manual";
   }): void;
   markSessionRead(input: { sessionId: string }): void;
+  applySessionNavigationCommand(
+    input: StructuredSessionNavigationCommandInput,
+  ): StructuredMutationCommitRecord;
   getWorkspaceSidebarState(): StructuredWorkspaceSidebarState;
   setSessionNavigationSectionState(input: {
     section: "pinned" | "active" | "archived";
@@ -5900,6 +5915,38 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         unread: false,
       },
     });
+  }
+
+  applySessionNavigationCommand(
+    input: StructuredSessionNavigationCommandInput,
+  ): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      switch (input.kind) {
+        case "set-pinned":
+          this.mustFindSessionRow(input.sessionId);
+          this.setSessionPinned(input);
+          break;
+        case "set-archived":
+          this.mustFindSessionRow(input.sessionId);
+          this.setSessionArchived(input);
+          break;
+        case "mark-read":
+          this.mustFindSessionRow(input.sessionId);
+          this.markSessionRead(input);
+          break;
+        case "mark-unread":
+          this.mustFindSessionRow(input.sessionId);
+          this.markSessionUnread({ sessionId: input.sessionId, reason: "manual" });
+          break;
+        case "set-section-state":
+          this.setSessionNavigationSectionState(input);
+          break;
+      }
+      return this.bumpStateRevision();
+    })();
+
+    return { updatedAt, stateRevision };
   }
 
   getWorkspaceSidebarState(): StructuredWorkspaceSidebarState {

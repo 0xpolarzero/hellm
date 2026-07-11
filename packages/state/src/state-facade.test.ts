@@ -37,10 +37,12 @@ import type {
   ThreadId,
   WorkflowTaskAttemptId,
   WorkspaceId,
+  WorkspaceSessionId,
   WorkspacePaneId,
   WorkspaceTabId,
 } from "@svvy/core";
 import {
+  StateCommands,
   StateFacadeError,
   StateReadModels,
   createStateAppLogsFacade,
@@ -1487,6 +1489,18 @@ describe("State read-model kind expansion", () => {
         status: "succeeded",
         summary: "Command finished",
       });
+      store.recordLifecycleEvent({
+        sessionId: created.workspaceSessionId,
+        kind: "Extension change reverted",
+        subjectKind: "session",
+        subjectId: created.workspaceSessionId,
+        at: "2026-06-21T12:30:00.000Z",
+        data: {
+          title: "Extension change reverted",
+          summary: "The fixture extension change was reverted.",
+          extensionId: "shell",
+        },
+      });
       const requestInput = store.createRequestUserInputRequest({
         sessionId: created.workspaceSessionId,
         surfacePiSessionId: created.surfacePiSessionId,
@@ -1515,6 +1529,10 @@ describe("State read-model kind expansion", () => {
         command: "printf ok",
         commandFamily: "shell",
       });
+      const revertedEvent = store
+        .getSessionState(created.workspaceSessionId)
+        .events.find((event) => event.kind === "Extension change reverted");
+      if (!revertedEvent) throw new Error("Expected the navigation product-event fixture.");
 
       const router = createWorkspaceStateRouter({
         appGlobalStore: store,
@@ -1536,7 +1554,74 @@ describe("State read-model kind expansion", () => {
       );
       expect(navigation).toMatchObject({
         kind: "sessionNavigation",
-        value: { activeSessions: [{ title: "Expanded read models" }] },
+        value: {
+          activeSessions: [
+            {
+              title: "draft text",
+              preview: "Command finished",
+              status: "running",
+              threadIdsByStatus: {
+                runningHandler: [handlerThread.id],
+                runningWorkflow: [],
+                waiting: [],
+                troubleshooting: [],
+              },
+              sidebarThreads: [
+                {
+                  threadId: handlerThread.id,
+                  status: "running-handler",
+                  subtitle: {
+                    badge: "workflow",
+                    text: "Generated workflow is running.",
+                    tone: "muted",
+                  },
+                  workflows: [
+                    {
+                      workflowRunId: workflowRun.id,
+                      status: "running",
+                      subtitle: {
+                        badge: "workflow",
+                        text: "Generated workflow is running.",
+                        tone: "muted",
+                      },
+                    },
+                  ],
+                },
+              ],
+              commandRollups: [
+                { commandId: command.id, status: "succeeded", summary: "Command finished" },
+                {
+                  commandId: workflowCommand.id,
+                  status: "requested",
+                  summary: "Launch a generated workflow.",
+                },
+              ],
+              productEvents: [
+                {
+                  eventId: revertedEvent.id,
+                  at: "2026-06-21T12:30:00.000Z",
+                  title: "Extension change reverted",
+                  summary: "The fixture extension change was reverted.",
+                  subject: { kind: "session", id: created.workspaceSessionId },
+                  details: {
+                    title: "Extension change reverted",
+                    summary: "The fixture extension change was reverted.",
+                    extensionId: "shell",
+                  },
+                },
+              ],
+              titleGeneration: {
+                status: "not-started",
+                renameLocked: false,
+                autoFrozen: false,
+                manualOverride: false,
+                triggeredAt: null,
+                finishedAt: null,
+                error: null,
+              },
+            },
+          ],
+        },
       });
 
       const transcript = await runTestEffect(
@@ -1875,6 +1960,174 @@ describe("State read-model kind expansion", () => {
         expect.arrayContaining(["snippets", "workspaceChromeLayout"]),
       );
     } finally {
+      store.close();
+    }
+  });
+
+  it("commits typed session navigation commands with explicit routing and idempotent receipts", async () => {
+    let idSeq = 0;
+    let cursor = Date.parse("2026-07-11T10:00:00.000Z");
+    const workspaceId = "workspace_session_navigation_commands" as WorkspaceId;
+    const store = createStructuredSessionStateStore({
+      databasePath: ":memory:",
+      idFactory: (prefix) => `${prefix}-session-navigation-${++idSeq}`,
+      now: () => {
+        const value = new Date(cursor).toISOString();
+        cursor += 1_000;
+        return value;
+      },
+      workspace: {
+        id: workspaceId,
+        label: "Session navigation commands",
+        cwd: "/tmp/svvy-session-navigation-commands" as typeof AbsolutePath.Type,
+        artifactDir: "/tmp/svvy-session-navigation-command-artifacts" as typeof AbsolutePath.Type,
+      },
+    });
+    const created = store.createOrchestratorSurface({
+      workspaceId,
+      title: "Session navigation commands",
+    });
+    const workspaceSessionId = created.workspaceSessionId as WorkspaceSessionId;
+    const appLogStore = createAppLogStore({ now: () => "2026-07-11T10:00:00.000Z" });
+    const router = createWorkspaceStateRouter({
+      appGlobalStore: store,
+      workspaceStores: [{ store }],
+    });
+    const service = stateCommandsFromRouter({
+      router,
+      appLogs: appLogStateFromStore(appLogStore),
+    });
+    const published: StateCommandPostCommitNotificationInput[] = [];
+    const managedRuntime = ManagedRuntime.make(
+      Layer.merge(
+        Layer.succeed(StateCommands, service),
+        Layer.succeed(
+          StateCommandPostCommitNotificationPort,
+          StateCommandPostCommitNotificationPort.of({
+            notifyCommittedStateCommand: (input) =>
+              Effect.sync(() => {
+                published.push(input);
+                return {
+                  receipt: input.receipt,
+                  acceptedDescriptorCount: input.descriptors.length,
+                  rebaselineRequired: false,
+                };
+              }),
+          }),
+        ),
+      ),
+    );
+    const submission = (clientRequestId: string) => ({
+      clientRequestId: clientRequestId as RuntimeClientRequestId,
+      source: "test" as RuntimeClientSubmissionSource,
+    });
+
+    try {
+      const commands = createStateCommandsFacade(managedRuntime);
+      const pinnedInput = {
+        workspaceId,
+        workspaceSessionId,
+        pinned: true,
+        clientSubmission: submission("session-navigation-pin"),
+      };
+      const pinned = await commands.sessionNavigation.setPinned(pinnedInput);
+      const duplicate = await commands.sessionNavigation.setPinned(pinnedInput);
+      await commands.sessionNavigation.setPinned({
+        ...pinnedInput,
+        pinned: false,
+        clientSubmission: submission("session-navigation-unpin"),
+      });
+      await commands.sessionNavigation.setArchived({
+        workspaceId,
+        workspaceSessionId,
+        archived: true,
+        clientSubmission: submission("session-navigation-archive"),
+      });
+      await commands.sessionNavigation.setArchived({
+        workspaceId,
+        workspaceSessionId,
+        archived: false,
+        clientSubmission: submission("session-navigation-unarchive"),
+      });
+      await commands.sessionNavigation.markUnread({
+        workspaceId,
+        workspaceSessionId,
+        clientSubmission: submission("session-navigation-unread"),
+      });
+      expect(store.getSessionState(workspaceSessionId).session.unreadReason).toBe("manual");
+      await commands.sessionNavigation.markRead({
+        workspaceId,
+        workspaceSessionId,
+        clientSubmission: submission("session-navigation-read"),
+      });
+      await commands.sessionNavigation.setSectionState({
+        workspaceId,
+        section: "archived",
+        collapsed: false,
+        sizePx: 420.5,
+        clientSubmission: submission("session-navigation-section"),
+      });
+
+      const snapshot = store.getSessionState(workspaceSessionId);
+      expect(pinned.receipt).toMatchObject({
+        clientRequestId: "session-navigation-pin",
+        outcome: "applied",
+      });
+      expect(duplicate.receipt).toEqual({
+        ...pinned.receipt,
+        outcome: "duplicate",
+      });
+      expect(snapshot.session).toMatchObject({
+        pinnedAt: null,
+        archivedAt: null,
+        unreadAt: null,
+        unreadReason: null,
+      });
+      expect(snapshot.session.lastReadAt).not.toBeNull();
+      expect(store.getWorkspaceSidebarState()).toMatchObject({
+        archivedGroupCollapsed: false,
+        archivedGroupSizePx: 421,
+      });
+      expect(published).toHaveLength(7);
+      expect(
+        published.map((notification) => ({
+          operation: notification.operation,
+          descriptors: notification.descriptors,
+        })),
+      ).toEqual(
+        [
+          "setPinned",
+          "setPinned",
+          "setArchived",
+          "setArchived",
+          "markUnread",
+          "markRead",
+          "setSectionState",
+        ].map((method) => ({
+          operation: `stateCommands.sessionNavigation.${method}`,
+          descriptors: [
+            { scope: "workspace", workspaceId, invalidation: { model: "sessionNavigation" } },
+          ],
+        })),
+      );
+
+      await expect(
+        runTestEffect(
+          service.sessionNavigation.setPinned({
+            workspaceId,
+            workspaceSessionId: "session_from_another_workspace" as WorkspaceSessionId,
+            pinned: true,
+            clientSubmission: submission("session-navigation-cross-workspace"),
+          }),
+        ),
+      ).rejects.toBeInstanceOf(StateContractError);
+      expect(store.listSessionStates().map((state) => state.session.id)).not.toContain(
+        "session_from_another_workspace",
+      );
+      commands.close();
+    } finally {
+      await managedRuntime.dispose();
+      appLogStore.close();
       store.close();
     }
   });
