@@ -2149,6 +2149,7 @@ export async function createChatRuntime(
       appReadModelCache.appLogs = null;
       appReadModelCache.appPreferences = null;
       appReadModelCache.providerAuths = null;
+      applyNotificationReadModelPatch(baseline.app, undefined, scope);
     } else {
       const workspaceCache = workspaceReadModelCache(workspaceInfo.workspaceId);
       workspaceCache.appLogs = null;
@@ -2158,8 +2159,8 @@ export async function createChatRuntime(
         rendererTelemetryEntries,
         rendererAppLogSeenSeq,
       );
+      applyNotificationReadModelPatch([...baseline.app, ...baseline.workspaces], undefined, scope);
     }
-    applyNotificationReadModelPatch([...baseline.app, ...baseline.workspaces], undefined, scope);
   };
 
   const currentLayoutSlots = (): WorkspaceLayoutSlotSummary[] =>

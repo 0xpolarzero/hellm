@@ -5825,6 +5825,39 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
+  it("does not let an app rebaseline clear or replace workspace request caches", async () => {
+    const requestInput = createRequestUserInputRequest({ requestId: "rui-workspace" });
+    const approval = createRuntimeApprovalRequest({ requestId: "apr-workspace" });
+    const harness = createFakeRpc({
+      sessions: [],
+      surfaces: [],
+      requestUserInputRequests: [requestInput],
+      runtimeApprovalRequests: [approval],
+    });
+    const runtime = await createRuntime(harness);
+    const rebaselinesBefore = harness.requestCounts.rebaselineStateReadModels;
+    harness.setRebaselineResult({
+      app: [],
+      workspaces: [
+        { kind: "requestInput", value: { requests: [] } },
+        { kind: "approvals", value: { requests: [] } },
+      ],
+      revision: 4 as StateRevision,
+    });
+
+    harness.emitDesktopNotification({
+      kind: "read-model-rebaseline-required",
+      reason: "event-sequence-gap",
+      rebaselineRequired: true,
+      scope: { kind: "app" },
+    });
+
+    await waitFor(() => harness.requestCounts.rebaselineStateReadModels === rebaselinesBefore + 1);
+    expect(runtime.getRequestUserInputRequests()).toEqual([requestInput]);
+    expect(runtime.getRuntimeApprovalRequests()).toEqual([approval]);
+    runtime.dispose();
+  });
+
   it("tracks app log summaries, live updates, static logs panes, and mark-seen requests", async () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
