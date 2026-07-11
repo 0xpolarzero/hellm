@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 describe("retired desktop integration RPC paths", () => {
@@ -97,6 +97,59 @@ describe("retired desktop integration RPC paths", () => {
     expect(violations).toEqual([]);
   });
 
+  it("keeps snippets on state read and command facades with identity-only source opens", async () => {
+    const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const bootstrapSource = await Bun.file(`${import.meta.dir}/app-runtime-bootstrap.ts`).text();
+    const registrySource = await Bun.file(
+      `${import.meta.dir}/workspace-runtime-registry.ts`,
+    ).text();
+    const catalogSource = await Bun.file(`${import.meta.dir}/session-catalog.ts`).text();
+    const chatRuntimeSource = await Bun.file(
+      `${import.meta.dir}/../mainview/chat-runtime.ts`,
+    ).text();
+    const sharedContractSource = await Bun.file(
+      `${import.meta.dir}/../shared/workspace-contract.ts`,
+    ).text();
+    const sharedSnippetsSource = await Bun.file(`${import.meta.dir}/../shared/snippets.ts`).text();
+    const openHandlerSource = backendSource
+      .split("openSnippetSourceInEditor:")[1]
+      ?.split("updateAgentProfile:")[0];
+
+    for (const channel of [
+      "stateSnippetsCreateManaged",
+      "stateSnippetsUpdateManaged",
+      "stateSnippetsDeleteManaged",
+      "stateSnippetsSetEnabled",
+      "openSnippetSourceInEditor",
+    ]) {
+      expect(sharedContractSource).toContain(`${channel}: {`);
+      expect(chatRuntimeSource).toContain(`rpcClient.request.${channel}`);
+      expect(backendSource).toContain(`${channel}:`);
+    }
+    expect(backendSource).toContain("facades.commands.state.snippets.createManaged(request)");
+    expect(backendSource).toContain("facades.commands.state.snippets.updateManaged(request)");
+    expect(backendSource).toContain("facades.commands.state.snippets.deleteManaged(request)");
+    expect(backendSource).toContain("facades.commands.state.snippets.setEnabled(request)");
+    expect(openHandlerSource).toContain('kind: "snippets"');
+    expect(openHandlerSource).toContain("snippetId: input.snippetId");
+    expect(openHandlerSource).not.toContain("input.path");
+    expect(chatRuntimeSource).toContain('case "snippets":');
+    expect(chatRuntimeSource).toContain("workspaceCache.snippets = null");
+    expect(catalogSource).not.toContain("SnippetStore");
+    expect(catalogSource).not.toContain("snippet-library");
+    expect(catalogSource).not.toContain("getSnippets()");
+    expect(bootstrapSource).not.toContain("snippetsSeed");
+    expect(registrySource).not.toContain("snippetsSeed");
+    expect(sharedSnippetsSource).not.toContain("scope:");
+    expect(sharedSnippetsSource).not.toContain("readOnly:");
+    expect(sharedSnippetsSource).not.toContain("createdAt:");
+    expect(sharedSnippetsSource).not.toContain("updatedAt:");
+    expect(existsSync(`${import.meta.dir}/snippet-library.ts`)).toBe(false);
+    expect(existsSync(`${import.meta.dir}/snippet-library.test.ts`)).toBe(false);
+    expect(existsSync(`${import.meta.dir}/snippet-store.ts`)).toBe(false);
+    expect(existsSync(`${import.meta.dir}/snippet-store.test.ts`)).toBe(false);
+  });
+
   it("pins increment-6 legacy renderer RPC channels until pane migration retires them", async () => {
     const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
     const chatRuntimeSource = await Bun.file(
@@ -117,12 +170,6 @@ describe("retired desktop integration RPC paths", () => {
       { channel: "removeExtensionEnvOverride", retirementIncrement: "Increment 10" },
       { channel: "getExtensionsInventory", retirementIncrement: "Increment 8" },
       { channel: "getWorkflowsGenerated", retirementIncrement: "Increment 8" },
-      { channel: "getSnippets", retirementIncrement: "Increment 8" },
-      { channel: "createManagedSnippet", retirementIncrement: "Increment 10" },
-      { channel: "updateManagedSnippet", retirementIncrement: "Increment 10" },
-      { channel: "deleteManagedSnippet", retirementIncrement: "Increment 10" },
-      { channel: "setSnippetEnabled", retirementIncrement: "Increment 10" },
-      { channel: "openSnippetExternalSourceInEditor", retirementIncrement: "Increment 10" },
       { channel: "listSessions", retirementIncrement: "Increment 8" },
       { channel: "getCommandInspector", retirementIncrement: "Increment 8" },
     ] as const;
@@ -138,6 +185,12 @@ describe("retired desktop integration RPC paths", () => {
 
     for (const channel of [
       "getHandlerThreadInspector",
+      "getSnippets",
+      "createManagedSnippet",
+      "updateManagedSnippet",
+      "deleteManagedSnippet",
+      "setSnippetEnabled",
+      "openSnippetExternalSourceInEditor",
       "recordSessionOpened",
       "revertExtensionChange",
       "reorderExtensionInstructionFiles",

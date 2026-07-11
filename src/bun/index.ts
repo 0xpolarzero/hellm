@@ -1415,56 +1415,35 @@ function buildDesktopRpcHandlers(
       getGeneratedAgentContextExternalSources: async (input) => {
         return getWorkspaceRuntime(input).catalog.getGeneratedAgentContextExternalSources();
       },
-      getSnippets: async (input) => {
-        return getWorkspaceRuntime(input).catalog.getSnippets();
-      },
-      createManagedSnippet: async (input) => {
+      stateSnippetsCreateManaged: (request) =>
+        facades.commands.state.snippets.createManaged(request),
+      stateSnippetsUpdateManaged: (request) =>
+        facades.commands.state.snippets.updateManaged(request),
+      stateSnippetsDeleteManaged: (request) =>
+        facades.commands.state.snippets.deleteManaged(request),
+      stateSnippetsSetEnabled: (request) => facades.commands.state.snippets.setEnabled(request),
+      openSnippetSourceInEditor: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const snippet = runtime.catalog.createManagedSnippet(input);
-        runtime.appLog.info("settings", "Snippet created.", {
-          snippetId: snippet.id,
-          title: snippet.title,
-        });
-        return snippet;
-      },
-      updateManagedSnippet: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const snippet = runtime.catalog.updateManagedSnippet(input);
-        runtime.appLog.info("settings", "Snippet updated.", {
-          snippetId: snippet.id,
-          title: snippet.title,
-        });
-        return snippet;
-      },
-      deleteManagedSnippet: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        runtime.catalog.deleteManagedSnippet(input);
-        runtime.appLog.info("settings", "Snippet deleted.", {
+        const readModelResult = await facades.state.readModels.fetch({
+          kind: "snippets",
+          workspaceId: input.workspaceId,
           snippetId: input.snippetId,
         });
-        return { ok: true as const };
-      },
-      setSnippetEnabled: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        runtime.catalog.setSnippetEnabled(input);
-        runtime.appLog.info("settings", input.enabled ? "Snippet enabled." : "Snippet disabled.", {
-          snippetId: input.snippetId,
-        });
-        return { ok: true as const };
-      },
-      openSnippetExternalSourceInEditor: (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const snippet = runtime.catalog
-          .getSnippets()
-          .discovered.find((candidate) => candidate.path === input.path);
-        if (!snippet) {
+        if (readModelResult.kind !== "snippets") {
+          throw new Error(`Expected state read model snippets; received ${readModelResult.kind}.`);
+        }
+        const snippet = readModelResult.value.snippets.find(
+          (candidate) => candidate.id === input.snippetId,
+        );
+        if (!snippet || snippet.source === "svvy" || snippet.path === null) {
           runtime.appLog.warning("external-editor", "Snippet source file is not discoverable.", {
-            path: input.path,
+            snippetId: input.snippetId,
           });
-          throw new Error(`Snippet source file is not discoverable: ${input.path}`);
+          throw new Error(`Discovered snippet source is not available: ${input.snippetId}`);
         }
         const result = openPathInPreferredEditor(runtime, snippet.path);
         runtime.appLog.info("external-editor", "Snippet source opened in external editor.", {
+          snippetId: snippet.id,
           path: snippet.path,
           editor: result.editor,
           opened: result.opened,

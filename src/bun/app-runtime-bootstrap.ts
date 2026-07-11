@@ -100,7 +100,6 @@ import {
 } from "@svvy/state";
 import type { AgentSettingsState, AppPreferences } from "../shared/agent-settings";
 import type { AppWorkspaceTabsState } from "../shared/workspace-contract";
-import type { ManagedSnippet } from "../shared/snippets";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import type { RunAcceptedLoadExtension } from "./extension-tools";
 import type { RunAcceptedRequestUserInput } from "./request-user-input-tool";
@@ -214,11 +213,6 @@ export interface AppRuntimeBootstrapInput {
     hasAgentProfileRows(): boolean;
     hasExtensionEnvRows(): boolean;
     read(): AgentSettingsState;
-  };
-  readonly snippetsSeed?: {
-    hasStateRows(): boolean;
-    readManaged(): readonly ManagedSnippet[];
-    workspaceId: WorkspaceId;
   };
 }
 
@@ -520,10 +514,6 @@ export async function createAppRuntimeBootstrap(
       seed: input.agentSettingsSeed,
       stateCommands,
     });
-    await seedSnippetStateRows({
-      seed: input.snippetsSeed,
-      stateCommands,
-    });
     await subscribeToCommittedAppLogAppends();
     for (const registration of initialWorkspaceStateRegistrations) {
       await subscribeToCommittedAppLogAppends(registration.store.workspaceId as WorkspaceId);
@@ -816,26 +806,6 @@ async function seedAgentSettingsStateRows(input: {
         });
       }
     }
-  }
-}
-
-async function seedSnippetStateRows(input: {
-  readonly seed: AppRuntimeBootstrapInput["snippetsSeed"];
-  readonly stateCommands: StateCommandsFacade;
-}): Promise<void> {
-  if (!input.seed || input.seed.hasStateRows()) return;
-  for (const snippet of input.seed.readManaged()) {
-    await input.stateCommands.snippets.createManaged({
-      workspaceId: input.seed.workspaceId,
-      title: snippet.title,
-      body: snippet.body,
-      metadata: snippet.metadata,
-      enabled: snippet.enabled,
-      clientSubmission: {
-        clientRequestId: `bootstrap-snippet-${snippet.id}` as RuntimeClientRequestId,
-        source: "app-bootstrap" as RuntimeClientSubmissionSource,
-      },
-    });
   }
 }
 

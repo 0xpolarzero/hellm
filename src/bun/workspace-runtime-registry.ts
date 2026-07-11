@@ -2034,14 +2034,6 @@ export class WorkspaceRuntimeRegistry {
           appGlobal.catalog.workspaceStateRouterRegistration().store.hasExtensionEnvOverrideRows(),
         read: () => appGlobal.agentSettingsStore.getState(),
       },
-      snippetsSeed: {
-        hasStateRows: () =>
-          appGlobal.catalog
-            .workspaceStateRouterRegistration()
-            .store.hasSnippetRows(appGlobal.workspaceId),
-        readManaged: () => appGlobal.catalog.getSnippets().managed,
-        workspaceId: appGlobal.workspaceId as WorkspaceId,
-      },
     });
   }
 

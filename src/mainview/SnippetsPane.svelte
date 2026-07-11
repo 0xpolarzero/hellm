@@ -249,12 +249,12 @@
     error = null;
     actionMessage = null;
     try {
-      const created = await runtime.createManagedSnippet({
+      const createdSnippetId = await runtime.createManagedSnippet({
         title: "Untitled snippet",
         body: "",
       });
       await loadSnippets();
-      const snippet = snippets.find((candidate) => candidate.id === created.id);
+      const snippet = snippets.find((candidate) => candidate.id === createdSnippetId);
       if (snippet) selectSnippet(snippet, { force: true });
       actionMessage = "Snippet created.";
     } catch (err) {
@@ -270,7 +270,7 @@
     error = null;
     actionMessage = null;
     try {
-      const updated = await runtime.updateManagedSnippet({
+      await runtime.updateManagedSnippet({
         snippetId: managedSelected.id,
         title: draft.title,
         body: draft.body,
@@ -278,7 +278,7 @@
         argumentHint: draft.argumentHint,
       });
       await loadSnippets();
-      const snippet = snippets.find((candidate) => candidate.id === updated.id);
+      const snippet = snippets.find((candidate) => candidate.id === managedSelected.id);
       if (snippet) selectSnippet(snippet);
       actionMessage = "Snippet saved.";
     } catch (err) {
@@ -342,7 +342,7 @@
     if (snippet.source === "svvy") return;
     actionMessage = null;
     try {
-      const opened = await runtime.openSnippetExternalSourceInEditor(snippet.path);
+      const opened = await runtime.openSnippetSourceInEditor(snippet.id);
       actionMessage = opened
         ? `Opened ${snippet.path}`
         : "Could not open snippet source. Check the configured external editor.";

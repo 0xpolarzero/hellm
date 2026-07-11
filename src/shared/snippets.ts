@@ -1,6 +1,5 @@
 import type {
   ComposerSnippetMention,
-  DiscoveredSnippetScope,
   DiscoveredSnippetSource,
   SentSnippetProvenance,
   SnippetMetadata,
@@ -8,7 +7,6 @@ import type {
 
 export type {
   ComposerSnippetMention,
-  DiscoveredSnippetScope,
   DiscoveredSnippetSource,
   SentSnippetProvenance,
   SnippetMetadata,
@@ -16,19 +14,14 @@ export type {
 } from "@svvy/core";
 export { parseSnippetMarkdown } from "@svvy/core";
 
-export type ExternalSnippetSource = DiscoveredSnippetSource;
-export type SnippetScope = DiscoveredSnippetScope;
-
 export interface DiscoveredSnippet {
   id: string;
-  source: ExternalSnippetSource;
-  scope: SnippetScope;
+  source: DiscoveredSnippetSource;
   title: string;
   path: string;
   body: string;
   metadata: SnippetMetadata;
   enabled: boolean;
-  readOnly: true;
 }
 
 export interface ManagedSnippet {
@@ -38,16 +31,11 @@ export interface ManagedSnippet {
   body: string;
   metadata: SnippetMetadata;
   enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-  readOnly: false;
 }
 
 export type SnippetRecord = ManagedSnippet | DiscoveredSnippet;
 
 export interface SnippetsReadModel {
-  managed: ManagedSnippet[];
-  discovered: DiscoveredSnippet[];
   snippets: SnippetRecord[];
 }
 
@@ -60,14 +48,10 @@ export interface CreateManagedSnippetRequest {
 
 export interface UpdateManagedSnippetRequest {
   snippetId: string;
-  title?: string;
-  body?: string;
-  description?: string | null;
-  argumentHint?: string | null;
-}
-
-export interface DeleteManagedSnippetRequest {
-  snippetId: string;
+  title: string;
+  body: string;
+  description: string | null;
+  argumentHint: string | null;
 }
 
 export interface SetSnippetEnabledRequest {

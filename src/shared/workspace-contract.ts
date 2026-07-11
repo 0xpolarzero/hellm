@@ -21,14 +21,6 @@ import type {
 } from "@svvy/core";
 import type { ComposerSnippetMention, SentSnippetProvenance } from "./snippets";
 import type { GeneratedAgentContextExternalSource } from "./generated-agent-context";
-import type {
-  CreateManagedSnippetRequest,
-  DeleteManagedSnippetRequest,
-  ManagedSnippet,
-  SetSnippetEnabledRequest,
-  SnippetsReadModel,
-  UpdateManagedSnippetRequest,
-} from "./snippets";
 import type { AppMenuAction } from "./shortcut-registry";
 import type {
   AnswerRequestInputResult,
@@ -61,6 +53,8 @@ import type {
   SetRequestInputTimerPausedResult,
   StateRevision,
   SnippetId,
+  SnippetMetadata,
+  SnippetSource,
   SurfacePiSessionId,
   SurfaceStreamGenerationId,
   SurfaceStreamSequence,
@@ -75,9 +69,13 @@ import type {
 } from "@svvy/core";
 import { COMPOSER_ATTACHMENT_TEXT_SIGNATURE_PREFIX } from "@svvy/core";
 import type {
+  CreateManagedSnippetCommandInput,
+  DeleteManagedSnippetCommandInput,
   MarkAppLogReadCommandInput,
+  SetSnippetEnabledCommandInput,
   StateCommandResult,
   UpdateAppPreferencesCommandInput,
+  UpdateManagedSnippetCommandInput,
 } from "@svvy/state";
 
 export type {
@@ -366,10 +364,10 @@ export interface StateSnippetsReadModel {
 
 export interface SnippetReadModelRecord {
   id: SnippetId;
-  source: "svvy" | "claude" | "pi" | "host";
+  source: SnippetSource;
   title: string;
   body: string;
-  metadata: JsonValue;
+  metadata: SnippetMetadata;
   enabled: boolean;
   path: string | null;
   updatedAt: string | null;
@@ -1456,8 +1454,9 @@ export interface OpenGeneratedAgentContextExternalSourceInEditorRequest {
   path: string;
 }
 
-export interface OpenSnippetExternalSourceInEditorRequest {
-  path: string;
+export interface OpenSnippetSourceInEditorRequest {
+  workspaceId: WorkspaceId;
+  snippetId: SnippetId;
 }
 
 export interface OpenWorkspaceSourceInEditorResponse {
@@ -2049,28 +2048,24 @@ export interface ChatRPCSchema {
         params: WorkspaceScopedRequest;
         response: GeneratedAgentContextExternalSource[];
       };
-      getSnippets: {
-        params: WorkspaceScopedRequest;
-        response: SnippetsReadModel;
+      stateSnippetsCreateManaged: {
+        params: CreateManagedSnippetCommandInput;
+        response: StateCommandResult<{ snippetId: SnippetId }>;
       };
-      createManagedSnippet: {
-        params: WorkspaceScoped<CreateManagedSnippetRequest>;
-        response: ManagedSnippet;
+      stateSnippetsUpdateManaged: {
+        params: UpdateManagedSnippetCommandInput;
+        response: StateCommandResult;
       };
-      updateManagedSnippet: {
-        params: WorkspaceScoped<UpdateManagedSnippetRequest>;
-        response: ManagedSnippet;
+      stateSnippetsDeleteManaged: {
+        params: DeleteManagedSnippetCommandInput;
+        response: StateCommandResult;
       };
-      deleteManagedSnippet: {
-        params: WorkspaceScoped<DeleteManagedSnippetRequest>;
-        response: { ok: true };
+      stateSnippetsSetEnabled: {
+        params: SetSnippetEnabledCommandInput;
+        response: StateCommandResult;
       };
-      setSnippetEnabled: {
-        params: WorkspaceScoped<SetSnippetEnabledRequest>;
-        response: { ok: true };
-      };
-      openSnippetExternalSourceInEditor: {
-        params: WorkspaceScoped<OpenSnippetExternalSourceInEditorRequest>;
+      openSnippetSourceInEditor: {
+        params: OpenSnippetSourceInEditorRequest;
         response: OpenWorkspaceSourceInEditorResponse;
       };
       updateAgentProfile: {

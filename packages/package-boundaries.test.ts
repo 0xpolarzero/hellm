@@ -990,6 +990,8 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "StructuredRecoveryWorkScope",
       "StructuredRecoveryWorkRecord",
       "StructuredGeneratedPackageFactRecord",
+      "StructuredGeneratedWorkflowsExportRecord",
+      "ReadGeneratedWorkflowsExportsInput",
       "StructuredGeneratedPackageWorkspaceLinkRecord",
       "StructuredExtensionDependencyApprovalRecord",
       "StructuredExtensionDependencyReadinessRecord",
@@ -10035,10 +10037,7 @@ describe("package boundaries", () => {
       "@svvy/sandbox",
       "@svvy/pi-adapter",
     ];
-    const allowedSharedPackageSubpaths = new Set([
-      "@svvy/state",
-      "@svvy/state/session-navigation",
-    ]);
+    const allowedSharedPackageSubpaths = new Set(["@svvy/state", "@svvy/state/session-navigation"]);
     const violations = listTypeScriptFiles(sharedSourceRoot).flatMap((file) =>
       isTestFile(file)
         ? []
@@ -10069,12 +10068,19 @@ describe("package boundaries", () => {
       ),
     ).toEqual([]);
     expect(
-      readNamedImportNames(join(sharedSourceRoot, "workspace-contract.ts"), "@svvy/state").toSorted(),
+      readNamedImportNames(
+        join(sharedSourceRoot, "workspace-contract.ts"),
+        "@svvy/state",
+      ).toSorted(),
     ).toEqual(
       [
+        "CreateManagedSnippetCommandInput",
+        "DeleteManagedSnippetCommandInput",
         "MarkAppLogReadCommandInput",
+        "SetSnippetEnabledCommandInput",
         "StateCommandResult",
         "UpdateAppPreferencesCommandInput",
+        "UpdateManagedSnippetCommandInput",
       ].toSorted(),
     );
   });

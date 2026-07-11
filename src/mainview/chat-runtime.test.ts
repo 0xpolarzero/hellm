@@ -28,6 +28,7 @@ import {
   type SendPromptRequest,
   type SetRequestUserInputTimerPausedRequest,
   type StateReadModelBaseline,
+  type StateSnippetsReadModel,
   type SurfaceSyncMessage,
   type WorkspaceCommandInspector,
   type WriteCommandStdinRequest,
@@ -60,7 +61,9 @@ import type {
   RequestInputQuestionId,
   RequestInputRequestId,
   RuntimeApprovalId,
+  SnippetId,
   StateRevision,
+  WorkspaceId,
 } from "@svvy/core";
 import { buildWorkspaceSessionNavigation } from "../shared/session-navigation";
 import { executePaletteFallbackPrompt } from "./command-palette";
@@ -157,6 +160,22 @@ type FakeRpcHarness = {
   requestUserInputAnswerRequests: Array<WorkspaceScoped<RequestUserInputAnswerRequest>>;
   runtimeApprovalAnswerRequests: Array<WorkspaceScoped<{ requestId: string; approved: boolean }>>;
   requestUserInputTimerRequests: Array<WorkspaceScoped<SetRequestUserInputTimerPausedRequest>>;
+  snippetCreateRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["stateSnippetsCreateManaged"]>[0]
+  >;
+  snippetUpdateRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["stateSnippetsUpdateManaged"]>[0]
+  >;
+  snippetDeleteRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["stateSnippetsDeleteManaged"]>[0]
+  >;
+  snippetEnableRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["stateSnippetsSetEnabled"]>[0]
+  >;
+  openSnippetSourceRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["openSnippetSourceInEditor"]>[0]
+  >;
+  setSnippetRows: (rows: StateSnippetsReadModel["snippets"]) => void;
   setPromptHandler: (surfacePiSessionId: string, handler: PromptHandler) => void;
   updateSummary: (sessionId: string, updater: (summary: WorkspaceSessionSummary) => void) => void;
   emitWorkspaceSync: (
@@ -764,6 +783,11 @@ function createFakeRpc(input: {
   const requestUserInputTimerRequests: Array<
     WorkspaceScoped<SetRequestUserInputTimerPausedRequest>
   > = [];
+  const snippetCreateRequests: FakeRpcHarness["snippetCreateRequests"] = [];
+  const snippetUpdateRequests: FakeRpcHarness["snippetUpdateRequests"] = [];
+  const snippetDeleteRequests: FakeRpcHarness["snippetDeleteRequests"] = [];
+  const snippetEnableRequests: FakeRpcHarness["snippetEnableRequests"] = [];
+  const openSnippetSourceRequests: FakeRpcHarness["openSnippetSourceRequests"] = [];
   const appLogSeenRequests: number[] = [];
   const branchListRequests: string[] = [];
   const branchSwitchRequests: Array<{ workspaceId: string; branch: string }> = [];
@@ -775,6 +799,7 @@ function createFakeRpc(input: {
   let persistedAppPreferences: AppPreferences = structuredClone(
     DEFAULT_AGENT_SETTINGS_STATE.appPreferences,
   );
+  let snippetRows: StateSnippetsReadModel["snippets"] = [];
   let desktopNotificationSequence = 0;
   let rebaselineResult: StateReadModelBaseline = {
     app: [],
@@ -1113,10 +1138,25 @@ function createFakeRpc(input: {
                 kind: "approvals",
                 value: {
                   requests: structuredClone(
-                    approvalsReadModelRequests.filter((request) => request.status === "pending"),
+                    approvalsReadModelRequests.filter(
+                      (approvalRequest) => approvalRequest.status === "pending",
+                    ),
                   ),
                 },
               };
+            case "snippets": {
+              const rows = request.snippetId
+                ? snippetRows.filter((snippet) => snippet.id === request.snippetId)
+                : snippetRows;
+              return {
+                kind: "snippets",
+                value: {
+                  managed: structuredClone(rows.filter((snippet) => snippet.source === "svvy")),
+                  discovered: structuredClone(rows.filter((snippet) => snippet.source !== "svvy")),
+                  snippets: structuredClone(rows),
+                },
+              };
+            }
             case "workflowTaskAttemptInspector":
               workflowTaskAttemptInspectorRequests.push({
                 workspaceId: request.workspaceId ?? "",
@@ -1166,6 +1206,17 @@ function createFakeRpc(input: {
                   kind: "approvals",
                   workspaceId:
                     descriptor.scope === "workspace" ? descriptor.workspaceId : undefined,
+                }),
+              ];
+            case "snippets":
+              return [
+                await harness.client.request.fetchStateReadModel({
+                  kind: "snippets",
+                  workspaceId:
+                    descriptor.scope === "workspace"
+                      ? descriptor.workspaceId
+                      : (TEST_WORKSPACE_INFO.workspaceId as WorkspaceId),
+                  snippetId: descriptor.invalidation.ids?.[0] as SnippetId | undefined,
                 }),
               ];
             default:
@@ -1519,42 +1570,80 @@ function createFakeRpc(input: {
           path,
         }),
         getGeneratedAgentContextExternalSources: async () => [],
-        getSnippets: async () => ({ managed: [], discovered: [], snippets: [] }),
-        createManagedSnippet: async ({ title, body, description, argumentHint }) => ({
-          id: "snippet-1",
-          source: "svvy",
-          title,
-          body,
-          metadata: {
-            description: description ?? null,
-            argumentHint: argumentHint ?? null,
-          },
-          enabled: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          readOnly: false,
-        }),
-        updateManagedSnippet: async ({ snippetId, title, body, description, argumentHint }) => ({
-          id: snippetId,
-          source: "svvy",
-          title: title ?? "Updated snippet",
-          body: body ?? "",
-          metadata: {
-            description: description ?? null,
-            argumentHint: argumentHint ?? null,
-          },
-          enabled: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          readOnly: false,
-        }),
-        deleteManagedSnippet: async () => ({ ok: true }),
-        setSnippetEnabled: async () => ({ ok: true }),
-        openSnippetExternalSourceInEditor: async ({ path }) => ({
-          opened: true,
-          editor: "system",
-          path,
-        }),
+        stateSnippetsCreateManaged: async (request) => {
+          snippetCreateRequests.push(structuredClone(request));
+          const snippetId = "snippet-1" as SnippetId;
+          snippetRows = [
+            ...snippetRows,
+            {
+              id: snippetId,
+              source: "svvy",
+              title: request.title,
+              body: request.body,
+              metadata: structuredClone(request.metadata),
+              enabled: request.enabled,
+              path: null,
+              updatedAt: new Date(0).toISOString(),
+            },
+          ];
+          return {
+            snippetId,
+            receipt: {
+              clientRequestId: request.clientSubmission?.clientRequestId ?? null,
+              outcome: "applied",
+              committedAt: new Date(0).toISOString() as typeof IsoDateTimeStringSchema.Type,
+              stateRevision: 1 as StateRevision,
+            },
+          };
+        },
+        stateSnippetsUpdateManaged: async (request) => {
+          snippetUpdateRequests.push(structuredClone(request));
+          snippetRows = snippetRows.map((snippet) =>
+            snippet.id === request.snippetId ? { ...snippet, ...request.patch } : snippet,
+          );
+          return {
+            receipt: {
+              clientRequestId: request.clientSubmission?.clientRequestId ?? null,
+              outcome: "applied",
+              committedAt: new Date(0).toISOString() as typeof IsoDateTimeStringSchema.Type,
+              stateRevision: 1 as StateRevision,
+            },
+          };
+        },
+        stateSnippetsDeleteManaged: async (request) => {
+          snippetDeleteRequests.push(structuredClone(request));
+          snippetRows = snippetRows.filter((snippet) => snippet.id !== request.snippetId);
+          return {
+            receipt: {
+              clientRequestId: request.clientSubmission?.clientRequestId ?? null,
+              outcome: "applied",
+              committedAt: new Date(0).toISOString() as typeof IsoDateTimeStringSchema.Type,
+              stateRevision: 1 as StateRevision,
+            },
+          };
+        },
+        stateSnippetsSetEnabled: async (request) => {
+          snippetEnableRequests.push(structuredClone(request));
+          snippetRows = snippetRows.map((snippet) =>
+            snippet.id === request.snippetId ? { ...snippet, enabled: request.enabled } : snippet,
+          );
+          return {
+            receipt: {
+              clientRequestId: request.clientSubmission?.clientRequestId ?? null,
+              outcome: "applied",
+              committedAt: new Date(0).toISOString() as typeof IsoDateTimeStringSchema.Type,
+              stateRevision: 1 as StateRevision,
+            },
+          };
+        },
+        openSnippetSourceInEditor: async (request) => {
+          openSnippetSourceRequests.push(structuredClone(request));
+          return {
+            opened: true,
+            editor: "system",
+            path: snippetRows.find((snippet) => snippet.id === request.snippetId)?.path ?? "",
+          };
+        },
         listSessions: async () => {
           requestCounts.listSessions += 1;
           return {
@@ -2345,6 +2434,11 @@ function createFakeRpc(input: {
     requestUserInputAnswerRequests,
     runtimeApprovalAnswerRequests,
     requestUserInputTimerRequests,
+    snippetCreateRequests,
+    snippetUpdateRequests,
+    snippetDeleteRequests,
+    snippetEnableRequests,
+    openSnippetSourceRequests,
     appLogSeenRequests,
     branchListRequests,
     branchSwitchRequests,
@@ -2371,6 +2465,9 @@ function createFakeRpc(input: {
     },
     setApprovalsReadModelRequests: (requests) => {
       approvalsReadModelRequests = structuredClone([...requests]);
+    },
+    setSnippetRows: (rows) => {
+      snippetRows = structuredClone(rows);
     },
     getRetainCount: (surfacePiSessionId) => surfaces.get(surfacePiSessionId)?.retainCount ?? 0,
     getSurfaceSnapshot: (surfacePiSessionId) =>
@@ -5701,6 +5798,212 @@ describe("createChatRuntime", () => {
       },
     });
 
+    runtime.dispose();
+  });
+
+  it("routes snippet mutations through exact state commands and opens discovered sources by identity", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    const discoveredSnippetId = "claude:user:/tmp/review.md" as SnippetId;
+    harness.setSnippetRows([
+      {
+        id: discoveredSnippetId,
+        source: "claude",
+        title: "Review",
+        body: "Review $1",
+        metadata: { description: "Review a target", argumentHint: "target" },
+        enabled: true,
+        path: "/tmp/review.md",
+        updatedAt: "2026-07-11T00:00:00.000Z" as never,
+      },
+    ]);
+    const runtime = await createRuntime(harness);
+
+    expect(await runtime.getSnippets()).toEqual({
+      snippets: [
+        expect.objectContaining({
+          id: discoveredSnippetId,
+          source: "claude",
+          path: "/tmp/review.md",
+        }),
+      ],
+    });
+
+    const createdSnippetId = await runtime.createManagedSnippet({
+      title: "  Plan  ",
+      body: "Plan $ARGUMENTS",
+      description: "  Make a plan  ",
+      argumentHint: "   ",
+    });
+    expect(harness.snippetCreateRequests).toEqual([
+      expect.objectContaining({
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+        title: "  Plan  ",
+        body: "Plan $ARGUMENTS",
+        metadata: { description: "Make a plan", argumentHint: null },
+        enabled: true,
+        clientSubmission: expect.objectContaining({ source: "desktop" }),
+      }),
+    ]);
+    expect(
+      runtime.snippetsSnapshot?.snippets.some((snippet) => snippet.id === createdSnippetId),
+    ).toBe(true);
+
+    await runtime.updateManagedSnippet({
+      snippetId: createdSnippetId,
+      title: "Plan next",
+      body: "Plan $1",
+      description: "Next step",
+      argumentHint: "target",
+    });
+    expect(harness.snippetUpdateRequests[0]).toMatchObject({
+      workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+      snippetId: createdSnippetId,
+      patch: {
+        title: "Plan next",
+        body: "Plan $1",
+        metadata: { description: "Next step", argumentHint: "target" },
+      },
+    });
+    expect(
+      runtime.snippetsSnapshot?.snippets.find((snippet) => snippet.id === createdSnippetId)?.title,
+    ).toBe("Plan next");
+
+    await runtime.setSnippetEnabled({ snippetId: discoveredSnippetId, enabled: false });
+    expect(harness.snippetEnableRequests[0]).toMatchObject({
+      workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+      snippetId: discoveredSnippetId,
+      enabled: false,
+    });
+    expect(
+      runtime.snippetsSnapshot?.snippets.find((snippet) => snippet.id === discoveredSnippetId)
+        ?.enabled,
+    ).toBe(false);
+
+    expect(await runtime.openSnippetSourceInEditor(discoveredSnippetId)).toBe(true);
+    expect(harness.openSnippetSourceRequests).toEqual([
+      {
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        snippetId: discoveredSnippetId,
+      },
+    ]);
+
+    await runtime.deleteManagedSnippet(createdSnippetId);
+    expect(harness.snippetDeleteRequests[0]).toMatchObject({
+      workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+      snippetId: createdSnippetId,
+    });
+    expect(
+      runtime.snippetsSnapshot?.snippets.some((snippet) => snippet.id === createdSnippetId),
+    ).toBe(false);
+    runtime.dispose();
+  });
+
+  it("applies snippet invalidations and workspace rebaselines to the renderer cache", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    const runtime = await createRuntime(harness);
+    await runtime.getSnippets();
+    const firstSnippetId = "pi:user:/tmp/first.md" as SnippetId;
+    harness.setSnippetRows([
+      {
+        id: firstSnippetId,
+        source: "pi",
+        title: "First",
+        body: "First body",
+        metadata: { description: null, argumentHint: null },
+        enabled: true,
+        path: "/tmp/first.md",
+        updatedAt: "2026-07-11T00:00:00.000Z" as never,
+      },
+    ]);
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 1 as never,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+      },
+      invalidation: {
+        scope: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        invalidation: { model: "snippets", ids: [firstSnippetId] },
+      },
+    });
+
+    await waitFor(() => runtime.snippetsSnapshot?.snippets[0]?.id === firstSnippetId);
+    const secondSnippetId = "claude:workspace:/tmp/second.md" as SnippetId;
+    harness.setRebaselineResult({
+      app: [],
+      workspaces: [
+        {
+          kind: "snippets",
+          value: {
+            managed: [],
+            discovered: [
+              {
+                id: secondSnippetId,
+                source: "claude",
+                title: "Second",
+                body: "Second body",
+                metadata: { description: null, argumentHint: null },
+                enabled: true,
+                path: "/tmp/second.md",
+                updatedAt: "2026-07-11T00:01:00.000Z" as never,
+              },
+            ],
+            snippets: [
+              {
+                id: secondSnippetId,
+                source: "claude",
+                title: "Second",
+                body: "Second body",
+                metadata: { description: null, argumentHint: null },
+                enabled: true,
+                path: "/tmp/second.md",
+                updatedAt: "2026-07-11T00:01:00.000Z" as never,
+              },
+            ],
+          },
+        },
+      ],
+      revision: 2 as StateRevision,
+    });
+    harness.emitDesktopNotification({
+      kind: "read-model-rebaseline-required",
+      reason: "event-sequence-gap",
+      rebaselineRequired: true,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+      },
+    });
+
+    await waitFor(() => runtime.snippetsSnapshot?.snippets[0]?.id === secondSnippetId);
+    expect(runtime.snippetsSnapshot?.snippets).toEqual([
+      expect.objectContaining({ id: secondSnippetId, source: "claude", path: "/tmp/second.md" }),
+    ]);
+    runtime.dispose();
+  });
+
+  it("rejects malformed state snippet rows instead of inferring renderer ownership", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    harness.setSnippetRows([
+      {
+        id: "managed-with-path" as SnippetId,
+        source: "svvy",
+        title: "Managed",
+        body: "body",
+        metadata: { description: null, argumentHint: null },
+        enabled: true,
+        path: "/tmp/not-managed.md",
+        updatedAt: "2026-07-11T00:00:00.000Z" as never,
+      },
+    ]);
+    const runtime = await createRuntime(harness);
+
+    await expect(runtime.getSnippets()).rejects.toThrow(
+      "Managed snippet managed-with-path unexpectedly has an external source path.",
+    );
     runtime.dispose();
   });
 

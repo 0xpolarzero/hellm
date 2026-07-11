@@ -20,6 +20,7 @@ import type {
   RuntimeClientSubmissionSource,
   RuntimeAttachmentId,
   RuntimeSubmittedAttachment,
+  SnippetId,
   WorkflowTaskAttemptId,
   WorkspaceId,
   WorkspaceRelativePath,
@@ -94,6 +95,7 @@ import {
   type SetExtensionTypescriptApiRequest,
   type StateReadModelBaseline,
   type StateReadModelResult,
+  type StateSnippetsReadModel,
   type UpdateExtensionInstructionFileRequest,
   type UpdateWorkflowAgentResponse,
   type WriteCommandStdinRequest,
@@ -105,9 +107,9 @@ import type { GeneratedAgentContextExternalSource } from "../shared/generated-ag
 import type {
   ComposerSnippetMention,
   CreateManagedSnippetRequest,
-  ManagedSnippet,
   SentSnippetProvenance,
   SetSnippetEnabledRequest,
+  SnippetRecord,
   SnippetsReadModel,
   UpdateManagedSnippetRequest,
 } from "../shared/snippets";
@@ -245,6 +247,30 @@ function requireStateReadModel<Kind extends StateReadModelResult["kind"]>(
     throw new Error(`Expected state read model ${kind}; received ${result.kind}.`);
   }
   return result as Extract<StateReadModelResult, { kind: Kind }>;
+}
+
+function snippetsFromStateReadModel(readModel: StateSnippetsReadModel): SnippetsReadModel {
+  return {
+    snippets: readModel.snippets.map((record): SnippetRecord => {
+      const common = {
+        id: record.id,
+        title: record.title,
+        body: record.body,
+        metadata: structuredClone(record.metadata),
+        enabled: record.enabled,
+      };
+      if (record.source === "svvy") {
+        if (record.path !== null) {
+          throw new Error(`Managed snippet ${record.id} unexpectedly has an external source path.`);
+        }
+        return { ...common, source: "svvy" };
+      }
+      if (record.path === null) {
+        throw new Error(`Discovered snippet ${record.id} is missing its external source path.`);
+      }
+      return { ...common, source: record.source, path: record.path };
+    }),
+  };
 }
 
 function appPreferencesFromStateReadModel(
@@ -715,12 +741,11 @@ export interface ChatRuntimeRpcClient {
     setExtensionEnvOverride: typeof rpc.request.setExtensionEnvOverride;
     removeExtensionEnvOverride: typeof rpc.request.removeExtensionEnvOverride;
     getGeneratedAgentContextExternalSources: typeof rpc.request.getGeneratedAgentContextExternalSources;
-    getSnippets: typeof rpc.request.getSnippets;
-    createManagedSnippet: typeof rpc.request.createManagedSnippet;
-    updateManagedSnippet: typeof rpc.request.updateManagedSnippet;
-    deleteManagedSnippet: typeof rpc.request.deleteManagedSnippet;
-    setSnippetEnabled: typeof rpc.request.setSnippetEnabled;
-    openSnippetExternalSourceInEditor: typeof rpc.request.openSnippetExternalSourceInEditor;
+    stateSnippetsCreateManaged: typeof rpc.request.stateSnippetsCreateManaged;
+    stateSnippetsUpdateManaged: typeof rpc.request.stateSnippetsUpdateManaged;
+    stateSnippetsDeleteManaged: typeof rpc.request.stateSnippetsDeleteManaged;
+    stateSnippetsSetEnabled: typeof rpc.request.stateSnippetsSetEnabled;
+    openSnippetSourceInEditor: typeof rpc.request.openSnippetSourceInEditor;
     updateAgentProfile: typeof rpc.request.updateAgentProfile;
     deleteAgentProfile: typeof rpc.request.deleteAgentProfile;
     reorderOrchestratorAgents: typeof rpc.request.reorderOrchestratorAgents;
@@ -1002,11 +1027,11 @@ export interface ChatRuntime {
     settings: RequestUserInputSettings,
   ) => Promise<AgentSettingsState>;
   getSnippets: () => Promise<SnippetsReadModel>;
-  createManagedSnippet: (input: CreateManagedSnippetRequest) => Promise<ManagedSnippet>;
-  updateManagedSnippet: (input: UpdateManagedSnippetRequest) => Promise<ManagedSnippet>;
+  createManagedSnippet: (input: CreateManagedSnippetRequest) => Promise<SnippetId>;
+  updateManagedSnippet: (input: UpdateManagedSnippetRequest) => Promise<void>;
   deleteManagedSnippet: (snippetId: string) => Promise<void>;
   setSnippetEnabled: (input: SetSnippetEnabledRequest) => Promise<void>;
-  openSnippetExternalSourceInEditor: (path: string) => Promise<boolean>;
+  openSnippetSourceInEditor: (snippetId: string) => Promise<boolean>;
 }
 
 function createFailureMessage(
@@ -1929,8 +1954,16 @@ export async function createChatRuntime(
   const refreshWorkflowsGenerated = async (): Promise<WorkspaceWorkflowsGeneratedReadModel> =>
     setAppCache("workflowsGenerated", await rpcClient.request.getWorkflowsGenerated(scoped()))!;
 
-  const refreshSnippets = async (): Promise<SnippetsReadModel> =>
-    setWorkspaceCache("snippets", await rpcClient.request.getSnippets(scoped()))!;
+  const refreshSnippets = async (): Promise<SnippetsReadModel> => {
+    const result = requireStateReadModel(
+      await rpcClient.request.fetchStateReadModel({
+        kind: "snippets",
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+      }),
+      "snippets",
+    );
+    return setWorkspaceCache("snippets", snippetsFromStateReadModel(result.value))!;
+  };
 
   const refreshRequestInput = async (): Promise<WorkspaceRequestUserInputRequest[]> => {
     const result = requireStateReadModel(
@@ -2042,9 +2075,6 @@ export async function createChatRuntime(
       ) {
         void refreshWorkflowsGenerated().catch(() => undefined);
       }
-      if (refreshAll || domains.includes("host_snippets")) {
-        void refreshSnippets().catch(() => undefined);
-      }
     }
   };
 
@@ -2136,6 +2166,9 @@ export async function createChatRuntime(
         case "approvals":
           runtimeApprovalRequests = structuredClone([...result.value.requests]);
           break;
+        case "snippets":
+          setWorkspaceCache("snippets", snippetsFromStateReadModel(result.value));
+          break;
       }
     }
     emit();
@@ -2153,6 +2186,7 @@ export async function createChatRuntime(
     } else {
       const workspaceCache = workspaceReadModelCache(workspaceInfo.workspaceId);
       workspaceCache.appLogs = null;
+      workspaceCache.snippets = null;
       backendAppLogSummary = emptyAppLogSummary();
       appLogSummary = summarizeRendererAppLogs(
         backendAppLogSummary,
@@ -3753,25 +3787,70 @@ export async function createChatRuntime(
     getGeneratedAgentContextExternalSources: refreshExternalInstructionSources,
     getSnippets: refreshSnippets,
     createManagedSnippet: async (input) => {
-      const created = await rpcClient.request.createManagedSnippet(scoped(input));
-      void refreshSnippets().catch(() => undefined);
-      return created;
+      const result = await rpcClient.request.stateSnippetsCreateManaged({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        title: input.title,
+        body: input.body,
+        metadata: {
+          description: input.description?.trim() || null,
+          argumentHint: input.argumentHint?.trim() || null,
+        },
+        enabled: true,
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
+      await refreshSnippets();
+      return result.snippetId;
     },
     updateManagedSnippet: async (input) => {
-      const updated = await rpcClient.request.updateManagedSnippet(scoped(input));
-      void refreshSnippets().catch(() => undefined);
-      return updated;
+      await rpcClient.request.stateSnippetsUpdateManaged({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        snippetId: input.snippetId as SnippetId,
+        patch: {
+          title: input.title,
+          body: input.body,
+          metadata: {
+            description: input.description?.trim() || null,
+            argumentHint: input.argumentHint?.trim() || null,
+          },
+        },
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
+      await refreshSnippets();
     },
     deleteManagedSnippet: async (snippetId) => {
-      await rpcClient.request.deleteManagedSnippet(scoped({ snippetId }));
-      void refreshSnippets().catch(() => undefined);
+      await rpcClient.request.stateSnippetsDeleteManaged({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        snippetId: snippetId as SnippetId,
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
+      await refreshSnippets();
     },
     setSnippetEnabled: async (input) => {
-      await rpcClient.request.setSnippetEnabled(scoped(input));
-      void refreshSnippets().catch(() => undefined);
+      await rpcClient.request.stateSnippetsSetEnabled({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        snippetId: input.snippetId as SnippetId,
+        enabled: input.enabled,
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
+      await refreshSnippets();
     },
-    openSnippetExternalSourceInEditor: async (path) => {
-      const result = await rpcClient.request.openSnippetExternalSourceInEditor(scoped({ path }));
+    openSnippetSourceInEditor: async (snippetId) => {
+      const result = await rpcClient.request.openSnippetSourceInEditor({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        snippetId: snippetId as SnippetId,
+      });
       return result.opened;
     },
   };

@@ -221,20 +221,6 @@ import {
   type GeneratedAgentContextStore,
 } from "./generated-agent-context-store";
 import {
-  applySnippetEnablement,
-  buildSnippetsReadModel,
-  discoverSnippets,
-} from "./snippet-library";
-import { createSnippetStore, type SnippetStore } from "./snippet-store";
-import type {
-  CreateManagedSnippetRequest,
-  DeleteManagedSnippetRequest,
-  ManagedSnippet,
-  SetSnippetEnabledRequest,
-  SnippetsReadModel,
-  UpdateManagedSnippetRequest,
-} from "../shared/snippets";
-import {
   createThreadCurrentTool,
   createThreadEpisodesTool,
   createThreadGroupTool,
@@ -567,7 +553,6 @@ export class WorkspaceSessionCatalog {
   private readonly generatedAgentContextAggregateCache: ReturnType<
     typeof createGeneratedAgentContextAggregateCache
   >;
-  private readonly snippetStore: SnippetStore;
   private readonly extensionsRoot: string;
   private readonly requestUserInputRuntime = new RequestUserInputRuntime();
   private readonly approvalBoundary: RuntimeApprovalBoundary;
@@ -670,9 +655,6 @@ export class WorkspaceSessionCatalog {
       extensionsRoot: this.extensionsRoot,
     });
     this.generatedAgentContextStore.getState();
-    this.snippetStore = createSnippetStore({
-      agentDir: this.sessionDir,
-    });
     this.recoveryCoordinator = new WorkspaceRecoveryCoordinator(
       this.workspaceId as WorkspaceId,
       this.runtimeRecoveryStatePort,
@@ -1060,35 +1042,6 @@ export class WorkspaceSessionCatalog {
 
   async getGeneratedAgentContextExternalSources(): Promise<GeneratedAgentContextExternalSource[]> {
     return this.buildCurrentExternalContextSources();
-  }
-
-  getSnippets(): SnippetsReadModel {
-    return buildSnippetsReadModel({
-      managed: this.snippetStore.listManaged(),
-      discovered: applySnippetEnablement(
-        discoverSnippets({
-          homeDir: homedir(),
-          workspaceDir: this.cwd,
-        }),
-        this.snippetStore.listDisabledSnippetIds(),
-      ),
-    });
-  }
-
-  createManagedSnippet(input: CreateManagedSnippetRequest): ManagedSnippet {
-    return this.snippetStore.createManaged(input);
-  }
-
-  updateManagedSnippet(input: UpdateManagedSnippetRequest): ManagedSnippet {
-    return this.snippetStore.updateManaged(input);
-  }
-
-  deleteManagedSnippet(input: DeleteManagedSnippetRequest): void {
-    this.snippetStore.deleteManaged(input);
-  }
-
-  setSnippetEnabled(input: SetSnippetEnabledRequest): void {
-    this.snippetStore.setEnabled(input);
   }
 
   private async buildCurrentExternalContextSources(): Promise<

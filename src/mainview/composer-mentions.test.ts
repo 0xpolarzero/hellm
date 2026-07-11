@@ -36,9 +36,6 @@ const SNIPPET: ManagedSnippet = {
     argumentHint: "target",
   },
   enabled: true,
-  createdAt: "2026-06-10T10:00:00.000Z",
-  updatedAt: "2026-06-10T10:00:00.000Z",
-  readOnly: false,
 };
 
 describe("composer mention query detection", () => {

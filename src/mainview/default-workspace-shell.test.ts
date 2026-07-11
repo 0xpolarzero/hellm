@@ -235,7 +235,8 @@ describe("default workspace renderer shell", () => {
     expect(runtimeSource).toContain("rpcClient.request.getWorkflowsGenerated(scoped())");
     expect(runtimeSource).not.toContain("rpcClient.request.getGeneratedAgentContext(scoped())");
     expect(runtimeSource).not.toContain("rpcClient.request.updateGeneratedAgentContext");
-    expect(runtimeSource).toContain("rpcClient.request.getSnippets(scoped())");
+    expect(runtimeSource).toContain('kind: "snippets"');
+    expect(runtimeSource).toContain("workspaceId: workspaceInfo.workspaceId as WorkspaceId");
     expect(runtimeSource).toContain("rpcClient.request.listSessions(scoped())");
     expect(runtimeSource).toContain('fetchStateReadModel({ kind: "appPreferences" })');
     expect(runtimeSource).not.toContain("getAppPreferences(scoped");
@@ -245,7 +246,9 @@ describe("default workspace renderer shell", () => {
     expect(contractSource).toContain("export interface WorkspaceScopedRequest");
     expect(contractSource).toContain("workspaceId: string;");
     expect(contractSource).not.toContain("getAppPreferences: {\n        params: undefined;");
-    expect(contractSource).not.toContain("updateAppPreferences: {\n        params: AppPreferences;");
+    expect(contractSource).not.toContain(
+      "updateAppPreferences: {\n        params: AppPreferences;",
+    );
     expect(contractSource).toContain("stateAppPreferencesUpdate: {");
     expect(contractSource).toContain("getAppWorkspaceTabs: {\n        params: undefined;");
     expect(contractSource).toContain(
