@@ -2104,6 +2104,12 @@ export async function createChatRuntime(
             ),
           );
           break;
+        case "requestInput":
+          requestUserInputRequests = structuredClone([...result.value.requests]);
+          break;
+        case "approvals":
+          runtimeApprovalRequests = structuredClone([...result.value.requests]);
+          break;
       }
     }
     emit();

@@ -143,6 +143,8 @@ type FakeRpcHarness = {
   emitDesktopNotification: (payload: DesktopRendererNotification) => void;
   setRebaselineResult: (baseline: StateReadModelBaseline) => void;
   setAppGlobalLogs: (readModel: AppLogReadModel) => void;
+  setRequestInputReadModelRequests: (requests: readonly WorkspaceRequestUserInputRequest[]) => void;
+  setApprovalsReadModelRequests: (requests: readonly WorkspaceRuntimeApprovalRequest[]) => void;
   commandInspectorRequests: Array<{ sessionId: string; commandId: string }>;
   commandStdinRequests: Array<WorkspaceScoped<WriteCommandStdinRequest>>;
   handlerThreadListRequests: string[];
@@ -634,6 +636,29 @@ function createRequestUserInputRequest(
   };
 }
 
+function createRuntimeApprovalRequest(
+  overrides: Partial<WorkspaceRuntimeApprovalRequest> = {},
+): WorkspaceRuntimeApprovalRequest {
+  return {
+    requestId: "apr-request-1",
+    workspaceSessionId: "session-1",
+    surfacePiSessionId: "session-1",
+    threadId: null,
+    ownerTitle: "Orchestrator",
+    toolName: "exec_command",
+    approvalMode: "user",
+    cwd: "/tmp/workspace",
+    command: "printf approved",
+    commandFamily: null,
+    snippetArtifactId: null,
+    status: "pending",
+    createdAt: "2026-04-10T10:12:00.000Z",
+    completedAt: null,
+    summary: "Run command: printf approved",
+    ...structuredClone(overrides),
+  };
+}
+
 function createMemoryStorage(): ChatStorage {
   const customProviders = new Map<string, CustomProvider>();
   const promptHistory = new Map<string, PromptHistoryEntry[]>();
@@ -730,6 +755,8 @@ function createFakeRpc(input: {
   }> = [];
   const requestUserInputRequests = structuredClone(input.requestUserInputRequests ?? []);
   const runtimeApprovalRequests = structuredClone(input.runtimeApprovalRequests ?? []);
+  let requestInputReadModelRequests = structuredClone(input.requestUserInputRequests ?? []);
+  let approvalsReadModelRequests = structuredClone(input.runtimeApprovalRequests ?? []);
   const requestUserInputAnswerRequests: Array<WorkspaceScoped<RequestUserInputAnswerRequest>> = [];
   const runtimeApprovalAnswerRequests: Array<
     WorkspaceScoped<{ requestId: string; approved: boolean }>
@@ -1087,6 +1114,16 @@ function createFakeRpc(input: {
                   usableModelProviders: ["openai" as ProviderId],
                 },
               };
+            case "requestInput":
+              return {
+                kind: "requestInput",
+                value: { requests: structuredClone(requestInputReadModelRequests) },
+              };
+            case "approvals":
+              return {
+                kind: "approvals",
+                value: { requests: structuredClone(approvalsReadModelRequests) },
+              };
             case "workflowTaskAttemptInspector":
               workflowTaskAttemptInspectorRequests.push({
                 workspaceId: request.workspaceId ?? "",
@@ -1122,6 +1159,22 @@ function createFakeRpc(input: {
               return [await harness.client.request.fetchStateReadModel({ kind: "settings" })];
             case "providerAuth":
               return [await harness.client.request.fetchStateReadModel({ kind: "providerAuth" })];
+            case "requestInput":
+              return [
+                await harness.client.request.fetchStateReadModel({
+                  kind: "requestInput",
+                  workspaceId:
+                    descriptor.scope === "workspace" ? descriptor.workspaceId : undefined,
+                }),
+              ];
+            case "runtimeApprovals":
+              return [
+                await harness.client.request.fetchStateReadModel({
+                  kind: "approvals",
+                  workspaceId:
+                    descriptor.scope === "workspace" ? descriptor.workspaceId : undefined,
+                }),
+              ];
             default:
               return [];
           }
@@ -2329,6 +2382,12 @@ function createFakeRpc(input: {
     setAppGlobalLogs: (readModel) => {
       appGlobalLogs = structuredClone(readModel);
     },
+    setRequestInputReadModelRequests: (requests) => {
+      requestInputReadModelRequests = structuredClone([...requests]);
+    },
+    setApprovalsReadModelRequests: (requests) => {
+      approvalsReadModelRequests = structuredClone([...requests]);
+    },
     getRetainCount: (surfacePiSessionId) => surfaces.get(surfacePiSessionId)?.retainCount ?? 0,
     getSurfaceSnapshot: (surfacePiSessionId) =>
       structuredClone(getSurfaceRecord(surfacePiSessionId).snapshot),
@@ -2538,23 +2597,7 @@ describe("createChatRuntime", () => {
   });
 
   it("hydrates runtime approval requests and answers them through the workspace RPC", async () => {
-    const runtimeApprovalRequest: WorkspaceRuntimeApprovalRequest = {
-      requestId: "apr-request-1",
-      workspaceSessionId: "session-1",
-      surfacePiSessionId: "session-1",
-      threadId: null,
-      ownerTitle: "Orchestrator",
-      toolName: "exec_command",
-      approvalMode: "user",
-      cwd: "/tmp/workspace",
-      command: "printf approved",
-      commandFamily: null,
-      snippetArtifactId: null,
-      status: "pending",
-      createdAt: "2026-04-10T10:12:00.000Z",
-      completedAt: null,
-      summary: "Run command: printf approved",
-    };
+    const runtimeApprovalRequest = createRuntimeApprovalRequest();
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "Waiting")],
       runtimeApprovalRequests: [runtimeApprovalRequest],
@@ -5701,6 +5744,100 @@ describe("createChatRuntime", () => {
         authHealth: "available",
       }),
     ]);
+    runtime.dispose();
+  });
+
+  it("applies request-input and approval invalidations without refreshing the legacy session catalog", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    const runtime = await createRuntime(harness);
+    const requestInput = createRequestUserInputRequest();
+    const approval = createRuntimeApprovalRequest();
+    const sessionListingsBeforeInvalidations = harness.requestCounts.listSessions;
+
+    harness.setRequestInputReadModelRequests([requestInput]);
+    harness.setApprovalsReadModelRequests([approval]);
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 1 as never,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as never,
+      },
+      invalidation: {
+        scope: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as never,
+        invalidation: { model: "requestInput", ids: [requestInput.requestId as never] },
+      },
+    });
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 1 as never,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as never,
+      },
+      invalidation: {
+        scope: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as never,
+        invalidation: { model: "runtimeApprovals", ids: [approval.requestId as never] },
+      },
+    });
+
+    await waitFor(
+      () =>
+        runtime.getRequestUserInputRequests().length === 1 &&
+        runtime.getRuntimeApprovalRequests().length === 1,
+    );
+
+    expect(runtime.getRequestUserInputRequests()).toEqual([requestInput]);
+    expect(runtime.getRuntimeApprovalRequests()).toEqual([approval]);
+    expect(harness.requestCounts.listSessions).toBe(sessionListingsBeforeInvalidations);
+    runtime.dispose();
+  });
+
+  it("replaces request-input and approval caches from a workspace rebaseline without refreshing the legacy session catalog", async () => {
+    const staleRequestInput = createRequestUserInputRequest({ requestId: "rui-stale" });
+    const staleApproval = createRuntimeApprovalRequest({ requestId: "apr-stale" });
+    const harness = createFakeRpc({
+      sessions: [],
+      surfaces: [],
+      requestUserInputRequests: [staleRequestInput],
+      runtimeApprovalRequests: [staleApproval],
+    });
+    const runtime = await createRuntime(harness);
+    const requestInput = createRequestUserInputRequest({ requestId: "rui-current" });
+    const approval = createRuntimeApprovalRequest({ requestId: "apr-current" });
+    const sessionListingsBeforeRebaseline = harness.requestCounts.listSessions;
+    harness.setRebaselineResult({
+      app: [],
+      workspaces: [
+        { kind: "requestInput", value: { requests: [requestInput] } },
+        { kind: "approvals", value: { requests: [approval] } },
+      ],
+      revision: 3 as StateRevision,
+    });
+
+    harness.emitDesktopNotification({
+      kind: "read-model-rebaseline-required",
+      reason: "event-sequence-gap",
+      rebaselineRequired: true,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as never,
+      },
+    });
+
+    await waitFor(
+      () =>
+        runtime.getRequestUserInputRequests()[0]?.requestId === requestInput.requestId &&
+        runtime.getRuntimeApprovalRequests()[0]?.requestId === approval.requestId,
+    );
+
+    expect(runtime.getRequestUserInputRequests()).toEqual([requestInput]);
+    expect(runtime.getRuntimeApprovalRequests()).toEqual([approval]);
+    expect(harness.requestCounts.listSessions).toBe(sessionListingsBeforeRebaseline);
     runtime.dispose();
   });
 
