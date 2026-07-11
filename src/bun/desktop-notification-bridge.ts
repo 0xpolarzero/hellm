@@ -278,7 +278,13 @@ export function createDesktopNotificationBridge(
           subscriptionScope: record.context.kind,
           surfaceCursors,
         });
+        const workspaceScopesChanged =
+          event.type === "workspace_read_model.changed" &&
+          event.invalidation.model === "workspaceChromeLayout";
         if (!notification) {
+          if (workspaceScopesChanged) {
+            await scheduleReconciliation();
+          }
           continue;
         }
         if (notification.kind === "read-model-rebaseline-required") {
@@ -286,6 +292,9 @@ export function createDesktopNotificationBridge(
           return;
         }
         emit(notification);
+        if (workspaceScopesChanged) {
+          await scheduleReconciliation();
+        }
       }
     } catch (error) {
       if (!record.stopped && !stopped) {

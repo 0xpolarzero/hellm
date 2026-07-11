@@ -201,12 +201,17 @@ describe("@svvy/desktop createDesktopApp", () => {
     ]);
   });
 
-  it("coalesces concurrent starts and disposals without acquiring or releasing twice", async () => {
+  it("coalesces app-bootstrap native/window shutdown disposal without releasing twice", async () => {
     const events: string[] = [];
     const app = createDesktopApp(createInput(events));
+    const forwardNativeWindowShutdown = () => app.dispose();
 
     await Promise.all([app.start(), app.start()]);
-    await Promise.all([app.dispose(), app.dispose(), app.dispose()]);
+    await Promise.all([
+      forwardNativeWindowShutdown(),
+      forwardNativeWindowShutdown(),
+      app.dispose(),
+    ]);
 
     expect(events.filter((event) => event === "bridge:expose")).toHaveLength(1);
     expect(events.filter((event) => event === "notifications:start")).toHaveLength(1);

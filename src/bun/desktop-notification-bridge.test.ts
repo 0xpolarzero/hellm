@@ -367,7 +367,54 @@ describe("desktop notification bridge", () => {
     await bridge.stop();
   });
 
-  it("has idempotent stop and suppresses runtime fanout after stop", async () => {
+  it("closes only the workspace subscription removed from authoritative tab state", async () => {
+    const workspaceIds = ["workspace-1", "workspace-2"];
+    const appSubscription = new PushSubscription();
+    const firstWorkspaceSubscription = new PushSubscription();
+    const secondWorkspaceSubscription = new PushSubscription();
+    const bridge = createDesktopNotificationBridge({
+      runtimeEvents: async (input) => {
+        if (input?.workspaceId === ("workspace-1" as never)) {
+          return firstWorkspaceSubscription;
+        }
+        if (input?.workspaceId === ("workspace-2" as never)) {
+          return secondWorkspaceSubscription;
+        }
+        return appSubscription;
+      },
+      state: stateWithWorkspaceTabs(workspaceIds),
+      rendererEmit: () => {},
+    });
+
+    await bridge.start();
+    await Promise.all([
+      appSubscription.waitForNextCall(1),
+      firstWorkspaceSubscription.waitForNextCall(1),
+      secondWorkspaceSubscription.waitForNextCall(1),
+    ]);
+    workspaceIds.splice(0, 1);
+    firstWorkspaceSubscription.push(
+      runtimeEvent({
+        type: "workspace_read_model.changed",
+        eventGenerationId: generationId,
+        sequence: 1 as never,
+        workspaceId,
+        invalidation: { model: "workspaceChromeLayout" },
+      }),
+    );
+    await firstWorkspaceSubscription.waitForNextCall(2);
+
+    expect(appSubscription.closeCalls).toBe(0);
+    expect(firstWorkspaceSubscription.closeCalls).toBe(1);
+    expect(secondWorkspaceSubscription.closeCalls).toBe(0);
+
+    await bridge.stop();
+    expect(appSubscription.closeCalls).toBe(1);
+    expect(firstWorkspaceSubscription.closeCalls).toBe(1);
+    expect(secondWorkspaceSubscription.closeCalls).toBe(1);
+  });
+
+  it("closes the injected runtime subscription once and suppresses fanout after stop", async () => {
     const notifications: DesktopRendererNotification[] = [];
     const subscription = new PushSubscription();
     const bridge = createDesktopNotificationBridge({
@@ -389,8 +436,8 @@ describe("desktop notification bridge", () => {
         invalidation: { model: "appPreferences" },
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(subscription.closeCalls).toBe(1);
     expect(notifications).toEqual([{ kind: "app-shutdown", reason: "bridge-stopped" }]);
   });
 });
@@ -451,8 +498,11 @@ class PushSubscription implements RuntimeEventSubscriptionLike {
   private queue: RuntimeEvent[] = [];
   private waiting: ((result: IteratorResult<RuntimeEvent>) => void) | null = null;
   private done = false;
+  private nextCallCount = 0;
+  private nextCallWaiters: Array<{ readonly count: number; readonly resolve: () => void }> = [];
   private readonly resolveClosed: (receipt: RuntimeEventSubscriptionClose) => void;
   readonly closed: Promise<RuntimeEventSubscriptionClose>;
+  closeCalls = 0;
 
   constructor() {
     let resolveClosed!: (receipt: RuntimeEventSubscriptionClose) => void;
@@ -481,7 +531,17 @@ class PushSubscription implements RuntimeEventSubscriptionLike {
     this.queue.push(event);
   }
 
+  waitForNextCall(count: number): Promise<void> {
+    if (this.nextCallCount >= count) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.nextCallWaiters.push({ count, resolve });
+    });
+  }
+
   async close(): Promise<void> {
+    this.closeCalls += 1;
     this.finish({
       reason: "closed",
       eventGenerationId: generationId,
@@ -493,6 +553,16 @@ class PushSubscription implements RuntimeEventSubscriptionLike {
   [Symbol.asyncIterator](): AsyncIterator<RuntimeEvent> {
     return {
       next: () => {
+        this.nextCallCount += 1;
+        const readyWaiters = this.nextCallWaiters.filter(
+          (waiter) => this.nextCallCount >= waiter.count,
+        );
+        this.nextCallWaiters = this.nextCallWaiters.filter(
+          (waiter) => this.nextCallCount < waiter.count,
+        );
+        for (const waiter of readyWaiters) {
+          waiter.resolve();
+        }
         const value = this.queue.shift();
         if (value) return Promise.resolve({ done: false, value });
         if (this.done) return Promise.resolve({ done: true, value: undefined });
