@@ -79,6 +79,8 @@ import {
   type StateStoredError,
   type StateRevision,
   type SnippetId,
+  type SnippetMetadata,
+  type SnippetSource,
   type SurfacePiSessionId,
   type ThreadId,
   type TurnId,
@@ -691,10 +693,10 @@ export interface SnippetsReadModel {
 
 export interface SnippetReadModelRecord {
   id: SnippetId;
-  source: "svvy" | "claude" | "pi" | "host";
+  source: SnippetSource;
   title: string;
   body: string;
-  metadata: JsonValueType;
+  metadata: SnippetMetadata;
   enabled: boolean;
   path: string | null;
   updatedAt: IsoDateTimeString | null;
@@ -1862,14 +1864,13 @@ function stateReadModelsFromState(state: {
               ),
             );
           case "snippets":
+            if (request.descriptor.scope !== "workspace") return [];
             return [
               {
                 kind: "snippets",
                 value: yield* buildSnippetsReadModel(structuredSession, {
                   kind: "snippets",
-                  ...(request.descriptor.scope === "workspace"
-                    ? { workspaceId: request.descriptor.workspaceId }
-                    : {}),
+                  workspaceId: request.descriptor.workspaceId,
                 }),
               },
             ];
@@ -1949,13 +1950,17 @@ function stateReadModelsFromState(state: {
               kind: "approvals",
               value: yield* buildApprovalsReadModel(structuredSession, { kind: "approvals" }),
             },
-            {
-              kind: "snippets",
-              value: yield* buildSnippetsReadModel(structuredSession, {
-                kind: "snippets",
-                ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
-              }),
-            },
+            ...(request.workspaceId
+              ? [
+                  {
+                    kind: "snippets" as const,
+                    value: yield* buildSnippetsReadModel(structuredSession, {
+                      kind: "snippets",
+                      workspaceId: request.workspaceId,
+                    }),
+                  },
+                ]
+              : []),
             {
               kind: "workspaceChromeLayout",
               value: yield* buildWorkspaceChromeLayoutReadModel(structuredSession, {
@@ -2302,11 +2307,9 @@ function buildExtensionsReadModel(
 
 function buildSnippetsReadModel(
   state: StructuredSessionState["Service"],
-  request: Omit<SnippetsReadModelRequest, "workspaceId"> & {
-    workspaceId?: WorkspaceIdType;
-  },
+  request: SnippetsReadModelRequest,
 ): Effect.Effect<SnippetsReadModel, StateContractError> {
-  return state.listSnippets(request.workspaceId ? { workspaceId: request.workspaceId } : {}).pipe(
+  return state.listSnippets({ workspaceId: request.workspaceId }).pipe(
     Effect.map((rows) => {
       const snippets = rows.map(snippetReadModelRecord);
       return {
@@ -2470,7 +2473,7 @@ function snippetReadModelRecord(row: StructuredSnippetRecord): SnippetReadModelR
     source: row.source,
     title: row.title,
     body: row.body,
-    metadata: row.metadata as JsonValueType,
+    metadata: row.metadata,
     enabled: row.enabled,
     path: row.path,
     updatedAt: (row.updatedAt ?? row.createdAt) as IsoDateTimeString,
@@ -3221,10 +3224,7 @@ function stateCommandsFromState(state: {
             decoded,
             `${decoded.workspaceId}:${decoded.snippetId}`,
             () => structuredSession.updateManagedSnippet(decoded),
-            snippetStateInvalidations(
-              decoded.workspaceId,
-              decoded.snippetId,
-            ),
+            snippetStateInvalidations(decoded.workspaceId, decoded.snippetId),
           );
         }),
       deleteManaged: (commandInput) =>
@@ -3237,10 +3237,7 @@ function stateCommandsFromState(state: {
             decoded,
             `${decoded.workspaceId}:${decoded.snippetId}`,
             () => structuredSession.deleteManagedSnippet(decoded),
-            snippetStateInvalidations(
-              decoded.workspaceId,
-              decoded.snippetId,
-            ),
+            snippetStateInvalidations(decoded.workspaceId, decoded.snippetId),
           );
         }),
       setEnabled: (commandInput) =>
@@ -3253,10 +3250,7 @@ function stateCommandsFromState(state: {
             decoded,
             `${decoded.workspaceId}:${decoded.snippetId}`,
             () => structuredSession.setSnippetEnabled(decoded),
-            snippetStateInvalidations(
-              decoded.workspaceId,
-              decoded.snippetId,
-            ),
+            snippetStateInvalidations(decoded.workspaceId, decoded.snippetId),
           );
         }),
     },

@@ -34,6 +34,7 @@ function host(
           packageName,
           action: "written" as const,
         })),
+        workflowsExports: [],
       }),
     listAcquiredWorkspaceIds: () => Effect.succeed([]),
     listRecoverableWorkspaceIds: () => Effect.succeed([]),
@@ -660,6 +661,7 @@ describe("refreshRuntimeGeneratedPackages", () => {
                       diagnostics: ["workflow source invalid"],
                     },
                   ],
+                  workflowsExports: [],
                 }),
               listAcquiredWorkspaceIds: () =>
                 Effect.sync(() => {
@@ -737,6 +739,7 @@ describe("refreshRuntimeGeneratedPackages", () => {
                     { packageName: "@svvyx/extensions", action: "written" },
                     { packageName: "@svvyx/workflows", action: "written", dependencies },
                   ],
+                  workflowsExports: [],
                 };
               }),
           }),
@@ -820,6 +823,7 @@ describe("refreshRuntimeGeneratedPackages", () => {
                       { packageName: "@svvyx/extensions", action: "written" },
                       { packageName: "@svvyx/workflows", action: "written" },
                     ],
+                    workflowsExports: [],
                   };
                 }),
               publishStateInvalidations: (afterCommit) =>
@@ -961,6 +965,7 @@ describe("refreshRuntimeGeneratedPackages", () => {
                 buildInputs.push(input);
                 return {
                   packages: [{ packageName: "@svvyx/extensions", action: "written" }],
+                  workflowsExports: [],
                 };
               }),
           }),

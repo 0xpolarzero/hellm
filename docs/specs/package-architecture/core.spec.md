@@ -2850,6 +2850,7 @@ type GeneratedPackagesRefreshResult =
 
 type GeneratedPackageBuildPlanResult = {
   packages: readonly GeneratedPackageBuildStatus[];
+  workflowsExports: readonly GeneratedWorkflowsExportBuildEvidence[];
 };
 
 // Link repair is deliberately separate from app-global build. Build input has no workspace id, so
@@ -2873,6 +2874,40 @@ type GeneratedPackageFileEvidence = {
   relativePath: string;
   path: AbsolutePath;
 };
+
+type GeneratedWorkflowsExportBuildEvidence = {
+  exportName: string;
+  qualifiedName: string;
+  sourcePath: AbsolutePath;
+  generatedPath: AbsolutePath;
+  generatedCode: string;
+} &
+  (
+    | {
+        kind: "agent";
+        namespace: "Agents";
+        agentParameters: TaskAgentParametersSource;
+        workflowAgentId: string;
+      }
+    | {
+        kind: "component";
+        namespace: "Components";
+        agentParameters: null;
+        workflowAgentId: null;
+      }
+    | {
+        kind: "prompt";
+        namespace: "Prompts";
+        agentParameters: null;
+        workflowAgentId: null;
+      }
+    | {
+        kind: "workflow";
+        namespace: "Workflows";
+        agentParameters: null;
+        workflowAgentId: null;
+      }
+  );
 
 type GeneratedPackageDependencyEvidence =
   | {
@@ -2950,6 +2985,15 @@ extension build, not durable generated-package read-model projections. Runtime d
 generated-package state facts. Public refresh callers do not receive `refreshScope`; they can
 retrieve persisted generated-package facts through state read models when they need product-state
 status.
+
+`GeneratedPackageBuildPlanResult.workflowsExports` is the renderer-safe export evidence emitted by
+the same validated `@svvyx/workflows` source items and rendered files that produced the successful
+package output. `kind` and `namespace` are a closed matching pair, `qualifiedName` equals
+`${namespace}.${exportName}`, and agent rows carry the exact validated
+`TaskAgentParametersSource` plus `workflowAgentId` equal to that parameter record's `id`.
+Non-agent rows carry `null` for both agent-only fields. This evidence is an extension build result;
+it does not add metadata to generated runtime export values or authorize `@svvy/extensions` to
+persist state.
 
 `RuntimeGeneratedPackageStatePort` is the core-owned state port used by runtime generated-package
 refresh and workspace-link repair. It is a state contract, not a generated-package build contract.

@@ -852,6 +852,12 @@ facts through `RuntimeGeneratedPackageStatePort` after the package-owned atomic 
 succeeds, and the Workflows pane reads those generated-package/read-model facts for
 source/generated links.
 
+The exact schema-backed build row is `GeneratedWorkflowsExportBuildEvidence`: it carries kind,
+matching namespace, export name, derived qualified name, absolute source and generated paths, and
+the rendered generated code. Agent rows carry the validated `TaskAgentParametersSource` plus
+`workflowAgentId` equal to that record's `id`; every non-agent row carries `null` for both
+agent-only fields.
+
 Generated runtime export values must not contain a private metadata symbol, public metadata fields,
 a public metadata manifest, a public `__exports` array, or any app-only method. Agents import and use
 the generated values exactly as ordinary Smithers authoring values.

@@ -5,11 +5,13 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import {
   ExtensionError as CoreExtensionError,
+  decodeUnknownGeneratedWorkflowsExportBuildEvidenceEffect,
   decodeUnknownTaskAgentParametersSourceEffect,
   type AbsolutePath,
   type ExtensionError,
   type GeneratedPackageDependencyEvidence,
   type GeneratedPackageBuildId,
+  type GeneratedWorkflowsExportBuildEvidence,
   type IsoDateTimeString,
 } from "@svvy/core";
 import {
@@ -57,6 +59,7 @@ export interface RefreshGeneratedWorkflowsPackageResult {
   readonly generatedPackagePath: AbsolutePath;
   readonly manifestPath: AbsolutePath;
   readonly evidence: GeneratedWorkflowsPackageEvidence;
+  readonly workflowsExports: readonly GeneratedWorkflowsExportBuildEvidence[];
   readonly generatedFiles: readonly {
     readonly relativePath: string;
     readonly path: AbsolutePath;
@@ -110,6 +113,12 @@ export const refreshGeneratedWorkflowsPackage = Effect.fn(
   });
   const manifest = files.find((file) => file.relativePath === GENERATED_PACKAGE_EVIDENCE_MANIFEST);
   const evidence = readGeneratedWorkflowsPackageEvidenceManifest(manifest?.contents);
+  const workflowsExports = yield* buildGeneratedWorkflowsExportEvidence({
+    files,
+    generatedPackagePath: input.generatedPackagePath,
+    items,
+    path,
+  });
 
   yield* replaceGeneratedPackageDirectory({
     generatedPackagePath: input.generatedPackagePath,
@@ -123,6 +132,7 @@ export const refreshGeneratedWorkflowsPackage = Effect.fn(
       GENERATED_PACKAGE_EVIDENCE_MANIFEST,
     ) as AbsolutePath,
     evidence,
+    workflowsExports,
     generatedFiles: files.map((file) => ({
       relativePath: file.relativePath,
       path: path.join(input.generatedPackagePath, file.relativePath) as AbsolutePath,
@@ -188,6 +198,85 @@ export function renderGeneratedWorkflowsPackageFiles(
       }),
     },
   ];
+}
+
+const WORKFLOW_NAMESPACE_BY_KIND = {
+  agent: "Agents",
+  component: "Components",
+  prompt: "Prompts",
+  workflow: "Workflows",
+} as const satisfies Record<WorkflowSourceKind, string>;
+
+function buildGeneratedWorkflowsExportEvidence(input: {
+  readonly files: readonly GeneratedWorkflowsPackageFile[];
+  readonly generatedPackagePath: AbsolutePath;
+  readonly items: readonly WorkflowSourceItem[];
+  readonly path: Path.Path;
+}): Effect.Effect<readonly GeneratedWorkflowsExportBuildEvidence[], ExtensionError> {
+  return Effect.gen(function* () {
+    const fileByRelativePath = new Map(input.files.map((file) => [file.relativePath, file]));
+    const exports: GeneratedWorkflowsExportBuildEvidence[] = [];
+
+    for (const item of input.items) {
+      const generatedFile = fileByRelativePath.get(item.relativeGeneratedPath);
+      if (!generatedFile) {
+        return yield* Effect.fail(
+          new CoreExtensionError({
+            operation: "extensions.generated-workflows.build-export-evidence",
+            reason: "execution-failed",
+            message: `Generated Workflows export file is missing: ${item.relativeGeneratedPath}`,
+          }),
+        );
+      }
+
+      let agentParameters = null;
+      let workflowAgentId = null;
+      if (item.kind === "agent") {
+        const parsed = parseJsonObject(item.sourceText, "workflow-agent source");
+        const { extensionOrder: _extensionOrder, ...bridgeParameters } = parsed;
+        agentParameters = yield* decodeUnknownTaskAgentParametersSourceEffect(
+          bridgeParameters,
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new CoreExtensionError({
+                operation: "extensions.generated-workflows.build-export-evidence",
+                reason: "execution-failed",
+                message: `Validated Workflows agent export no longer matches TaskAgentParametersSource: ${item.exportName}`,
+                cause,
+              }),
+          ),
+        );
+        workflowAgentId = agentParameters.id;
+      }
+
+      const namespace = WORKFLOW_NAMESPACE_BY_KIND[item.kind];
+      const evidence = yield* decodeUnknownGeneratedWorkflowsExportBuildEvidenceEffect({
+        kind: item.kind,
+        namespace,
+        exportName: item.exportName,
+        qualifiedName: `${namespace}.${item.exportName}`,
+        sourcePath: item.sourcePath,
+        generatedPath: input.path.join(input.generatedPackagePath, item.relativeGeneratedPath),
+        generatedCode: generatedFile.contents,
+        agentParameters,
+        workflowAgentId,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new CoreExtensionError({
+              operation: "extensions.generated-workflows.build-export-evidence",
+              reason: "execution-failed",
+              message: `Generated Workflows export evidence is invalid: ${item.exportName}`,
+              cause,
+            }),
+        ),
+      );
+      exports.push(evidence);
+    }
+
+    return exports;
+  });
 }
 
 function renderGeneratedWorkflowsPackageJson(

@@ -16,6 +16,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import {
   RUNTIME_TURN_DECISIONS,
   StateContractError,
@@ -90,7 +91,12 @@ import {
   type ValidatePiSessionReferenceInput,
   type WorkspaceId,
   type RuntimeTurnDecision,
+  SnippetMetadataSchema,
+  SnippetSourceSchema,
   type StateRevision,
+  strictBoundaryParseOptions,
+  type SnippetMetadata,
+  type SnippetSource,
   decodeUnknownExternalInstructionsSettingsExit,
   normalizeExternalInstructionsSettings,
 } from "@svvy/core";
@@ -131,6 +137,14 @@ const DEFAULT_EXTERNAL_INSTRUCTIONS_JSON = JSON.stringify(DEFAULT_EXTERNAL_INSTR
 const DEFAULT_EXTERNAL_INSTRUCTIONS_SQL_JSON = DEFAULT_EXTERNAL_INSTRUCTIONS_JSON.replaceAll(
   "'",
   "''",
+);
+const decodeSnippetMetadataContract = Schema.decodeUnknownSync(
+  SnippetMetadataSchema,
+  strictBoundaryParseOptions,
+);
+const decodeSnippetSourceContract = Schema.decodeUnknownSync(
+  SnippetSourceSchema,
+  strictBoundaryParseOptions,
 );
 
 function runtimeSourceScopeKey(scope: RuntimeSourceScanFactRecord["scope"]): string {
@@ -383,10 +397,10 @@ export interface StructuredExtensionEnvOverrideRecord {
 export interface StructuredSnippetRecord {
   id: string;
   workspaceId: string;
-  source: "svvy" | "claude" | "pi" | "host";
+  source: SnippetSource;
   title: string;
   body: string;
-  metadata: JsonValue;
+  metadata: SnippetMetadata;
   enabled: boolean;
   path: string | null;
   createdAt: string;
@@ -1074,8 +1088,8 @@ export interface StructuredSessionStateStore {
   removeExtensionEnvOverride(
     input: RemoveExtensionEnvOverrideCommandInput,
   ): StructuredMutationCommitRecord;
-  hasSnippetRows(workspaceId?: string): boolean;
-  listSnippets(input?: { workspaceId?: string }): StructuredSnippetRecord[];
+  hasSnippetRows(workspaceId: string): boolean;
+  listSnippets(input: { workspaceId: string }): StructuredSnippetRecord[];
   createManagedSnippet(input: CreateManagedSnippetCommandInput): StructuredSnippetRecord & {
     stateRevision: StateRevision;
   };
@@ -2045,7 +2059,7 @@ type ExtensionEnvOverrideRow = {
 type SnippetRow = {
   snippet_id: string;
   workspace_id: string;
-  source: "svvy" | "claude" | "pi" | "host";
+  source: string;
   title: string;
   body: string;
   metadata_json: string;
@@ -2995,35 +3009,38 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return { updatedAt, stateRevision };
   }
 
-  hasSnippetRows(workspaceId?: string): boolean {
+  hasSnippetRows(workspaceId: string): boolean {
     const row = this.db
       .query(
         `SELECT 1 AS found FROM snippet
-         WHERE deleted_at IS NULL AND (?1 IS NULL OR workspace_id = ?1)
+         WHERE deleted_at IS NULL AND workspace_id = ?
          LIMIT 1`,
       )
-      .get(workspaceId ?? null) as { found: number } | undefined;
+      .get(workspaceId) as { found: number } | undefined;
     return Boolean(row);
   }
 
-  listSnippets(input: { workspaceId?: string } = {}): StructuredSnippetRecord[] {
+  listSnippets(input: { workspaceId: string }): StructuredSnippetRecord[] {
     return (
       this.db
         .query(
           `SELECT * FROM snippet
-         WHERE deleted_at IS NULL AND (?1 IS NULL OR workspace_id = ?1)
+         WHERE deleted_at IS NULL AND workspace_id = ?
          ORDER BY source ASC, title ASC, snippet_id ASC`,
         )
-        .all(input.workspaceId ?? null) as SnippetRow[]
+        .all(input.workspaceId) as SnippetRow[]
     ).map((row) => this.mapSnippet(row));
   }
 
   createManagedSnippet(input: CreateManagedSnippetCommandInput): StructuredSnippetRecord & {
     stateRevision: StateRevision;
   } {
+    const operation = "structured-session.createManagedSnippet";
+    this.assertSnippetWorkspace(input.workspaceId, operation);
+    const title = normalizeManagedSnippetTitle(input.title, operation);
+    const metadata = decodeSnippetMetadataInput(input.metadata, operation);
     const now = this.now();
     const snippetId = this.createId("snippet");
-    const workspaceId = input.workspaceId ?? this.workspace.id;
     const stateRevision = this.db.transaction(() => {
       this.db
         .query(
@@ -3034,72 +3051,96 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         )
         .run(
           snippetId,
-          workspaceId,
-          input.title.trim(),
+          input.workspaceId,
+          title,
           input.body,
-          JSON.stringify(input.metadata ?? {}),
+          JSON.stringify(metadata),
           input.enabled ? 1 : 0,
           now,
           now,
         );
       return this.bumpStateRevision();
     })();
-    return { ...this.mustFindSnippet(snippetId), stateRevision };
+    return {
+      ...this.mustFindSnippet(input.workspaceId, snippetId, operation),
+      stateRevision,
+    };
   }
 
   updateManagedSnippet(input: UpdateManagedSnippetCommandInput): StructuredMutationCommitRecord {
-    const current = this.mustFindSnippet(input.snippetId);
-    const updatedAt = this.now();
-    const stateRevision = this.db.transaction(() => {
-      this.db
+    const operation = "structured-session.updateManagedSnippet";
+    this.assertSnippetWorkspace(input.workspaceId, operation);
+    return this.db.transaction(() => {
+      const current = this.mustFindManagedSnippet(input.workspaceId, input.snippetId, operation);
+      const title =
+        input.patch.title === undefined
+          ? current.title
+          : normalizeManagedSnippetTitle(input.patch.title, operation);
+      const metadata =
+        input.patch.metadata === undefined
+          ? current.metadata
+          : decodeSnippetMetadataInput(input.patch.metadata, operation);
+      const updatedAt = this.now();
+      const updated = this.db
         .query(
           `UPDATE snippet
            SET title = ?, body = ?, metadata_json = ?, enabled = ?, updated_at = ?
-           WHERE snippet_id = ? AND source = 'svvy' AND deleted_at IS NULL`,
+           WHERE snippet_id = ? AND workspace_id = ? AND source = 'svvy' AND deleted_at IS NULL`,
         )
         .run(
-          input.patch.title ?? current.title,
+          title,
           input.patch.body ?? current.body,
-          JSON.stringify(input.patch.metadata ?? current.metadata ?? {}),
+          JSON.stringify(metadata),
           (input.patch.enabled ?? current.enabled) ? 1 : 0,
           updatedAt,
           input.snippetId,
+          input.workspaceId,
         );
-      return this.bumpStateRevision();
+      if (updated.changes !== 1) {
+        throw snippetNotFoundError(operation, input.workspaceId, input.snippetId, true);
+      }
+      return { updatedAt, stateRevision: this.bumpStateRevision() };
     })();
-    return { updatedAt, stateRevision };
   }
 
   deleteManagedSnippet(input: DeleteManagedSnippetCommandInput): StructuredMutationCommitRecord {
-    this.mustFindSnippet(input.snippetId);
-    const updatedAt = this.now();
-    const stateRevision = this.db.transaction(() => {
-      this.db
+    const operation = "structured-session.deleteManagedSnippet";
+    this.assertSnippetWorkspace(input.workspaceId, operation);
+    return this.db.transaction(() => {
+      this.mustFindManagedSnippet(input.workspaceId, input.snippetId, operation);
+      const updatedAt = this.now();
+      const deleted = this.db
         .query(
           `UPDATE snippet
            SET deleted_at = ?, updated_at = ?
-           WHERE snippet_id = ? AND source = 'svvy' AND deleted_at IS NULL`,
+           WHERE snippet_id = ? AND workspace_id = ? AND source = 'svvy' AND deleted_at IS NULL`,
         )
-        .run(updatedAt, updatedAt, input.snippetId);
-      return this.bumpStateRevision();
+        .run(updatedAt, updatedAt, input.snippetId, input.workspaceId);
+      if (deleted.changes !== 1) {
+        throw snippetNotFoundError(operation, input.workspaceId, input.snippetId, true);
+      }
+      return { updatedAt, stateRevision: this.bumpStateRevision() };
     })();
-    return { updatedAt, stateRevision };
   }
 
   setSnippetEnabled(input: SetSnippetEnabledCommandInput): StructuredMutationCommitRecord {
-    this.mustFindSnippet(input.snippetId);
-    const updatedAt = this.now();
-    const stateRevision = this.db.transaction(() => {
-      this.db
+    const operation = "structured-session.setSnippetEnabled";
+    this.assertSnippetWorkspace(input.workspaceId, operation);
+    return this.db.transaction(() => {
+      this.mustFindSnippet(input.workspaceId, input.snippetId, operation);
+      const updatedAt = this.now();
+      const updated = this.db
         .query(
           `UPDATE snippet
            SET enabled = ?, updated_at = ?
-           WHERE snippet_id = ? AND deleted_at IS NULL`,
+           WHERE snippet_id = ? AND workspace_id = ? AND deleted_at IS NULL`,
         )
-        .run(input.enabled ? 1 : 0, updatedAt, input.snippetId);
-      return this.bumpStateRevision();
+        .run(input.enabled ? 1 : 0, updatedAt, input.snippetId, input.workspaceId);
+      if (updated.changes !== 1) {
+        throw snippetNotFoundError(operation, input.workspaceId, input.snippetId, false);
+      }
+      return { updatedAt, stateRevision: this.bumpStateRevision() };
     })();
-    return { updatedAt, stateRevision };
   }
 
   acquireWorkspace(input: AcquireWorkspaceInput): AcquireWorkspaceResult {
@@ -9817,12 +9858,46 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     };
   }
 
-  private mustFindSnippet(snippetId: string): StructuredSnippetRecord {
+  private assertSnippetWorkspace(workspaceId: string, operation: string): void {
+    if (workspaceId !== this.workspace.id) {
+      throw new StateContractError({
+        operation,
+        reason: "invalid-input",
+        message: `Workspace ${workspaceId} is not managed by this state store.`,
+      });
+    }
+  }
+
+  private mustFindSnippet(
+    workspaceId: string,
+    snippetId: string,
+    operation: string,
+  ): StructuredSnippetRecord {
     const row = this.db
-      .query(`SELECT * FROM snippet WHERE snippet_id = ? AND deleted_at IS NULL`)
-      .get(snippetId) as SnippetRow | undefined;
+      .query(
+        `SELECT * FROM snippet
+         WHERE snippet_id = ? AND workspace_id = ? AND deleted_at IS NULL`,
+      )
+      .get(snippetId, workspaceId) as SnippetRow | undefined;
     if (!row) {
-      throw new Error(`Snippet ${snippetId} was not found.`);
+      throw snippetNotFoundError(operation, workspaceId, snippetId, false);
+    }
+    return this.mapSnippet(row);
+  }
+
+  private mustFindManagedSnippet(
+    workspaceId: string,
+    snippetId: string,
+    operation: string,
+  ): StructuredSnippetRecord {
+    const row = this.db
+      .query(
+        `SELECT * FROM snippet
+         WHERE snippet_id = ? AND workspace_id = ? AND source = 'svvy' AND deleted_at IS NULL`,
+      )
+      .get(snippetId, workspaceId) as SnippetRow | undefined;
+    if (!row) {
+      throw snippetNotFoundError(operation, workspaceId, snippetId, true);
     }
     return this.mapSnippet(row);
   }
@@ -9831,10 +9906,10 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return {
       id: row.snippet_id,
       workspaceId: row.workspace_id,
-      source: row.source,
+      source: decodeStoredSnippetSource(row.source),
       title: row.title,
       body: row.body,
-      metadata: fromJson<JsonValue>(row.metadata_json) ?? {},
+      metadata: decodeStoredSnippetMetadata(row.metadata_json),
       enabled: row.enabled !== 0,
       path: row.path,
       createdAt: row.created_at,
@@ -11506,10 +11581,10 @@ function initializeSchema(db: Database): void {
     CREATE TABLE IF NOT EXISTS snippet (
       snippet_id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
-      source TEXT NOT NULL,
+      source TEXT NOT NULL CHECK (source IN ('svvy', 'claude', 'pi')),
       title TEXT NOT NULL,
       body TEXT NOT NULL,
-      metadata_json TEXT NOT NULL DEFAULT '{}',
+      metadata_json TEXT NOT NULL DEFAULT '{"description":null,"argumentHint":null}',
       enabled INTEGER NOT NULL DEFAULT 1,
       path TEXT,
       created_at TEXT NOT NULL,
@@ -12387,6 +12462,70 @@ function fromJson<T>(value: string | null | undefined): T | null {
     return null;
   }
   return JSON.parse(value) as T;
+}
+
+function normalizeManagedSnippetTitle(title: string, operation: string): string {
+  const normalized = title.trim();
+  if (!normalized) {
+    throw new StateContractError({
+      operation,
+      reason: "invalid-input",
+      message: "Managed snippet title must not be empty.",
+    });
+  }
+  return normalized;
+}
+
+function decodeSnippetMetadataInput(input: unknown, operation: string): SnippetMetadata {
+  try {
+    return decodeSnippetMetadataContract(input);
+  } catch (cause) {
+    throw new StateContractError({
+      operation,
+      reason: "invalid-input",
+      message: "Managed snippet metadata does not match the snippet metadata contract.",
+      cause,
+    });
+  }
+}
+
+function decodeStoredSnippetMetadata(value: string): SnippetMetadata {
+  try {
+    return decodeSnippetMetadataContract(JSON.parse(value));
+  } catch (cause) {
+    throw new StateContractError({
+      operation: "structured-session.snippet.decode",
+      reason: "decode-failed",
+      message: "Persisted snippet metadata does not match the snippet metadata contract.",
+      cause,
+    });
+  }
+}
+
+function decodeStoredSnippetSource(value: string): SnippetSource {
+  try {
+    return decodeSnippetSourceContract(value);
+  } catch (cause) {
+    throw new StateContractError({
+      operation: "structured-session.snippet.decode",
+      reason: "decode-failed",
+      message: `Persisted snippet source ${value} is unsupported.`,
+      cause,
+    });
+  }
+}
+
+function snippetNotFoundError(
+  operation: string,
+  workspaceId: string,
+  snippetId: string,
+  managedOnly: boolean,
+): StateContractError {
+  return new StateContractError({
+    operation,
+    reason: "not-found",
+    message: `${managedOnly ? "Managed snippet" : "Snippet"} ${snippetId} was not found in workspace ${workspaceId}.`,
+  });
 }
 
 function decodeExternalInstructionsSettings(value: unknown): ExternalInstructionsSettings {

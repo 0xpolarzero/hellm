@@ -15,7 +15,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   normalizeExternalInstructionsSettings,
+  StateContractError,
   type ExternalInstructionsSettings,
+  type WorkspaceId,
 } from "@svvy/core";
 import {
   createStructuredSessionStateStore,
@@ -186,6 +188,147 @@ describe("structured session state SQLite persistence", () => {
     expect(second.store.readAppPreferences().externalInstructions).toEqual(
       normalizeExternalInstructionsSettings(externalInstructions),
     );
+  });
+
+  it("normalizes managed snippet titles and persists exact snippet metadata", () => {
+    const { store, workspaceCwd } = createSqliteStore();
+    const workspaceId = workspaceCwd as WorkspaceId;
+    const created = store.createManagedSnippet({
+      workspaceId,
+      title: "  Review changes  ",
+      body: "Review $1",
+      metadata: { description: "Review a change", argumentHint: "path" },
+      enabled: true,
+    });
+
+    expect(created).toMatchObject({
+      workspaceId,
+      source: "svvy",
+      title: "Review changes",
+      metadata: { description: "Review a change", argumentHint: "path" },
+    });
+
+    store.updateManagedSnippet({
+      workspaceId,
+      snippetId: created.id as never,
+      patch: {
+        title: "  Review carefully  ",
+        metadata: { description: null, argumentHint: "file" },
+      },
+    });
+    expect(store.listSnippets({ workspaceId })).toMatchObject([
+      {
+        id: created.id,
+        title: "Review carefully",
+        metadata: { description: null, argumentHint: "file" },
+      },
+    ]);
+
+    for (const title of ["", "   "]) {
+      expect(() =>
+        store.createManagedSnippet({
+          workspaceId,
+          title,
+          body: "Review",
+          metadata: { description: null, argumentHint: null },
+          enabled: true,
+        }),
+      ).toThrow("Managed snippet title must not be empty");
+      expect(() =>
+        store.updateManagedSnippet({
+          workspaceId,
+          snippetId: created.id as never,
+          patch: { title },
+        }),
+      ).toThrow("Managed snippet title must not be empty");
+    }
+  });
+
+  it("rejects missing, cross-workspace, and discovered managed snippet mutations without commits", () => {
+    const { store, workspaceCwd } = createSqliteStore();
+    const workspaceId = workspaceCwd as WorkspaceId;
+    const db = (store as unknown as { db: Database }).db;
+    const insertedAt = "2026-04-18T11:59:00.000Z";
+    db.query(
+      `INSERT INTO snippet (
+         snippet_id, workspace_id, source, title, body, metadata_json,
+         enabled, path, created_at, updated_at, deleted_at
+       ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, NULL)`,
+    ).run(
+      "snippet-discovered",
+      workspaceId,
+      "claude",
+      "Discovered review",
+      "Review this",
+      JSON.stringify({ description: "External", argumentHint: null }),
+      "/tmp/discovered-review.md",
+      insertedAt,
+      insertedAt,
+    );
+    db.query(
+      `INSERT INTO snippet (
+         snippet_id, workspace_id, source, title, body, metadata_json,
+         enabled, path, created_at, updated_at, deleted_at
+       ) VALUES (?, ?, 'svvy', ?, ?, ?, 1, NULL, ?, ?, NULL)`,
+    ).run(
+      "snippet-other-workspace",
+      "workspace_other",
+      "Other workspace",
+      "Do not mutate",
+      JSON.stringify({ description: null, argumentHint: null }),
+      insertedAt,
+      insertedAt,
+    );
+    const revisionBefore = store.readCurrentStateRevision();
+
+    const expectNotFound = (run: () => unknown) => {
+      try {
+        run();
+        throw new Error("Expected snippet mutation to fail.");
+      } catch (error) {
+        expect(error).toBeInstanceOf(StateContractError);
+        expect(error).toMatchObject({ reason: "not-found" });
+      }
+    };
+
+    for (const snippetId of ["snippet-missing", "snippet-discovered", "snippet-other-workspace"]) {
+      expectNotFound(() =>
+        store.updateManagedSnippet({
+          workspaceId,
+          snippetId: snippetId as never,
+          patch: { body: "Mutated" },
+        }),
+      );
+      expectNotFound(() =>
+        store.deleteManagedSnippet({ workspaceId, snippetId: snippetId as never }),
+      );
+    }
+
+    expect(store.readCurrentStateRevision()).toBe(revisionBefore);
+    expect(store.listSnippets({ workspaceId })).toMatchObject([
+      { id: "snippet-discovered", source: "claude", body: "Review this" },
+    ]);
+    expect(
+      db
+        .query(`SELECT body, deleted_at FROM snippet WHERE snippet_id = ?`)
+        .get("snippet-other-workspace"),
+    ).toEqual({ body: "Do not mutate", deleted_at: null });
+
+    expect(() =>
+      db
+        .query(
+          `INSERT INTO snippet (
+           snippet_id, workspace_id, source, title, body, metadata_json,
+           enabled, path, created_at, updated_at, deleted_at
+         ) VALUES ('snippet-host', ?, 'host', 'Host', 'Unsupported', ?, 1, NULL, ?, ?, NULL)`,
+        )
+        .run(
+          workspaceId,
+          JSON.stringify({ description: null, argumentHint: null }),
+          insertedAt,
+          insertedAt,
+        ),
+    ).toThrow();
   });
 
   it("persists session navigation metadata and sidebar collapse state across restart", () => {

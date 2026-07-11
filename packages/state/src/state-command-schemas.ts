@@ -17,6 +17,7 @@ import {
   RecordProviderAuthStatusInputSchema,
   RuntimeClientSubmissionInputSchema,
   SnippetId,
+  SnippetMetadataSchema,
   strictBoundaryParseOptions,
   SurfacePiSessionId,
   ThreadId,
@@ -296,12 +297,14 @@ export const SetExternalInstructionActorUsageCommandInputSchema = Schema.Struct(
 export type SetExternalInstructionActorUsageCommandInput =
   typeof SetExternalInstructionActorUsageCommandInputSchema.Type;
 
-export const SnippetMetadataSchema = JsonValue;
+export { SnippetMetadataSchema };
 export type SnippetMetadata = typeof SnippetMetadataSchema.Type;
+
+const ManagedSnippetTitleSchema = Schema.String.check(Schema.isPattern(/\S/));
 
 export const CreateManagedSnippetCommandInputSchema = Schema.Struct({
   workspaceId: WorkspaceId,
-  title: Schema.String,
+  title: ManagedSnippetTitleSchema,
   body: Schema.String,
   metadata: SnippetMetadataSchema,
   enabled: Schema.Boolean,
@@ -310,7 +313,7 @@ export const CreateManagedSnippetCommandInputSchema = Schema.Struct({
 export type CreateManagedSnippetCommandInput = typeof CreateManagedSnippetCommandInputSchema.Type;
 
 export const UpdateManagedSnippetPatchSchema = Schema.Struct({
-  title: Schema.optionalKey(Schema.String),
+  title: Schema.optionalKey(ManagedSnippetTitleSchema),
   body: Schema.optionalKey(Schema.String),
   metadata: Schema.optionalKey(SnippetMetadataSchema),
   enabled: Schema.optionalKey(Schema.Boolean),

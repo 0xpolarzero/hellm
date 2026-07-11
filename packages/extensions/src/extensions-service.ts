@@ -403,7 +403,7 @@ function refreshGeneratedPackages(
     requestedPackages.has(GENERATED_WORKFLOWS_PACKAGE_NAME);
   const mustRefreshWorkflows = requestedPackages.has(GENERATED_WORKFLOWS_PACKAGE_NAME);
   if (!mustRefreshExtensions && !mustRefreshWorkflows) {
-    return Effect.succeed({ packages: [] });
+    return Effect.succeed({ packages: [], workflowsExports: [] });
   }
 
   return Effect.gen(function* () {
@@ -473,7 +473,10 @@ function refreshGeneratedPackages(
         });
       }
 
-      return { packages };
+      return {
+        packages,
+        workflowsExports: workflowsRefresh?.workflowsExports ?? [],
+      };
     }),
     Effect.mapError(
       (cause) =>

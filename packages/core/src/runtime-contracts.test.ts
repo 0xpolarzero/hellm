@@ -1242,6 +1242,7 @@ describe("@svvy/core runtime contracts", () => {
             ],
           },
         ],
+        workflowsExports: [],
       }) as unknown,
     ).toEqual({
       packages: [
@@ -1257,11 +1258,13 @@ describe("@svvy/core runtime contracts", () => {
           ],
         },
       ],
+      workflowsExports: [],
     });
 
     expect(() =>
       unsafeDecodeGeneratedPackageBuildPlanResultSyncForTestsAndBootstrap({
         packages: [],
+        workflowsExports: [],
         workspaceLinkRepairPlans: [],
       }),
     ).toThrow();

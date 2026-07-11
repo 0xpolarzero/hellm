@@ -10,6 +10,7 @@ import type {
   IsoDateTimeString,
 } from "@svvy/core";
 import {
+  type RefreshGeneratedWorkflowsPackageResult,
   refreshGeneratedWorkflowsPackage,
   renderGeneratedWorkflowsPackageFiles,
 } from "./generated-workflows-package";
@@ -410,11 +411,31 @@ describe("generated workflows package", () => {
         },
       });
 
-      yield* refreshWithServices(services);
+      const result = yield* refreshWithServices(services);
 
       const generatedAgent = services.readFile("/generated/@svvyx/workflows/agents/ordered.ts");
       assert.notStrictEqual(generatedAgent, null);
       assert.strictEqual((generatedAgent ?? "").includes("extensionOrder"), false);
+      assert.deepStrictEqual(result.workflowsExports as unknown, [
+        {
+          kind: "agent",
+          namespace: "Agents",
+          exportName: "ordered",
+          qualifiedName: "Agents.ordered",
+          sourcePath: "/workflows/agents/ordered.agent.json",
+          generatedPath: "/generated/@svvyx/workflows/agents/ordered.ts",
+          generatedCode: generatedAgent,
+          agentParameters: {
+            id: "ordered",
+            label: "Ordered",
+            provider: "openai",
+            model: "gpt-5",
+            reasoning: { effort: "medium" },
+            instructions: "Use ordered extensions.",
+          },
+          workflowAgentId: "ordered",
+        },
+      ]);
     }),
   );
 
@@ -919,7 +940,7 @@ describe("generated workflows package", () => {
 
 function refreshWithServices(
   services: ReturnType<typeof fakeWorkflowPackageServices>,
-): Effect.Effect<unknown, ExtensionError | PlatformError> {
+): Effect.Effect<RefreshGeneratedWorkflowsPackageResult, ExtensionError | PlatformError> {
   return refreshGeneratedWorkflowsPackage({
     coreTypeContractPackageRoot: "/generated/@svvy/core-type-contract" as AbsolutePath,
     generatedPackagePath: "/generated/@svvyx/workflows" as AbsolutePath,

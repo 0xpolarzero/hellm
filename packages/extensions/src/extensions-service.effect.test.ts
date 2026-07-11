@@ -1084,6 +1084,62 @@ describe("@svvy/extensions Effect service", () => {
       assert.match(result.packages[1]?.sourceFingerprint ?? "", /^svvy-fnv64-v1:[0-9a-f]{16}$/);
       assert.match(result.packages[1]?.outputFingerprint ?? "", /^svvy-fnv64-v1:[0-9a-f]{16}$/);
       assert.strictEqual(Object.hasOwn(result, "workspaceLinks"), false);
+      assert.deepStrictEqual(result.workflowsExports as unknown, [
+        {
+          kind: "agent",
+          namespace: "Agents",
+          exportName: "reviewerAgent",
+          qualifiedName: "Agents.reviewerAgent",
+          sourcePath: "/workflows/agents/reviewerAgent.agent.json",
+          generatedPath: "/generated/workflows-package/agents/reviewerAgent.ts",
+          generatedCode: writtenFiles.get("/generated/workflows-package/agents/reviewerAgent.ts"),
+          agentParameters: {
+            id: "reviewerAgent",
+            label: "Reviewer",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoning: { effort: "medium" },
+            instructions: "Review the implementation.",
+            overrides: { git: "loaded", "apply-patch": "available" },
+          },
+          workflowAgentId: "reviewerAgent",
+        },
+        {
+          kind: "component",
+          namespace: "Components",
+          exportName: "summary",
+          qualifiedName: "Components.summary",
+          sourcePath: "/workflows/components/summary.ts",
+          generatedPath: "/generated/workflows-package/components/summary.ts",
+          generatedCode: writtenFiles.get("/generated/workflows-package/components/summary.ts"),
+          agentParameters: null,
+          workflowAgentId: null,
+        },
+        {
+          kind: "prompt",
+          namespace: "Prompts",
+          exportName: "reviewChecklist",
+          qualifiedName: "Prompts.reviewChecklist",
+          sourcePath: "/workflows/prompts/reviewChecklist.mdx",
+          generatedPath: "/generated/workflows-package/prompts/reviewChecklist.ts",
+          generatedCode: writtenFiles.get(
+            "/generated/workflows-package/prompts/reviewChecklist.ts",
+          ),
+          agentParameters: null,
+          workflowAgentId: null,
+        },
+        {
+          kind: "workflow",
+          namespace: "Workflows",
+          exportName: "reviewFlow",
+          qualifiedName: "Workflows.reviewFlow",
+          sourcePath: "/workflows/workflows/reviewFlow.tsx",
+          generatedPath: "/generated/workflows-package/workflows/reviewFlow.tsx",
+          generatedCode: writtenFiles.get("/generated/workflows-package/workflows/reviewFlow.tsx"),
+          agentParameters: null,
+          workflowAgentId: null,
+        },
+      ]);
       const extensionsBuildId = result.packages[0]?.buildId;
       if (!extensionsBuildId) {
         throw new Error("expected generated extensions package build id");

@@ -480,7 +480,7 @@ describe("State app-log facade slice", () => {
               workspaceId,
               title: "Reusable prompt",
               body: "Summarize this file.",
-              metadata: { source: "test" },
+              metadata: { description: "Summarize a file", argumentHint: "path" },
               enabled: true,
               clientSubmission: {
                 clientRequestId: "snippet-command" as RuntimeClientRequestId,
@@ -1791,9 +1791,9 @@ describe("State read-model kind expansion", () => {
       const created = await runTestEffect(
         commands.snippets.createManaged({
           workspaceId,
-          title: "Routed snippet",
+          title: "  Routed snippet  ",
           body: "Initial body",
-          metadata: {},
+          metadata: { description: null, argumentHint: null },
           enabled: true,
         }),
       );
@@ -1809,16 +1809,18 @@ describe("State read-model kind expansion", () => {
         commands.snippets.setEnabled({ workspaceId, snippetId, enabled: false }),
       );
 
-      expect(appGlobalStore.listSnippets()).toEqual([]);
-      expect(workspaceStore.listSnippets()).toMatchObject([
-        { id: snippetId, body: "Updated body", enabled: false },
+      expect(appGlobalStore.listSnippets({ workspaceId: appGlobalStore.workspaceId })).toEqual([]);
+      expect(workspaceStore.listSnippets({ workspaceId })).toMatchObject([
+        { id: snippetId, title: "Routed snippet", body: "Updated body", enabled: false },
       ]);
       expect(
         await runTestEffect(readModels.fetch({ kind: "snippets", workspaceId })),
       ).toMatchObject({
         kind: "snippets",
         value: {
-          managed: [{ id: snippetId, body: "Updated body", enabled: false }],
+          managed: [
+            { id: snippetId, title: "Routed snippet", body: "Updated body", enabled: false },
+          ],
         },
       });
       expect([...updated.afterCommit, ...disabled.afterCommit]).toEqual([
@@ -1837,7 +1839,7 @@ describe("State read-model kind expansion", () => {
       const deleted = await runTestEffect(
         commands.snippets.deleteManaged({ workspaceId, snippetId }),
       );
-      expect(workspaceStore.listSnippets()).toEqual([]);
+      expect(workspaceStore.listSnippets({ workspaceId })).toEqual([]);
       expect(deleted.afterCommit).toEqual([
         {
           scope: "workspace",
@@ -1845,6 +1847,20 @@ describe("State read-model kind expansion", () => {
           invalidation: { model: "snippets", ids: [snippetId] },
         },
       ]);
+      const revisionAfterDelete = workspaceStore.readCurrentStateRevision();
+      await expect(
+        runTestEffect(
+          commands.snippets.updateManaged({
+            workspaceId,
+            snippetId,
+            patch: { body: "Must not commit" },
+          }),
+        ),
+      ).rejects.toMatchObject({ reason: "not-found" });
+      await expect(
+        runTestEffect(commands.snippets.deleteManaged({ workspaceId, snippetId })),
+      ).rejects.toMatchObject({ reason: "not-found" });
+      expect(workspaceStore.readCurrentStateRevision()).toBe(revisionAfterDelete);
     } finally {
       appLogStore.close();
       workspaceStore.close();

@@ -766,6 +766,7 @@ describe("@svvy/runtime Runtime.layer", () => {
               action: "written",
             },
           ],
+          workflowsExports: [],
         },
       ]);
       assert.deepStrictEqual(result, {
@@ -791,6 +792,7 @@ describe("@svvy/runtime Runtime.layer", () => {
                 packageName,
                 action: "written" as const,
               })),
+              workflowsExports: [],
             };
             builtPackages.push(result);
             return result;

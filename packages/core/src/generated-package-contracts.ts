@@ -7,6 +7,7 @@ import {
   RecoveryWorkId,
   WorkspaceId,
 } from "./ids";
+import type { TaskAgentParametersSource } from "./runtime-contracts";
 
 export const GeneratedPackageNameSchema = Schema.Literals([
   "@svvyx/workflows",
@@ -56,6 +57,88 @@ export const GeneratedPackageFileEvidenceSchema = Schema.Struct({
   path: AbsolutePath,
 });
 export type GeneratedPackageFileEvidence = typeof GeneratedPackageFileEvidenceSchema.Type;
+
+const GeneratedWorkflowsAgentParametersSchema = Schema.Struct({
+  id: Schema.String.check(Schema.isNonEmpty()),
+  label: Schema.String.check(Schema.isNonEmpty()),
+  provider: Schema.String.check(Schema.isNonEmpty()),
+  model: Schema.String.check(Schema.isNonEmpty()),
+  reasoning: Schema.Struct({
+    effort: Schema.Literals(["off", "minimal", "low", "medium", "high", "xhigh"]),
+  }),
+  instructions: Schema.String,
+  overrides: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.Literals(["loaded", "available", "unavailable"])),
+  ),
+}) as Schema.Codec<TaskAgentParametersSource>;
+
+const GeneratedWorkflowsExportIdentityFields = {
+  exportName: Schema.String.check(Schema.isNonEmpty()),
+  qualifiedName: Schema.String.check(Schema.isNonEmpty()),
+  sourcePath: AbsolutePath,
+  generatedPath: AbsolutePath,
+  generatedCode: Schema.String,
+};
+
+type GeneratedWorkflowsExportBuildEvidenceShape = {
+  readonly namespace: "Agents" | "Components" | "Prompts" | "Workflows";
+  readonly exportName: string;
+  readonly qualifiedName: string;
+  readonly agentParameters: TaskAgentParametersSource | null;
+  readonly workflowAgentId: string | null;
+};
+
+const GeneratedWorkflowsExportBuildEvidenceInvariant = Schema.makeFilter(
+  (evidence: GeneratedWorkflowsExportBuildEvidenceShape) => {
+    if (evidence.qualifiedName !== `${evidence.namespace}.${evidence.exportName}`) {
+      return {
+        path: ["qualifiedName"],
+        issue: "generated Workflows qualified name must match namespace and export name",
+      };
+    }
+    if (evidence.agentParameters && evidence.workflowAgentId !== evidence.agentParameters.id) {
+      return {
+        path: ["workflowAgentId"],
+        issue: "generated Workflows agent id must match agent parameter identity",
+      };
+    }
+    return true;
+  },
+  { expected: "valid generated Workflows export build evidence" },
+);
+
+export const GeneratedWorkflowsExportBuildEvidenceSchema = Schema.Union([
+  Schema.Struct({
+    ...GeneratedWorkflowsExportIdentityFields,
+    kind: Schema.Literal("agent"),
+    namespace: Schema.Literal("Agents"),
+    agentParameters: GeneratedWorkflowsAgentParametersSchema,
+    workflowAgentId: Schema.String.check(Schema.isNonEmpty()),
+  }),
+  Schema.Struct({
+    ...GeneratedWorkflowsExportIdentityFields,
+    kind: Schema.Literal("component"),
+    namespace: Schema.Literal("Components"),
+    agentParameters: Schema.Null,
+    workflowAgentId: Schema.Null,
+  }),
+  Schema.Struct({
+    ...GeneratedWorkflowsExportIdentityFields,
+    kind: Schema.Literal("prompt"),
+    namespace: Schema.Literal("Prompts"),
+    agentParameters: Schema.Null,
+    workflowAgentId: Schema.Null,
+  }),
+  Schema.Struct({
+    ...GeneratedWorkflowsExportIdentityFields,
+    kind: Schema.Literal("workflow"),
+    namespace: Schema.Literal("Workflows"),
+    agentParameters: Schema.Null,
+    workflowAgentId: Schema.Null,
+  }),
+]).pipe(Schema.check(GeneratedWorkflowsExportBuildEvidenceInvariant));
+export type GeneratedWorkflowsExportBuildEvidence =
+  typeof GeneratedWorkflowsExportBuildEvidenceSchema.Type;
 
 export const GeneratedPackageDependencyEvidenceSchema = Schema.Union([
   Schema.Struct({
@@ -157,6 +240,7 @@ export type GeneratedPackageWorkspaceLinkRepairPlan =
 
 export const GeneratedPackageBuildPlanResultSchema = Schema.Struct({
   packages: Schema.Array(GeneratedPackageBuildStatusSchema),
+  workflowsExports: Schema.Array(GeneratedWorkflowsExportBuildEvidenceSchema),
 });
 export type GeneratedPackageBuildPlanResult = typeof GeneratedPackageBuildPlanResultSchema.Type;
 
@@ -235,5 +319,16 @@ export const decodeUnknownGeneratedPackageBuildPlanResultExit = Schema.decodeUnk
 );
 export const decodeUnknownGeneratedPackageBuildPlanResultEffect = Schema.decodeUnknownEffect(
   GeneratedPackageBuildPlanResultSchema,
+  strictBoundaryParseOptions,
+);
+
+export const unsafeDecodeGeneratedWorkflowsExportBuildEvidenceSyncForTestsAndBootstrap =
+  Schema.decodeUnknownSync(GeneratedWorkflowsExportBuildEvidenceSchema, strictBoundaryParseOptions);
+export const decodeUnknownGeneratedWorkflowsExportBuildEvidenceExit = Schema.decodeUnknownExit(
+  GeneratedWorkflowsExportBuildEvidenceSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownGeneratedWorkflowsExportBuildEvidenceEffect = Schema.decodeUnknownEffect(
+  GeneratedWorkflowsExportBuildEvidenceSchema,
   strictBoundaryParseOptions,
 );

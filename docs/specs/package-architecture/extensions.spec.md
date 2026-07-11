@@ -1497,6 +1497,26 @@ yield*
 //       diagnostics: []
 //     },
 //   ],
+//   workflowsExports: [
+//     {
+//       kind: "agent",
+//       namespace: "Agents",
+//       exportName: "reviewerAgent",
+//       qualifiedName: "Agents.reviewerAgent",
+//       sourcePath: "/app/workflows/agents/reviewerAgent.agent.json",
+//       generatedPath: "/app/generated/workflows/agents/reviewerAgent.ts",
+//       generatedCode: "import type { TaskAgentParametersSource } from \"./index\"; ...",
+//       agentParameters: {
+//         id: "reviewerAgent",
+//         label: "Reviewer",
+//         provider: "openai",
+//         model: "gpt-5.4",
+//         reasoning: { effort: "medium" },
+//         instructions: "Review the implementation.",
+//       },
+//       workflowAgentId: "reviewerAgent",
+//     },
+//   ],
 // }
 
 yield*
@@ -2629,9 +2649,12 @@ invalidation descriptors. Runtime owns when that work runs, how failures retry o
 state-backed read-model invalidations are published.
 
 `@svvy/extensions` returns generated-file evidence, generated manifest evidence, dependency
-evidence, and optional per-package string diagnostics through `GeneratedPackageBuildPlanResult`
-from `generatedPackages.refresh(...)`; it returns workspace-link plans only from
-`generatedPackages.planWorkspaceLink(...)`. Runtime decodes those outputs and writes
+evidence, exact renderer-safe `workflowsExports` build evidence, and optional per-package string
+diagnostics through `GeneratedPackageBuildPlanResult` from `generatedPackages.refresh(...)`; it
+returns workspace-link plans only from `generatedPackages.planWorkspaceLink(...)`. Each Workflows
+export evidence row is derived from one validated source item plus its rendered output file; agent
+rows carry their validated task-agent parameter record and workflow-agent identity, while
+non-agent rows carry `null` for both agent-only fields. Runtime decodes those outputs and writes
 generated-package facts through `RuntimeGeneratedPackageStatePort` after successful output
 replacement or reconciliation. Extensions never call generated-package state ports directly, never
 emit read-model invalidations, and never duplicate state-owned generated-package facts in generated

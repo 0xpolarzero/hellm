@@ -849,6 +849,17 @@ type SnippetsReadModel = {
   snippets: readonly SnippetReadModelRecord[];
 };
 
+type SnippetReadModelRecord = {
+  id: SnippetId;
+  source: SnippetSource;
+  title: string;
+  body: string;
+  metadata: SnippetMetadata;
+  enabled: boolean;
+  path: AbsolutePath | null;
+  updatedAt: IsoDateTimeString | null;
+};
+
 type WorkflowsGeneratedReadModel = {
   packageName: "@svvyx/workflows";
   facts: readonly StructuredGeneratedPackageFactRecord[];
@@ -1494,6 +1505,15 @@ type SetSnippetEnabledCommandInput = {
 };
 ```
 
+Snippet command and read-model contracts reuse the exact core-owned `SnippetMetadata` and
+`SnippetSource` contracts. Metadata contains only nullable `description` and `argumentHint`; source
+is exactly `svvy`, `claude`, or `pi`, with no generic `host` source or arbitrary JSON metadata.
+Managed create/update title decoding trims surrounding whitespace and rejects an empty result.
+Managed update/delete resolves the row by both explicit `workspaceId` and `source = "svvy"` before
+writing; missing, cross-workspace, deleted, and discovered rows return `StateContractError` without
+bumping the state revision or emitting an invalidation descriptor. `setEnabled` remains valid for
+both managed and discovered rows, but still resolves the target inside the explicit workspace.
+
 Secret-bearing local types stay process-local. Persisted state, RPC contracts, generated package
 files, read models, diagnostics, and app logs expose only presence, non-secret labels, extension
 env names, or fingerprints. Provider credential writes/removals and extension secret value
@@ -1539,7 +1559,7 @@ receives only commit-scoped facts that cannot be fetched before the write, such 
 | `providerAuth`    | Persist provider credential presence, provider auth status rows, and OAuth result/status facts through state-owned provider auth status rows and secret references coordinated with host/live `SecretStorePort`.                                                                                                                                                                           | `@svvy/state` provider auth tables and secret references          | Live OAuth browser/device flow, model probing, pi provider calls, returning raw secrets.                                   |
 | `extensionEnv`    | Persist app-global non-secret extension env overrides, secret references, and env status facts used by readiness and invocation env resolution.                                                                                                                                                                                                                                            | `@svvy/state` extension env tables and secret references          | Running extension commands, exposing raw secrets, editing extension source manifests, generated package refresh execution. |
 | `agentProfiles`   | Persist orchestrator profile rows, singleton handler profile, orchestrator/handler extension usage, DB-backed external-instruction actor usage/order, and workflow-task actor defaults for newly created workflow task-agent attempts that are not tied to one `.agent.json` source file.                                                                                                  | `@svvy/state` agent/profile and external-instruction usage tables | Workflow-agent `.agent.json` row edits, extension source edits, generated actor-context rendering.                         |
-| `snippets`        | Persist managed svvy snippets and enablement state for managed/discovered snippets.                                                                                                                                                                                                                                                                                                        | `@svvy/state` snippet tables                                      | Editing read-only host snippet files, watching snippet source roots, expanding snippets into prompt text during send.      |
+| `snippets`        | Persist exact-schema managed svvy snippets and enablement state for managed/discovered snippets; trim and reject empty managed titles, and reject missing, cross-workspace, or discovered managed update/delete targets without committing.                                                                                                                                                | `@svvy/state` snippet tables                                      | Editing read-only host snippet files, watching snippet source roots, expanding snippets into prompt text during send.      |
 | `appLogs`         | Persist app-log read cursors, visible-range read marking, and workspace/app unread clearing.                                                                                                                                                                                                                                                                                               | `@svvy/state` app-log read-state tables                           | Deleting log rows, rewriting payloads, publishing live bridge messages directly, or inferring command/session state.       |
 
 Increment 6 command-group rows:
@@ -1550,7 +1570,7 @@ Increment 6 command-group rows:
 | `workspaceLayout` | `packages/state/src/state-facade.ts` validates `SaveWorkspaceLayoutSnapshotCommandInput`, `UpdateWorkspacePaneCommandInput`, and `CloseWorkspacePaneCommandInput` through `state-command-schemas.ts` and routes them through `StateCommands.workspaceLayout`. | Workspace `{ model: "workspaceChromeLayout" }` descriptors for layout snapshot/pane mutations. | `RendererStateCommandsFacade.workspaceLayout` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`. | `packages/state/src/state-facade.test.ts`; `src/bun/renderer-state-facade.test.ts`; `packages/package-boundaries.test.ts`. |
 | `extensionEnv` | `packages/state/src/state-facade.ts` validates non-secret env override command inputs through `state-command-schemas.ts` and routes them through `StateCommands.extensionEnv`; secret values stay behind `SecretStoreMutationPort` and are never read-model payloads. | App `{ model: "extensions", ids: [extensionId] }` descriptors. | `RendererStateCommandsFacade.extensionEnv` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`. | `packages/state/src/state-facade.test.ts`; `src/bun/renderer-state-facade.test.ts`; `src/bun/removed-contracts.test.ts` legacy channel coverage. |
 | `agentProfiles` | `packages/state/src/state-facade.ts` validates orchestrator/thread-handler profile, extension usage/default, order, and external-instruction usage command inputs through `state-command-schemas.ts` and routes them through `StateCommands.agentProfiles`. | App `{ model: "agents", ids? }` descriptors. | `RendererStateCommandsFacade.agentProfiles` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`. | `packages/state/src/state-facade.test.ts`; `src/bun/renderer-state-facade.test.ts`; `src/bun/removed-contracts.test.ts` legacy channel coverage. |
-| `snippets` | `packages/state/src/state-facade.ts` validates managed snippet create/update/delete/enablement command inputs through `state-command-schemas.ts` and routes them through `StateCommands.snippets`; `createManaged` returns the committed `snippetId` plus receipt. | Workspace `{ model: "snippets", ids: [snippetId] }` descriptors. | `RendererStateCommandsFacade.snippets` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`. | `packages/state/src/state-facade.test.ts`; `src/bun/renderer-state-facade.test.ts`; `src/bun/removed-contracts.test.ts` legacy channel coverage. |
+| `snippets` | `packages/state/src/state-facade.ts` validates exact core snippet metadata/source contracts and trimmed non-empty managed titles through `state-command-schemas.ts`, routes every request by explicit workspace through `StateCommands.snippets`, and requires managed update/delete targets to exist in that workspace with `source = "svvy"`; `createManaged` returns the committed `snippetId` plus receipt. | Workspace `{ model: "snippets", ids: [snippetId] }` descriptors only after a successful commit. | `RendererStateCommandsFacade.snippets` in `src/bun/renderer-state-facade.ts` and `packages/desktop/src/index.ts`. | `packages/state/src/state-command-schemas.test.ts`; `packages/state/src/structured-session-state-sqlite.test.ts`; `packages/state/src/state-facade.test.ts`; `src/bun/renderer-state-facade.test.ts`; `src/bun/removed-contracts.test.ts` legacy channel coverage. |
 
 File-backed source commands are excluded by construction. Workflow-agent `.agent.json` edits,
 including that workflow agent's provider, model, reasoning, instruction text, extension usage

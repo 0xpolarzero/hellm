@@ -151,9 +151,9 @@ describe("@svvy/state command schemas", () => {
   it("requires explicit workspace routing on every managed-snippet command", () => {
     const create = decodeUnknownCreateManagedSnippetCommandInputExit({
       workspaceId: "workspace_snippets",
-      title: "Review",
+      title: "  Review  ",
       body: "Review this file.",
-      metadata: {},
+      metadata: { description: "Review a file", argumentHint: "path" },
       enabled: true,
     });
     expect(Exit.isSuccess(create)).toBe(true);
@@ -165,7 +165,7 @@ describe("@svvy/state command schemas", () => {
         decodeUnknownCreateManagedSnippetCommandInputExit({
           title: "Review",
           body: "Review this file.",
-          metadata: {},
+          metadata: { description: null, argumentHint: null },
           enabled: true,
         }),
       ),
@@ -174,7 +174,7 @@ describe("@svvy/state command schemas", () => {
     const update = decodeUnknownUpdateManagedSnippetCommandInputExit({
       workspaceId: "workspace_snippets",
       snippetId: "snippet_01",
-      patch: { body: "Review this change." },
+      patch: { title: "  Revised review  ", body: "Review this change." },
     });
     expect(Exit.isSuccess(update)).toBe(true);
     if (Exit.isSuccess(update)) {
@@ -220,5 +220,48 @@ describe("@svvy/state command schemas", () => {
         }),
       ),
     ).toBe(true);
+  });
+
+  it("rejects empty managed titles and non-contract snippet metadata", () => {
+    for (const title of ["", "   "]) {
+      expect(
+        Exit.isFailure(
+          decodeUnknownCreateManagedSnippetCommandInputExit({
+            workspaceId: "workspace_snippets",
+            title,
+            body: "Review this file.",
+            metadata: { description: null, argumentHint: null },
+            enabled: true,
+          }),
+        ),
+      ).toBe(true);
+      expect(
+        Exit.isFailure(
+          decodeUnknownUpdateManagedSnippetCommandInputExit({
+            workspaceId: "workspace_snippets",
+            snippetId: "snippet_01",
+            patch: { title },
+          }),
+        ),
+      ).toBe(true);
+    }
+
+    for (const metadata of [
+      {},
+      { description: null },
+      { description: null, argumentHint: null, allowedTools: ["Shell"] },
+    ]) {
+      expect(
+        Exit.isFailure(
+          decodeUnknownCreateManagedSnippetCommandInputExit({
+            workspaceId: "workspace_snippets",
+            title: "Review",
+            body: "Review this file.",
+            metadata,
+            enabled: true,
+          }),
+        ),
+      ).toBe(true);
+    }
   });
 });

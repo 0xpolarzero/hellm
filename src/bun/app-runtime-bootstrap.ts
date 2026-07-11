@@ -829,7 +829,7 @@ async function seedSnippetStateRows(input: {
       workspaceId: input.seed.workspaceId,
       title: snippet.title,
       body: snippet.body,
-      metadata: snippet.metadata as unknown as JsonValue,
+      metadata: snippet.metadata,
       enabled: snippet.enabled,
       clientSubmission: {
         clientRequestId: `bootstrap-snippet-${snippet.id}` as RuntimeClientRequestId,
