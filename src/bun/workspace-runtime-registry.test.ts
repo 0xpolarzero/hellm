@@ -2234,7 +2234,7 @@ describe("WorkspaceRuntimeRegistry", () => {
 
     const opened = await runtimeOperations.sourceEdits.open({
       sourceKind: "builtin-extension",
-      sourceId: "base-common",
+      sourceId: "base-common#minimal",
     });
     const nextText = `${opened.text.trimEnd()}\n\nRuntime source edit test.\n`;
 
@@ -2242,7 +2242,7 @@ describe("WorkspaceRuntimeRegistry", () => {
       workspaceId: runtime.workspaceId as WorkspaceId,
       source: {
         sourceKind: "builtin-extension",
-        sourceId: "base-common",
+        sourceId: "base-common#minimal",
         expectedSourceVersion: opened.sourceVersion,
         text: nextText,
         saveMode: "compare-and-swap",
@@ -2250,7 +2250,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     });
     const reopened = await runtimeOperations.sourceEdits.open({
       sourceKind: "builtin-extension",
-      sourceId: "base-common",
+      sourceId: "base-common#minimal",
     });
 
     expect(opened.path).toEndWith("base-common/instructions/minimal.md");

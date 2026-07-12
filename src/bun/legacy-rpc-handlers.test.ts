@@ -109,8 +109,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "addExtensionInstructionFile",
   "removeExtensionInstructionFile",
   "configureExtensionInstructionFile",
-  "updateExtensionInstructionFile",
-  "openExtensionInstructionFileInEditor",
   "setExtensionEnvSecret",
   "removeExtensionEnvSecret",
   "openGeneratedAgentContextExternalSourceInEditor",

@@ -1968,16 +1968,6 @@ function createFakeRpc(input: {
           reversibleChanges: [],
           snapshots: [],
         }),
-        updateExtensionInstructionFile: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
-        }),
-        openExtensionInstructionFileInEditor: async () => ({
-          opened: true,
-          editor: "system",
-          path: "/tmp/instruction.md",
-        }),
         setExtensionEnvSecret: async () => ({
           extensions: [],
           reversibleChanges: [],

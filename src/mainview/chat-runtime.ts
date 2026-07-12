@@ -103,7 +103,6 @@ import {
   type DesktopRendererCommand,
   type DuplicateExtensionRequest,
   type ExtensionsInventoryReadModel,
-  type OpenExtensionInstructionFileInEditorRequest,
   type ProviderAuthReadModel,
   type ProviderAuthInfo,
   type RemoveExtensionInstructionFileRequest,
@@ -116,7 +115,6 @@ import {
   type StateReadModelBaseline,
   type StateReadModelResult,
   type StateSnippetsReadModel,
-  type UpdateExtensionInstructionFileRequest,
   type WriteCommandStdinRequest,
   type WriteCommandStdinResponse,
 } from "../shared/workspace-contract";
@@ -783,8 +781,6 @@ export interface ChatRuntimeRpcClient {
     addExtensionInstructionFile: typeof rpc.request.addExtensionInstructionFile;
     removeExtensionInstructionFile: typeof rpc.request.removeExtensionInstructionFile;
     configureExtensionInstructionFile: typeof rpc.request.configureExtensionInstructionFile;
-    updateExtensionInstructionFile: typeof rpc.request.updateExtensionInstructionFile;
-    openExtensionInstructionFileInEditor: typeof rpc.request.openExtensionInstructionFileInEditor;
     setExtensionEnvSecret: typeof rpc.request.setExtensionEnvSecret;
     removeExtensionEnvSecret: typeof rpc.request.removeExtensionEnvSecret;
     stateExtensionEnvSetOverride: typeof rpc.request.stateExtensionEnvSetOverride;
@@ -1065,12 +1061,6 @@ export interface ChatRuntime {
   configureExtensionInstructionFile: (
     input: Omit<ConfigureExtensionInstructionFileRequest, "workspaceId">,
   ) => Promise<ExtensionsInventoryReadModel>;
-  updateExtensionInstructionFile: (
-    input: Omit<UpdateExtensionInstructionFileRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
-  openExtensionInstructionFileInEditor: (
-    input: Omit<OpenExtensionInstructionFileInEditorRequest, "workspaceId">,
-  ) => Promise<boolean>;
   setExtensionEnvSecret: (
     input: Omit<SetExtensionEnvSecretRequest, "workspaceId">,
   ) => Promise<ExtensionsInventoryReadModel>;
@@ -4885,15 +4875,6 @@ export async function createChatRuntime(
         "extensionsInventory",
         await rpcClient.request.configureExtensionInstructionFile(scoped(input)),
       )!,
-    updateExtensionInstructionFile: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.updateExtensionInstructionFile(scoped(input)),
-      )!,
-    openExtensionInstructionFileInEditor: async (input) => {
-      const result = await rpcClient.request.openExtensionInstructionFileInEditor(scoped(input));
-      return result.opened;
-    },
     setExtensionEnvSecret: async (input) =>
       setWorkspaceCache(
         "extensionsInventory",

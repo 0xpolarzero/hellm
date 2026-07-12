@@ -4,10 +4,8 @@
   import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";
   import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
   import type { Snippet } from "svelte";
-  import { isFileBackedEditConflictError } from "../shared/file-backed-edit";
   import type {
     ExtensionInstructionFileReadModel,
-    ExtensionLoadedInstructionContributorReadModel,
   } from "../shared/workspace-contract";
   import type { ChatRuntime } from "./chat-runtime";
   import { formatTokenCount } from "./chat-format";
@@ -96,40 +94,31 @@
     saving = true;
     errorMessage = "";
     try {
-      const inventory = await runtime.updateExtensionInstructionFile({
-        extensionId,
-        kind,
-        name: file.name,
-        content: draft,
-        baseSourceVersion,
-        mode,
+      if (!file.source || !baseSourceVersion) {
+        throw new Error(`Editable extension source identity is unavailable: ${file.name}`);
+      }
+      const result = await runtime.saveSourceEdit({
+        ...file.source,
+        expectedSourceVersion: baseSourceVersion,
+        text: draft,
+        saveMode: mode,
       });
-      const savedFile = inventory.extensions
-        .find((extension) => extension.id === extensionId)
-        ?.[kind === "minimal" ? "minimalInstruction" : "loadedInstructionContributors"];
-      const savedSourceVersion =
-        kind === "minimal"
-          ? (savedFile as ExtensionInstructionFileReadModel | undefined)?.sourceVersion
-          : kind === "script"
-            ? (savedFile as ExtensionLoadedInstructionContributorReadModel[] | undefined)?.find(
-                (candidate) =>
-                  candidate.kind === "scripted" && candidate.script.name === file.name,
-              )?.script.sourceVersion
-            : (savedFile as ExtensionLoadedInstructionContributorReadModel[] | undefined)?.find(
-                (candidate) =>
-                  candidate.kind === "source" && candidate.file.name === file.name,
-              )?.file.sourceVersion;
+      if (result.status === "stale") {
+        conflictFile = {
+          ...file,
+          path: result.current.path,
+          content: result.current.text,
+          sourceVersion: result.current.sourceVersion,
+        };
+        baseSourceVersion = result.current.sourceVersion;
+        return;
+      }
       savedContent = draft;
-      baseSourceVersion = savedSourceVersion ?? baseSourceVersion;
+      baseSourceVersion = result.sourceVersion;
       conflictFile = null;
       onSaved();
     } catch (error) {
-      if (isFileBackedEditConflictError<ExtensionInstructionFileReadModel>(error)) {
-        conflictFile = error.conflict.current;
-        baseSourceVersion = error.conflict.currentVersion;
-      } else {
-        errorMessage = error instanceof Error ? error.message : "Unable to save instruction file.";
-      }
+      errorMessage = error instanceof Error ? error.message : "Unable to save instruction file.";
     } finally {
       saving = false;
     }
@@ -145,12 +134,8 @@
   }
 
   async function openExternal() {
-    await runtime.openExtensionInstructionFileInEditor({
-      extensionId,
-      kind,
-      name: file.name,
-      path: file.path,
-    });
+    if (!file.source) throw new Error(`Extension source identity is unavailable: ${file.name}`);
+    await runtime.openSourceInEditor(file.source);
   }
 
   function autosaveStatusLabel(input: AutosaveStatus): string {

@@ -2491,6 +2491,10 @@ describe("svvyx extensions command", () => {
       minimalInstruction: {
         name: "minimal.md",
         editable: true,
+        source: {
+          sourceKind: "builtin-extension",
+          sourceId: "base-common#minimal",
+        },
       },
       loadedInstructionContributors: [
         {
@@ -2518,6 +2522,11 @@ describe("svvyx extensions command", () => {
           output: {
             name: "010-tinyfish-cli.generated.md",
             editable: false,
+            source: {
+              sourceKind: "builtin-extension",
+              sourceId:
+                "web#generated-instruction/instructions%2Ffull%2F010-tinyfish-cli.generated.md",
+            },
           },
         },
       ],
@@ -2537,6 +2546,7 @@ describe("svvyx extensions command", () => {
       tooling: {
         nativeToolSchema: {
           name: "tool-schema.json",
+          openable: false,
         },
         typescriptApiStatus: "disabled",
       },
@@ -2584,6 +2594,7 @@ describe("svvyx extensions command", () => {
         typescriptApiStatus: "emitted",
         typescriptApiDeclaration: {
           name: "artifacts.types.d.ts",
+          openable: false,
         },
       },
     });

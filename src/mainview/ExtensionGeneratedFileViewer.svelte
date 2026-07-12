@@ -23,15 +23,12 @@
     showTokenCount = true,
   }: Props = $props();
 
-  const openablePath = $derived(block.path.startsWith("/") && block.openable !== false);
+  const openablePath = $derived(Boolean(block.source) && block.openable !== false);
 
   async function openExternal() {
     if (!openablePath) return;
-    await runtime.openExtensionInstructionFileInEditor({
-      extensionId,
-      name: block.name,
-      path: block.path,
-    });
+    if (!block.source) return;
+    await runtime.openSourceInEditor(block.source);
   }
 </script>
 

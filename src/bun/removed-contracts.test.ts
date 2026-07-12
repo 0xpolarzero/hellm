@@ -304,6 +304,10 @@ describe("retired desktop integration RPC paths", () => {
     expect(backendSource).toContain("facades.commands.state.agentProfiles.reorderOrchestrators");
     expect(backendSource).toContain("facades.runtime.sourceEdits.open(input)");
     expect(backendSource).toContain("facades.runtime.sourceEdits.save(input)");
+    expect(backendSource).not.toContain("updateExtensionInstructionFile:");
+    expect(backendSource).not.toContain("openExtensionInstructionFileInEditor:");
+    expect(sharedContractSource).not.toContain("updateExtensionInstructionFile:");
+    expect(sharedContractSource).not.toContain("openExtensionInstructionFileInEditor:");
     expect(backendSource).toContain("facades.runtime.requestInput.setVariant(input)");
     expect(backendSource).toContain("facades.runtime.requestInput.setBlockingTimeout(input)");
     expect(backendSource).toContain("facades.commands.state.extensionEnv.setOverride");

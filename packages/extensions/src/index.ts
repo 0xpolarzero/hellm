@@ -23,6 +23,8 @@ export * from "./packaged-extension-templates-port";
 export * from "./request-user-input-contracts";
 export * from "./request-user-input-handler";
 export * from "./request-user-input-variant-instructions";
+export { extensionOwnedSourceId } from "./source-edit-sessions";
+export type { ExtensionOwnedSourceAddress } from "./source-edit-sessions";
 export * from "./thread-start-contracts";
 export * from "./thread-start-handler";
 export * from "./workspace-source-link-port";

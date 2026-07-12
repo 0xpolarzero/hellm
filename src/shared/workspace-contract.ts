@@ -5,7 +5,6 @@ import type {
   ReasoningEffort,
   WorkflowAgentKey,
 } from "./agent-settings";
-import type { FileBackedSaveMode } from "./file-backed-edit";
 import type {
   ExtensionCategory,
   ExtensionInterfaceKind,
@@ -675,6 +674,7 @@ export interface ExtensionInstructionFileReadModel {
   sourceVersion: string;
   bypassed: boolean;
   editable: boolean;
+  source?: OpenExtensionSourceEditInput;
   tokenCount: {
     tokens: number;
     accuracy: "estimated";
@@ -700,6 +700,7 @@ export interface ExtensionGeneratedReadonlyBlockReadModel {
   path: string;
   openable?: boolean;
   content: string;
+  source?: OpenExtensionSourceEditInput;
   tokenCount: {
     tokens: number;
     accuracy: "estimated";
@@ -812,22 +813,6 @@ export interface ConfigureExtensionInstructionFileRequest extends WorkspaceScope
   extensionId: string;
   name: string;
   bypassed: boolean;
-}
-
-export interface UpdateExtensionInstructionFileRequest extends WorkspaceScopedRequest {
-  extensionId: string;
-  kind?: "full" | "minimal" | "script";
-  name: string;
-  content: string;
-  baseSourceVersion?: string;
-  mode?: FileBackedSaveMode;
-}
-
-export interface OpenExtensionInstructionFileInEditorRequest extends WorkspaceScopedRequest {
-  extensionId: string;
-  kind?: "full" | "minimal" | "script";
-  name: string;
-  path?: string;
 }
 
 export interface SetExtensionEnvSecretRequest extends WorkspaceScopedRequest {
@@ -1878,14 +1863,6 @@ export interface ChatRPCSchema {
       configureExtensionInstructionFile: {
         params: ConfigureExtensionInstructionFileRequest;
         response: ExtensionsInventoryReadModel;
-      };
-      updateExtensionInstructionFile: {
-        params: UpdateExtensionInstructionFileRequest;
-        response: ExtensionsInventoryReadModel;
-      };
-      openExtensionInstructionFileInEditor: {
-        params: OpenExtensionInstructionFileInEditorRequest;
-        response: OpenWorkspaceSourceInEditorResponse;
       };
       setExtensionEnvSecret: {
         params: SetExtensionEnvSecretRequest;

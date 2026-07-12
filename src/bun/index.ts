@@ -79,7 +79,6 @@ import {
   assertExtensionEnvWriteValue,
   readBuiltinExtensionsInventory,
   runSvvyxExtensionsCommand,
-  writeExtensionInstructionFile,
 } from "./svvyx-extensions-command";
 import { mapAppRuntimeLogSource } from "./app-runtime-log-source";
 import { createMacOsKeychainExtensionEnvSecretStore } from "./extension-env-secret-store";
@@ -917,100 +916,6 @@ function buildDesktopRpcHandlers(
           bypassed: input.bypassed,
         });
         return readWorkspaceExtensionsInventory(runtime);
-      },
-      updateExtensionInstructionFile: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        writeExtensionInstructionFile({
-          extensionId: input.extensionId,
-          file: input.name,
-          kind: input.kind,
-          content: input.content,
-          baseSourceVersion: input.baseSourceVersion,
-          mode: input.mode,
-          extensionsRoot: runtime.catalog.getExtensionsRoot(),
-        });
-        runtime.appLog.info("settings", "Extension instruction file updated from UI.", {
-          extensionId: input.extensionId,
-          name: input.name,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      openExtensionInstructionFileInEditor: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const inventory = await readWorkspaceExtensionsInventory(runtime);
-        const extension = inventory.extensions.find(
-          (candidate) => candidate.id === input.extensionId,
-        );
-        const inventoryPaths = new Set<string>();
-        if (extension?.minimalInstruction?.path) {
-          inventoryPaths.add(extension.minimalInstruction.path);
-        }
-        for (const contributor of extension?.loadedInstructionContributors ?? []) {
-          if (contributor.kind === "source") {
-            inventoryPaths.add(contributor.file.path);
-          } else {
-            inventoryPaths.add(contributor.script.path);
-            inventoryPaths.add(contributor.output.path);
-          }
-        }
-        for (const block of [
-          extension?.tooling.nativeToolSchema,
-          extension?.tooling.svvyxCommandSource,
-          extension?.tooling.svvyxCommandSchema,
-          extension?.tooling.typescriptApiDeclaration,
-        ]) {
-          if (block?.path) inventoryPaths.add(block.path);
-        }
-        const requestedPath = input.path && inventoryPaths.has(input.path) ? input.path : null;
-        const path =
-          requestedPath ??
-          (input.kind === "minimal"
-            ? extension?.minimalInstruction?.path
-            : input.kind === "script"
-              ? extension?.loadedInstructionContributors
-                  .filter((contributor) => contributor.kind === "scripted")
-                  .find((contributor) => contributor.script.name === input.name)?.script.path
-              : extension?.loadedInstructionContributors
-                  .filter((contributor) => contributor.kind === "source")
-                  .find((contributor) => contributor.file.name === input.name)?.file.path);
-        if (path && !existsSync(path) && extension && input.kind !== "script") {
-          const content =
-            input.kind === "minimal"
-              ? extension.minimalInstruction?.content
-              : extension.loadedInstructionContributors
-                  .filter((contributor) => contributor.kind === "source")
-                  .find((contributor) => contributor.file.name === input.name)?.file.content;
-          writeExtensionInstructionFile({
-            extensionId: input.extensionId,
-            file: input.name,
-            kind: input.kind ?? "full",
-            content: content ?? "",
-            mode: "overwrite",
-            extensionsRoot: runtime.catalog.getExtensionsRoot(),
-          });
-        }
-        if (!path) {
-          throw new Error(
-            `Extension instruction file not found: ${input.extensionId}/${input.name}`,
-          );
-        }
-        if (input.path && !requestedPath) {
-          throw new Error(`Extension source file not found: ${input.extensionId}/${input.name}`);
-        }
-        if (input.path && !existsSync(path)) {
-          throw new Error(`Extension source file does not exist: ${path}`);
-        }
-        const result = await openPathInPreferredEditor(runtime, facades.hostActions, path);
-        runtime.appLog.info(
-          "external-editor",
-          "Extension instruction file opened in external editor.",
-          {
-            path,
-            editor: result.editor,
-            opened: result.opened,
-          },
-        );
-        return { ...result, path };
       },
       setExtensionEnvSecret: async (input) => {
         const runtime = getWorkspaceRuntime(input);

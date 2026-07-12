@@ -40,6 +40,7 @@ import {
   type WorkspaceSourceLinkPort,
 } from "./workspace-source-link-port";
 import type { GeneratedExtensionExportDiscoveryServices } from "./generated-extensions-package";
+import { extensionOwnedSourceId } from "./source-edit-sessions";
 
 function nativeToolLookup(input: {
   toolName: string;
@@ -631,29 +632,30 @@ describe("@svvy/extensions Effect service", () => {
   it.effect("opens and saves editable extension source sessions with file-backed CAS", () =>
     Effect.gen(function* () {
       const sourceEditHarness = makeSourceEditHarness();
+      const sourceId = extensionOwnedSourceId("base-common", { kind: "minimal" });
       const result = yield* Effect.gen(function* () {
         const extensions = yield* Extensions;
         const opened = yield* extensions.sources.openEditSession({
           sourceKind: "builtin-extension",
-          sourceId: "base-common",
+          sourceId,
         });
         const stale = yield* extensions.sources.saveEditSession({
           sourceKind: "builtin-extension",
-          sourceId: "base-common",
+          sourceId,
           expectedSourceVersion: "sha256:not-current",
           text: "ignored\n",
           saveMode: "compare-and-swap",
         });
         const saved = yield* extensions.sources.saveEditSession({
           sourceKind: "builtin-extension",
-          sourceId: "base-common",
+          sourceId,
           expectedSourceVersion: opened.sourceVersion,
           text: "Load Base Common from the editable source file.\n",
           saveMode: "compare-and-swap",
         });
         const reopened = yield* extensions.sources.openEditSession({
           sourceKind: "builtin-extension",
-          sourceId: "base-common",
+          sourceId,
         });
         return { opened, stale, saved, reopened };
       }).pipe(Effect.provide(sourceEditHarness.layer));
@@ -686,6 +688,95 @@ describe("@svvy/extensions Effect service", () => {
         "Load Base Common from the editable source file.\n",
       );
     }),
+  );
+
+  it.effect(
+    "resolves canonical extension contributor identities and keeps generated records read-only",
+    () =>
+      Effect.gen(function* () {
+        const sourceEditHarness = makeSourceEditHarness();
+        const generatedPath = joinSourceEditPathSegments(
+          sourceEditHarness.extensionsRoot,
+          "sources",
+          "builtin",
+          "web",
+          "instructions",
+          "full",
+          "010-tinyfish-cli.generated.md",
+        );
+        const commandSchemaPath = joinSourceEditPathSegments(
+          sourceEditHarness.extensionsRoot,
+          "generated",
+          "extensions",
+          "workflows",
+          "commands.json",
+        );
+        sourceEditHarness.writeFile(generatedPath, "generated web guidance\n");
+        sourceEditHarness.writeFile(commandSchemaPath, "{}\n");
+        const generatedSourceId = extensionOwnedSourceId("web", {
+          kind: "generated-instruction",
+          relativePath: "instructions/full/010-tinyfish-cli.generated.md",
+        });
+        const commandSchemaSourceId = extensionOwnedSourceId("workflows", {
+          kind: "command-schema",
+        });
+
+        const result = yield* Effect.gen(function* () {
+          const extensions = yield* Extensions;
+          const generated = yield* extensions.sources.openEditSession({
+            sourceKind: "builtin-extension",
+            sourceId: generatedSourceId,
+          });
+          const commandSchema = yield* extensions.sources.openEditSession({
+            sourceKind: "builtin-extension",
+            sourceId: commandSchemaSourceId,
+          });
+          const readOnly = yield* extensions.sources
+            .saveEditSession({
+              sourceKind: "builtin-extension",
+              sourceId: generatedSourceId,
+              expectedSourceVersion: generated.sourceVersion,
+              text: "do not write\n",
+              saveMode: "overwrite",
+            })
+            .pipe(Effect.flip);
+          const aliases = yield* Effect.all(
+            [
+              "web#generated-instruction/instructions%2ffull%2f010-tinyfish-cli.generated.md",
+              "web#generated-instruction/instructions%2F..%2Fmanifest.json",
+            ].map((sourceId) =>
+              extensions.sources
+                .openEditSession({ sourceKind: "builtin-extension", sourceId })
+                .pipe(Effect.flip),
+            ),
+          );
+          const missingGenerated = yield* extensions.sources
+            .openEditSession({
+              sourceKind: "builtin-extension",
+              sourceId: extensionOwnedSourceId("web", {
+                kind: "generated-instruction",
+                relativePath: "instructions/full/missing.generated.md",
+              }),
+            })
+            .pipe(Effect.flip);
+          return { generated, commandSchema, readOnly, aliases, missingGenerated };
+        }).pipe(Effect.provide(sourceEditHarness.layer));
+
+        assert.strictEqual(result.generated.path, generatedPath);
+        assert.strictEqual(result.generated.text, "generated web guidance\n");
+        assert.strictEqual(result.commandSchema.path, commandSchemaPath);
+        assertExtensionError(result.readOnly, {
+          _tag: "ExtensionError",
+          reason: "read-only-source",
+        });
+        for (const error of result.aliases) {
+          assertExtensionError(error, { _tag: "ExtensionError", reason: "invalid-input" });
+        }
+        assertExtensionError(result.missingGenerated, {
+          _tag: "ExtensionError",
+          reason: "not-found",
+        });
+      }),
   );
 
   it.effect("opens and saves workflow source edit sessions with exact file mappings", () =>

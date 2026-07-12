@@ -34,6 +34,7 @@ import { refreshGeneratedExtensionsPackage } from "./generated-extensions-packag
 import type {
   AgentProfileId,
   ExtensionId,
+  OpenExtensionSourceEditInput,
   PromptExecutionExternalInstructionSource,
   RequestInputVariant,
   RuntimeExtensionContextImpactStateFacade,
@@ -88,7 +89,7 @@ import {
   WORKFLOWS_FACADE_DECLARATION,
 } from "./execute-typescript-api-declaration";
 import { builtinLoadedInstructionDefaults } from "./default-system-prompt";
-import { buildNativeToolSchemaJsonForExtension } from "@svvy/extensions";
+import { buildNativeToolSchemaJsonForExtension, extensionOwnedSourceId } from "@svvy/extensions";
 
 export type CliRequirementStatus = {
   id: string;
@@ -750,6 +751,10 @@ function extensionLoadedInstructionContributors(
           name: file.name,
           path,
           bypassed: configByName.get(file.name) ?? false,
+          source: extensionSourceIdentity(extension, {
+            kind: "instruction",
+            name: file.name,
+          }),
         }),
       });
     }
@@ -766,6 +771,7 @@ function extensionLoadedInstructionContributors(
           name,
           path,
           bypassed: configByName.get(name) ?? false,
+          source: extensionSourceIdentity(extension, { kind: "instruction", name }),
         }),
       });
     }
@@ -795,6 +801,10 @@ function extensionLoadedInstructionContributors(
         name: basename(instruction.script),
         path: scriptPath,
         bypassed: false,
+        source: extensionSourceIdentity(extension, {
+          kind: "script",
+          relativePath: instruction.script,
+        }),
       }),
       output: instructionFileReadModel({
         content: outputContent,
@@ -802,6 +812,10 @@ function extensionLoadedInstructionContributors(
         name,
         path: outputPath,
         bypassed: configByName.get(name) ?? false,
+        source: extensionSourceIdentity(extension, {
+          kind: "generated-instruction",
+          relativePath: instruction.output,
+        }),
       }),
       regenerateCommand: `svvyx extensions build ${extension.id} --json`,
     });
@@ -835,6 +849,7 @@ function instructionFileReadModel(input: {
   name: string;
   path: string;
   bypassed: boolean;
+  source?: OpenExtensionSourceEditInput;
 }): ExtensionInstructionFileReadModel {
   return {
     name: input.name,
@@ -843,7 +858,19 @@ function instructionFileReadModel(input: {
     sourceVersion: readFileBackedVersion(input.path),
     bypassed: input.bypassed,
     editable: input.editable,
+    ...(input.source ? { source: input.source } : {}),
     tokenCount: countPromptTokens({ provider: "openai", model: "gpt-4o", text: input.content }),
+  };
+}
+
+function extensionSourceIdentity(
+  extension: Pick<ResolvedExtensionRecord, "category" | "id">,
+  address: Parameters<typeof extensionOwnedSourceId>[1],
+): OpenExtensionSourceEditInput | undefined {
+  if (extension.category !== "builtin" && extension.category !== "user") return undefined;
+  return {
+    sourceKind: extension.category === "builtin" ? "builtin-extension" : "user-extension",
+    sourceId: extensionOwnedSourceId(extension.id, address),
   };
 }
 
@@ -919,6 +946,7 @@ function extensionToolingReadModel(
             content: buildNativeToolSchemaJsonForExtension(extension, requestInputVariant),
             name: "tool-schema.json",
             path: `generated/native-tools/${extension.id}.schema.json`,
+            openable: false,
           }),
         }
       : {}),
@@ -1043,12 +1071,14 @@ function generatedReadonlyBlock(input: {
   name: string;
   openable?: boolean;
   path: string;
+  source?: OpenExtensionSourceEditInput;
 }): ExtensionGeneratedReadonlyBlockReadModel {
   return {
     name: input.name,
     path: input.path,
     ...(input.openable === false ? { openable: false } : {}),
     content: input.content,
+    ...(input.source ? { source: input.source } : {}),
     tokenCount: countPromptTokens({ provider: "openai", model: "gpt-4o", text: input.content }),
   };
 }
@@ -1074,6 +1104,7 @@ function extensionSvvyxCommandSourceReadModel(
     name: "source/index.ts",
     path,
     bypassed: false,
+    source: extensionSourceIdentity(extension, { kind: "svvyx-source" }),
   });
 }
 
@@ -1107,6 +1138,7 @@ function extensionSvvyxCommandSchemaReadModel(
     name: "commands.json",
     openable: Boolean(generatedContent),
     path: generatedPath,
+    source: extensionSourceIdentity(extension, { kind: "command-schema" }),
   });
 }
 
@@ -1133,6 +1165,7 @@ function extensionTypescriptApiDeclaration(
     return generatedReadonlyBlock({
       content: ARTIFACTS_FACADE_DECLARATION,
       name: "artifacts.types.d.ts",
+      openable: false,
       path: resolve(cwd, "generated", "execute-typescript-api.generated.ts"),
     });
   }
@@ -1140,6 +1173,7 @@ function extensionTypescriptApiDeclaration(
     return generatedReadonlyBlock({
       content: WORKFLOWS_FACADE_DECLARATION,
       name: "workflows.types.d.ts",
+      openable: false,
       path: resolve(cwd, "generated", "execute-typescript-api.generated.ts"),
     });
   }
@@ -1149,6 +1183,7 @@ function extensionTypescriptApiDeclaration(
   return generatedReadonlyBlock({
     content,
     name: "types.d.ts",
+    openable: false,
     path,
   });
 }
@@ -1177,6 +1212,7 @@ function extensionMinimalInstructionReadModel(
       path && existsSync(path) ? readFileBackedVersion(path) : fileBackedTextVersion(content),
     bypassed: false,
     editable: extension.category !== "external_instruction",
+    source: extensionSourceIdentity(extension, { kind: "minimal" }),
     tokenCount: countPromptTokens({ provider: "openai", model: "gpt-4o", text: content }),
   };
 }
