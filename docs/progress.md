@@ -56,11 +56,11 @@ How to use this file:
           `@svvy/state`, app/bootstrap, bridge code, and renderer/shared code. Duplicated shared
           UI/Bun DTO declarations are absent except package-private view models derived from core or
           state read-model contracts.
-    - [ ] Desktop renderer bridge DTOs live in core/state/runtime public contracts or
+    - [x] Desktop renderer bridge DTOs live in core/state/runtime public contracts or
           `@svvy/desktop` renderer-safe adapter types: renderer transcript, stream patch, context
           usage, model display, tool-call projection, and `ChatRPCSchema` lifecycle/read-model
           receipts use those desktop-facing contracts, while full surface snapshots and pi-native
-          messages are absent from the renderer bridge boundary.
+          messages are absent from the renderer bridge boundary. Commit(s): `9685acd0b0`
     - [ ] The package architecture contract uses the exact Effect v4 beta.84 surface for schema
           decoders/assertions, schema representation imports, explicit non-adoption of Effect SQL,
           core-owned data-only port tags, extension source-edit method ledgers, builtin source
@@ -244,10 +244,10 @@ How to use this file:
         to the exact app/bootstrap, process-entrypoint, facade/bridge, pi-adapter callback bridge,
         and source-invalidation coordinator adapter allowlists named by package-boundary checks, and
         test runtime construction limited to named harness files.
-  - [ ] Boundary tests reject renderer-root runtime internals: `packages/desktop/src/**`,
+  - [x] Boundary tests reject renderer-root runtime internals: `packages/desktop/src/**`,
         `src/mainview/**`, and `src/shared/**` cannot import pi-native packages, `@svvy/pi-adapter`,
         `@svvy/extensions`, `@svvy/state/*` implementation subpaths, raw runtime internals, or
-        pi-shaped message/session/model DTOs; desktop receives only prebuilt renderer-safe facades.
+        pi-shaped message/session/model DTOs; desktop receives only prebuilt renderer-safe facades. Commit(s): `9685acd0b0`
   - [ ] Boundary tests enforce Effect ownership: Effect runtime/module member adoption is scoped
         by owner package or allowed file, Effect package versions match the lockfile, root owns
         `vitest` and `@effect/vitest`, and package manifests do not own package-local Effect test
@@ -559,11 +559,11 @@ true })`, and broad sleep/polling helpers in unit tests.
           failures to typed abort errors, and invokes a runtime-owned queued-message abort
           post-commit lane only after publication so queue wakeup and surface refresh behavior stay
           inside runtime services.
-    - [ ] `Runtime.approvals.answer` resolves durable approval requests through
+    - [x] `Runtime.approvals.answer` resolves durable approval requests through
           one `RuntimeApprovalStatePort` transaction that settles the request, starts or cancels the
           bound command, and clears the matching approval wait; publishes the transaction's
           committed `afterCommit` descriptors through the runtime-owned notification path; and
-          invokes the runtime-owned approval wait lane only to resolve the existing live waiter.
+          invokes the runtime-owned approval wait lane only to resolve the existing live waiter. Commit(s): `9685acd0b0`
     - [ ] `Runtime.sourceInvalidation` exposes fully wired `hint`, `reconcile`,
           `refreshGeneratedContext`, and `refreshGeneratedPackages` methods; missing wiring is a
           composition error and unsupported source-domain/scope combinations return explicit
@@ -887,13 +887,13 @@ true })`, and broad sleep/polling helpers in unit tests.
             subscription close receipts into renderer-safe/headless-safe rebaseline notifications
             carrying `eventGenerationId`, `lastContiguousSequence` or failed cursor details,
             optional workspace identity, and the affected read-model descriptors to refetch.
-    - [ ] Runtime source-edit workflow-agent APIs use the exact core-owned source-edit DTO
+    - [x] Runtime source-edit workflow-agent APIs use the exact core-owned source-edit DTO
           contracts, delegate file-backed reads/writes to `@svvy/extensions`, record source facts
           through state ports, and schedule generated-context/generated-package reconciliation after
-          committed state mutation results.
-    - [ ] Source-edit request/result DTOs and schema decoders live in
+          committed state mutation results. Commit(s): `9685acd0b0`
+    - [x] Source-edit request/result DTOs and schema decoders live in
           `@svvy/core/runtime-source-edit-contracts`; `@svvy/runtime` and app bootstrap consume them
-          from `@svvy/core`, and `@svvy/extensions` does not export those shared contracts.
+          from `@svvy/core`, and `@svvy/extensions` does not export those shared contracts. Commit(s): `9685acd0b0`
     - [ ] Runtime source invalidation, command-session, and approval APIs include realistic success
           and rejected examples in the package spec and typed tests covering their public
           input/output contracts.
@@ -918,17 +918,17 @@ true })`, and broad sleep/polling helpers in unit tests.
   - [ ] Define the closed `RuntimeEffectRequest` schemas and command-fact request inputs in
         `@svvy/core` as declarative outputs returned by extension handlers for `@svvy/runtime` to
         apply through `@svvy/state`.
-    - [ ] Add the runtime request-input state port contracts, apply the first
+    - [x] Add the runtime request-input state port contracts, apply the first
           `request_input.create` effect, and expose `runtime.requestInput.answer` with
           `AnswerRequestInputInput`, answer recording, and the spec-shaped
           `AnswerRequestInputResult.delivery` variants through `@svvy/runtime` with package tests
-          and boundary coverage.
-    - [ ] Complete durable request-input answer idempotency: normalized `clientSubmission` values
+          and boundary coverage. Commit(s): `9685acd0b0`
+    - [x] Complete durable request-input answer idempotency: normalized `clientSubmission` values
           return `status: "duplicate"` with the original `AnswerRequestInputResult.delivery`,
           perform no second post-commit wake, queue wake, live wait resolution, invalidation
           publication, answer-row insert, queue-row insert, or command settlement, nonblocking
           recorded-only answers do not resolve blocking waits, and committed nonblocking queued
-          answers publish queue/surface invalidations only when a queue row is created.
+          answers publish queue/surface invalidations only when a queue row is created. Commit(s): `9685acd0b0`
     - [ ] Apply `handler_thread.start` through runtime-owned handler lifecycle services, state
           ports, command facts, queue insertion, after-commit notifications, and tests.
       - [ ] Apply the prepared durable handler-thread start through `RuntimeThreadStatePort`,
@@ -986,39 +986,39 @@ true })`, and broad sleep/polling helpers in unit tests.
     - [ ] Expose `RuntimeThreadStatePort.ensureHandlerThreadRunnable(...)` for runtime/native-tool
           code that must make a handler thread runnable and clear its wait projection without raw
           store access.
-    - [ ] Route request-input tool execution through runtime-facing turn, command, request-input,
+    - [x] Route request-input tool execution through runtime-facing turn, command, request-input,
           queue, and wait state ports; no accepted-tool path uses package-private
-          structured-session-state implementation access.
-    - [ ] Request-input blocking waits are runtime-owned end to end: wait registration, timeout
+          structured-session-state implementation access. Commit(s): `9685acd0b0`
+    - [x] Request-input blocking waits are runtime-owned end to end: wait registration, timeout
           defaulting, pause/resume, stale timer suppression, cancellation, surface close,
           restart/recovery, command terminal facts, wait projection, and queue wakeups all run
-          through `@svvy/runtime` services over core-owned state ports.
-      - [ ] Finish package-private `RuntimeRequestInputWaitService.waitForBlockingRequest(...)` with
+          through `@svvy/runtime` services over core-owned state ports. Commit(s): `9685acd0b0`
+      - [x] Finish package-private `RuntimeRequestInputWaitService.waitForBlockingRequest(...)` with
             internal registry `Deferred` handoffs, Effect clock/sleep timeout fibers, explicit
             registry close semantics, runtime-facing request/command/wait/queue ports, and
-            deterministic `TestClock` coverage.
-      - [ ] Compose request-input answer, timer, and queued-delivery writes through runtime-owned
+            deterministic `TestClock` coverage. Commit(s): `9685acd0b0`
+      - [x] Compose request-input answer, timer, and queued-delivery writes through runtime-owned
             lifecycle services that publish committed after-commit descriptors before resolving live
-            waits or waking owning surface queues.
-      - [ ] Make blocking request-input terminal request/answer resolution one durable
+            waits or waking owning surface queues. Commit(s): `9685acd0b0`
+      - [x] Make blocking request-input terminal request/answer resolution one durable
             compare-and-set transition keyed by `requestId`, owning command id, request status, and
             timer version/deadline that atomically terminalizes the request and linked command and
             clears only its matching durable session wait. The first terminal commit wins, and
             losing contenders observe `stale-state` without publishing invalidations, resolving
-            `Deferred`s, inserting answer or queue rows, or settling commands.
+            `Deferred`s, inserting answer or queue rows, or settling commands. Commit(s): `9685acd0b0`
     - [ ] Compute extension usage impacts and affected-surface binding updates through runtime-owned
           generated-context binding and fingerprint reconciliation, preserving command output/fact
           behavior through named core-owned state ports.
-    - [ ] Request-input answer and timer state writes publish committed
+    - [x] Request-input answer and timer state writes publish committed
           after-commit descriptors through runtime-owned notification publication, then resolve live
-          waits or queue delivery through package-private runtime services.
-    - [ ] Compose request-input settings reads, wait-registry wiring, timeout scheduling, queue
+          waits or queue delivery through package-private runtime services. Commit(s): `9685acd0b0`
+    - [x] Compose request-input settings reads, wait-registry wiring, timeout scheduling, queue
           wakeups, and pi materialization through runtime-owned services plus state ports/facades;
           keep app-bootstrap host-adapter code limited to bootstrap wiring, host adapter provision,
-          and facade exposure.
-    - [ ] The full accepted-tool blocking request-input path runs inside `@svvy/runtime` services
+          and facade exposure. Commit(s): `9685acd0b0`
+    - [x] The full accepted-tool blocking request-input path runs inside `@svvy/runtime` services
           with deterministic `TestClock` coverage for timeout pause/resume, cancellation, surface
-          close, and restart/recovery; Promise conversion exists only at app facade/tool boundaries.
+          close, and restart/recovery; Promise conversion exists only at app facade/tool boundaries. Commit(s): `9685acd0b0`
     - [ ] Return `StateMutationResult<T>` from every mutating runtime-facing state port so runtime
           lanes can distinguish committed values from committed after-commit invalidation
           descriptors.
@@ -1396,15 +1396,15 @@ true })`, and broad sleep/polling helpers in unit tests.
   - [ ] Renderer/shared code imports `@svvy/core` contracts for runtime-facing data while
         app-bootstrap-provided `@svvy/runtime` and `@svvy/state` facades perform runtime/state work,
         without pi-native message/session/model imports or direct pi `Agent` mutation.
-    - [ ] Shared renderer contracts expose read-model request/response and live-patch DTOs instead
+    - [x] Shared renderer contracts expose read-model request/response and live-patch DTOs instead
           of pi-native transcript snapshots, full workspace sync payloads, or
           `ConversationSurfaceSnapshot`, `SurfaceSyncMessage.snapshot`, or full session/surface
-          push payloads.
-    - [ ] Renderer chat state uses plain view models derived from state read models and ordered
-          stream patches; it does not construct, mirror, mutate, or store pi `Agent` objects.
-    - [ ] Renderer/shared roots reject pi-native package imports, `@svvy/extensions` values, and
+          push payloads. Commit(s): `9685acd0b0`
+    - [x] Renderer chat state uses plain view models derived from state read models and ordered
+          stream patches; it does not construct, mirror, mutate, or store pi `Agent` objects. Commit(s): `9685acd0b0`
+    - [x] Renderer/shared roots reject pi-native package imports, `@svvy/extensions` values, and
           `@svvy/state/*` implementation subpaths; extension usage, session navigation, and
-          transcript display come only from injected facades and state/core read-model DTOs.
+          transcript display come only from injected facades and state/core read-model DTOs. Commit(s): `9685acd0b0`
     - [ ] Store base actor prompts and builtin instruction material as `@svvy/extensions` source
           assets, and keep profile settings, `@svvy/runtime`, `@svvy/state`, workspace session
           catalog wiring, and app prompt host entrypoints free of prompt-body source ownership.
@@ -1431,17 +1431,17 @@ true })`, and broad sleep/polling helpers in unit tests.
         stream patches, then have app/bootstrap subscribe, sequence, gap-detect, and fan out
         renderer-safe invalidations or bounded surface stream patches to `@svvy/desktop` with
         read-model rebaseline.
-  - [ ] `@svvy/state` owns prompt history, composer drafts, and surface transcript read models.
+  - [x] `@svvy/state` owns prompt history, composer drafts, and surface transcript read models.
         Desktop/RPC payloads use `@svvy/core` schemas, public handler-surface identity, and
         renderer-safe read models; submit responses and snapshots never contain pi transcript
-        objects or renderer `Agent` state.
-  - [ ] Runtime source edits expose only methods backed by exact `@svvy/core` schemas,
+        objects or renderer `Agent` state. Commit(s): `9685acd0b0`
+  - [x] Runtime source edits expose only methods backed by exact `@svvy/core` schemas,
         `@svvy/extensions` file operations, `@svvy/state` source-fact writes, runtime Effect
         methods, facade wiring, and package-boundary/contract tests. Public source-edit methods are
         the closed runtime-owned source operation set with file-backed writes performed by
         `@svvy/extensions`, DB/product-state source facts committed through `@svvy/state`, typed
         runtime invalidations emitted only from committed descriptors, and no generic source CRUD
-        surface.
+        surface. Commit(s): `9685acd0b0`
   - [ ] Runtime state, prompt, queue, extension, and command execution ownership lives in the
         package service graph, with `@svvy/desktop` consuming bootstrap-provided runtime/state
         facades through renderer bridge adapters.
@@ -1719,8 +1719,8 @@ This section is governed by `docs/specs/workflow-library.spec.md` and `docs/spec
   - [ ] Preflight app-owned user Extension source before Workflows source validation so invalid Extension build inputs and TypeScript-enabled `svvyx` extensions that cannot rebuild fail with Extension-specific diagnostics before `@svvyx/extensions` or `@svvyx/workflows` package writes.
   - [ ] Workflows build preflight requests Extension rebuild work through `@svvy/runtime`; `@svvy/extensions` produces rebuild evidence, and dependency/CLI-aware outcomes are available before workflow-agent extension usage overrides are accepted.
 - [ ] `svvyx workflows models list --json` reads the same pi-normalized provider/model/auth/reasoning metadata used by the Agents pane, without a live completion request by default.
-- [ ] Store reusable task-agent parameters as structured `.agent.json` source records that are bidirectionally synchronized with the Agents pane and generated as `Agents.*` exports.
-- [ ] Save `--kind agent` by statically extracting namespace-qualified `Agents.defineTaskAgent(...)` parameter literals without executing arbitrary TypeScript; reject dynamic, unresolved, or root `defineTaskAgent(...)` inputs with structured diagnostics.
+- [x] Store reusable task-agent parameters as structured `.agent.json` source records that are bidirectionally synchronized with the Agents pane and generated as `Agents.*` exports. Commit(s): `9685acd0b0`
+- [x] Save `--kind agent` by statically extracting namespace-qualified `Agents.defineTaskAgent(...)` parameter literals without executing arbitrary TypeScript; reject dynamic, unresolved, or root `defineTaskAgent(...)` inputs with structured diagnostics. Commit(s): `9685acd0b0`
 - [ ] Generated `@svvyx/workflows` task-agent clients validate bridge success responses before
       returning `RunTaskAgentResult` and fail malformed success JSON with a clear bridge error.
 - [ ] The `runTaskAgent` bridge validates auth header shape, request/response body size limits,
@@ -1745,15 +1745,15 @@ This section is governed by `docs/specs/workspace-navigation-core-projection.spe
 - [x] Add session row actions for pin, unpin, archive, and unarchive. Commit(s): `3855fe4`
 - [ ] Keep durable unread state session-level with sidebar timestamp dots, focus-to-read clearing, and session row context-menu actions for mark read or unread, pin, rename, archive, and confirmed delete; pane unread treatment, when present, reads from the same session metadata.
 - [x] Join session summaries, focused panel, and panel-to-surface bindings in one workspace-shell read model without depending on a global active surface. Commit(s): `9a21f87`, `b0ee858`
-- [ ] Keep workspace summaries and live transcript patches as separate read-model/renderer-safe
+- [x] Keep workspace summaries and live transcript patches as separate read-model/renderer-safe
       projection surfaces: workspace summaries come from `@svvy/state` read models, live transcript
       patches come from app/bootstrap-derived renderer-safe surface stream patches, and
-      `@svvy/desktop` caches them only as non-authoritative view state.
-- [ ] Render open live-surface registry state from state-backed read models plus
-      app/bootstrap-derived renderer-safe invalidations keyed by `surfacePiSessionId`.
-- [ ] Render each live surface from state-backed surface read models plus app/bootstrap-derived
+      `@svvy/desktop` caches them only as non-authoritative view state. Commit(s): `9685acd0b0`
+- [x] Render open live-surface registry state from state-backed read models plus
+      app/bootstrap-derived renderer-safe invalidations keyed by `surfacePiSessionId`. Commit(s): `9685acd0b0`
+- [x] Render each live surface from state-backed surface read models plus app/bootstrap-derived
       renderer-safe invalidations and bounded surface stream patches for prompt-lock, model,
-      reasoning, and cancellation lifecycle changes.
+      reasoning, and cancellation lifecycle changes. Commit(s): `9685acd0b0`
 - [x] Render handler-thread rows from structured state in the workspace shell while keeping lifecycle subtitles, active command summaries, running indicators, open-pane treatment, and compact context rails local to the owning row. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
 - [x] Show thread objective, objective state, and row-local derived blocked reason in panel-local thread views. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
 - [x] Render the latest thread episode for an inspected thread while preserving earlier episodes in thread history. Commit(s): `ba5c3f0`, `9a21f87`, `b0ee858`
@@ -1837,9 +1837,9 @@ This section is governed by `docs/specs/pane-layout.spec.md`.
 - [x] Show the current focused-surface agent profile summary in pane chrome. Commit(s): `8e19462`
 - [ ] Use TanStack Form for complex settings forms where renderer-local validation and save state are needed.
   - [ ] Provider API key entry and app-preference settings use TanStack Form with validation, dirty state, reset/cancel submit state, async save errors, and `@svvy/state`-normalized reset defaults.
-  - [ ] Agent-profile and workflow-agent parameter editors use TanStack Form while preserving direct-save semantics, workflow-agent instruction autosave status inside the textarea, and pi-normalized provider/model/reasoning constraints.
+  - [x] Agent-profile and workflow-agent parameter editors use TanStack Form while preserving direct-save semantics, workflow-agent instruction autosave status inside the textarea, and pi-normalized provider/model/reasoning constraints. Commit(s): `9685acd0b0`
   - [ ] Extension env editors cover editable non-secret overrides and secret writes/removals through app-owned UI with redacted async errors and `@svvy/extensions`-authoritative readiness refresh.
-- [ ] Expose workflow-agent parameter records in the Agents pane through the same source used for `Agents.*` generated Workflows exports, with create, duplicate, user-delete, non-deletable default Explorer/Implementer/Reviewer records, source-file links, and the same expanded extension selection/order editor used by other agent profiles.
+- [x] Expose workflow-agent parameter records in the Agents pane through the same source used for `Agents.*` generated Workflows exports, with create, duplicate, user-delete, non-deletable Default/Explorer/Implementer/Reviewer records, source-file links, and the same expanded extension selection/order editor used by other agent profiles. Commit(s): `9685acd0b0`
 - [x] Keep Agents-pane profile and workflow-agent controls visually stable during transient save/autosave states, using save indicators and action-level guards instead of dimming unrelated row controls. Commit(s): 5de117401
 - [ ] Workflow-agent parameter record implementation and tests use the documented handler guidance
       from `workflow-library.spec.md` and `workflows.extension.spec.md` without coupling shipped
