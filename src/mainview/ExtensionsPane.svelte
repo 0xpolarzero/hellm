@@ -11,8 +11,7 @@
   import SaveIcon from "@lucide/svelte/icons/save";
   import TerminalIcon from "@lucide/svelte/icons/terminal";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
-  import { onDestroy, onMount, tick } from "svelte";
-  import { flip } from "svelte/animate";
+  import { onMount, tick } from "svelte";
   import type {
     AppPreferences,
     ExternalInstructionActor,
@@ -41,7 +40,6 @@
   import ExtensionGeneratedFileViewer from "./ExtensionGeneratedFileViewer.svelte";
   import ExtensionInstructionFileEditor from "./ExtensionInstructionFileEditor.svelte";
   import ExtensionListRow from "./ExtensionListRow.svelte";
-  import { queuedMessageOrderChanged, reorderQueuedMessageItems } from "./queued-message-order";
 
   type Props = {
     runtime: ChatRuntime;
@@ -72,7 +70,6 @@
   let confirmingDeleteExtensionId = $state<string | null>(null);
   let confirmingResetExtensionId = $state<string | null>(null);
   let confirmingDeleteInstructionKey = $state<string | null>(null);
-  let confirmingResetOrder = $state(false);
   let snapshotAction = $state<"save" | "rename" | "delete" | "load" | null>(null);
   let snapshotNameInput = $state<HTMLInputElement | null>(null);
   let renameSnapshotInput = $state<HTMLInputElement | null>(null);
@@ -86,16 +83,6 @@
   let newExtensionOpen = $state(false);
   let newExtensionTitle = $state("");
   let newExtensionDescription = $state("");
-  let extensionListElement = $state<HTMLElement | null>(null);
-  let extensionDrag = $state<{
-    extensionId: string;
-    pointerId: number;
-    startY: number;
-    didMove: boolean;
-  } | null>(null);
-  let dragCaptureElement: HTMLElement | null = null;
-  let draggedExtensionId = $state<string | null>(null);
-  let dropBeforeExtensionId = $state<string | null>(null);
   const extensionRowElements = new Map<string, HTMLElement>();
 
   const ACTORS = [
@@ -113,23 +100,11 @@
 
   function inventoryRows(): ExtensionInventoryItemReadModel[] {
     const rows = extensionsInventory?.extensions ?? [];
-    return orderedInventoryRows(rows).filter(
-      (extension) => extensionFilter === "all" || extension.interface === extensionFilter,
-    );
-  }
-
-  function orderedInventoryRows(rows: ExtensionInventoryItemReadModel[]) {
-    const order = extensionsInventory?.defaults?.order ?? [];
-    const orderById = new Map(order.map((id, index) => [id, index]));
-    return reorderQueuedMessageItems(
-      rows.toSorted((left, right) => {
-        const leftOrder = orderById.get(left.id) ?? Number.MAX_SAFE_INTEGER;
-        const rightOrder = orderById.get(right.id) ?? Number.MAX_SAFE_INTEGER;
-        return leftOrder - rightOrder || left.title.localeCompare(right.title) || left.id.localeCompare(right.id);
-      }),
-      draggedExtensionId,
-      dropBeforeExtensionId,
-    );
+    return rows
+      .toSorted(
+        (left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id),
+      )
+      .filter((extension) => extensionFilter === "all" || extension.interface === extensionFilter);
   }
 
   function registerExtensionRow(node: HTMLElement, extensionId: string) {
@@ -142,10 +117,6 @@
       },
     };
   }
-
-  onDestroy(() => {
-    removeExtensionDragListeners();
-  });
 
   function toggleExtensionExpanded(extensionId: string) {
     if (expandedExtensionIds.has(extensionId)) {
@@ -509,133 +480,6 @@
         error instanceof Error ? error.message : "Unable to update TypeScript API setting.";
     } finally {
       finishExtensionAction(actionKey);
-    }
-  }
-
-  async function resetExtensionOrder(): Promise<void> {
-    const actionKey = "order";
-    if (isExtensionActionPending(actionKey) || !confirmingResetOrder) return;
-    startExtensionAction(actionKey);
-    inventoryError = null;
-    try {
-      await applyExtensionInventoryMutation(runtime.reorderExtensionDefaults({ extensionIds: [] }));
-      confirmingResetOrder = false;
-    } catch (error) {
-      inventoryError = error instanceof Error ? error.message : "Unable to reset extension order.";
-    } finally {
-      finishExtensionAction(actionKey);
-    }
-  }
-
-  function requestResetExtensionOrder(): void {
-    if (isExtensionActionPending("order")) return;
-    confirmingResetOrder = true;
-  }
-
-  function cancelResetExtensionOrderConfirmation(): void {
-    confirmingResetOrder = false;
-  }
-
-  function addExtensionDragListeners() {
-    window.addEventListener("pointermove", handleExtensionDragMove);
-    window.addEventListener("pointerup", handleExtensionDragEnd);
-    window.addEventListener("pointercancel", handleExtensionDragCancel);
-  }
-
-  function removeExtensionDragListeners() {
-    window.removeEventListener("pointermove", handleExtensionDragMove);
-    window.removeEventListener("pointerup", handleExtensionDragEnd);
-    window.removeEventListener("pointercancel", handleExtensionDragCancel);
-  }
-
-  function startExtensionDrag(event: PointerEvent, extension: ExtensionInventoryItemReadModel) {
-    if (extensionFilter !== "all") return;
-    extensionDrag = {
-      extensionId: extension.id,
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      didMove: false,
-    };
-    draggedExtensionId = null;
-    dropBeforeExtensionId = null;
-    dragCaptureElement = event.currentTarget as HTMLElement;
-    dragCaptureElement.setPointerCapture(event.pointerId);
-    addExtensionDragListeners();
-  }
-
-  function extensionDropTarget(clientY: number): string | null {
-    const candidates = [
-      ...(extensionListElement?.querySelectorAll<HTMLElement>("[data-extension-draggable='true']") ??
-        []),
-    ].filter((element) => element.dataset.extensionId !== draggedExtensionId);
-    for (const element of candidates) {
-      const rect = element.getBoundingClientRect();
-      if (clientY < rect.top + rect.height / 2) return element.dataset.extensionId ?? null;
-    }
-    return null;
-  }
-
-  function applyExtensionDragMove(clientY: number) {
-    if (!extensionDrag) return;
-    const didMove = extensionDrag.didMove || Math.abs(clientY - extensionDrag.startY) > 5;
-    if (!didMove) return;
-    if (!extensionDrag.didMove) draggedExtensionId = extensionDrag.extensionId;
-    extensionDrag = { ...extensionDrag, didMove: true };
-    dropBeforeExtensionId = extensionDropTarget(clientY);
-  }
-
-  function handleExtensionDragMove(event: PointerEvent) {
-    if (!extensionDrag || event.pointerId !== extensionDrag.pointerId) return;
-    applyExtensionDragMove(event.clientY);
-    if (extensionDrag.didMove || Math.abs(event.clientY - extensionDrag.startY) > 5) {
-      event.preventDefault();
-    }
-  }
-
-  function handleExtensionDragCancel(event: PointerEvent) {
-    if (!extensionDrag || event.pointerId !== extensionDrag.pointerId) return;
-    cancelExtensionDrag();
-  }
-
-  function releaseExtensionDragCapture(pointerId: number) {
-    if (dragCaptureElement?.hasPointerCapture(pointerId)) {
-      dragCaptureElement.releasePointerCapture(pointerId);
-    }
-    dragCaptureElement = null;
-  }
-
-  function cancelExtensionDrag() {
-    if (!extensionDrag) return;
-    releaseExtensionDragCapture(extensionDrag.pointerId);
-    removeExtensionDragListeners();
-    extensionDrag = null;
-    draggedExtensionId = null;
-    dropBeforeExtensionId = null;
-  }
-
-  async function handleExtensionDragEnd(event: PointerEvent) {
-    if (!extensionDrag || event.pointerId !== extensionDrag.pointerId) return;
-    applyExtensionDragMove(event.clientY);
-    const completedDrag = extensionDrag.didMove;
-    const movingId = extensionDrag.extensionId;
-    const beforeId = dropBeforeExtensionId;
-    const pointerId = extensionDrag.pointerId;
-    extensionDrag = null;
-    draggedExtensionId = null;
-    dropBeforeExtensionId = null;
-    releaseExtensionDragCapture(pointerId);
-    removeExtensionDragListeners();
-    const rows = inventoryRows();
-    if (!completedDrag || !queuedMessageOrderChanged(rows, movingId, beforeId)) return;
-    try {
-      extensionsInventory = await runtime.reorderExtensionDefaults({
-        extensionIds: reorderQueuedMessageItems(rows, movingId, beforeId).map(
-          (extension) => extension.id,
-        ),
-      });
-    } catch (error) {
-      inventoryError =
-        error instanceof Error ? error.message : "Unable to reorder extensions.";
     }
   }
 
@@ -1216,32 +1060,6 @@
     <section class="extension-toolbar" aria-label="Extension controls">
       <div class="extension-toolbar-row extension-toolbar-history-row">
         <div
-          use:dismissConfirmation={{
-            active: confirmingResetOrder,
-            onDismiss: cancelResetExtensionOrderConfirmation,
-          }}
-        >
-          <Tooltip label={confirmingResetOrder ? "Confirm reset default extension order" : "Reset default extension order"}>
-            <button
-              type="button"
-              class="extension-toolbar-action"
-              disabled={isExtensionActionPending("order")}
-              onclick={() =>
-                confirmingResetOrder
-                  ? void resetExtensionOrder()
-                  : requestResetExtensionOrder()}
-            >
-              {#if confirmingResetOrder}
-                <CheckIcon aria-hidden="true" size={12} strokeWidth={1.9} />
-                Confirm
-              {:else}
-                <RotateCcwIcon aria-hidden="true" size={12} strokeWidth={1.9} />
-                Order
-              {/if}
-            </button>
-          </Tooltip>
-        </div>
-        <div
           class="extension-snapshot-controls"
           use:dismissConfirmation={{
             active:
@@ -1463,7 +1281,7 @@
       </section>
     {/if}
 
-  <div class="extensions-list" aria-label="Extension inventory" bind:this={extensionListElement}>
+  <div class="extensions-list" aria-label="Extension inventory">
     {#each inventoryRows() as extension (extension.id)}
       {@const cliRequirements = inventoryCliRequirements(extension.id)}
       {@const envRequirements = inventoryEnvRequirements(extension.id)}
@@ -1472,8 +1290,6 @@
       <div
         use:registerExtensionRow={extension.id}
         data-extension-id={extension.id}
-        data-extension-draggable={extensionFilter === "all" ? "true" : "false"}
-        animate:flip={{ duration: draggedExtensionId ? 150 : 0 }}
       >
         <ExtensionListRow
           id={extension.id}
@@ -1481,13 +1297,9 @@
           description={extension.description}
           markerLabel="customized"
           markerVisible={customizedExtension(extension)}
-          dragging={extension.id === draggedExtensionId}
-          draggable={extensionFilter === "all"}
-          dragLabel={`Reorder ${extension.title}`}
           expanded={expanded}
           expandedInset={false}
           target={extension.id === targetExtensionId}
-          onDragPointerDown={(event) => startExtensionDrag(event, extension)}
           onToggle={() => toggleExtensionExpanded(extension.id)}
         >
           {#snippet leading()}

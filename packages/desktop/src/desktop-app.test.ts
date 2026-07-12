@@ -27,6 +27,23 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
   const modelMetadata = {
     list: async () => [],
   } as CreateDesktopAppInput["modelMetadata"];
+  const appActions = {
+    workspaces: {
+      acquireByCwd: async () => ({
+        workspaceId: "workspace_01",
+        cwd: "/workspace",
+        workspaceLabel: "workspace",
+        kind: "user" as const,
+      }),
+      acquireDefault: async () => ({
+        workspaceId: "workspace_default",
+        cwd: "/default",
+        workspaceLabel: "default",
+        kind: "default" as const,
+      }),
+      releaseVisual: async () => ({ released: true }),
+    },
+  } satisfies CreateDesktopAppInput["appActions"];
   const commands = {
     runtime: {},
     state: {
@@ -40,6 +57,7 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
 
   return {
     runtime,
+    appActions,
     modelMetadata,
     state,
     commands,
@@ -56,12 +74,21 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
         clipboard: {
           writeText: async () => ({ ok: true as const }),
         },
+        dialogs: {
+          pickFolder: async () => ({ selectedPaths: [] }),
+          pickFilesAndFolders: async () => ({ selectedPaths: [] }),
+        },
+        paths: {
+          open: async () => ({ opened: true }),
+          reveal: async () => ({ ok: true as const }),
+        },
       },
       bridge: {
         exposeRendererApi: async (api) => {
           events.push("bridge:expose");
           expect(api).toEqual({
             runtime,
+            appActions,
             modelMetadata,
             state,
             commands,

@@ -12,6 +12,8 @@ let nextWindowId = 1;
 let rpcDetachFailure: Error | null = null;
 let beforeQuitInstallFailure: Error | null = null;
 let rendererSendFailure: Error | null = null;
+let openFileDialogResult: string[] = [];
+let openPathResult = true;
 let lastRpcConfig: {
   handlers?: { requests?: { rendererReady?: () => Promise<{ ok: true }> } };
 } | null = null;
@@ -88,6 +90,17 @@ mock.module("electrobun/bun", () => ({
     clipboardWriteText(text: string) {
       calls.push(`clipboard:${text}`);
     },
+    async openFileDialog(options: Record<string, unknown>) {
+      calls.push(`dialog:${JSON.stringify(options)}`);
+      return [...openFileDialogResult];
+    },
+    openPath(path: string) {
+      calls.push(`path.open:${path}`);
+      return openPathResult;
+    },
+    showItemInFolder(path: string) {
+      calls.push(`path.reveal:${path}`);
+    },
   },
   ApplicationMenu: {
     setApplicationMenu(menu: unknown) {
@@ -136,6 +149,7 @@ async function reportRendererReady(): Promise<void> {
 
 const rendererApiInput = {
   runtime: {} as never,
+  appActions: {} as never,
   modelMetadata: {} as never,
   state: {} as never,
   commands: {} as never,
@@ -153,6 +167,8 @@ describe("Electrobun desktop host adapter", () => {
     rpcDetachFailure = null;
     beforeQuitInstallFailure = null;
     rendererSendFailure = null;
+    openFileDialogResult = [];
+    openPathResult = true;
     lastRpcConfig = null;
   });
 
@@ -211,6 +227,42 @@ describe("Electrobun desktop host adapter", () => {
       ok: true,
     });
     expect(calls).toContain("clipboard:copied");
+  });
+
+  it("owns native folder and attachment picking through typed host actions", async () => {
+    const { host } = createHost();
+    openFileDialogResult = ["/workspace/first", "/workspace/second"];
+
+    await expect(
+      host.actions.dialogs.pickFolder({ startingFolder: "/workspace" }),
+    ).resolves.toEqual({ selectedPaths: ["/workspace/first", "/workspace/second"] });
+    await expect(
+      host.actions.dialogs.pickFilesAndFolders({ startingFolder: "/workspace" }),
+    ).resolves.toEqual({ selectedPaths: ["/workspace/first", "/workspace/second"] });
+    expect(calls).toContain(
+      'dialog:{"startingFolder":"/workspace","allowedFileTypes":"*","canChooseFiles":false,"canChooseDirectory":true,"allowsMultipleSelection":false}',
+    );
+    expect(calls).toContain(
+      'dialog:{"startingFolder":"/workspace","allowedFileTypes":"*","canChooseFiles":true,"canChooseDirectory":true,"allowsMultipleSelection":true}',
+    );
+  });
+
+  it("owns native path open and reveal behavior through typed host actions", async () => {
+    const { host } = createHost();
+
+    await expect(host.actions.paths.open({ path: "/workspace/folder" })).resolves.toEqual({
+      opened: true,
+    });
+    openPathResult = false;
+    await expect(host.actions.paths.open({ path: "/workspace/missing" })).resolves.toEqual({
+      opened: false,
+    });
+    await expect(host.actions.paths.reveal({ path: "/workspace/file.ts" })).resolves.toEqual({
+      ok: true,
+    });
+    expect(calls).toContain("path.open:/workspace/folder");
+    expect(calls).toContain("path.open:/workspace/missing");
+    expect(calls).toContain("path.reveal:/workspace/file.ts");
   });
 
   it("guards renderer notification delivery across bridge disposal", async () => {

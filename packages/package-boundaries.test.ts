@@ -725,6 +725,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
     "@svvy/desktop",
     [
       "CreateDesktopAppInput",
+      "DesktopAppActionsFacade",
       "DesktopApp",
       "DesktopBridgeAdapter",
       "DesktopBridgeRegistration",
@@ -741,6 +742,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "DesktopWindowAdapter",
       "DesktopWindowHandle",
       "DesktopWindowId",
+      "DesktopWorkspaceInfo",
       "RendererStateCommandsFacade",
       "RendererModelMetadataFacade",
       "RendererStateFacade",

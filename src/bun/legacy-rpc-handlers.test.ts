@@ -63,6 +63,9 @@ const FACADE_BACKED_REQUESTS = [
   "stateExtensionEnvSetOverride",
   "stateExtensionEnvRemoveOverride",
   "createOrchestratorSurface",
+  "openWorkspace",
+  "getDefaultWorkspace",
+  "closeWorkspace",
 ] as const satisfies readonly ChatRpcRequestName[];
 
 const HOST_BACKED_REQUESTS = [
@@ -85,7 +88,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "resetExtension",
   "buildExtension",
   "setExtensionTypescriptApi",
-  "reorderExtensionDefaults",
   "addExtensionInstructionFile",
   "removeExtensionInstructionFile",
   "configureExtensionInstructionFile",
@@ -93,9 +95,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "openExtensionInstructionFileInEditor",
   "setExtensionEnvSecret",
   "removeExtensionEnvSecret",
-  "openWorkspace",
-  "getDefaultWorkspace",
-  "closeWorkspace",
   "listWorkspaceBranches",
   "switchWorkspaceBranch",
   "listWorkspacePaths",

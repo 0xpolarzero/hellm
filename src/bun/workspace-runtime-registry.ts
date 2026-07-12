@@ -13,6 +13,7 @@ import {
 import * as Effect from "effect/Effect";
 import type {
   CreateDesktopAppInput,
+  DesktopAppActionsFacade,
   DesktopRuntimeActionsFacade,
   RendererStateCommandsFacade,
   RendererStateFacade,
@@ -138,6 +139,7 @@ export type WorkspaceRuntimeOperations = Pick<
 >;
 
 export interface DesktopAppFacades {
+  readonly appActions: DesktopAppActionsFacade;
   readonly runtimeActions: DesktopRuntimeActionsFacade;
   readonly runtimeCommands: CreateDesktopAppInput["commands"]["runtime"];
   readonly rendererState: RendererStateFacade;
@@ -658,6 +660,15 @@ export class WorkspaceRuntimeRegistry {
           },
         };
         return {
+          appActions: {
+            workspaces: {
+              acquireByCwd: async ({ cwd }) => (await this.acquireWorkspace(cwd)).getInfo(),
+              acquireDefault: async () => (await this.getDefaultWorkspace()).getInfo(),
+              releaseVisual: async ({ workspaceId }) => ({
+                released: await this.releaseWorkspace(workspaceId),
+              }),
+            },
+          },
           runtimeActions: {
             workspaces,
             surfaces: runtime.facade.surfaces,

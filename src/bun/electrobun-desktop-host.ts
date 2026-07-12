@@ -488,6 +488,37 @@ export function createElectrobunDesktopHostAdapter(
         return { ok: true };
       },
     },
+    dialogs: {
+      async pickFolder({ startingFolder }) {
+        const selectedPaths = await Utils.openFileDialog({
+          startingFolder,
+          allowedFileTypes: "*",
+          canChooseFiles: false,
+          canChooseDirectory: true,
+          allowsMultipleSelection: false,
+        });
+        return { selectedPaths };
+      },
+      async pickFilesAndFolders({ startingFolder }) {
+        const selectedPaths = await Utils.openFileDialog({
+          startingFolder,
+          allowedFileTypes: "*",
+          canChooseFiles: true,
+          canChooseDirectory: true,
+          allowsMultipleSelection: true,
+        });
+        return { selectedPaths };
+      },
+    },
+    paths: {
+      async open({ path }) {
+        return { opened: Utils.openPath(path) };
+      },
+      async reveal({ path }) {
+        Utils.showItemInFolder(path);
+        return { ok: true };
+      },
+    },
   };
 
   function requireMainWindow(windowId: DesktopWindowId): MainWindowRecord {

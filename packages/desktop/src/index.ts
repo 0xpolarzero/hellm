@@ -9,6 +9,7 @@ import type {
   SurfaceStreamGenerationId,
   SurfaceStreamPatchInput,
   SurfaceStreamSequence,
+  WorkspaceKind,
   WorkspaceId,
 } from "@svvy/core";
 import type { createRuntimeFacade } from "@svvy/runtime";
@@ -20,6 +21,21 @@ type BootstrapStateFacade = ReturnType<typeof createStateFacade>;
 type BootstrapStateCommandsFacade = ReturnType<typeof createStateCommandsFacade>;
 
 export type DesktopRuntimeActionsFacade = Omit<RuntimeFacade, "events" | "close" | "commands">;
+
+export interface DesktopWorkspaceInfo {
+  readonly workspaceId: string;
+  readonly cwd: string;
+  readonly workspaceLabel: string;
+  readonly kind: WorkspaceKind;
+}
+
+export interface DesktopAppActionsFacade {
+  readonly workspaces: {
+    acquireByCwd(input: { readonly cwd: string }): Promise<DesktopWorkspaceInfo>;
+    acquireDefault(): Promise<DesktopWorkspaceInfo>;
+    releaseVisual(input: { readonly workspaceId: string }): Promise<{ readonly released: boolean }>;
+  };
+}
 
 export interface RendererStateFacade {
   readonly readModels: Pick<
@@ -50,6 +66,7 @@ export interface DesktopNotificationBridge {
 
 export interface CreateDesktopAppInput {
   readonly runtime: DesktopRuntimeActionsFacade;
+  readonly appActions: DesktopAppActionsFacade;
   readonly modelMetadata: RendererModelMetadataFacade;
   readonly state: RendererStateFacade;
   readonly commands: {
@@ -72,11 +89,24 @@ export interface DesktopHostActionsAdapter {
   readonly clipboard: {
     writeText(input: { readonly text: string }): Promise<{ readonly ok: true }>;
   };
+  readonly dialogs: {
+    pickFolder(input: {
+      readonly startingFolder: string;
+    }): Promise<{ readonly selectedPaths: readonly string[] }>;
+    pickFilesAndFolders(input: {
+      readonly startingFolder: string;
+    }): Promise<{ readonly selectedPaths: readonly string[] }>;
+  };
+  readonly paths: {
+    open(input: { readonly path: string }): Promise<{ readonly opened: boolean }>;
+    reveal(input: { readonly path: string }): Promise<{ readonly ok: true }>;
+  };
 }
 
 export interface DesktopBridgeAdapter {
   exposeRendererApi(input: {
     runtime: DesktopRuntimeActionsFacade;
+    appActions: DesktopAppActionsFacade;
     modelMetadata: RendererModelMetadataFacade;
     state: RendererStateFacade;
     commands: CreateDesktopAppInput["commands"];
@@ -291,6 +321,7 @@ export function createDesktopApp(input: CreateDesktopAppInput): DesktopApp {
         try {
           bridgeRegistration = await input.host.bridge.exposeRendererApi({
             runtime: input.runtime,
+            appActions: input.appActions,
             modelMetadata: input.modelMetadata,
             state: input.state,
             commands: input.commands,

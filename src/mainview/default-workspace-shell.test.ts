@@ -121,7 +121,7 @@ describe("default workspace renderer shell", () => {
     expect(bunSource).toContain("openWorkspace: async (input: OpenWorkspaceRequest = {})");
     expect(bunSource).toContain("const { cwd } = input;");
     expect(bunSource).toContain(
-      "const runtime = await workspaceRuntimeRegistry.acquireWorkspace(selectedCwd);",
+      "const workspace = await facades.appActions.workspaces.acquireByCwd({ cwd: selectedCwd });",
     );
   });
 
@@ -1014,8 +1014,8 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("showLeading={false}");
     expect(extensionsPaneSource).toContain("confirmingResetExtensionId");
     expect(extensionsPaneSource).toContain("Confirm reset");
-    expect(extensionsPaneSource).toContain("confirmingResetOrder");
-    expect(extensionsPaneSource).toContain("Confirm reset default extension order");
+    expect(extensionsPaneSource).not.toContain("confirmingResetOrder");
+    expect(extensionsPaneSource).not.toContain("Confirm reset default extension order");
     expect(extensionListRowSource).toContain("showDragHandle?: boolean");
     expect(extensionListRowSource).toContain("showLeading?: boolean");
     expect(extensionListRowSource).toContain("> .shared-extension-main");

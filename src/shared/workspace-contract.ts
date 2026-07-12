@@ -797,10 +797,6 @@ export interface SetExtensionTypescriptApiRequest extends WorkspaceScopedRequest
   enabled: boolean;
 }
 
-export interface ReorderExtensionDefaultsRequest extends WorkspaceScopedRequest {
-  extensionIds: string[];
-}
-
 export interface AddExtensionInstructionFileRequest extends WorkspaceScopedRequest {
   extensionId: string;
   name: string;
@@ -1866,10 +1862,6 @@ export interface ChatRPCSchema {
       };
       setExtensionTypescriptApi: {
         params: SetExtensionTypescriptApiRequest;
-        response: ExtensionsInventoryReadModel;
-      };
-      reorderExtensionDefaults: {
-        params: ReorderExtensionDefaultsRequest;
         response: ExtensionsInventoryReadModel;
       };
       addExtensionInstructionFile: {

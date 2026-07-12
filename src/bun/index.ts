@@ -1121,22 +1121,6 @@ function buildDesktopRpcHandlers(
         });
         return readWorkspaceExtensionsInventory(runtime);
       },
-      reorderExtensionDefaults: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const orderArgs = input.extensionIds
-          .map((extensionId) => `--extension ${quoteSvvyxCommandArg(extensionId)}`)
-          .join(" ");
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          input.extensionIds.length
-            ? `svvyx extensions defaults reorder ${orderArgs} --json`
-            : "svvyx extensions defaults reset-order --json",
-        );
-        runtime.appLog.info("settings", "Extension default order updated from UI.", {
-          count: input.extensionIds.length,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
       addExtensionInstructionFile: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         await runWorkspaceExtensionsCommand(
@@ -1448,23 +1432,14 @@ function buildDesktopRpcHandlers(
         }
         const selectedCwd =
           cwd ??
-          (
-            await Utils.openFileDialog({
-              startingFolder,
-              allowedFileTypes: "*",
-              canChooseFiles: false,
-              canChooseDirectory: true,
-              allowsMultipleSelection: false,
-            })
-          )[0];
+          (await facades.hostActions.dialogs.pickFolder({ startingFolder })).selectedPaths[0];
         if (!selectedCwd) return { workspace: null };
-        const runtime = await workspaceRuntimeRegistry.acquireWorkspace(selectedCwd);
-        runtime.appLog.info("workspace", "Workspace opened.", { workspaceId: runtime.workspaceId });
-        recordDevBrowserToolsEvent("workspace.opened", { workspaceId: runtime.workspaceId });
-        return { workspace: addWorkspaceBranch(runtime.getInfo()) };
+        const workspace = await facades.appActions.workspaces.acquireByCwd({ cwd: selectedCwd });
+        recordDevBrowserToolsEvent("workspace.opened", { workspaceId: workspace.workspaceId });
+        return { workspace: addWorkspaceBranch(workspace) };
       },
       getDefaultWorkspace: async () => {
-        return addWorkspaceBranch((await workspaceRuntimeRegistry.getDefaultWorkspace()).getInfo());
+        return addWorkspaceBranch(await facades.appActions.workspaces.acquireDefault());
       },
       stateWorkspaceChromeSetTabs: (request) =>
         facades.commands.state.workspaceChrome.setTabs(request),
@@ -1475,9 +1450,9 @@ function buildDesktopRpcHandlers(
       stateWorkspaceLayoutSaveSlot: (request) =>
         facades.commands.state.workspaceLayout.saveSlot(request),
       closeWorkspace: async ({ workspaceId }) => {
-        const closed = await workspaceRuntimeRegistry.closeWorkspace(workspaceId);
-        recordDevBrowserToolsEvent("workspace.closed", { workspaceId, closed });
-        return { ok: closed };
+        const { released } = await facades.appActions.workspaces.releaseVisual({ workspaceId });
+        recordDevBrowserToolsEvent("workspace.closed", { workspaceId, closed: released });
+        return { ok: released };
       },
       listWorkspaceBranches: (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -2281,6 +2256,7 @@ await runDesktopBootstrap({
 
     desktopApp = createDesktopApp({
       runtime: facades.runtimeActions,
+      appActions: facades.appActions,
       modelMetadata: facades.modelMetadata,
       state: facades.rendererState,
       commands: {

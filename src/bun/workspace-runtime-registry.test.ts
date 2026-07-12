@@ -12,7 +12,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import * as Effect from "effect/Effect";
 import type {
@@ -87,6 +87,7 @@ describe("WorkspaceRuntimeRegistry", () => {
 
     expect(await secondAcquisition).toBe(facades);
     expect(Object.keys(facades).toSorted()).toEqual([
+      "appActions",
       "modelMetadata",
       "rendererState",
       "rendererStateCommands",
@@ -103,6 +104,12 @@ describe("WorkspaceRuntimeRegistry", () => {
       "sourceInvalidation",
       "surfaces",
       "workspaces",
+    ]);
+    expect(Object.keys(facades.appActions)).toEqual(["workspaces"]);
+    expect(Object.keys(facades.appActions.workspaces)).toEqual([
+      "acquireByCwd",
+      "acquireDefault",
+      "releaseVisual",
     ]);
     expect("events" in facades.runtimeActions).toBeFalse();
     expect("commands" in facades.runtimeActions).toBeFalse();
@@ -138,6 +145,65 @@ describe("WorkspaceRuntimeRegistry", () => {
       reason: "target-not-found",
     });
     expect(registry["externalWorkspaceOwners"].size).toBe(0);
+  });
+
+  it("exposes renderer-safe visual workspace lifecycle actions without registry records", async () => {
+    const cwd = tempWorkspace("desktop-app-actions-workspace-lifecycle");
+    const registry = createRegistry(cwd);
+    const facades = await registry.acquireDesktopAppFacades();
+
+    const acquired = await facades.appActions.workspaces.acquireByCwd({ cwd });
+
+    expect(typeof acquired.workspaceId).toBe("string");
+    expect(acquired).toEqual({
+      workspaceId: acquired.workspaceId,
+      cwd: realpathSync.native(cwd),
+      workspaceLabel: basename(realpathSync.native(cwd)),
+      kind: "user",
+    });
+    expect(Object.keys(acquired).toSorted()).toEqual([
+      "cwd",
+      "kind",
+      "workspaceId",
+      "workspaceLabel",
+    ]);
+    expect("catalog" in acquired).toBeFalse();
+    expect("dispose" in acquired).toBeFalse();
+    expect(registry.getRuntime(acquired.workspaceId).cwd).toBe(acquired.cwd);
+
+    await expect(
+      facades.appActions.workspaces.releaseVisual({ workspaceId: acquired.workspaceId }),
+    ).resolves.toEqual({ released: true });
+    expect(registry.listOpenWorkspaces()).toEqual([]);
+    await expect(
+      facades.appActions.workspaces.releaseVisual({ workspaceId: acquired.workspaceId }),
+    ).resolves.toEqual({ released: false });
+  });
+
+  it("acquires the default visual workspace through the desktop app-action facade", async () => {
+    const appDataDir = tempWorkspace("desktop-app-actions-default-data");
+    const registry = createRegistry(
+      tempWorkspace("desktop-app-actions-default-initial"),
+      undefined,
+      {
+        appDataDir,
+      },
+    );
+    const facades = await registry.acquireDesktopAppFacades();
+
+    const acquired = await facades.appActions.workspaces.acquireDefault();
+
+    expect(typeof acquired.workspaceId).toBe("string");
+    expect(acquired).toMatchObject({
+      workspaceId: acquired.workspaceId,
+      cwd: getDefaultWorkspaceCwd(appDataDir),
+      kind: "default",
+    });
+    expect(registry.listOpenWorkspaces()).toContainEqual(acquired);
+    expect(registry.getRuntime(acquired.workspaceId).workspaceId).toBe(acquired.workspaceId);
+    await expect(
+      facades.appActions.workspaces.releaseVisual({ workspaceId: acquired.workspaceId }),
+    ).resolves.toEqual({ released: true });
   });
 
   it("does not open the initial cwd unless startup opening is requested", async () => {
