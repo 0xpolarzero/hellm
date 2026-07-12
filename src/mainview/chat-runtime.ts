@@ -718,7 +718,6 @@ export interface ChatSurfaceController {
   deleteQueuedPrompt: (promptId: string) => Promise<boolean>;
   reorderQueuedPrompt: (promptId: string, beforePromptId: string | null) => Promise<boolean>;
   steerQueuedPrompt: (promptId: string) => Promise<boolean>;
-  setExtensionContextAutoUpdate: (enabled: boolean) => Promise<boolean>;
   setExtensionUsage: (extensionId: string, state: ExtensionUsageState) => Promise<void>;
   abort: () => Promise<void>;
   subscribe: (listener: ChatRuntimeListener) => () => void;
@@ -848,7 +847,6 @@ export interface ChatRuntimeRpcClient {
     answerRequestUserInput: typeof rpc.request.answerRequestUserInput;
     answerRuntimeApprovalRequest: typeof rpc.request.answerRuntimeApprovalRequest;
     setRequestUserInputTimerPaused: typeof rpc.request.setRequestUserInputTimerPaused;
-    setExtensionContextAutoUpdate: typeof rpc.request.setExtensionContextAutoUpdate;
     setSurfaceModel: typeof rpc.request.setSurfaceModel;
     setSurfaceThoughtLevel: typeof rpc.request.setSurfaceThoughtLevel;
     setSurfaceExtensionUsage: typeof rpc.request.setSurfaceExtensionUsage;
@@ -1903,15 +1901,6 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
       workspaceId: this.workspaceId,
       target: this.target,
       queuedMessageId: promptId,
-    });
-    return response.ok;
-  }
-
-  async setExtensionContextAutoUpdate(enabled: boolean): Promise<boolean> {
-    const response = await this.rpcClient.request.setExtensionContextAutoUpdate({
-      workspaceId: this.workspaceId,
-      target: this.target,
-      enabled,
     });
     return response.ok;
   }

@@ -1887,17 +1887,6 @@ function buildDesktopRpcHandlers(
         });
         return result;
       },
-      setExtensionContextAutoUpdate: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const result = await runtime.catalog.setExtensionContextAutoUpdate(input);
-        runtime.appLog.info("prompt", "Surface extension context auto-update changed.", {
-          workspaceSessionId: input.target.workspaceSessionId,
-          surfacePiSessionId: input.target.surfacePiSessionId,
-          threadId: input.target.threadId,
-          enabled: input.enabled,
-        });
-        return result;
-      },
       cancelPrompt: async (input): Promise<{ ok: boolean }> => {
         await facades.runtime.messages.abort({
           target: input.target as AbortPromptInput["target"],

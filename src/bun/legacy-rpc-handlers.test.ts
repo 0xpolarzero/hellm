@@ -109,7 +109,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "editCommittedUserMessage",
   "editQueuedSurfaceMessage",
   "reorderQueuedSurfaceMessage",
-  "setExtensionContextAutoUpdate",
   "setSurfaceModel",
   "setSurfaceThoughtLevel",
   "setSurfaceExtensionUsage",

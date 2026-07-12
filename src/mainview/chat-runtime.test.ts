@@ -3058,10 +3058,6 @@ function createFakeRpc(input: {
           }
           return { requestId: request.requestId as RequestInputRequestId };
         },
-        setExtensionContextAutoUpdate: async ({ target }) => ({
-          ok: true,
-          target: cloneTarget(target),
-        }),
         setSurfaceModel: async ({ target, provider, model }) => {
           modelUpdates.push({ target: cloneTarget(target), model });
           const record = getSurfaceRecord(target.surfacePiSessionId);

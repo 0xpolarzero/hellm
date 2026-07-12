@@ -89,7 +89,6 @@ import type {
   ForkSessionRequest,
   PromptTarget,
   PromptClientSubmissionMetadata,
-  SetExtensionContextAutoUpdateRequest,
   SurfaceMutationResponse,
   SurfaceOpenResponse,
   UpdateComposerDraftRequest,
@@ -1520,9 +1519,10 @@ export class WorkspaceSessionCatalog {
     return { ok: true, target: structuredClone(input.target) };
   }
 
-  async setExtensionContextAutoUpdate(
-    input: SetExtensionContextAutoUpdateRequest,
-  ): Promise<SurfaceMutationResponse> {
+  async setExtensionContextAutoUpdate(input: {
+    target: PromptTarget;
+    enabled: boolean;
+  }): Promise<SurfaceMutationResponse> {
     this.assertValidPromptTarget(input.target);
     if (input.target.surface === "handler") {
       if (!input.target.threadId) {

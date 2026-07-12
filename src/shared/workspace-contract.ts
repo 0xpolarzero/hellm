@@ -966,11 +966,6 @@ export interface QueuedSurfaceMessageRequest {
   queuedMessageId: string;
 }
 
-export interface SetExtensionContextAutoUpdateRequest {
-  target: PromptTarget;
-  enabled: boolean;
-}
-
 export interface ReorderQueuedSurfaceMessageRequest extends QueuedSurfaceMessageRequest {
   beforeQueuedMessageId?: string | null;
 }
@@ -2080,10 +2075,6 @@ export interface ChatRPCSchema {
       setRequestUserInputTimerPaused: {
         params: WorkspaceScoped<SetRequestUserInputTimerPausedRequest>;
         response: RequestInputTimerPauseResponse;
-      };
-      setExtensionContextAutoUpdate: {
-        params: WorkspaceScoped<SetExtensionContextAutoUpdateRequest>;
-        response: SurfaceMutationResponse;
       };
       setSurfaceModel: {
         params: WorkspaceScoped<SetSurfaceModelRequest>;
