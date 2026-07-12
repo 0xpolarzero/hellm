@@ -1947,10 +1947,6 @@ export interface ChatRPCSchema {
         params: WorkspaceScopedRequest;
         response: WorkspaceMutationResponse;
       };
-      getWorkspaceInfo: {
-        params: WorkspaceScopedRequest;
-        response: WorkspaceInfoResponse;
-      };
       listWorkspaceBranches: {
         params: WorkspaceScopedRequest;
         response: WorkspaceBranchListResponse;

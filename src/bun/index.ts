@@ -1495,9 +1495,6 @@ function buildDesktopRpcHandlers(
         recordDevBrowserToolsEvent("workspace.closed", { workspaceId, closed });
         return { ok: closed };
       },
-      getWorkspaceInfo: (input) => {
-        return addWorkspaceBranch(getWorkspaceRuntime(input).getInfo());
-      },
       listWorkspaceBranches: (input) => {
         const runtime = getWorkspaceRuntime(input);
         const currentBranch = getWorkspaceBranch(runtime.cwd);

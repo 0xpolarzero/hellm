@@ -2076,7 +2076,6 @@ function createFakeRpc(input: {
           };
           return structuredClone(requestInputSettings);
         },
-        getWorkspaceInfo: async () => structuredClone(workspaceInfo),
         stateWorkspaceLayoutSaveSlot: async (request) => {
           workspaceLayoutSaveRequests.push(structuredClone(request));
           await workspaceLayoutSaveHandler?.(request);

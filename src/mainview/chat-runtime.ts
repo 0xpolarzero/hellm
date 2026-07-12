@@ -817,7 +817,6 @@ export interface ChatRuntimeRpcClient {
     setRequestInputVariant: typeof rpc.request.setRequestInputVariant;
     setRequestInputBlockingTimeout: typeof rpc.request.setRequestInputBlockingTimeout;
     getOpenWorkspaces: typeof rpc.request.getOpenWorkspaces;
-    getWorkspaceInfo: typeof rpc.request.getWorkspaceInfo;
     stateWorkspaceLayoutSaveSlot: typeof rpc.request.stateWorkspaceLayoutSaveSlot;
     listWorkspaceBranches: typeof rpc.request.listWorkspaceBranches;
     switchWorkspaceBranch: typeof rpc.request.switchWorkspaceBranch;
@@ -869,8 +868,7 @@ export interface ChatRuntimeRpcClient {
 const DEFAULT_RPC_CLIENT: ChatRuntimeRpcClient = rpc;
 
 export interface ChatRuntimeOptions {
-  workspaceInfo?: WorkspaceInfoResponse;
-  workspaceId?: string;
+  workspaceInfo: WorkspaceInfoResponse;
   workspaceTabId?: string;
   initialLayoutId?: WorkspaceLayoutSlotId;
   selectWorkspaceLayoutSlot?: (layoutId: WorkspaceLayoutSlotId) => Promise<void>;
@@ -2016,17 +2014,10 @@ function inspectorTargetKey(kind: InspectorCacheKind, id: string): string {
 }
 
 export async function createChatRuntime(
-  options: ChatRuntimeOptions = {},
+  options: ChatRuntimeOptions,
   rpcClient: ChatRuntimeRpcClient = DEFAULT_RPC_CLIENT,
 ): Promise<ChatRuntime> {
-  const workspaceInfo =
-    options.workspaceInfo ??
-    (options.workspaceId
-      ? await rpcClient.request.getWorkspaceInfo({ workspaceId: options.workspaceId })
-      : null);
-  if (!workspaceInfo) {
-    throw new Error("createChatRuntime requires workspaceInfo or workspaceId.");
-  }
+  const workspaceInfo = options.workspaceInfo;
   const listeners = new Set<ChatRuntimeListener>();
   const appLogUpdateListeners = new Set<(payload: AppLogUpdateMessage) => void>();
   const rendererCommandListeners = new Set<(command: DesktopRendererCommand) => void>();

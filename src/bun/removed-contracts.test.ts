@@ -364,6 +364,7 @@ describe("retired desktop integration RPC paths", () => {
       "setExtensionEnvOverride",
       "removeExtensionEnvOverride",
       "createSession",
+      "getWorkspaceInfo",
     ]) {
       expect(sharedContractSource).not.toContain(`${channel}: {`);
       expect(chatRuntimeSource).not.toContain(`rpcClient.request.${channel}(`);

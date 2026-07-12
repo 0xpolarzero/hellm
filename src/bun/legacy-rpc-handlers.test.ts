@@ -94,7 +94,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "getOpenWorkspaces",
   "getDefaultWorkspace",
   "closeWorkspace",
-  "getWorkspaceInfo",
   "listWorkspaceBranches",
   "switchWorkspaceBranch",
   "writeClipboardText",
