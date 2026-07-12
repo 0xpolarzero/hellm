@@ -2512,15 +2512,10 @@ function createFakeRpc(input: {
           surfaces.set(sessionId, { fixture, retainCount: 1 });
           return { target: cloneTarget(surfaceTarget(fixture)) };
         },
-        openSession: async ({ sessionId }) => {
-          await openSessionHandlers.get(sessionId)?.();
-          const record = getSurfaceRecord(sessionId);
-          record.retainCount += 1;
-          const target = surfaceTarget(record.fixture);
-          openedTargets.push(cloneTarget(target));
-          return { target: cloneTarget(target) };
-        },
         openSurface: async ({ target }) => {
+          if (target.surface === "orchestrator") {
+            await openSessionHandlers.get(target.workspaceSessionId)?.();
+          }
           const record = getSurfaceRecord(target.surfacePiSessionId);
           record.retainCount += 1;
           record.fixture = withSurfaceTarget(record.fixture, target);
@@ -2531,7 +2526,10 @@ function createFakeRpc(input: {
           closeRequests.push(cloneTarget(target));
           const record = getSurfaceRecord(target.surfacePiSessionId);
           record.retainCount = Math.max(0, record.retainCount - 1);
-          return { ok: true };
+          return {
+            target: cloneTarget(target) as never,
+            lifecycle: record.retainCount === 0 ? ("idle" as const) : ("open" as const),
+          };
         },
         renameSession: async ({ sessionId, title }) => {
           updateSummary(sessionId, (summary) => {

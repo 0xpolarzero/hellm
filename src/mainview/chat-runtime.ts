@@ -832,7 +832,6 @@ export interface ChatRuntimeRpcClient {
     writeCommandStdin: typeof rpc.request.writeCommandStdin;
     getArtifactPreview: typeof rpc.request.getArtifactPreview;
     createSession: typeof rpc.request.createSession;
-    openSession: typeof rpc.request.openSession;
     openSurface: typeof rpc.request.openSurface;
     closeSurface: typeof rpc.request.closeSurface;
     renameSession: typeof rpc.request.renameSession;
@@ -3651,10 +3650,7 @@ export async function createChatRuntime(
       }
 
       try {
-        const opened =
-          target.surface === "orchestrator"
-            ? await rpcClient.request.openSession(scoped({ sessionId: target.workspaceSessionId }))
-            : await rpcClient.request.openSurface(scoped({ target }));
+        const opened = await rpcClient.request.openSurface(scoped({ target }));
         const readModels = await fetchSurfaceReadModels(normalizePromptTarget(opened.target));
         if (!isCurrent()) return;
         await bindPaneToSurfaceReadModels(paneState.panelId, readModels, {
@@ -4342,7 +4338,15 @@ export async function createChatRuntime(
 
       if (existingController) {
         if (existingController.ownerPaneIds.length === 0) {
-          const opened = await rpcClient.request.openSession(scoped({ sessionId }));
+          const opened = await rpcClient.request.openSurface(
+            scoped({
+              target: {
+                workspaceSessionId: sessionId,
+                surface: "orchestrator",
+                surfacePiSessionId: sessionId,
+              },
+            }),
+          );
           const openedTarget = normalizePromptTarget(opened.target);
           await bindPaneToSurfaceReadModels(nextPaneId, await fetchSurfaceReadModels(openedTarget));
           return;
@@ -4351,7 +4355,15 @@ export async function createChatRuntime(
         return;
       }
 
-      const opened = await rpcClient.request.openSession(scoped({ sessionId }));
+      const opened = await rpcClient.request.openSurface(
+        scoped({
+          target: {
+            workspaceSessionId: sessionId,
+            surface: "orchestrator",
+            surfacePiSessionId: sessionId,
+          },
+        }),
+      );
       const openedTarget = normalizePromptTarget(opened.target);
       await bindPaneToSurfaceReadModels(nextPaneId, await fetchSurfaceReadModels(openedTarget));
     },

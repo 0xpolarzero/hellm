@@ -1720,53 +1720,37 @@ function buildDesktopRpcHandlers(
         });
         return { target: session.target };
       },
-      openSession: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { sessionId } = input;
-        const session = await runtime.catalog.openSession(sessionId);
-        recordDevBrowserToolsEvent("session.opened", {
-          sessionId,
-        });
-        runtime.appLog.info("session", "Workspace session opened.", {
-          workspaceSessionId: sessionId,
-        });
-        return { target: session.target };
-      },
       openSurface: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
         const { target } = input;
-        const session = await runtime.catalog.openSurface(target);
+        const opened = await facades.runtime.surfaces.open({
+          workspaceId: input.workspaceId as WorkspaceId,
+          target: target as RuntimeSurfaceTarget,
+        });
         recordDevBrowserToolsEvent("surface.opened", {
           surface: target.surface,
           surfacePiSessionId: target.surfacePiSessionId,
           threadId: target.threadId ?? null,
           workspaceSessionId: target.workspaceSessionId,
         });
-        runtime.appLog.info("surface", "Surface opened.", {
-          surface: target.surface,
-          workspaceSessionId: target.workspaceSessionId,
-          surfacePiSessionId: target.surfacePiSessionId,
-          threadId: target.threadId,
-        });
-        return { target: session.target };
+        return { target: opened.target as typeof target };
       },
       closeSurface: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
         const { target } = input;
-        const result = await runtime.catalog.closeSurface(target);
+        const result = await facades.runtime.surfaces.close({
+          workspaceId: input.workspaceId as WorkspaceId,
+          target: target as RuntimeSurfaceTarget,
+          closeReason: "pane-closed",
+        });
         recordDevBrowserToolsEvent("surface.closed", {
           surface: target.surface,
           surfacePiSessionId: target.surfacePiSessionId,
           threadId: target.threadId ?? null,
           workspaceSessionId: target.workspaceSessionId,
         });
-        runtime.appLog.info("surface", "Surface closed.", {
-          surface: target.surface,
-          workspaceSessionId: target.workspaceSessionId,
-          surfacePiSessionId: target.surfacePiSessionId,
-          threadId: target.threadId,
-        });
-        return result;
+        return {
+          target: result.target as typeof target,
+          lifecycle: result.lifecycle,
+        };
       },
       renameSession: async (input) => {
         const runtime = getWorkspaceRuntime(input);

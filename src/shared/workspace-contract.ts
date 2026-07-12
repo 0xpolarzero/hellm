@@ -1686,10 +1686,6 @@ export interface AgentContextPreviewResponse {
 
 export type AgentModelChoice = ModelInfo;
 
-export interface OpenSessionRequest {
-  sessionId: string;
-}
-
 export interface OpenSurfaceRequest {
   target: PromptTarget;
 }
@@ -1720,6 +1716,11 @@ export interface SurfaceMutationResponse {
 
 export interface SurfaceOpenResponse {
   target: PromptTarget;
+}
+
+export interface SurfaceCloseResponse {
+  target: PromptTarget;
+  lifecycle: "open" | "idle" | "disposed";
 }
 
 export interface ChatRPCSchema {
@@ -2005,17 +2006,13 @@ export interface ChatRPCSchema {
         params: WorkspaceScoped<CreateSessionRequest>;
         response: SurfaceOpenResponse;
       };
-      openSession: {
-        params: WorkspaceScoped<OpenSessionRequest>;
-        response: SurfaceOpenResponse;
-      };
       openSurface: {
         params: WorkspaceScoped<OpenSurfaceRequest>;
         response: SurfaceOpenResponse;
       };
       closeSurface: {
         params: WorkspaceScoped<CloseSurfaceRequest>;
-        response: WorkspaceMutationResponse;
+        response: SurfaceCloseResponse;
       };
       renameSession: {
         params: WorkspaceScoped<RenameSessionRequest>;
