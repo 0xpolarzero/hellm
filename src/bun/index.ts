@@ -1121,19 +1121,6 @@ function buildDesktopRpcHandlers(
         });
         return readWorkspaceExtensionsInventory(runtime);
       },
-      setExtensionDefaultUsage: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions defaults set-usage --actor ${quoteSvvyxCommandArg(input.actorKind)} --extension ${quoteSvvyxCommandArg(input.extensionId)} --state ${quoteSvvyxCommandArg(input.state)} --json`,
-        );
-        runtime.appLog.info("settings", "Extension default usage updated from UI.", {
-          actorKind: input.actorKind,
-          extensionId: input.extensionId,
-          state: input.state,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
       reorderExtensionDefaults: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const orderArgs = input.extensionIds

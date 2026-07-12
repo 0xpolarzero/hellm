@@ -797,12 +797,6 @@ export interface SetExtensionTypescriptApiRequest extends WorkspaceScopedRequest
   enabled: boolean;
 }
 
-export interface SetExtensionDefaultUsageRequest extends WorkspaceScopedRequest {
-  actorKind: "orchestrator" | "workflow-task";
-  extensionId: string;
-  state: ExtensionUsageState;
-}
-
 export interface ReorderExtensionDefaultsRequest extends WorkspaceScopedRequest {
   extensionIds: string[];
 }
@@ -1877,10 +1871,6 @@ export interface ChatRPCSchema {
       };
       setExtensionTypescriptApi: {
         params: SetExtensionTypescriptApiRequest;
-        response: ExtensionsInventoryReadModel;
-      };
-      setExtensionDefaultUsage: {
-        params: SetExtensionDefaultUsageRequest;
         response: ExtensionsInventoryReadModel;
       };
       reorderExtensionDefaults: {

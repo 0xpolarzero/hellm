@@ -81,7 +81,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "resetExtension",
   "buildExtension",
   "setExtensionTypescriptApi",
-  "setExtensionDefaultUsage",
   "reorderExtensionDefaults",
   "addExtensionInstructionFile",
   "removeExtensionInstructionFile",

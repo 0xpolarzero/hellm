@@ -1966,11 +1966,6 @@ function createFakeRpc(input: {
           reversibleChanges: [],
           snapshots: [],
         }),
-        setExtensionDefaultUsage: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
-        }),
         reorderExtensionDefaults: async () => ({
           extensions: [],
           reversibleChanges: [],
