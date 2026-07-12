@@ -1493,10 +1493,7 @@ function buildDesktopRpcHandlers(
       switchWorkspaceBranch: (input) => {
         return switchWorkspaceBranch(getWorkspaceRuntime(input), input.branch);
       },
-      writeClipboardText: ({ text }) => {
-        Utils.clipboardWriteText(text);
-        return { ok: true };
-      },
+      writeClipboardText: (input) => facades.hostActions.clipboard.writeText(input),
       listWorkspacePaths: (input) => {
         const runtime = getWorkspaceRuntime(input);
         return input.refresh ? runtime.pathIndex.refresh() : runtime.pathIndex.list();

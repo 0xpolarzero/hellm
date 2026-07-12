@@ -85,6 +85,9 @@ mock.module("electrobun/bun", () => ({
     quit() {
       calls.push("app.quit");
     },
+    clipboardWriteText(text: string) {
+      calls.push(`clipboard:${text}`);
+    },
   },
   ApplicationMenu: {
     setApplicationMenu(menu: unknown) {
@@ -136,6 +139,7 @@ const rendererApiInput = {
   modelMetadata: {} as never,
   state: {} as never,
   commands: {} as never,
+  hostActions: {} as never,
 };
 
 describe("Electrobun desktop host adapter", () => {
@@ -198,6 +202,15 @@ describe("Electrobun desktop host adapter", () => {
     expect(calls.slice(-2)).toEqual(["window.focus", "window.close"]);
     expect(host.getMainWindow()).toBeNull();
     await bridge.dispose();
+  });
+
+  it("owns clipboard writes through its typed host action facade", async () => {
+    const { host } = createHost();
+
+    await expect(host.actions.clipboard.writeText({ text: "copied" })).resolves.toEqual({
+      ok: true,
+    });
+    expect(calls).toContain("clipboard:copied");
   });
 
   it("guards renderer notification delivery across bridge disposal", async () => {

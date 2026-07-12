@@ -64,7 +64,14 @@ export interface DesktopHostAdapter {
   readonly bridge: DesktopBridgeAdapter;
   readonly windows: DesktopWindowAdapter;
   readonly menus: DesktopMenuAdapter;
+  readonly actions: DesktopHostActionsAdapter;
   readonly browserTools?: DesktopBrowserToolsUiAdapter;
+}
+
+export interface DesktopHostActionsAdapter {
+  readonly clipboard: {
+    writeText(input: { readonly text: string }): Promise<{ readonly ok: true }>;
+  };
 }
 
 export interface DesktopBridgeAdapter {
@@ -73,6 +80,7 @@ export interface DesktopBridgeAdapter {
     modelMetadata: RendererModelMetadataFacade;
     state: RendererStateFacade;
     commands: CreateDesktopAppInput["commands"];
+    hostActions: DesktopHostActionsAdapter;
   }): Promise<DesktopBridgeRegistration>;
   sendToRenderer(input: DesktopRendererNotification): Promise<void>;
 }
@@ -286,6 +294,7 @@ export function createDesktopApp(input: CreateDesktopAppInput): DesktopApp {
             modelMetadata: input.modelMetadata,
             state: input.state,
             commands: input.commands,
+            hostActions: input.host.actions,
           });
           assertStartupMayContinue();
           notificationsStartAttempted = true;

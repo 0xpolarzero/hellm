@@ -52,10 +52,21 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
       },
     },
     host: {
+      actions: {
+        clipboard: {
+          writeText: async () => ({ ok: true as const }),
+        },
+      },
       bridge: {
         exposeRendererApi: async (api) => {
           events.push("bridge:expose");
-          expect(api).toEqual({ runtime, modelMetadata, state, commands });
+          expect(api).toEqual({
+            runtime,
+            modelMetadata,
+            state,
+            commands,
+            hostActions: api.hostActions,
+          });
           return {
             rendererReady: Promise.resolve(),
             dispose: async () => {

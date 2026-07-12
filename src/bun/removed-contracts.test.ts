@@ -311,6 +311,7 @@ describe("retired desktop integration RPC paths", () => {
     expect(backendSource).toContain("facades.commands.state.extensionEnv.setOverride");
     expect(backendSource).toContain("facades.commands.state.extensionEnv.removeOverride");
     expect(backendSource).toContain("facades.runtime.surfaces.createOrchestrator");
+    expect(backendSource).toContain("facades.hostActions.clipboard.writeText(input)");
   });
 
   it("pins increment-6 legacy renderer RPC channels until pane migration retires them", async () => {

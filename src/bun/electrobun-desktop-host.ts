@@ -477,6 +477,15 @@ export function createElectrobunDesktopHostAdapter(
     },
   };
 
+  const actions: DesktopHostAdapter["actions"] = {
+    clipboard: {
+      async writeText({ text }) {
+        Utils.clipboardWriteText(text);
+        return { ok: true };
+      },
+    },
+  };
+
   function requireMainWindow(windowId: DesktopWindowId): MainWindowRecord {
     if (!mainWindow || mainWindow.windowId !== windowId) {
       throw new Error(`Electrobun main window ${windowId} is not available.`);
@@ -488,6 +497,7 @@ export function createElectrobunDesktopHostAdapter(
     bridge,
     windows,
     menus,
+    actions,
     ...(options.browserTools ? { browserTools: options.browserTools } : {}),
     getMainWindow: () => mainWindow?.window ?? null,
     lifecycle: {

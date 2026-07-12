@@ -65,6 +65,10 @@ const FACADE_BACKED_REQUESTS = [
   "createOrchestratorSurface",
 ] as const satisfies readonly ChatRpcRequestName[];
 
+const HOST_BACKED_REQUESTS = [
+  "writeClipboardText",
+] as const satisfies readonly ChatRpcRequestName[];
+
 const LEGACY_HANDLER_RETIREMENT_INCREMENT = 10 as const;
 
 const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
@@ -94,7 +98,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "closeWorkspace",
   "listWorkspaceBranches",
   "switchWorkspaceBranch",
-  "writeClipboardText",
   "listWorkspacePaths",
   "pickWorkspaceAttachments",
   "importComposerAttachments",
@@ -133,6 +136,7 @@ describe("legacy RPC handler seam", () => {
     const classifiedRequests: readonly string[] = [
       ...DESKTOP_LIFECYCLE_REQUESTS,
       ...FACADE_BACKED_REQUESTS,
+      ...HOST_BACKED_REQUESTS,
       ...LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10,
     ];
 
