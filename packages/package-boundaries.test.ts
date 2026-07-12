@@ -729,6 +729,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "DesktopBridgeAdapter",
       "DesktopBridgeRegistration",
       "DesktopBrowserToolsUiAdapter",
+      "DesktopHostActionsAdapter",
       "DesktopHostAdapter",
       "DesktopMainWindowInput",
       "DesktopMenuAdapter",
@@ -8640,10 +8641,7 @@ describe("package boundaries", () => {
     expect(approvalSource).toContain("facades.runtime.approvals.answer(");
     expect(approvalSource).not.toContain("runtime.catalog.answerRuntimeApprovalRequest(");
 
-    const nextBridgeMethodStart = source.indexOf(
-      "setExtensionContextAutoUpdate: async",
-      pauseStart,
-    );
+    const nextBridgeMethodStart = source.indexOf("cancelPrompt: async", pauseStart);
     expect(pauseStart).toBeGreaterThanOrEqual(0);
     expect(nextBridgeMethodStart).toBeGreaterThan(pauseStart);
     const pauseSource = source.slice(pauseStart, nextBridgeMethodStart);

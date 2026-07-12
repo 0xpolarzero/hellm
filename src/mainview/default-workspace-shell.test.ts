@@ -941,8 +941,8 @@ describe("default workspace renderer shell", () => {
     expect(contractSource).toContain("loadExtensionSnapshot");
     expect(contractSource).toContain("setExtensionEnvSecret");
     expect(contractSource).toContain("removeExtensionEnvSecret");
-    expect(contractSource).toContain("setExtensionEnvOverride");
-    expect(contractSource).toContain("removeExtensionEnvOverride");
+    expect(contractSource).toContain("stateExtensionEnvSetOverride");
+    expect(contractSource).toContain("stateExtensionEnvRemoveOverride");
     for (const requestName of [
       "SetExtensionEnvSecretRequest",
       "RemoveExtensionEnvSecretRequest",
