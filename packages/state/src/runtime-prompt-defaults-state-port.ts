@@ -11,6 +11,7 @@ import {
   structuredSessionStateFromStore,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
+import { mutationResult, surfaceAndSessionNavigationInvalidations } from "./state-mutation-result";
 
 function isRuntimePromptDefaultsRecord(value: unknown): value is RuntimePromptDefaultsRecord {
   if (!value || typeof value !== "object") {
@@ -26,7 +27,9 @@ function isRuntimePromptDefaultsRecord(value: unknown): value is RuntimePromptDe
     record.provider.length > 0 &&
     typeof record.model === "string" &&
     record.model.length > 0 &&
-    (record.reasoningEffort === "low" ||
+    (record.reasoningEffort === "off" ||
+      record.reasoningEffort === "minimal" ||
+      record.reasoningEffort === "low" ||
       record.reasoningEffort === "medium" ||
       record.reasoningEffort === "high" ||
       record.reasoningEffort === "xhigh")
@@ -88,6 +91,14 @@ export function runtimePromptDefaultsStatePortFromStructuredSessionState(
       Effect.gen(function* () {
         if (input.target.surface === "orchestrator") {
           const snapshot = yield* state.getSessionState(input.target.workspaceSessionId);
+          if (snapshot.session.orchestratorPiSessionId !== input.target.surfacePiSessionId) {
+            return yield* Effect.fail(
+              promptDefaultsStateError(
+                "not-found",
+                `Orchestrator surface ${input.target.surfacePiSessionId} was not found for session ${input.target.workspaceSessionId}.`,
+              ),
+            );
+          }
           const defaults = {
             provider: snapshot.pi.provider,
             model: snapshot.pi.model,
@@ -104,21 +115,90 @@ export function runtimePromptDefaultsStatePortFromStructuredSessionState(
           );
         }
 
-        const detail = yield* state.getThreadDetail(input.target.threadId);
+        const target = input.target;
+        const detail = yield* state.getThreadDetail(target.threadId);
         if (
-          detail.thread.sessionId !== input.target.workspaceSessionId ||
-          detail.thread.surfacePiSessionId !== input.target.surfacePiSessionId
+          detail.thread.sessionId !== target.workspaceSessionId ||
+          detail.thread.surfacePiSessionId !== target.surfacePiSessionId
         ) {
           return yield* Effect.fail(
             promptDefaultsStateError(
               "invalid-input",
-              `Handler thread ${input.target.threadId} does not match target surface ${input.target.surfacePiSessionId}.`,
+              `Handler thread ${target.threadId} does not match target surface ${target.surfacePiSessionId}.`,
             ),
           );
         }
         return yield* parseThreadPromptDefaults(
           input.target.threadId,
           detail.thread.agentProfileJson,
+        );
+      }),
+    updatePromptDefaults: (input) =>
+      Effect.gen(function* () {
+        const defaults = {
+          provider: input.provider,
+          model: input.model,
+          reasoningEffort: input.reasoningEffort,
+        } satisfies RuntimePromptDefaultsRecord;
+        if (input.target.surface === "orchestrator") {
+          const snapshot = yield* state.getSessionState(input.target.workspaceSessionId);
+          if (snapshot.session.orchestratorPiSessionId !== input.target.surfacePiSessionId) {
+            return yield* Effect.fail(
+              promptDefaultsStateError(
+                "not-found",
+                `Orchestrator surface ${input.target.surfacePiSessionId} was not found for session ${input.target.workspaceSessionId}.`,
+              ),
+            );
+          }
+          yield* state.upsertPiSession({
+            ...snapshot.pi,
+            ...defaults,
+            updatedAt: yield* state.getCurrentTimestamp(),
+          });
+          return mutationResult(
+            defaults,
+            surfaceAndSessionNavigationInvalidations(
+              state.workspaceId,
+              input.target.surfacePiSessionId,
+            ),
+          );
+        }
+
+        const target = input.target;
+        const detail = yield* state.getThreadDetail(target.threadId);
+        if (
+          detail.thread.sessionId !== target.workspaceSessionId ||
+          detail.thread.surfacePiSessionId !== target.surfacePiSessionId
+        ) {
+          return yield* Effect.fail(
+            promptDefaultsStateError(
+              "not-found",
+              `Handler thread ${target.threadId} does not match target surface ${target.surfacePiSessionId}.`,
+            ),
+          );
+        }
+        let profile: Record<string, unknown> = {};
+        if (detail.thread.agentProfileJson) {
+          const parsed = yield* Effect.try({
+            try: () => JSON.parse(detail.thread.agentProfileJson ?? "{}") as unknown,
+            catch: (cause) =>
+              promptDefaultsStateError(
+                "invalid-input",
+                `Handler thread ${target.threadId} prompt defaults could not be decoded.`,
+                cause,
+              ),
+          });
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            profile = parsed as Record<string, unknown>;
+          }
+        }
+        yield* state.updateThread({
+          threadId: target.threadId,
+          agentProfileJson: JSON.stringify({ ...profile, ...defaults }),
+        });
+        return mutationResult(
+          defaults,
+          surfaceAndSessionNavigationInvalidations(state.workspaceId, target.surfacePiSessionId),
         );
       }),
   };

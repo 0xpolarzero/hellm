@@ -63,6 +63,7 @@
 		snippetMentions?: ComposerSnippetMention[];
 		snippetProvenance?: SentSnippetProvenance[];
 		editMessageTimestamp?: string | number;
+		editMessageId?: string;
 		telemetryCorrelationId?: string;
 		clientSubmission?: PromptClientSubmissionMetadata;
 	};
@@ -88,6 +89,7 @@
 	};
 
 	export type ComposerEditDraft = {
+		messageId: string;
 		messageTimestamp: string | number;
 		text: string;
 	};
@@ -792,6 +794,7 @@
 			details: composerSubmitTelemetryDetails(),
 		});
 		const editingMessageTimestamp = editDraft?.messageTimestamp;
+		const editingMessageId = editDraft?.messageId;
 		const serialized = serializeComposerDraft(draft, snippetMentions);
 		const nextDraft = serialized.text;
 		const nextVisibleDraft = draft;
@@ -828,6 +831,7 @@
 				snippetMentions: nextSnippetMentions,
 				snippetProvenance: serialized.snippetProvenance,
 				editMessageTimestamp: editingMessageTimestamp,
+				editMessageId: editingMessageId,
 				telemetryCorrelationId: correlationId,
 				clientSubmission,
 			});

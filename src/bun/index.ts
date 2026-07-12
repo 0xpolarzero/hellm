@@ -6,6 +6,8 @@ import { IsoDateTimeStringSchema, normalizeDesktopBridgeErrorContract } from "@s
 import { createDesktopApp, type DesktopApp } from "@svvy/desktop";
 import type {
   AbortPromptInput,
+  ExtensionId,
+  PromptTarget,
   ProviderAuthHealth,
   ProviderAuthStatus,
   ProviderId,
@@ -20,6 +22,7 @@ import type {
   SteerQueuedMessageInput,
   SurfacePiSessionId,
   WorkspaceId,
+  WorkspaceSessionId,
 } from "@svvy/core";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -34,11 +37,7 @@ import type {
   SendPromptResponse,
   WorkspaceInfoResponse,
 } from "../shared/workspace-contract";
-import {
-  DEFAULT_AGENT_SETTINGS,
-  DEFAULT_ORCHESTRATOR_PROFILE_ID,
-  type AgentDefaults,
-} from "../shared/agent-settings";
+import { DEFAULT_AGENT_SETTINGS, type AgentDefaults } from "../shared/agent-settings";
 import {
   getCredential,
   getProviderEnvVar,
@@ -54,10 +53,7 @@ import {
   supportsOAuth,
 } from "./oauth-login";
 import { DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt";
-import {
-  decodePromptClientSubmissionToRuntimeInput,
-  type SessionDefaults,
-} from "./session-catalog";
+import { decodePromptClientSubmissionToRuntimeInput } from "./session-catalog";
 import { assertAgentModelSelection } from "./svvyx-workflows-command";
 import { resolveWorkspaceCwd } from "./workspace-context";
 import { WorkspaceRuntimeRegistry, type WorkspaceRuntime } from "./workspace-runtime-registry";
@@ -311,16 +307,6 @@ function getDefaultAgentSettings(): AgentDefaults {
 
   resolvedDefaults = DEFAULT_AGENT_SETTINGS;
   return resolvedDefaults;
-}
-
-function getSessionDefaults(profileId = DEFAULT_ORCHESTRATOR_PROFILE_ID): SessionDefaults {
-  const defaults = getDefaultAgentSettings();
-  return {
-    model: defaults.model,
-    provider: defaults.provider,
-    thinkingLevel: defaults.reasoningEffort,
-    agentProfileId: profileId,
-  };
 }
 
 function getWorkspaceBranch(cwd: string): string | undefined {
@@ -1397,7 +1383,11 @@ function buildDesktopRpcHandlers(
       renameSession: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const { sessionId, title } = input;
-        const result = await runtime.catalog.renameSession(sessionId, title);
+        await facades.runtime.surfaces.renameOrchestrator({
+          workspaceId: input.workspaceId as WorkspaceId,
+          workspaceSessionId: sessionId as WorkspaceSessionId,
+          title,
+        });
         recordDevBrowserToolsEvent("session.renamed", {
           sessionId,
           title,
@@ -1406,32 +1396,36 @@ function buildDesktopRpcHandlers(
           workspaceSessionId: sessionId,
           title,
         });
-        return result;
+        return { ok: true };
       },
       forkSession: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
         const { sessionId, title, messageTimestamp } = input;
-        const session = await runtime.catalog.forkSession(
-          { sessionId, title, messageTimestamp },
-          getSessionDefaults(),
-        );
+        const session = await facades.runtime.surfaces.forkOrchestrator({
+          workspaceId: input.workspaceId as WorkspaceId,
+          workspaceSessionId: sessionId as WorkspaceSessionId,
+          ...(title !== undefined ? { title } : {}),
+          ...(messageTimestamp !== undefined ? { messageTimestamp } : {}),
+        });
         recordDevBrowserToolsEvent("session.forked", {
           sessionId,
           targetSessionId: session.target.workspaceSessionId,
           messageTimestamp: messageTimestamp ?? null,
           title: title?.trim() || null,
         });
-        return { target: session.target };
+        return { target: session.target as PromptTarget };
       },
       deleteSession: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const { sessionId } = input;
-        const result = await runtime.catalog.deleteSession(sessionId);
+        await facades.runtime.surfaces.deleteOrchestrator({
+          workspaceId: input.workspaceId as WorkspaceId,
+          workspaceSessionId: sessionId as WorkspaceSessionId,
+        });
         recordDevBrowserToolsEvent("session.deleted", { sessionId });
         runtime.appLog.info("session", "Workspace session deleted.", {
           workspaceSessionId: sessionId,
         });
-        return result;
+        return { ok: true };
       },
       sendPrompt: async (payload): Promise<SendPromptResponse> => {
         return await submitPromptFromDesktop({
@@ -1443,7 +1437,6 @@ function buildDesktopRpcHandlers(
         });
       },
       recordRendererTelemetry: async (payload) => {
-        const runtime = getWorkspaceRuntime(payload);
         const level = payload.level ?? "debug";
         const details = {
           eventName: payload.eventName,
@@ -1461,17 +1454,7 @@ function buildDesktopRpcHandlers(
           errorName: payload.error?.name,
           errorMessage: payload.error?.message,
         });
-        const message = payload.message ?? `Renderer telemetry: ${payload.eventName}`;
-        if (level === "error") {
-          runtime.appLog.error("renderer", message, payload.error, details);
-        } else if (level === "warn") {
-          runtime.appLog.warning("renderer", message, details);
-        } else if (level === "info") {
-          runtime.appLog.info("renderer", message, details);
-        } else {
-          runtime.appLog.debug("renderer", message, details);
-        }
-        return { ok: true };
+        return facades.appActions.telemetry.recordRenderer(payload);
       },
       updateComposerDraft: async (input) => {
         const result = await facades.runtime.messages.updateDraft({
@@ -1484,10 +1467,13 @@ function buildDesktopRpcHandlers(
       },
       editCommittedUserMessage: async (payload): Promise<EditCommittedUserMessageResponse> => {
         const runtime = getWorkspaceRuntime(payload);
-        const session = await runtime.catalog.editCommittedUserMessage({
-          target: payload.target,
+        const result = await facades.runtime.messages.editCommitted({
+          workspaceId: payload.workspaceId as never,
+          target: payload.target as never,
+          messageId: payload.messageId as never,
           messageTimestamp: payload.messageTimestamp,
           message: payload.message,
+          clientSubmission: payload.clientSubmission as never,
         });
         runtime.appLog.info("prompt", "Committed user message edited.", {
           workspaceSessionId: payload.target.workspaceSessionId,
@@ -1495,7 +1481,7 @@ function buildDesktopRpcHandlers(
           threadId: payload.target.threadId,
           messageTimestamp: String(payload.messageTimestamp),
         });
-        return session;
+        return { target: result.target };
       },
       deleteQueuedSurfaceMessage: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -1639,97 +1625,73 @@ function buildDesktopRpcHandlers(
       setSurfaceModel: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const { target, provider, model } = input;
-        const result = await runtime.catalog.setSurfaceModel(target, provider, model);
-        if (result.ok) {
-          recordDevBrowserToolsEvent("surface.model.changed", {
-            model,
-            surfacePiSessionId: target.surfacePiSessionId,
-            threadId: target.threadId ?? null,
-            workspaceSessionId: target.workspaceSessionId,
-          });
-          runtime.appLog.info("surface", "Surface model changed.", {
-            model,
-            provider,
-            workspaceSessionId: target.workspaceSessionId,
-            surfacePiSessionId: target.surfacePiSessionId,
-            threadId: target.threadId,
-          });
-        } else {
-          runtime.appLog.error(
-            "surface",
-            `Surface pi session ${target.surfacePiSessionId} was not found for model update.`,
-            {
-              model,
-              surfacePiSessionId: target.surfacePiSessionId,
-            },
-          );
-        }
-        return result;
+        const result = await facades.runtime.surfaces.updateModel({
+          workspaceId: input.workspaceId as WorkspaceId,
+          target: target as PromptTarget,
+          provider,
+          model,
+        });
+        recordDevBrowserToolsEvent("surface.model.changed", {
+          model,
+          surfacePiSessionId: target.surfacePiSessionId,
+          threadId: target.threadId ?? null,
+          workspaceSessionId: target.workspaceSessionId,
+        });
+        runtime.appLog.info("surface", "Surface model changed.", {
+          model,
+          provider,
+          workspaceSessionId: target.workspaceSessionId,
+          surfacePiSessionId: target.surfacePiSessionId,
+          threadId: target.threadId,
+        });
+        return { ok: true, target: result.target };
       },
       setSurfaceThoughtLevel: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const { target, level } = input;
-        const result = await runtime.catalog.setSurfaceThoughtLevel(target, level);
-        if (result.ok) {
-          recordDevBrowserToolsEvent("surface.reasoning.changed", {
-            level,
-            surfacePiSessionId: target.surfacePiSessionId,
-            threadId: target.threadId ?? null,
-            workspaceSessionId: target.workspaceSessionId,
-          });
-          runtime.appLog.info("surface", "Surface reasoning changed.", {
-            level,
-            workspaceSessionId: target.workspaceSessionId,
-            surfacePiSessionId: target.surfacePiSessionId,
-            threadId: target.threadId,
-          });
-        } else {
-          runtime.appLog.error(
-            "surface",
-            `Surface pi session ${target.surfacePiSessionId} was not found for reasoning update.`,
-            {
-              level,
-              surfacePiSessionId: target.surfacePiSessionId,
-            },
-          );
-        }
-        return result;
+        const result = await facades.runtime.surfaces.updateReasoning({
+          workspaceId: input.workspaceId as WorkspaceId,
+          target: target as PromptTarget,
+          reasoningEffort: level,
+        });
+        recordDevBrowserToolsEvent("surface.reasoning.changed", {
+          level,
+          surfacePiSessionId: target.surfacePiSessionId,
+          threadId: target.threadId ?? null,
+          workspaceSessionId: target.workspaceSessionId,
+        });
+        runtime.appLog.info("surface", "Surface reasoning changed.", {
+          level,
+          workspaceSessionId: target.workspaceSessionId,
+          surfacePiSessionId: target.surfacePiSessionId,
+          threadId: target.threadId,
+        });
+        return { ok: true, target: result.target };
       },
       setSurfaceExtensionUsage: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const { target, extensionId, state } = input;
-        const result = await runtime.catalog.setSurfaceExtensionUsage({
-          target,
+        const result = await facades.runtime.surfaces.updateExtensionUsage({
+          workspaceId: input.workspaceId as WorkspaceId,
+          target: target as PromptTarget,
+          extensionId: extensionId as ExtensionId,
+          usage: state,
+        });
+        recordDevBrowserToolsEvent("surface.extension.changed", {
           extensionId,
           state,
+          surfacePiSessionId: target.surfacePiSessionId,
+          threadId: target.threadId ?? null,
+          workspaceSessionId: target.workspaceSessionId,
         });
-        if (result.ok) {
-          recordDevBrowserToolsEvent("surface.extension.changed", {
-            extensionId,
-            state,
-            surfacePiSessionId: target.surfacePiSessionId,
-            threadId: target.threadId ?? null,
-            workspaceSessionId: target.workspaceSessionId,
-          });
-          runtime.appLog.info("surface", "Surface extension usage changed.", {
-            extensionId,
-            state,
-            workspaceSessionId: target.workspaceSessionId,
-            surfacePiSessionId: target.surfacePiSessionId,
-            threadId: target.threadId,
-          });
-        } else {
-          runtime.appLog.error(
-            "surface",
-            `Surface pi session ${target.surfacePiSessionId} was not found for extension usage update.`,
-            {
-              extensionId,
-              state,
-              surfacePiSessionId: target.surfacePiSessionId,
-            },
-          );
-        }
-        return result;
+        runtime.appLog.info("surface", "Surface extension usage changed.", {
+          extensionId,
+          state,
+          workspaceSessionId: target.workspaceSessionId,
+          surfacePiSessionId: target.surfacePiSessionId,
+          threadId: target.threadId,
+        });
+        return { ok: true, target: result.target };
       },
       listProviderAuths: async (): Promise<ProviderAuthInfo[]> => {
         const fallbacks = await listProviderAuthSummaries({ refreshOAuth: false });

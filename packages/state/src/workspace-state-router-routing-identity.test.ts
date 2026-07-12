@@ -72,6 +72,10 @@ const surfaceLifecycleAudit: PortRoutingAudit<RuntimeSurfaceLifecycleStatePortSe
   createOrchestratorSurface: { via: "explicit-workspace-id", inputField: "workspaceId" },
   openSurface: { via: "explicit-workspace-id", inputField: "workspaceId" },
   closeSurface: { via: "explicit-workspace-id", inputField: "workspaceId" },
+  readOrchestratorLifecycle: { via: "explicit-workspace-id", inputField: "workspaceId" },
+  renameOrchestrator: { via: "explicit-workspace-id", inputField: "workspaceId" },
+  forkOrchestrator: { via: "explicit-workspace-id", inputField: "workspaceId" },
+  deleteOrchestrator: { via: "explicit-workspace-id", inputField: "workspaceId" },
 };
 
 const promptDefaultsAudit: PortRoutingAudit<RuntimePromptDefaultsStatePortService> = {
@@ -79,6 +83,11 @@ const promptDefaultsAudit: PortRoutingAudit<RuntimePromptDefaultsStatePortServic
     via: "prompt-target",
     inputField: "target",
     committedRecords: ["pi_session_reference", "session"],
+  },
+  updatePromptDefaults: {
+    via: "prompt-target",
+    inputField: "target",
+    committedRecords: ["session", "thread", "agent_profile"],
   },
 };
 
@@ -127,6 +136,11 @@ const actorExtensionBindingAudit: PortRoutingAudit<RuntimeActorExtensionBindingS
 
 const queueAudit: PortRoutingAudit<RuntimeQueueStatePortService> = {
   acceptSubmittedSurfaceMessage: {
+    via: "prompt-target",
+    inputField: "target",
+    committedRecords: ["pi_session_reference", "session"],
+  },
+  acceptEditedCommittedSurfaceMessage: {
     via: "prompt-target",
     inputField: "target",
     committedRecords: ["pi_session_reference", "session"],
@@ -510,7 +524,7 @@ function createRegistry() {
 }
 
 describe("workspace state router routing-identity audit", () => {
-  it("classifies exactly the sixteen routed state ports and 88 dispatched methods", () => {
+  it("classifies exactly the sixteen routed state ports and 94 dispatched methods", () => {
     const { registry, cleanup } = createRegistry();
     const router = createWorkspaceStateRouter({
       appGlobalStore: makeStore(registry, "workspace_app_global", "appglobal"),
@@ -552,8 +566,8 @@ describe("workspace state router routing-identity audit", () => {
       expect(Object.keys(routerPorts).toSorted()).toEqual(
         auditedPorts.map(([key]) => key).toSorted(),
       );
-      expect(totalMethods).toBe(88);
-      expect(auditRows.length).toBe(88);
+      expect(totalMethods).toBe(94);
+      expect(auditRows.length).toBe(94);
     } finally {
       cleanup();
     }

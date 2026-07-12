@@ -170,6 +170,8 @@ describe("@svvy/runtime workflow task-agent bridge service", () => {
                 surfacePiSessionId,
                 session: { surfacePiSessionId },
                 withPromptLock: (effect) => effect,
+                acquirePromptLock: () => Effect.succeed(Effect.void),
+                restorePiHistory: () => Effect.void,
                 runPiTurn: () => Effect.die("unused"),
                 interruptActivePrompt: () => Effect.void,
                 isPromptActive: () => false,

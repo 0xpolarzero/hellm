@@ -514,6 +514,41 @@ export const CreateSurfaceResultSchema = Schema.Struct({
 });
 export type CreateSurfaceResult = typeof CreateSurfaceResultSchema.Type;
 
+export const RenameOrchestratorSurfaceInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  workspaceSessionId: WorkspaceSessionId,
+  title: Schema.String,
+});
+export type RenameOrchestratorSurfaceInput = typeof RenameOrchestratorSurfaceInputSchema.Type;
+
+export const RenameOrchestratorSurfaceResultSchema = Schema.Struct({
+  workspaceSessionId: WorkspaceSessionId,
+  title: Schema.String,
+  stateRevision: StateRevisionSchema,
+});
+export type RenameOrchestratorSurfaceResult = typeof RenameOrchestratorSurfaceResultSchema.Type;
+
+export const ForkOrchestratorSurfaceInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  workspaceSessionId: WorkspaceSessionId,
+  title: Schema.optionalKey(Schema.String),
+  messageTimestamp: Schema.optionalKey(Schema.Union([Schema.String, Schema.Number])),
+});
+export type ForkOrchestratorSurfaceInput = typeof ForkOrchestratorSurfaceInputSchema.Type;
+
+export const DeleteOrchestratorSurfaceInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  workspaceSessionId: WorkspaceSessionId,
+});
+export type DeleteOrchestratorSurfaceInput = typeof DeleteOrchestratorSurfaceInputSchema.Type;
+
+export const DeleteOrchestratorSurfaceResultSchema = Schema.Struct({
+  workspaceSessionId: WorkspaceSessionId,
+  deleted: Schema.Literal(true),
+  stateRevision: StateRevisionSchema,
+});
+export type DeleteOrchestratorSurfaceResult = typeof DeleteOrchestratorSurfaceResultSchema.Type;
+
 export const OpenSurfaceInputSchema = Schema.Struct({
   workspaceId: WorkspaceId,
   target: RuntimeSurfaceTargetSchema,
@@ -550,6 +585,34 @@ export const CloseSurfaceResultSchema = Schema.Struct({
 });
 export type CloseSurfaceResult = typeof CloseSurfaceResultSchema.Type;
 
+export const UpdateSurfaceModelInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  target: PromptTargetSchema,
+  provider: Schema.String,
+  model: Schema.String,
+});
+export type UpdateSurfaceModelInput = typeof UpdateSurfaceModelInputSchema.Type;
+
+export const UpdateSurfaceReasoningInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  target: PromptTargetSchema,
+  reasoningEffort: ReasoningEffortSchema,
+});
+export type UpdateSurfaceReasoningInput = typeof UpdateSurfaceReasoningInputSchema.Type;
+
+export const UpdateSurfaceExtensionUsageInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  target: PromptTargetSchema,
+  extensionId: ExtensionId,
+  usage: Schema.Literals(["loaded", "available", "unavailable"]),
+});
+export type UpdateSurfaceExtensionUsageInput = typeof UpdateSurfaceExtensionUsageInputSchema.Type;
+
+export const UpdateSurfaceSettingsResultSchema = Schema.Struct({
+  target: PromptTargetSchema,
+});
+export type UpdateSurfaceSettingsResult = typeof UpdateSurfaceSettingsResultSchema.Type;
+
 export const SubmitMessageInputSchema = Schema.Struct({
   target: PromptTargetSchema,
   message: RuntimeSubmittedMessageSchema,
@@ -572,6 +635,19 @@ export const SubmitMessageResultSchema = Schema.Struct({
 });
 
 export type SubmitMessageResult = typeof SubmitMessageResultSchema.Type;
+
+export const EditCommittedUserMessageInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  target: PromptTargetSchema,
+  messageId: MessageId,
+  messageTimestamp: Schema.Union([Schema.String, Schema.Number]),
+  message: RuntimeSubmittedMessageSchema,
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
+});
+export type EditCommittedUserMessageInput = typeof EditCommittedUserMessageInputSchema.Type;
+
+export const EditCommittedUserMessageResultSchema = SubmitMessageResultSchema;
+export type EditCommittedUserMessageResult = typeof EditCommittedUserMessageResultSchema.Type;
 
 export const AbortQueuedPromptInputSchema = Schema.Struct({
   target: PromptTargetSchema,
@@ -1824,10 +1900,31 @@ export interface RuntimeSurfacesApiEffect {
   ): Effect.Effect<CreateSurfaceResult, RuntimeContractError>;
   open(input: OpenSurfaceInput): Effect.Effect<OpenSurfaceResult, RuntimeContractError>;
   close(input: CloseSurfaceInput): Effect.Effect<CloseSurfaceResult, RuntimeContractError>;
+  renameOrchestrator(
+    input: RenameOrchestratorSurfaceInput,
+  ): Effect.Effect<RenameOrchestratorSurfaceResult, RuntimeContractError>;
+  forkOrchestrator(
+    input: ForkOrchestratorSurfaceInput,
+  ): Effect.Effect<CreateSurfaceResult, RuntimeContractError>;
+  deleteOrchestrator(
+    input: DeleteOrchestratorSurfaceInput,
+  ): Effect.Effect<DeleteOrchestratorSurfaceResult, RuntimeContractError>;
+  updateModel(
+    input: UpdateSurfaceModelInput,
+  ): Effect.Effect<UpdateSurfaceSettingsResult, RuntimeContractError>;
+  updateReasoning(
+    input: UpdateSurfaceReasoningInput,
+  ): Effect.Effect<UpdateSurfaceSettingsResult, RuntimeContractError>;
+  updateExtensionUsage(
+    input: UpdateSurfaceExtensionUsageInput,
+  ): Effect.Effect<UpdateSurfaceSettingsResult, RuntimeContractError>;
 }
 
 export interface RuntimeMessagesApiEffect {
   submit(input: SubmitMessageInput): Effect.Effect<SubmitMessageResult, RuntimeContractError>;
+  editCommitted(
+    input: EditCommittedUserMessageInput,
+  ): Effect.Effect<EditCommittedUserMessageResult, RuntimeContractError>;
   abort(input: AbortPromptInput): Effect.Effect<void, RuntimeContractError>;
   updateDraft(
     input: UpdateComposerDraftInput,
@@ -1980,6 +2077,26 @@ export const decodeUnknownCreateSurfaceResultEffect = Schema.decodeUnknownEffect
   CreateSurfaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
+export const decodeUnknownRenameOrchestratorSurfaceInputEffect = Schema.decodeUnknownEffect(
+  RenameOrchestratorSurfaceInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownRenameOrchestratorSurfaceResultEffect = Schema.decodeUnknownEffect(
+  RenameOrchestratorSurfaceResultSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownForkOrchestratorSurfaceInputEffect = Schema.decodeUnknownEffect(
+  ForkOrchestratorSurfaceInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownDeleteOrchestratorSurfaceInputEffect = Schema.decodeUnknownEffect(
+  DeleteOrchestratorSurfaceInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownDeleteOrchestratorSurfaceResultEffect = Schema.decodeUnknownEffect(
+  DeleteOrchestratorSurfaceResultSchema,
+  RuntimeBoundaryParseOptions,
+);
 export const unsafeDecodeOpenSurfaceInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   OpenSurfaceInputSchema,
   RuntimeBoundaryParseOptions,
@@ -2028,6 +2145,22 @@ export const decodeUnknownCloseSurfaceResultEffect = Schema.decodeUnknownEffect(
   CloseSurfaceResultSchema,
   RuntimeBoundaryParseOptions,
 );
+export const decodeUnknownUpdateSurfaceModelInputEffect = Schema.decodeUnknownEffect(
+  UpdateSurfaceModelInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownUpdateSurfaceReasoningInputEffect = Schema.decodeUnknownEffect(
+  UpdateSurfaceReasoningInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownUpdateSurfaceExtensionUsageInputEffect = Schema.decodeUnknownEffect(
+  UpdateSurfaceExtensionUsageInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownUpdateSurfaceSettingsResultEffect = Schema.decodeUnknownEffect(
+  UpdateSurfaceSettingsResultSchema,
+  RuntimeBoundaryParseOptions,
+);
 export const unsafeDecodeSubmitMessageInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(
   SubmitMessageInputSchema,
   RuntimeBoundaryParseOptions,
@@ -2062,6 +2195,14 @@ export const decodeUnknownSubmitMessageResultExit = Schema.decodeUnknownExit(
 );
 export const decodeUnknownSubmitMessageResultEffect = Schema.decodeUnknownEffect(
   SubmitMessageResultSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownEditCommittedUserMessageInputEffect = Schema.decodeUnknownEffect(
+  EditCommittedUserMessageInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownEditCommittedUserMessageResultEffect = Schema.decodeUnknownEffect(
+  EditCommittedUserMessageResultSchema,
   RuntimeBoundaryParseOptions,
 );
 export const unsafeDecodeAbortPromptInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(

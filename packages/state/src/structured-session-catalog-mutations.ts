@@ -53,44 +53,6 @@ export function structuredSessionCatalogMutationsFromStore(store: StructuredSess
       );
     },
 
-    updateOrchestratorPromptDefaults(input: {
-      sessionId: string;
-      provider: string;
-      model: string;
-      reasoningEffort: string;
-    }): StateMutationResult<StructuredPiSessionRecord> {
-      const current = store.getSessionState(input.sessionId).pi;
-      store.upsertPiSession({
-        ...current,
-        provider: input.provider,
-        model: input.model,
-        reasoningEffort: input.reasoningEffort,
-        updatedAt: store.getCurrentTimestamp(),
-      });
-      const value = store.getSessionState(input.sessionId).pi;
-      return mutationResult(
-        value,
-        surfaceAndSessionNavigationInvalidations(workspaceId, value.sessionId),
-      );
-    },
-
-    setOrchestratorGeneratedAgentContextFingerprint(input: {
-      sessionId: string;
-      generatedAgentContextFingerprint: string;
-    }): StateMutationResult<StructuredPiSessionRecord> {
-      const current = store.getSessionState(input.sessionId).pi;
-      store.upsertPiSession({
-        ...current,
-        generatedAgentContextFingerprint: input.generatedAgentContextFingerprint,
-        updatedAt: store.getCurrentTimestamp(),
-      });
-      const value = store.getSessionState(input.sessionId).pi;
-      return mutationResult(
-        value,
-        surfaceAndSessionNavigationInvalidations(workspaceId, value.sessionId),
-      );
-    },
-
     deleteSessionState(sessionId: string): StateMutationResult<void> {
       const snapshot = store.getSessionState(sessionId);
       const descriptors = dedupeInvalidations([

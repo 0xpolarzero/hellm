@@ -57,6 +57,43 @@ export function runtimeSurfaceLifecycleStatePortFromStructuredSessionState(
             ),
           ),
         ),
+    readOrchestratorLifecycle: (input) => state.readOrchestratorLifecycle(input),
+    renameOrchestrator: (input) =>
+      state
+        .renameOrchestratorSurface(input)
+        .pipe(
+          Effect.map((result) =>
+            mutationResult(
+              result,
+              surfaceAndSessionNavigationInvalidations(state.workspaceId, input.workspaceSessionId),
+            ),
+          ),
+        ),
+    forkOrchestrator: (input) =>
+      state
+        .forkOrchestratorSurface(input)
+        .pipe(
+          Effect.map((result) =>
+            mutationResult(
+              result,
+              surfaceAndSessionNavigationInvalidations(
+                state.workspaceId,
+                result.surfacePiSessionId,
+              ),
+            ),
+          ),
+        ),
+    deleteOrchestrator: (input) =>
+      Effect.gen(function* () {
+        const current = yield* state.readOrchestratorLifecycle(input);
+        const result = yield* state.deleteOrchestratorSurface(input);
+        return mutationResult(
+          result,
+          current.targets.flatMap((target) =>
+            surfaceAndSessionNavigationInvalidations(state.workspaceId, target.surfacePiSessionId),
+          ),
+        );
+      }),
   };
 }
 

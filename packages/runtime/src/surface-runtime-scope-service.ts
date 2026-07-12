@@ -42,6 +42,10 @@ export interface RuntimeSurfaceRuntimeServiceService {
   readonly surfacePiSessionId: SurfacePiSessionId;
   readonly session: PiSessionRef;
   withPromptLock<A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R>;
+  acquirePromptLock(): Effect.Effect<Effect.Effect<void>>;
+  restorePiHistory(input: {
+    readonly entryId: import("@svvy/core").PiHistoryEntryRef;
+  }): Effect.Effect<void, RuntimeContractError>;
   runPiTurn(input: RunPiTurnInput): Effect.Effect<RuntimePiTurnStream, RuntimeContractError>;
   interruptActivePrompt(input: {
     readonly turnId?: string | null;
@@ -130,6 +134,27 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
           surfacePiSessionId: input.session.surfacePiSessionId,
           session: input.session,
           withPromptLock: (effect) => promptLock.withPermit(effect),
+          acquirePromptLock: () =>
+            Effect.gen(function* () {
+              const acquired = yield* Deferred.make<void>();
+              const release = yield* Deferred.make<void>();
+              yield* promptLock
+                .withPermit(
+                  Deferred.succeed(acquired, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                  ),
+                )
+                .pipe(Effect.forkIn(input.scope));
+              yield* Deferred.await(acquired);
+              return Deferred.succeed(release, undefined).pipe(Effect.asVoid);
+            }),
+          restorePiHistory: ({ entryId }) =>
+            adapter.history.restoreToEntry({ session: input.session, entryId }).pipe(
+              Effect.provideService(PiSessionReferencePort, references),
+              Effect.mapError((cause) =>
+                runtimePiAdapterError("runtime.surface.restorePiHistory", cause),
+              ),
+            ),
           runPiTurn: (turnInput) =>
             adapter.turns.run(turnInput).pipe(
               Effect.provideService(Scope.Scope, input.scope),

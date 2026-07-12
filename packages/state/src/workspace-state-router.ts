@@ -5,6 +5,7 @@ import {
   RuntimeApprovalStatePort,
   RuntimeCommandStatePort,
   RuntimeComposerDraftStatePort,
+  RuntimeComposerProfileStatePort,
   RuntimeEpisodeStatePort,
   RuntimeGeneratedPackageStatePort,
   PiSessionReferencePort,
@@ -28,6 +29,7 @@ import {
   type RuntimeApprovalStatePortService,
   type RuntimeCommandStatePortService,
   type RuntimeComposerDraftStatePortService,
+  type RuntimeComposerProfileStatePortService,
   type RuntimeEpisodeStatePortService,
   type RuntimeGeneratedPackageStatePortService,
   type RuntimeGeneratedPackageWorkspaceLinkRecord,
@@ -53,6 +55,7 @@ import { runtimeActorExtensionBindingStatePortFromStructuredSessionState } from 
 import { runtimeApprovalStatePortFromStructuredSessionState } from "./runtime-approval-state-port";
 import { runtimeCommandStatePortFromStructuredSessionState } from "./runtime-command-state-port";
 import { runtimeComposerDraftStatePortFromStructuredSessionState } from "./runtime-composer-draft-state-port";
+import { runtimeComposerProfileStatePortFromStructuredSessionState } from "./runtime-composer-profile-state-port";
 import { runtimeEpisodeStatePortFromStructuredSessionState } from "./runtime-episode-state-port";
 import { runtimeGeneratedPackageStatePortFromStructuredSessionState } from "./runtime-generated-package-state-port";
 import { runtimePromptDefaultsStatePortFromStructuredSessionState } from "./runtime-prompt-defaults-state-port";
@@ -89,6 +92,7 @@ export interface WorkspaceStateRouter {
   readonly workspace: RuntimeWorkspaceStatePortService;
   readonly surfaceLifecycle: RuntimeSurfaceLifecycleStatePortService;
   readonly promptDefaults: RuntimePromptDefaultsStatePortService;
+  readonly composerProfile: RuntimeComposerProfileStatePortService;
   readonly source: RuntimeSourceStatePortService;
   readonly generatedPackage: RuntimeGeneratedPackageStatePortService;
   readonly actorExtensionBinding: RuntimeActorExtensionBindingStatePortService;
@@ -122,6 +126,7 @@ interface RegisteredStore {
     readonly workspace: RuntimeWorkspaceStatePortService;
     readonly surfaceLifecycle: RuntimeSurfaceLifecycleStatePortService;
     readonly promptDefaults: RuntimePromptDefaultsStatePortService;
+    readonly composerProfile: RuntimeComposerProfileStatePortService;
     readonly source: RuntimeSourceStatePortService;
     readonly generatedPackage: RuntimeGeneratedPackageStatePortService;
     readonly actorExtensionBinding: RuntimeActorExtensionBindingStatePortService;
@@ -152,6 +157,7 @@ function registerStore(store: StructuredSessionStateStore): RegisteredStore {
       surfaceLifecycle:
         runtimeSurfaceLifecycleStatePortFromStructuredSessionState(structuredSession),
       promptDefaults: runtimePromptDefaultsStatePortFromStructuredSessionState(structuredSession),
+      composerProfile: runtimeComposerProfileStatePortFromStructuredSessionState(structuredSession),
       source: runtimeSourceStatePortFromStructuredSessionState(structuredSession),
       generatedPackage:
         runtimeGeneratedPackageStatePortFromStructuredSessionState(structuredSession),
@@ -476,6 +482,22 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
       via(resolveWorkspace("closeSurface", request.workspaceId), (registered) =>
         registered.ports.surfaceLifecycle.closeSurface(request),
       ),
+    readOrchestratorLifecycle: (request) =>
+      via(resolveWorkspace("readOrchestratorLifecycle", request.workspaceId), (registered) =>
+        registered.ports.surfaceLifecycle.readOrchestratorLifecycle(request),
+      ),
+    renameOrchestrator: (request) =>
+      via(resolveWorkspace("renameOrchestrator", request.workspaceId), (registered) =>
+        registered.ports.surfaceLifecycle.renameOrchestrator(request),
+      ),
+    forkOrchestrator: (request) =>
+      via(resolveWorkspace("forkOrchestrator", request.workspaceId), (registered) =>
+        registered.ports.surfaceLifecycle.forkOrchestrator(request),
+      ),
+    deleteOrchestrator: (request) =>
+      via(resolveWorkspace("deleteOrchestrator", request.workspaceId), (registered) =>
+        registered.ports.surfaceLifecycle.deleteOrchestrator(request),
+      ),
   };
 
   const promptDefaults: RuntimePromptDefaultsStatePortService = {
@@ -483,6 +505,18 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
       via(locatePromptTarget("resolvePromptDefaults", request.target), (registered) =>
         registered.ports.promptDefaults.resolvePromptDefaults(request),
       ),
+    updatePromptDefaults: (request) =>
+      via(locatePromptTarget("updatePromptDefaults", request.target), (registered) =>
+        registered.ports.promptDefaults.updatePromptDefaults(request),
+      ),
+  };
+
+  const composerProfile: RuntimeComposerProfileStatePortService = {
+    readSurfaceProfileId: (request) =>
+      via(locatePromptTarget("readSurfaceProfileId", request.target), (registered) =>
+        registered.ports.composerProfile.readSurfaceProfileId(request),
+      ),
+    updateFromComposer: (request) => appGlobal.ports.composerProfile.updateFromComposer(request),
   };
 
   const source: RuntimeSourceStatePortService = {
@@ -576,6 +610,10 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
     acceptSubmittedSurfaceMessage: (request) =>
       via(locatePromptTarget("acceptSubmittedSurfaceMessage", request.target), (registered) =>
         registered.ports.queue.acceptSubmittedSurfaceMessage(request),
+      ),
+    acceptEditedCommittedSurfaceMessage: (request) =>
+      via(locatePromptTarget("acceptEditedCommittedSurfaceMessage", request.target), (registered) =>
+        registered.ports.queue.acceptEditedCommittedSurfaceMessage(request),
       ),
     enqueueSurfaceMessage: (request) =>
       via(
@@ -1139,6 +1177,7 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
     workspace,
     surfaceLifecycle,
     promptDefaults,
+    composerProfile,
     source,
     generatedPackage,
     actorExtensionBinding,
@@ -1172,6 +1211,7 @@ export function layerWorkspaceStateRouter(
   | RuntimeWorkspaceStatePort
   | RuntimeSurfaceLifecycleStatePort
   | RuntimePromptDefaultsStatePort
+  | RuntimeComposerProfileStatePort
   | RuntimeSourceStatePort
   | RuntimeGeneratedPackageStatePort
   | RuntimeActorExtensionBindingStatePort
@@ -1192,6 +1232,7 @@ export function layerWorkspaceStateRouter(
     Layer.succeed(RuntimeWorkspaceStatePort, router.workspace),
     Layer.succeed(RuntimeSurfaceLifecycleStatePort, router.surfaceLifecycle),
     Layer.succeed(RuntimePromptDefaultsStatePort, router.promptDefaults),
+    Layer.succeed(RuntimeComposerProfileStatePort, router.composerProfile),
     Layer.succeed(RuntimeSourceStatePort, router.source),
     Layer.succeed(RuntimeGeneratedPackageStatePort, router.generatedPackage),
     Layer.succeed(RuntimeActorExtensionBindingStatePort, router.actorExtensionBinding),

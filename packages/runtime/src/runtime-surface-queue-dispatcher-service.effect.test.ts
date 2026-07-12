@@ -73,7 +73,16 @@ function queuedMessage(): RuntimeSurfaceMessageRecord {
     kind: "user_message",
     idempotencyKey: "queue_runtime_queue_dispatcher",
     messageJson: JSON.stringify({ text: "Use a native tool." }),
-    payloadJson: null,
+    payloadJson: JSON.stringify({
+      source: "committed-user-message-edit",
+      sourceMessageId: "message_runtime_queue_dispatcher",
+      expectedCommittedAt: "2026-07-09T00:00:00.000Z",
+      sourcePiHistoryEntry: {
+        session: { surfacePiSessionId },
+        entryId: "pi_history_runtime_queue_dispatcher",
+        messageId: "message_runtime_queue_dispatcher",
+      },
+    }),
     status: "queued",
     priority: "runtime",
     orderingKey: `surface:${surfacePiSessionId}`,
@@ -159,6 +168,7 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
         assert.deepStrictEqual(titlePublications, [[titleInvalidation]]);
         assert.deepStrictEqual(calls, [
           "claim",
+          "restorePiHistory:pi_history_runtime_queue_dispatcher",
           `startTurn:${turnId}`,
           `queueTitle:${workspaceSessionId}:${surfacePiSessionId}`,
           "publishTitle:1",
@@ -193,6 +203,9 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
                   surfacePiSessionId,
                   session: { surfacePiSessionId },
                   withPromptLock: (effect) => effect,
+                  acquirePromptLock: () => Effect.succeed(Effect.void),
+                  restorePiHistory: ({ entryId }) =>
+                    Effect.sync(() => calls.push(`restorePiHistory:${entryId.entryId}`)),
                   runPiTurn: () => Effect.die("unused"),
                   interruptActivePrompt: () => Effect.void,
                   isPromptActive: () => false,
@@ -216,6 +229,7 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
                   model: "gpt-5",
                   reasoningEffort: "medium",
                 }),
+              update: () => Effect.die("unused"),
             }),
             Layer.succeed(RuntimePromptExecutionService, {
               executeClaimedPrompt: (input) =>
@@ -296,6 +310,7 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
                   return { value: queuedMessage(), afterCommit: [] };
                 }),
               acceptSubmittedSurfaceMessage: () => Effect.die("unused"),
+              acceptEditedCommittedSurfaceMessage: () => Effect.die("unused"),
               enqueueSurfaceMessage: () => Effect.die("unused"),
               getSurfaceQueuedMessage: () => Effect.die("unused"),
               releaseExpiredSurfaceMessageClaims: () => Effect.die("unused"),

@@ -418,7 +418,9 @@
   }
 
   function startEditingUserMessage(message: RendererTranscriptUserEntry, text: string): void {
+    if (!message.messageId) return;
     editDraft = {
+      messageId: message.messageId,
       messageTimestamp: message.timestamp,
       text,
     };

@@ -18,6 +18,7 @@ import {
   PromptTargetSchema,
   RuntimeSubmittedMessageSchema,
   RuntimeSurfaceTargetSchema,
+  type RuntimeSurfaceTarget,
   WorkflowTaskRuntimeSurfaceTargetSchema,
   RequestUserInputResolvedAnswerSchema,
   RunTaskAgentPromptSourceSchema,
@@ -30,6 +31,7 @@ import {
   RuntimeTurnDecisionSchema,
   UpdateActorExtensionBindingRequestSchema,
   ExtensionUsageStateSchema,
+  type ExtensionUsageState,
   HandlerInheritedHistoryBlockSchema,
   ThreadHistoryModeSchema,
   type AnswerRequestInputInput,
@@ -41,13 +43,16 @@ import {
   type CloseSurfaceResult,
   type CreateOrchestratorSurfaceInput,
   type CreateSurfaceResult,
+  type DeleteOrchestratorSurfaceResult,
   type OpenSurfaceInput,
   type OpenSurfaceResult,
+  type RenameOrchestratorSurfaceResult,
   type PromptTarget,
   RecordEpisodeRequestSchema,
   ReasoningEffortSchema,
   type ReleaseWorkspaceInput,
   type ReleaseWorkspaceResult,
+  type ReasoningEffort,
   type RuntimeClientSubmissionInput,
   type StateCommandReceipt,
   type StateCommandPostCommitNotificationError,
@@ -85,6 +90,7 @@ import {
   GeneratedContextFingerprint,
   GeneratedPackageBuildId,
   IsoDateTimeStringSchema,
+  AgentProfileId,
   MessageId,
   ModelId,
   NonNegativeSafeIntegerSchema,
@@ -116,7 +122,7 @@ import {
   PositiveSafeIntegerSchema,
   type IsoDateTimeString,
 } from "./ids";
-import { PiHistoryEntryRefSchema } from "./pi-adapter-contracts";
+import { PiHistoryEntryRefSchema, type PiHistoryEntryRef } from "./pi-adapter-contracts";
 import {
   RuntimeTranscriptAssistantContentSchema,
   RuntimeTranscriptAssistantMessageSchema,
@@ -184,6 +190,32 @@ export interface RuntimeSurfaceLifecycleStatePortService {
   closeSurface(
     input: CloseSurfaceInput,
   ): Effect.Effect<StateMutationResult<CloseSurfaceResult>, StateContractError>;
+  readOrchestratorLifecycle(input: {
+    readonly workspaceId: WorkspaceId;
+    readonly workspaceSessionId: WorkspaceSessionId;
+  }): Effect.Effect<
+    {
+      readonly title: string;
+      readonly titleGenerationStatus: string;
+      readonly targets: readonly RuntimeSurfaceTarget[];
+    },
+    StateContractError
+  >;
+  renameOrchestrator(input: {
+    readonly workspaceId: WorkspaceId;
+    readonly workspaceSessionId: WorkspaceSessionId;
+    readonly title: string;
+  }): Effect.Effect<StateMutationResult<RenameOrchestratorSurfaceResult>, StateContractError>;
+  forkOrchestrator(input: {
+    readonly workspaceId: WorkspaceId;
+    readonly sourceWorkspaceSessionId: WorkspaceSessionId;
+    readonly targetSurfacePiSessionId: SurfacePiSessionId;
+    readonly title?: string;
+  }): Effect.Effect<StateMutationResult<CreateSurfaceResult>, StateContractError>;
+  deleteOrchestrator(input: {
+    readonly workspaceId: WorkspaceId;
+    readonly workspaceSessionId: WorkspaceSessionId;
+  }): Effect.Effect<StateMutationResult<DeleteOrchestratorSurfaceResult>, StateContractError>;
 }
 
 export interface RuntimeSurfaceLifecycleStatePort {
@@ -209,10 +241,21 @@ export const ResolveRuntimePromptDefaultsInputSchema = Schema.Struct({
   target: PromptTargetSchema,
 });
 
+export const UpdateRuntimePromptDefaultsInputSchema = Schema.Struct({
+  target: PromptTargetSchema,
+  provider: Schema.String,
+  model: Schema.String,
+  reasoningEffort: ReasoningEffortSchema,
+});
+export type UpdateRuntimePromptDefaultsInput = typeof UpdateRuntimePromptDefaultsInputSchema.Type;
+
 export interface RuntimePromptDefaultsStatePortService {
   resolvePromptDefaults(
     input: ResolveRuntimePromptDefaultsInput,
   ): Effect.Effect<RuntimePromptDefaultsRecord, StateContractError>;
+  updatePromptDefaults(
+    input: UpdateRuntimePromptDefaultsInput,
+  ): Effect.Effect<StateMutationResult<RuntimePromptDefaultsRecord>, StateContractError>;
 }
 
 export interface RuntimePromptDefaultsStatePort {
@@ -223,6 +266,32 @@ export const RuntimePromptDefaultsStatePort = Context.Service<
   RuntimePromptDefaultsStatePort,
   RuntimePromptDefaultsStatePortService
 >("@svvy/core/RuntimePromptDefaultsStatePort");
+
+export interface RuntimeComposerProfileUpdateInput {
+  readonly profileId: AgentProfileId;
+  readonly provider?: string;
+  readonly model?: string;
+  readonly reasoningEffort?: ReasoningEffort;
+  readonly extensionUsage?: Readonly<Record<string, ExtensionUsageState>>;
+}
+
+export interface RuntimeComposerProfileStatePortService {
+  readSurfaceProfileId(input: {
+    readonly target: PromptTarget;
+  }): Effect.Effect<AgentProfileId | null, StateContractError>;
+  updateFromComposer(
+    input: RuntimeComposerProfileUpdateInput,
+  ): Effect.Effect<StateMutationResult<boolean>, StateContractError>;
+}
+
+export interface RuntimeComposerProfileStatePort {
+  readonly _tag: "RuntimeComposerProfileStatePort";
+}
+
+export const RuntimeComposerProfileStatePort = Context.Service<
+  RuntimeComposerProfileStatePort,
+  RuntimeComposerProfileStatePortService
+>("@svvy/core/RuntimeComposerProfileStatePort");
 
 export const RuntimeSourceFactRecordSchema = Schema.Struct({
   scope: SourceInvalidationScopeSchema,
@@ -712,6 +781,33 @@ export const AcceptSubmittedRuntimeSurfaceMessageInputSchema = Schema.Struct({
 export type AcceptSubmittedRuntimeSurfaceMessageInput =
   typeof AcceptSubmittedRuntimeSurfaceMessageInputSchema.Type;
 
+export interface AcceptEditedCommittedRuntimeSurfaceMessageInput {
+  readonly workspaceId: WorkspaceId;
+  readonly target: PromptTarget;
+  readonly sourceMessageId: MessageId;
+  readonly expectedCommittedAt: IsoDateTimeString;
+  readonly sourcePiHistoryEntry: PiHistoryEntryRef;
+  readonly idempotencyKey: string;
+  readonly promptHistoryText: string | null;
+  readonly messageJson: string;
+  readonly payloadJson: string;
+}
+
+export const CommittedUserMessageEditQueuePayloadSchema = Schema.Struct({
+  source: Schema.Literal("committed-user-message-edit"),
+  sourceMessageId: MessageId,
+  expectedCommittedAt: IsoDateTimeStringSchema,
+  sourcePiHistoryEntry: PiHistoryEntryRefSchema,
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
+});
+export type CommittedUserMessageEditQueuePayload =
+  typeof CommittedUserMessageEditQueuePayloadSchema.Type;
+
+export interface AcceptEditedCommittedRuntimeSurfaceMessageResult {
+  readonly queuedMessage: RuntimeSurfaceMessageRecord;
+  readonly accepted: "created" | "existing";
+}
+
 export const GetRuntimeSurfaceMessageInputSchema = Schema.Struct({
   id: Schema.String,
 });
@@ -784,6 +880,12 @@ export interface RuntimeQueueStatePortService {
   acceptSubmittedSurfaceMessage(
     input: AcceptSubmittedRuntimeSurfaceMessageInput,
   ): Effect.Effect<StateMutationResult<RuntimeSurfaceMessageRecord>, StateContractError>;
+  acceptEditedCommittedSurfaceMessage(
+    input: AcceptEditedCommittedRuntimeSurfaceMessageInput,
+  ): Effect.Effect<
+    StateMutationResult<AcceptEditedCommittedRuntimeSurfaceMessageResult>,
+    StateContractError
+  >;
   enqueueSurfaceMessage(
     input: EnqueueRuntimeSurfaceMessageInput,
   ): Effect.Effect<StateMutationResult<RuntimeSurfaceMessageRecord>, StateContractError>;

@@ -8,6 +8,7 @@ import {
   RuntimeArtifactStatePort,
   RuntimeCommandStatePort,
   RuntimeComposerDraftStatePort,
+  RuntimeComposerProfileStatePort,
   RuntimeEpisodeStatePort,
   RuntimeExtensionContextImpactStatePort,
   RuntimeExtensionStatePort,
@@ -35,6 +36,7 @@ import { layerRuntimeApprovalStatePort } from "./runtime-approval-state-port";
 import { layerRuntimeArtifactStatePort } from "./runtime-artifact-state-port";
 import { layerRuntimeCommandStatePort } from "./runtime-command-state-port";
 import { layerRuntimeComposerDraftStatePort } from "./runtime-composer-draft-state-port";
+import { layerRuntimeComposerProfileStatePort } from "./runtime-composer-profile-state-port";
 import { layerRuntimeEpisodeStatePort } from "./runtime-episode-state-port";
 import { layerRuntimeExtensionContextImpactStatePort } from "./runtime-extension-context-impact-state-port";
 import { layerRuntimeExtensionStatePort } from "./runtime-extension-state-port";
@@ -63,6 +65,7 @@ export type StructuredSessionStatePorts =
   | RuntimeWorkspaceStatePort
   | RuntimeSurfaceLifecycleStatePort
   | RuntimeComposerDraftStatePort
+  | RuntimeComposerProfileStatePort
   | RuntimeQueueStatePort
   | RuntimeTurnStatePort
   | RuntimeCommandStatePort
@@ -90,6 +93,7 @@ export const structuredSessionStatePortsLayer = Layer.mergeAll(
   layerRuntimeWorkspaceStatePort,
   layerRuntimeSurfaceLifecycleStatePort,
   layerRuntimeComposerDraftStatePort,
+  layerRuntimeComposerProfileStatePort,
   layerRuntimeQueueStatePort,
   layerRuntimeTurnStatePort,
   layerRuntimeCommandStatePort,
@@ -121,6 +125,7 @@ export function structuredSessionStatePortsLayerWithSandboxPolicyConfig(
     layerRuntimeWorkspaceStatePort,
     layerRuntimeSurfaceLifecycleStatePort,
     layerRuntimeComposerDraftStatePort,
+    layerRuntimeComposerProfileStatePort,
     layerRuntimeQueueStatePort,
     layerRuntimeTurnStatePort,
     layerRuntimeCommandStatePort,

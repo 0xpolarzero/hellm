@@ -6,12 +6,17 @@ import {
   RuntimePromptDefaultsStatePort,
   type PromptTarget,
   type RuntimePromptDefaultsRecord,
+  type StateMutationResult,
+  type UpdateRuntimePromptDefaultsInput,
 } from "@svvy/core";
 
 export interface RuntimePromptDefaultsServiceService {
   resolve(input: {
     readonly target: PromptTarget;
   }): Effect.Effect<RuntimePromptDefaultsRecord, RuntimeContractError>;
+  update(
+    input: UpdateRuntimePromptDefaultsInput,
+  ): Effect.Effect<StateMutationResult<RuntimePromptDefaultsRecord>, RuntimeContractError>;
 }
 
 export class RuntimePromptDefaultsService extends Context.Service<
@@ -31,6 +36,18 @@ export const layerRuntimePromptDefaultsService = Layer.effect(
               new RuntimeContractError({
                 operation: "runtime.promptDefaults.resolve",
                 reason: "stale-state",
+                message: cause.message,
+                cause,
+              }),
+          ),
+        ),
+      update: (input) =>
+        state.updatePromptDefaults(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RuntimeContractError({
+                operation: "runtime.promptDefaults.update",
+                reason: cause.reason === "not-found" ? "target-not-found" : "state-conflict",
                 message: cause.message,
                 cause,
               }),

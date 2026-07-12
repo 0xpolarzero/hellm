@@ -232,6 +232,7 @@ describe("@svvy/runtime durable prompt transcript", () => {
         }),
       markSurfaceMessageFailed: () => Effect.die("Unexpected failed queue settlement."),
       acceptSubmittedSurfaceMessage: () => Effect.die("Unexpected submit."),
+      acceptEditedCommittedSurfaceMessage: () => Effect.die("Unexpected committed edit."),
       enqueueSurfaceMessage: () => Effect.die("Unexpected enqueue."),
       getSurfaceQueuedMessage: () => Effect.die("Unexpected queue read."),
       claimNextQueuedSurfaceMessage: () => Effect.die("Unexpected claim."),
@@ -405,6 +406,8 @@ describe("@svvy/runtime durable prompt transcript", () => {
               surfacePiSessionId,
               session: { surfacePiSessionId },
               withPromptLock: (effect) => effect,
+              acquirePromptLock: () => Effect.succeed(Effect.void),
+              restorePiHistory: () => Effect.void,
               runPiTurn: () =>
                 Effect.succeed({
                   stream: Stream.fromIterable(events),

@@ -84,6 +84,27 @@ export type DesktopWorkspacePathTarget =
   | { readonly kind: "missing" }
   | { readonly kind: "file" | "folder"; readonly absolutePath: string };
 
+export interface DesktopRendererTelemetryInput {
+  readonly workspaceId: string;
+  readonly eventName: string;
+  readonly level?: "debug" | "info" | "warn" | "error";
+  readonly message?: string;
+  readonly target?: {
+    readonly workspaceSessionId: string;
+    readonly surfacePiSessionId: string;
+    readonly surface: "orchestrator" | "handler";
+    readonly threadId?: string;
+  };
+  readonly panelId?: string;
+  readonly correlationId?: string;
+  readonly details?: Readonly<Record<string, unknown>>;
+  readonly error?: {
+    readonly name?: string;
+    readonly message: string;
+    readonly stack?: string;
+  };
+}
+
 export interface DesktopAppActionsFacade {
   readonly workspaces: {
     acquireByCwd(input: { readonly cwd: string }): Promise<DesktopWorkspaceInfo>;
@@ -122,6 +143,9 @@ export interface DesktopAppActionsFacade {
       readonly workspaceId: string;
       readonly workspaceRelativePath: string;
     }): Promise<DesktopWorkspacePathTarget>;
+  };
+  readonly telemetry: {
+    recordRenderer(input: DesktopRendererTelemetryInput): Promise<{ readonly ok: true }>;
   };
 }
 

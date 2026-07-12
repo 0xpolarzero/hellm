@@ -86,6 +86,64 @@ describe("RuntimePromptDefaultsStatePort", () => {
     }
   });
 
+  it("updates exact surface defaults without mutating workspace-local profiles", async () => {
+    const store = createStructuredSessionStateStore({ workspace });
+    try {
+      seedOrchestrator(store);
+      const snapshot = store.getSessionState("session-prompt-defaults");
+      store.upsertPiSession({
+        ...snapshot.pi,
+        orchestratorAgentProfileId: "default-orchestrator" as never,
+      });
+      const currentProfile = store
+        .listAgentProfiles()
+        .find((profile) => profile.profileId === "default-orchestrator")!;
+      store.updateOrchestratorProfile({
+        profile: {
+          profileId: "default-orchestrator" as never,
+          name: currentProfile.name,
+          providerId: currentProfile.providerId as never,
+          modelId: currentProfile.modelId as never,
+          reasoning: { effort: "medium" },
+          extensionUsage: {},
+          extensionOrder: [],
+          followComposer: true,
+        },
+      });
+      const port = runtimePromptDefaultsStatePortFromStore(store);
+      const target = {
+        workspaceSessionId: "session-prompt-defaults" as WorkspaceSessionId,
+        surface: "orchestrator" as const,
+        surfacePiSessionId: "session-prompt-defaults" as SurfacePiSessionId,
+      };
+
+      const result = await runTestEffect(
+        port.updatePromptDefaults({
+          target,
+          provider: "anthropic",
+          model: "claude-sonnet-4",
+          reasoningEffort: "low",
+        }),
+      );
+
+      expect(result.value).toEqual({
+        provider: "anthropic",
+        model: "claude-sonnet-4",
+        reasoningEffort: "low",
+      });
+      expect(store.getSessionState("session-prompt-defaults").pi).toMatchObject(result.value);
+      expect(
+        store.listAgentProfiles().find((profile) => profile.profileId === "default-orchestrator"),
+      ).toMatchObject({
+        providerId: currentProfile.providerId,
+        modelId: currentProfile.modelId,
+        followComposer: true,
+      });
+    } finally {
+      store.close();
+    }
+  });
+
   it("fails when durable defaults are incomplete", async () => {
     const store = createStructuredSessionStateStore({ workspace });
     try {

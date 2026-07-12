@@ -61,7 +61,7 @@ export const adoptedEffectRuntimeModuleExports = [
   { module: "effect/Context", members: ["Service"] },
   {
     module: "effect/DateTime",
-    members: ["addDuration", "formatIso", "makeUnsafe", "now"],
+    members: ["addDuration", "formatIso", "make", "makeUnsafe", "now"],
   },
   { module: "effect/Deferred", members: ["await", "fail", "make", "succeed"] },
   { module: "effect/Duration", members: ["millis", "min"] },
@@ -266,6 +266,14 @@ export const adoptedEffectInstanceMemberPolicies = [
     allowedSourceGlobs: ["packages/sandbox/src/sandbox.ts"],
     productReason:
       "Sandbox helper validation and effectful path-access resolution use the injected abstract FileSystem service to verify candidate helper existence, executable metadata, regular-file status, helper bytes, canonical paths, and nearest-existing-parent containment without importing host fs modules.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: ["remove"],
+    allowedSourceGlobs: ["packages/pi-adapter/src/pi-adapter.ts"],
+    productReason:
+      "Pi session hard-delete uses the injected abstract FileSystem service after reference validation and live-session release, keeping host filesystem APIs out of the adapter implementation.",
   },
   {
     module: "effect/FileSystem",
@@ -903,7 +911,7 @@ export const auditedEffectInstalledExports = [
   },
   {
     module: "effect/DateTime",
-    members: ["addDuration", "formatIso", "makeUnsafe", "now"],
+    members: ["addDuration", "formatIso", "make", "makeUnsafe", "now"],
     scope: "installed-export-audit",
     owner: "docs/specs/package-architecture/effect-v4.spec.md",
     verifiedOn: "2026-06-25",

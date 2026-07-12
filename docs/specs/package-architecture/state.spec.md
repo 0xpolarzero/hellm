@@ -232,6 +232,7 @@ import {
   RuntimeGeneratedPackageStatePort,
   RuntimeArtifactStatePort,
   RuntimePromptDefaultsStatePort,
+  RuntimeComposerProfileStatePort,
   RuntimeQueueStatePort,
   RuntimeReadModelStatePort,
   RuntimeRecoveryStatePort,
@@ -382,6 +383,7 @@ The public named state-backed port layers are exactly:
 - `layerRuntimeExtensionContextImpactStatePort`
 - `layerRuntimeGeneratedPackageStatePort`
 - `layerRuntimePromptDefaultsStatePort`
+- `layerRuntimeComposerProfileStatePort`
 - `layerRuntimeArtifactStatePort`
 - `layerRuntimeRecoveryStatePort`
 - `layerRuntimeReadModelStatePort`
@@ -2211,7 +2213,8 @@ type RuntimeWorkspaceStatePort = {
 RuntimeQueueStatePort:
 
 - Caller: `@svvy/runtime` queue dispatcher and runtime-owned queue insertion paths only.
-- Methods: acceptSubmittedSurfaceMessage, enqueueSurfaceMessage, getSurfaceQueuedMessage,
+- Methods: acceptSubmittedSurfaceMessage, acceptEditedCommittedSurfaceMessage,
+  enqueueSurfaceMessage, getSurfaceQueuedMessage,
   claimNextQueuedSurfaceMessage, releaseExpiredSurfaceMessageClaims, markSurfaceMessageSteering,
   markSurfaceMessageQueued, markSurfaceMessageDelivered, markSurfaceMessageFailed,
   cancelSurfaceMessage, reorderSurfaceMessage.
@@ -2229,11 +2232,19 @@ RuntimeQueueStatePort:
   `enqueueSurfaceMessage(...)` remains the lower-level queue insert for runtime-owned non-composer
   work such as request-input answer deliveries, workflow task starts, report requests, and other
   surface-control queue items.
+- Rule: committed-message edit acceptance uses
+  `acceptEditedCommittedSurfaceMessage(...)`. The transaction first returns an existing row for an
+  edit-specific idempotency key, then rejects any other nonterminal row on the surface, validates
+  workspace/target ownership and the exact source message id, committed timestamp, and pi history
+  reference, rejects an active assistant, deletes the source and later transcript rows, inserts the
+  interactive replacement row carrying the durable edit intent, clears the durable draft, and
+  appends prompt history. Any failed check or insert rolls the entire mutation back.
 
 RuntimeSurfaceLifecycleStatePort:
 
 - Caller: @svvy/runtime surface creation, open, and close flows.
-- Methods: createOrchestratorSurface, openSurface, closeSurface.
+- Methods: createOrchestratorSurface, openSurface, closeSurface, readOrchestratorLifecycle,
+  renameOrchestrator, forkOrchestrator, deleteOrchestrator.
 - Rule: this port records durable lifecycle facts only: surface/session creation,
   open-owner/reference state, close-owner/reference state, lifecycle timestamps, and after-commit
   read-model invalidation descriptors. It does not acquire, retain, or dispose live pi sessions,
@@ -2255,6 +2266,22 @@ type RuntimeSurfaceLifecycleStatePort = {
   closeSurface(
     input: CloseSurfaceInput,
   ): Effect.Effect<StateMutationResult<CloseSurfaceResult>, StateContractError>;
+  readOrchestratorLifecycle(input: {
+    workspaceId: WorkspaceId;
+    workspaceSessionId: WorkspaceSessionId;
+  }): Effect.Effect<OrchestratorLifecycleRecord, StateContractError>;
+  renameOrchestrator(input: RenameOrchestratorInput): Effect.Effect<
+    StateMutationResult<RenameOrchestratorSurfaceResult>,
+    StateContractError
+  >;
+  forkOrchestrator(input: ForkOrchestratorInput): Effect.Effect<
+    StateMutationResult<CreateSurfaceResult>,
+    StateContractError
+  >;
+  deleteOrchestrator(input: DeleteOrchestratorInput): Effect.Effect<
+    StateMutationResult<DeleteOrchestratorSurfaceResult>,
+    StateContractError
+  >;
 };
 ```
 
@@ -2316,7 +2343,7 @@ type RuntimeWorkflowTaskStatePort = {
 RuntimePromptDefaultsStatePort:
 
 - Caller: @svvy/runtime prompt submission through `RuntimePromptDefaultsService`.
-- Methods: resolvePromptDefaults.
+- Methods: resolvePromptDefaults, updatePromptDefaults.
 - Rule: prompt default resolution reads durable surface/profile/model state and returns the
   provider, model, and reasoning effort that runtime must use for prompt admission. It does not
   return prompt text, generated-context read-model payloads, extension instruction bodies, pi-native model
@@ -2336,6 +2363,28 @@ type RuntimePromptDefaultsStatePort = {
   resolvePromptDefaults(
     input: ResolveRuntimePromptDefaultsInput,
   ): Effect.Effect<RuntimePromptDefaultsRecord, StateContractError>;
+  updatePromptDefaults(
+    input: UpdateRuntimePromptDefaultsInput,
+  ): Effect.Effect<StateMutationResult<RuntimePromptDefaultsRecord>, StateContractError>;
+};
+```
+
+RuntimeComposerProfileStatePort:
+
+- Caller: `@svvy/runtime` surface model, reasoning, and extension composer controls.
+- Methods: readSurfaceProfileId, updateFromComposer.
+- Rule: surface profile identity is resolved from the exact workspace target, while Follow composer
+  writes are routed to app-global agent-profile authority. Workspace-local profile rows are never
+  used as app-global write authority.
+
+```ts
+type RuntimeComposerProfileStatePort = {
+  readSurfaceProfileId(input: {
+    target: PromptTarget;
+  }): Effect.Effect<AgentProfileId | null, StateContractError>;
+  updateFromComposer(
+    input: RuntimeComposerProfileUpdateInput,
+  ): Effect.Effect<StateMutationResult<boolean>, StateContractError>;
 };
 ```
 
@@ -2442,7 +2491,8 @@ RuntimeTranscriptStatePort:
   Surface stream generation and sequence compare-and-swap is committed atomically with each live
   transcript mutation. Per-packet delta/tool/cursor writes return no read-model invalidations;
   user commit, assistant begin, assistant commit, and assistant fail return exactly one surface
-  invalidation.
+  invalidation. Committed-message transcript rebasing is not exposed as a standalone transcript
+  mutation; it is part of the atomic queue-state edit acceptance transaction.
 
 The exact transcript state port is:
 
@@ -3523,6 +3573,12 @@ type RuntimeQueueStatePort = {
 acceptSubmittedSurfaceMessage(
 input: AcceptSubmittedRuntimeSurfaceMessageInput,
 ): Effect.Effect<StateMutationResult<RuntimeSurfaceMessageRecord>, StateContractError>;
+acceptEditedCommittedSurfaceMessage(
+input: AcceptEditedCommittedRuntimeSurfaceMessageInput,
+): Effect.Effect<
+  StateMutationResult<AcceptEditedCommittedRuntimeSurfaceMessageResult>,
+  StateContractError
+>;
 enqueueSurfaceMessage(
 input: EnqueueRuntimeSurfaceMessageInput,
 ): Effect.Effect<StateMutationResult<RuntimeSurfaceMessageRecord>, StateContractError>;

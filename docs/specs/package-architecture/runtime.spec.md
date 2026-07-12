@@ -1295,14 +1295,29 @@ tool, state, event, and recovery machinery once a workflow-task surface is creat
 
 ### Public Entry
 
-The only public entry for user-messageable prompt-bearing work is
+The ordinary public entry for user-messageable prompt-bearing work is
 `Runtime.messages.submit(input: SubmitMessageInput)` and the matching Promise facade method. The
 input codec is `SubmitMessageInputSchema`; the result codec is `SubmitMessageResultSchema`.
 Callers provide only `target: PromptTarget`, `message: RuntimeSubmittedMessage`, optional
 `delivery: "enqueue-and-run" | "queue-only"`, and optional
 `clientSubmission: RuntimeClientSubmissionInput`.
 
-Callers must not provide `workspaceId`, pi message arrays, transcript snapshots, `systemPrompt`,
+Committed-message edit-and-resend uses the separate
+`Runtime.messages.editCommitted(input: EditCommittedUserMessageInput)` method. Runtime validates
+the explicit workspace, exact target, message id, and committed timestamp and preflights current
+prompt/model authority. While holding the surface prompt lock, it atomically compare-and-swaps the
+source transcript message and pi history reference, rejects pending queue work, rebases the visible
+transcript, inserts one interactive replacement queue row with a durable edit intent, clears the
+durable composer draft, and appends prompt history. Idempotent replay returns that queue row even
+after the source transcript row is gone. Queue dispatch holds the same prompt lock from claim
+through prompt completion and asks `PiAdapter.history.restoreToEntry(...)` to reconcile the durable
+edit intent before every dispatch attempt. A temporary restore failure requeues the claimed row for
+retry; pi reconciliation must succeed before turn preparation. The original pi branch remains
+historical; the state-backed visible transcript follows the revised branch.
+
+Ordinary submit callers must not provide `workspaceId`; committed-message edit callers provide the
+explicit workspace identity used by live-surface admission and the state transaction. Callers do
+not provide pi message arrays, transcript snapshots, `systemPrompt`,
 generated-context previews, extension declarations, renderer panel ids, workflow task-agent targets,
 command ids, turn ids, queue row payloads, runtime-effect envelopes, or extension operations.
 Runtime resolves workspace ownership from committed surface/session facts through core-owned state

@@ -102,6 +102,7 @@ function createHarness(
         return stateMutation(createQueuedRecord(input, id), [queueInvalidation]);
       });
     },
+    acceptEditedCommittedSurfaceMessage: () => Effect.die("Unexpected committed edit call."),
     enqueueSurfaceMessage: () => Effect.die("Unexpected enqueueSurfaceMessage call."),
     getSurfaceQueuedMessage: () => Effect.die("Unexpected getSurfaceQueuedMessage call."),
     claimNextQueuedSurfaceMessage: () =>

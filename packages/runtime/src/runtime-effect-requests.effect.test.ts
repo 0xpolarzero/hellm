@@ -900,6 +900,7 @@ describe("runtime effect request application", () => {
         const queueStatePort = {
           acceptSubmittedSurfaceMessage: () =>
             Effect.die("Unexpected acceptSubmittedSurfaceMessage call."),
+          acceptEditedCommittedSurfaceMessage: () => Effect.die("Unexpected committed edit."),
           enqueueSurfaceMessage: (input) => {
             calls.push(`state:${input.surfacePiSessionId}`);
             enqueueCalls.push(input);
@@ -984,6 +985,7 @@ describe("runtime effect request application", () => {
           const queueStatePort = {
             acceptSubmittedSurfaceMessage: () =>
               Effect.die("Unexpected acceptSubmittedSurfaceMessage call."),
+            acceptEditedCommittedSurfaceMessage: () => Effect.die("Unexpected committed edit."),
             enqueueSurfaceMessage: (input) => {
               calls.push(`state:${input.surfacePiSessionId}`);
               return Effect.succeed(
@@ -1048,6 +1050,7 @@ describe("runtime effect request application", () => {
           const queueStatePort = {
             acceptSubmittedSurfaceMessage: () =>
               Effect.die("Unexpected acceptSubmittedSurfaceMessage call."),
+            acceptEditedCommittedSurfaceMessage: () => Effect.die("Unexpected committed edit."),
             enqueueSurfaceMessage: (input) => {
               calls.push(`state:${input.surfacePiSessionId}`);
               return Effect.succeed(

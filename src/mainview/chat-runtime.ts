@@ -663,6 +663,7 @@ export type ComposerPromptSubmission = {
   snippetProvenance?: SentSnippetProvenance[];
   telemetryCorrelationId?: string;
   clientSubmission?: PromptClientSubmissionMetadata;
+  editMessageId?: string;
 };
 
 export type RendererTelemetryEvent = {
@@ -1826,11 +1827,25 @@ class SurfaceControllerImpl implements ChatSurfaceControllerInternal {
       throw new Error("Wait for the current turn to finish before editing an earlier message.");
     }
 
-    const userMessage = buildUserMessage(submission);
+    const messageId = input.editMessageId;
+    if (!messageId) {
+      throw new Error("The committed user message identity is missing.");
+    }
     const request: EditCommittedUserMessageRequest = {
       target: this.target,
+      messageId,
       messageTimestamp,
-      message: userMessage,
+      message: {
+        text: submission.text,
+        attachments: buildRuntimeSubmittedAttachments(submission.attachments),
+        snippetProvenance: submission.snippetProvenance,
+      },
+      clientSubmission: serializableClientSubmission(
+        input.clientSubmission ?? {
+          clientRequestId: createDesktopClientRequestId(),
+          source: "desktop",
+        },
+      )!,
     };
 
     this.promptDispatchInFlight = true;

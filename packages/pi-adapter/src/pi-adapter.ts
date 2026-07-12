@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -35,6 +36,9 @@ import {
   type ActorKind,
   type ClosePiSessionInput,
   type CreatePiSessionInput,
+  type DeletePiSessionInput,
+  type ForkPiSessionInput,
+  type ForkPiSessionResult,
   type GenerateTitleInput,
   type GenerateTitleResult,
   type InterruptPiTurnInput,
@@ -48,10 +52,12 @@ import {
   type PiSessionRef,
   type PiSessionReference,
   type PiToolExecutionUpdate,
+  type RenamePiSessionInput,
   type ProviderAuthPortError,
   type ProviderCredentialSnapshot,
   type ProviderUsableCredentialSnapshot,
   type RunPiTurnInput,
+  type RestorePiHistoryEntryInput,
   type RuntimeSubmittedMessage,
   type SurfacePiSessionId,
   type ToolCallId,
@@ -60,6 +66,7 @@ import {
 } from "@svvy/core";
 import { normalizePiAgentEventToRuntimeEventsSync } from "./events";
 import { createPiManagedAgentSession, type CreatePiManagedAgentSessionResult } from "./session";
+import { createPiHistoryNavigationAgentSession } from "./history-navigation-session";
 import { runtimeSubmittedMessagePromptText } from "./messages";
 import { readPiModelCatalog } from "./model-catalog";
 
@@ -79,6 +86,17 @@ export interface PiAdapterSessionsService {
     Scope.Scope | ProviderAuthPort | PiRuntimePathsPort | PiSessionReferencePort
   >;
   close(input: ClosePiSessionInput): Effect.Effect<void, PiAdapterError>;
+  rename(input: RenamePiSessionInput): Effect.Effect<void, PiAdapterError, PiSessionReferencePort>;
+  fork(
+    input: ForkPiSessionInput,
+  ): Effect.Effect<
+    ForkPiSessionResult,
+    PiAdapterError,
+    PiRuntimePathsPort | PiSessionReferencePort
+  >;
+  delete(
+    input: DeletePiSessionInput,
+  ): Effect.Effect<void, PiAdapterError, PiSessionReferencePort | FileSystem.FileSystem>;
 }
 
 export interface PiAdapterModelsService {
@@ -112,9 +130,16 @@ export interface PiAdapterTurnsService {
   ): Effect.Effect<void, PiAdapterError, PiSessionReferencePort>;
 }
 
+export interface PiAdapterHistoryService {
+  restoreToEntry(
+    input: RestorePiHistoryEntryInput,
+  ): Effect.Effect<void, PiAdapterError, PiSessionReferencePort>;
+}
+
 export interface PiAdapterService {
   sessions: PiAdapterSessionsService;
   turns: PiAdapterTurnsService;
+  history: PiAdapterHistoryService;
   models: PiAdapterModelsService;
   helperJobs: PiAdapterHelperJobsService;
 }
@@ -132,10 +157,16 @@ export const makePiAdapter = Effect.fn("@svvy/pi-adapter/makePiAdapter")(() =>
         create: (input) => createSession(liveSessions, input),
         open: (input) => openSession(liveSessions, input),
         close: (input) => closeSession(liveSessions, input),
+        rename: (input) => renameSession(input),
+        fork: (input) => forkSession(input),
+        delete: (input) => deleteSession(liveSessions, input),
       },
       turns: {
         run: (input) => runTurn(liveSessions, input),
         interrupt: (input) => interruptTurn(liveSessions, input),
+      },
+      history: {
+        restoreToEntry: (input) => restoreHistoryEntry(liveSessions, input),
       },
       models: {
         list: (input) => listModels(input),
@@ -175,6 +206,7 @@ type PiLiveSessionEntry = {
   readonly reference: PiSessionReference;
   readonly paths: PiRuntimePathsSnapshot;
   readonly sessionManager: SessionManager;
+  readonly idleAgentSession?: AgentSession;
   readonly activeTurn?: PiLiveActiveTurn;
   readonly lastTerminalTurnId?: TurnId;
 };
@@ -354,6 +386,188 @@ function closeSession(
   input: ClosePiSessionInput,
 ): Effect.Effect<void, PiAdapterError> {
   return removeLiveSession(liveSessions, input.session.surfacePiSessionId).pipe(Effect.asVoid);
+}
+
+function renameSession(
+  input: RenamePiSessionInput,
+): Effect.Effect<void, PiAdapterError, PiSessionReferencePort> {
+  return Effect.gen(function* () {
+    const reference = yield* requireValidSessionReference("pi-adapter.sessions.rename", input);
+    const title = input.title.trim();
+    if (!title) {
+      return yield* Effect.fail(
+        new PiAdapterError({
+          operation: "pi-adapter.sessions.rename",
+          reason: "history-operation-failed",
+          message: "Session title cannot be empty.",
+        }),
+      );
+    }
+    yield* Effect.try({
+      try: () => SessionManager.open(reference.storageLocator).appendSessionInfo(title),
+      catch: (cause) =>
+        new PiAdapterError({
+          operation: "pi-adapter.sessions.rename",
+          reason: "history-operation-failed",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+    });
+  });
+}
+
+function forkSession(
+  input: ForkPiSessionInput,
+): Effect.Effect<ForkPiSessionResult, PiAdapterError, PiRuntimePathsPort | PiSessionReferencePort> {
+  return Effect.gen(function* () {
+    const runtimePaths = yield* PiRuntimePathsPort;
+    const paths = yield* runtimePaths.resolve({ workspaceId: input.workspaceId });
+    const source = yield* requireValidSessionReference("pi-adapter.sessions.fork", input);
+    const manager = yield* Effect.try({
+      try: () => {
+        if (input.messageTimestamp === undefined) {
+          return SessionManager.forkFrom(source.storageLocator, paths.cwd, paths.sessionDir);
+        }
+        const sourceManager = SessionManager.open(
+          source.storageLocator,
+          paths.sessionDir,
+          paths.cwd,
+        );
+        const targetTimestamp = String(input.messageTimestamp);
+        const branchEntry = sourceManager
+          .getBranch()
+          .find(
+            (entry) =>
+              entry.type === "message" &&
+              entry.message.role === "assistant" &&
+              String(entry.message.timestamp) === targetTimestamp,
+          );
+        if (!branchEntry) {
+          throw new Error("Unable to fork: assistant message was not found in the session branch.");
+        }
+        if (!sourceManager.createBranchedSession(branchEntry.id)) {
+          throw new Error("Unable to fork: branched session file was not created.");
+        }
+        return sourceManager;
+      },
+      catch: (cause) =>
+        new PiAdapterError({
+          operation: "pi-adapter.sessions.fork",
+          reason: "history-operation-failed",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+    });
+    const title = input.title?.trim();
+    if (title) {
+      yield* Effect.try({
+        try: () => manager.appendSessionInfo(title),
+        catch: (cause) =>
+          new PiAdapterError({
+            operation: "pi-adapter.sessions.fork",
+            reason: "history-operation-failed",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      });
+    }
+    const surfacePiSessionId = manager.getSessionId() as SurfacePiSessionId;
+    const storageLocator = manager.getSessionFile();
+    if (!storageLocator) {
+      return yield* Effect.fail(
+        new PiAdapterError({
+          operation: "pi-adapter.sessions.fork",
+          reason: "session-create-failed",
+          message: "Forked pi session did not produce a persisted session file.",
+        }),
+      );
+    }
+    const metadata = {
+      ...source.metadata,
+      actorKind: input.actorKind,
+      workspaceId: input.workspaceId,
+      workspaceSessionId: surfacePiSessionId,
+    };
+    return {
+      surfacePiSessionId,
+      reference: {
+        surfacePiSessionId,
+        referenceFingerprint: [
+          PI_ADAPTER_KIND,
+          PI_ADAPTER_VERSION,
+          input.workspaceId,
+          surfacePiSessionId,
+          surfacePiSessionId,
+          String(source.metadata?.generatedContextFingerprint ?? ""),
+        ].join(":"),
+        adapterKind: PI_ADAPTER_KIND,
+        adapterVersion: PI_ADAPTER_VERSION,
+        storageLocator,
+        piSessionId: manager.getSessionId(),
+        metadata,
+      },
+    };
+  });
+}
+
+function deleteSession(
+  liveSessions: Ref.Ref<Map<string, PiLiveSessionEntry>>,
+  input: DeletePiSessionInput,
+): Effect.Effect<void, PiAdapterError, PiSessionReferencePort | FileSystem.FileSystem> {
+  return Effect.gen(function* () {
+    const reference = yield* requireValidSessionReference("pi-adapter.sessions.delete", input);
+    yield* removeLiveSession(liveSessions, input.surfacePiSessionId);
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.remove(reference.storageLocator, { force: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PiAdapterError({
+            operation: "pi-adapter.sessions.delete",
+            reason: "session-close-failed",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      ),
+    );
+  });
+}
+
+function requireValidSessionReference(
+  operation: string,
+  input: {
+    readonly workspaceId: WorkspaceId;
+    readonly surfacePiSessionId: SurfacePiSessionId;
+    readonly actorKind: ActorKind;
+  },
+): Effect.Effect<PiSessionReference, PiAdapterError, PiSessionReferencePort> {
+  return Effect.gen(function* () {
+    const references = yield* PiSessionReferencePort;
+    const reference = yield* references
+      .getPiSessionReference({ surfacePiSessionId: input.surfacePiSessionId })
+      .pipe(Effect.mapError((cause) => piSessionReferenceError(operation, cause)));
+    if (!reference) {
+      return yield* Effect.fail(
+        new PiAdapterError({
+          operation,
+          reason: "session-not-found",
+          message: `Pi session reference ${input.surfacePiSessionId} was not found.`,
+        }),
+      );
+    }
+    const validation = yield* references
+      .validatePiSessionReference({ ...input, reference })
+      .pipe(Effect.mapError((cause) => piSessionReferenceError(operation, cause)));
+    if (!validation.valid) {
+      return yield* Effect.fail(
+        new PiAdapterError({
+          operation,
+          reason: validation.reason === "not-found" ? "session-not-found" : "session-open-failed",
+          message: `Pi session reference ${input.surfacePiSessionId} is not valid: ${validation.reason}.`,
+        }),
+      );
+    }
+    return validation.reference;
+  });
 }
 
 function getLiveSession(
@@ -537,6 +751,81 @@ function interruptTurn(
   });
 }
 
+function restoreHistoryEntry(
+  liveSessions: Ref.Ref<Map<string, PiLiveSessionEntry>>,
+  input: RestorePiHistoryEntryInput,
+): Effect.Effect<void, PiAdapterError, PiSessionReferencePort> {
+  const operation = "pi-adapter.history.restoreToEntry";
+  return Effect.gen(function* () {
+    if (input.session.surfacePiSessionId !== input.entryId.session.surfacePiSessionId) {
+      return yield* Effect.fail(
+        new PiAdapterError({
+          operation,
+          reason: "history-operation-failed",
+          message: "The history entry does not belong to the requested pi session.",
+        }),
+      );
+    }
+    const liveEntry = yield* getLiveSession(liveSessions, input.session.surfacePiSessionId);
+    if (!liveEntry) {
+      return yield* Effect.fail(
+        new PiAdapterError({
+          operation,
+          reason: "session-not-found",
+          message: `Pi session ${input.session.surfacePiSessionId} is not open.`,
+        }),
+      );
+    }
+    if (liveEntry.activeTurn) {
+      return yield* Effect.fail(
+        new PiAdapterError({
+          operation,
+          reason: "active-turn-running",
+          message: `Pi session ${input.session.surfacePiSessionId} is running turn ${liveEntry.activeTurn.turnId}.`,
+        }),
+      );
+    }
+    yield* validateLiveSessionReference(operation, liveEntry);
+    yield* Effect.tryPromise({
+      try: async () => {
+        const navigationSession =
+          liveEntry.idleAgentSession ??
+          (await createPiHistoryNavigationAgentSession({
+            cwd: liveEntry.paths.cwd,
+            agentDir: liveEntry.paths.agentDir,
+            modelRegistryPath: join(liveEntry.paths.agentDir, "models.json"),
+            sessionManager: liveEntry.sessionManager,
+          }));
+        let result: Awaited<ReturnType<AgentSession["navigateTree"]>>;
+        try {
+          result = await navigationSession.navigateTree(input.entryId.entryId, {
+            summarize: false,
+          });
+        } finally {
+          if (!liveEntry.idleAgentSession) navigationSession.dispose();
+        }
+        if (result.cancelled) {
+          throw new Error(`History navigation to ${input.entryId.entryId} was cancelled.`);
+        }
+      },
+      catch: (cause) =>
+        new PiAdapterError({
+          operation,
+          reason: "history-operation-failed",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+    });
+    const references = yield* PiSessionReferencePort;
+    yield* references
+      .savePiSessionReference({
+        surfacePiSessionId: liveEntry.surfacePiSessionId,
+        reference: liveEntry.reference,
+      })
+      .pipe(Effect.mapError((cause) => piSessionReferenceError(operation, cause)));
+  });
+}
+
 function validateLiveSessionReference(
   operation: string,
   liveEntry: PiLiveSessionEntry,
@@ -641,7 +930,13 @@ function openTurnStream(
                   }),
           });
         }
-        yield* clearActiveTurn(liveSessions, input.session.surfacePiSessionId, input.turnId, true);
+        yield* clearActiveTurn(
+          liveSessions,
+          input.session.surfacePiSessionId,
+          input.turnId,
+          true,
+          !abort,
+        );
         yield* Deferred.succeed(closed, undefined).pipe(Effect.ignore);
       });
     yield* installActiveTurnClose(liveSessions, input, closeTurn);
@@ -1333,18 +1628,32 @@ function installActiveTurnAgentSession(
   input: RunPiTurnInput,
   agentSession: AgentSession,
 ): Effect.Effect<boolean> {
-  return Ref.modify(liveSessions, (current) => {
-    const liveEntry = current.get(input.session.surfacePiSessionId);
-    if (!liveEntry || liveEntry.activeTurn?.turnId !== input.turnId) {
-      return [false, current] as const;
-    }
-    const next = new Map(current);
-    next.set(input.session.surfacePiSessionId, {
-      ...liveEntry,
-      activeTurn: { turnId: input.turnId, agentSession },
-    });
-    return [true, next] as const;
-  });
+  return Ref.modify(
+    liveSessions,
+    (
+      current,
+    ): readonly [
+      { readonly installed: boolean; readonly idleAgentSession: AgentSession | undefined },
+      Map<string, PiLiveSessionEntry>,
+    ] => {
+      const liveEntry = current.get(input.session.surfacePiSessionId);
+      if (!liveEntry || liveEntry.activeTurn?.turnId !== input.turnId) {
+        return [{ installed: false, idleAgentSession: undefined }, current];
+      }
+      const { idleAgentSession, ...activeEntry } = liveEntry;
+      const next = new Map(current);
+      next.set(input.session.surfacePiSessionId, {
+        ...activeEntry,
+        activeTurn: { turnId: input.turnId, agentSession },
+      });
+      return [{ installed: true, idleAgentSession }, next];
+    },
+  ).pipe(
+    Effect.map(({ installed, idleAgentSession }) => {
+      idleAgentSession?.dispose();
+      return installed;
+    }),
+  );
 }
 
 function installActiveTurnClose(
@@ -1414,7 +1723,7 @@ function terminalizeActiveTurn(
           }),
       });
     }
-    yield* clearActiveTurn(liveSessions, surfacePiSessionId, turnId, true);
+    yield* clearActiveTurn(liveSessions, surfacePiSessionId, turnId, true, false);
   });
 }
 
@@ -1423,6 +1732,7 @@ function clearActiveTurn(
   surfacePiSessionId: SurfacePiSessionId,
   turnId: TurnId,
   terminal: boolean,
+  retainAgentSession = false,
 ): Effect.Effect<void> {
   return Effect.gen(function* () {
     const activeTurn = yield* Ref.modify(liveSessions, (current) => {
@@ -1439,6 +1749,9 @@ function clearActiveTurn(
         reference: liveEntry.reference,
         paths: liveEntry.paths,
         sessionManager: liveEntry.sessionManager,
+        ...(retainAgentSession && liveEntry.activeTurn.agentSession
+          ? { idleAgentSession: liveEntry.activeTurn.agentSession }
+          : {}),
         ...(liveEntry.lastTerminalTurnId
           ? { lastTerminalTurnId: liveEntry.lastTerminalTurnId }
           : {}),
@@ -1446,7 +1759,7 @@ function clearActiveTurn(
       });
       return [liveEntry.activeTurn, next] as const;
     });
-    disposeActiveTurn(activeTurn);
+    if (!retainAgentSession) disposeActiveTurn(activeTurn);
   });
 }
 
@@ -1483,6 +1796,7 @@ function releaseLiveSession(
       return [liveEntry, next] as const;
     });
     disposeActiveTurn(entry?.activeTurn);
+    entry?.idleAgentSession?.dispose();
   });
 }
 
@@ -1501,6 +1815,7 @@ function removeLiveSession(
       return [liveEntry, next] as const;
     });
     disposeActiveTurn(entry?.activeTurn);
+    entry?.idleAgentSession?.dispose();
     return entry;
   });
 }

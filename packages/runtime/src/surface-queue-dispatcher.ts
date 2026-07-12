@@ -44,6 +44,10 @@ export interface SurfaceQueueDispatchHost<
   ): Effect.Effect<A, RuntimeContractError>;
   resolveTarget(target: TTarget): SurfaceQueueHostResult<TTarget>;
   retainSurface(target: TTarget): SurfaceQueueHostResult<TSurface>;
+  acquirePromptLock?(input: {
+    target: TTarget;
+    surface: TSurface;
+  }): SurfaceQueueHostResult<Effect.Effect<void>>;
   releaseSurface(input: { target: TTarget; surface: TSurface }): SurfaceQueueHostResult<void>;
   isSurfaceActive(input: { target: TTarget; surface: TSurface }): boolean;
   activePromptDone(input: {
@@ -202,6 +206,8 @@ export function createSurfaceQueueDispatcher<
       );
       const surfacePiSessionId = yield* currentTargetSurfacePiSessionId(currentTarget);
       let releaseTransferred = false;
+      let promptLockReleaseTransferred = false;
+      let releasePromptLock: Effect.Effect<void> | null = null;
       let retainedSurface: TSurface | null = null;
       const acquired = yield* runHost("runtime.queue.dispatch.retainSurface", () =>
         host.retainSurface(currentTarget),
@@ -209,6 +215,11 @@ export function createSurfaceQueueDispatcher<
       return yield* Effect.gen(function* () {
         let surface = acquired;
         retainedSurface = acquired;
+        releasePromptLock = host.acquirePromptLock
+          ? yield* runHost("runtime.queue.dispatch.acquirePromptLock", () =>
+              host.acquirePromptLock!({ target: currentTarget, surface }),
+            )
+          : Effect.void;
         if (host.isSurfaceActive({ target: currentTarget, surface })) {
           const activePromptDone = host.activePromptDone({ target: currentTarget, surface });
           if (options.awaitPrompt && activePromptDone) {
@@ -253,7 +264,13 @@ export function createSurfaceQueueDispatcher<
             surface,
             queued,
           }),
-        ).pipe(Effect.catch((error) => failQueuedDelivery(currentTarget, queued, error)));
+        ).pipe(
+          Effect.catch((error) =>
+            error.reason === "target-not-ready"
+              ? requeueClaimedDelivery(currentTarget, queued, error)
+              : failQueuedDelivery(currentTarget, queued, error),
+          ),
+        );
 
         if (materialized.kind === "delivered") {
           yield* queue
@@ -316,8 +333,12 @@ export function createSurfaceQueueDispatcher<
         const promptDoneWithRelease = hostResultToEffect(
           "runtime.queue.dispatch.awaitStartedPrompt",
           started.promptDone,
-        ).pipe(Effect.ensuring(releaseSurface(currentTarget, surface).pipe(Effect.ignore)));
+        ).pipe(
+          Effect.ensuring(releasePromptLock.pipe(Effect.ignore)),
+          Effect.ensuring(releaseSurface(currentTarget, surface).pipe(Effect.ignore)),
+        );
         releaseTransferred = true;
+        promptLockReleaseTransferred = true;
 
         if (options.awaitPrompt) {
           yield* promptDoneWithRelease;
@@ -332,7 +353,13 @@ export function createSurfaceQueueDispatcher<
         Effect.ensuring(
           Effect.gen(function* () {
             if (releaseTransferred || retainedSurface === null) {
+              if (!promptLockReleaseTransferred && releasePromptLock !== null) {
+                yield* releasePromptLock.pipe(Effect.ignore);
+              }
               return;
+            }
+            if (!promptLockReleaseTransferred && releasePromptLock !== null) {
+              yield* releasePromptLock.pipe(Effect.ignore);
             }
             yield* releaseSurface(currentTarget, retainedSurface as TSurface).pipe(Effect.ignore);
           }),

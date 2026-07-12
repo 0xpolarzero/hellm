@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Semaphore from "effect/Semaphore";
 import { assert, describe, it } from "@effect/vitest";
 import {
   RuntimeContractError,
@@ -94,6 +95,8 @@ function createState(queue: RuntimeSurfaceMessageRecord[] = []) {
   const queueStatePort: RuntimeQueueStatePortService = {
     acceptSubmittedSurfaceMessage: () =>
       Effect.die("Unexpected acceptSubmittedSurfaceMessage call."),
+    acceptEditedCommittedSurfaceMessage: () =>
+      Effect.die("Unexpected acceptEditedCommittedSurfaceMessage call."),
     enqueueSurfaceMessage: () => Effect.die("Unexpected enqueueSurfaceMessage call."),
     getSurfaceQueuedMessage: () => Effect.die("Unexpected getSurfaceQueuedMessage call."),
     claimNextQueuedSurfaceMessage: (input) => {
@@ -334,6 +337,41 @@ describe("surface queue dispatcher", () => {
     }),
   );
 
+  it.effect("holds the surface prompt lock before claiming through prompt completion", () =>
+    Effect.gen(function* () {
+      const lock = yield* Semaphore.make(1);
+      const editEntered = yield* Deferred.make<void>();
+      const releaseEdit = yield* Deferred.make<void>();
+      const editFiber = yield* lock
+        .withPermit(
+          Deferred.succeed(editEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseEdit)),
+          ),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(editEntered);
+
+      const { queueStatePort, calls: stateCalls } = createState([createQueued("queue_locked")]);
+      const { host } = createHost({
+        acquirePromptLock: () => lock.take(1).pipe(Effect.as(lock.release(1))),
+      });
+      const dispatchFiber = yield* runDispatcher(
+        queueStatePort,
+        createTestDispatcher(host).drainNextQueuedSurfaceMessage(
+          { surfacePiSessionId: "surface_01" },
+          { awaitPrompt: true },
+        ),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      assert.deepStrictEqual(stateCalls, []);
+
+      yield* Deferred.succeed(releaseEdit, undefined);
+      yield* Fiber.join(editFiber);
+      assert.strictEqual(yield* Fiber.join(dispatchFiber), true);
+      assert.strictEqual(stateCalls[0], TEST_CLAIM_CALL);
+    }),
+  );
+
   it.effect("does not claim behind an active prompt when waiting was not requested", () =>
     Effect.gen(function* () {
       const { queueStatePort, calls: stateCalls } = createState([createQueued("queue_01")]);
@@ -561,6 +599,55 @@ describe("surface queue dispatcher", () => {
         `failed:queue_01:Malformed queued payload.:${TEST_CLAIM_OWNER_ID}:${TEST_LEASE_VERSION}`,
       ]);
       assert.deepStrictEqual(hostCalls, ["retain", "refresh", "notify", "release"]);
+    }),
+  );
+
+  it.effect("requeues a retryable edit reconciliation failure and dispatches it on retry", () =>
+    Effect.gen(function* () {
+      const queued = createQueued("queue_edit_retry");
+      const state = createState([queued]);
+      let reconciliationAttempts = 0;
+      const { host } = createHost({
+        materializeQueuedMessage: () => {
+          reconciliationAttempts += 1;
+          return reconciliationAttempts === 1
+            ? Effect.fail(
+                new RuntimeContractError({
+                  operation: "runtime.queue.dispatch.reconcileCommittedEdit",
+                  reason: "target-not-ready",
+                  message: "Pi history restore temporarily failed.",
+                }),
+              )
+            : Effect.succeed({
+                kind: "dispatch" as const,
+                message: "replacement",
+                metadata: "edit-intent",
+              });
+        },
+      });
+      const dispatcher = createTestDispatcher(host);
+      const first = yield* runDispatcher(
+        state.queueStatePort,
+        dispatcher.drainNextQueuedSurfaceMessage(
+          { surfacePiSessionId: "surface_01" },
+          { awaitPrompt: true },
+        ),
+      ).pipe(Effect.flip);
+      assert.strictEqual(first.reason, "target-not-ready");
+      assert.ok(state.calls.some((call) => call.startsWith("queued:queue_edit_retry:front")));
+
+      state.queue.push(queued);
+      assert.strictEqual(
+        yield* runDispatcher(
+          state.queueStatePort,
+          dispatcher.drainNextQueuedSurfaceMessage(
+            { surfacePiSessionId: "surface_01" },
+            { awaitPrompt: true },
+          ),
+        ),
+        true,
+      );
+      assert.strictEqual(reconciliationAttempts, 2);
     }),
   );
 

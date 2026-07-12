@@ -12,6 +12,7 @@ import type {
   AnswerRequestInputInput,
   CommandId,
   CreateOrchestratorSurfaceInput,
+  EditCommittedUserMessageInput,
   GeneratedPackagesRefreshResult,
   InternalRefreshGeneratedPackagesRequest,
   OpenExtensionSourceEditInput,
@@ -68,6 +69,14 @@ const submitInput = {
   message: { text: "Run the package boundary tests." },
   delivery: "enqueue-and-run",
 } satisfies SubmitMessageInput;
+
+const editCommittedInput = {
+  workspaceId: "workspace_01" as WorkspaceId,
+  target: submitInput.target,
+  messageId: "message_edit_01" as never,
+  messageTimestamp: Date.parse("2026-07-12T00:00:00.000Z"),
+  message: { text: "Revised message." },
+} satisfies EditCommittedUserMessageInput;
 
 const testEventGenerationId = "runtime-events-generation-test" as RuntimeEventGenerationId;
 const runtimeEventSequence = (value: number) => value as RuntimeEventSequence;
@@ -159,9 +168,16 @@ function runtimeService(overrides: RuntimeServiceTestOverrides): RuntimeService 
       createOrchestrator: () => Effect.die("unused"),
       open: () => Effect.die("unused"),
       close: () => Effect.die("unused"),
+      renameOrchestrator: () => Effect.die("unused"),
+      forkOrchestrator: () => Effect.die("unused"),
+      deleteOrchestrator: () => Effect.die("unused"),
+      updateModel: () => Effect.die("unused"),
+      updateReasoning: () => Effect.die("unused"),
+      updateExtensionUsage: () => Effect.die("unused"),
     },
     messages: {
       submit: () => Effect.die("unused"),
+      editCommitted: () => Effect.die("unused"),
       abort: () => Effect.die("unused"),
       updateDraft: () => Effect.die("unused"),
       ...messages,
@@ -388,6 +404,12 @@ describe("@svvy/runtime facade", () => {
               closedSurfaces.push(input);
               return closedSurfaceResult;
             }),
+          renameOrchestrator: () => Effect.die("unused"),
+          forkOrchestrator: () => Effect.die("unused"),
+          deleteOrchestrator: () => Effect.die("unused"),
+          updateModel: () => Effect.die("unused"),
+          updateReasoning: () => Effect.die("unused"),
+          updateExtensionUsage: () => Effect.die("unused"),
         },
         messages: {
           submit: () => Effect.succeed(submitResult(submitInput)),
@@ -466,6 +488,39 @@ describe("@svvy/runtime facade", () => {
     try {
       await expect(facade.messages.submit(submitInput)).resolves.toEqual(submitResult(submitInput));
       expect(submitted).toEqual([submitInput]);
+    } finally {
+      await facade.close();
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("forwards committed-message edits through the Effect Runtime service", async () => {
+    const edits: EditCommittedUserMessageInput[] = [];
+    const managedRuntime = createTestManagedRuntime(
+      runtimeService({
+        messages: {
+          editCommitted: (input) =>
+            Effect.sync(() => {
+              edits.push(input);
+              return submitResult({ ...submitInput, target: input.target, message: input.message });
+            }),
+        },
+        queues: {},
+        commands: {},
+        events: () => Effect.succeed(testEventSubscription(Stream.empty)),
+      }),
+    );
+    const facade = createRuntimeFacade(managedRuntime);
+
+    try {
+      await expect(facade.messages.editCommitted(editCommittedInput)).resolves.toEqual(
+        submitResult({
+          ...submitInput,
+          target: editCommittedInput.target,
+          message: editCommittedInput.message,
+        }),
+      );
+      expect(edits).toEqual([editCommittedInput]);
     } finally {
       await facade.close();
       await managedRuntime.dispose();

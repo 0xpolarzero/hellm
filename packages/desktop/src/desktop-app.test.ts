@@ -74,6 +74,9 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
       importComposerAttachments: async () => ({ attachments: [], skippedPaths: [] }),
       resolvePathTarget: async () => ({ kind: "missing" as const }),
     },
+    telemetry: {
+      recordRenderer: async () => ({ ok: true as const }),
+    },
   } satisfies CreateDesktopAppInput["appActions"];
   const commands = {
     runtime: {},

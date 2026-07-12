@@ -6,6 +6,7 @@ export { layerRuntimeActorExtensionBindingStatePort } from "./runtime-actor-exte
 export { layerRuntimeApprovalStatePort } from "./runtime-approval-state-port";
 export { layerRuntimeArtifactStatePort } from "./runtime-artifact-state-port";
 export { layerRuntimeComposerDraftStatePort } from "./runtime-composer-draft-state-port";
+export { layerRuntimeComposerProfileStatePort } from "./runtime-composer-profile-state-port";
 export { layerRuntimeCommandStatePort } from "./runtime-command-state-port";
 export { layerRuntimeEpisodeStatePort } from "./runtime-episode-state-port";
 export { layerRuntimeExtensionContextImpactStatePort } from "./runtime-extension-context-impact-state-port";

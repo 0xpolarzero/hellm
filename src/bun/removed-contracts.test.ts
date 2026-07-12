@@ -173,11 +173,9 @@ describe("retired desktop integration RPC paths", () => {
     expect(catalogSource).not.toContain("commitSurfaceMetadata");
     expect(catalogSource.match(/catalogStateMutations\.upsertPiSession/g) ?? []).toHaveLength(1);
     expect(catalogSource).toContain("resolveStateBackedPromptDefaults");
-    expect(catalogSource).toContain("updateOrchestratorPromptDefaults");
-    expect(catalogSource).toContain("setOrchestratorGeneratedAgentContextFingerprint");
-    expect(catalogMutationsSource).toContain(
-      "const current = store.getSessionState(input.sessionId).pi",
-    );
+    expect(catalogSource).not.toContain("updateOrchestratorPromptDefaults");
+    expect(catalogSource).not.toContain("setOrchestratorGeneratedAgentContextFingerprint");
+    expect(catalogMutationsSource).not.toContain("updateOrchestratorPromptDefaults");
   });
 
   it("keeps snippets on state read and command facades with identity-only source opens", async () => {
@@ -347,6 +345,17 @@ describe("retired desktop integration RPC paths", () => {
     );
     expect(handlerSource).not.toContain("Utils.openPath");
     expect(handlerSource).not.toContain("spawn(");
+  });
+
+  it("routes renderer telemetry persistence through the typed app action", async () => {
+    const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const handlerSource = backendSource
+      .split("recordRendererTelemetry:")[1]
+      ?.split("updateComposerDraft:")[0];
+
+    expect(handlerSource).toContain("facades.appActions.telemetry.recordRenderer(payload)");
+    expect(handlerSource).not.toContain("getWorkspaceRuntime(payload)");
+    expect(handlerSource).not.toContain('runtime.appLog.error("renderer"');
   });
 
   it("pins increment-6 legacy renderer RPC channels until pane migration retires them", async () => {

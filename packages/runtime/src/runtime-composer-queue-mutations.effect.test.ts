@@ -85,6 +85,7 @@ function queuePort(
 ): RuntimeQueueStatePortService {
   return {
     acceptSubmittedSurfaceMessage: () => Effect.die("unused"),
+    acceptEditedCommittedSurfaceMessage: () => Effect.die("unused"),
     enqueueSurfaceMessage: () => Effect.die("unused"),
     getSurfaceQueuedMessage: ({ id }) =>
       Effect.sync(() => {

@@ -19,10 +19,16 @@ import {
   RuntimeToolExecutionError,
 } from "@svvy/core";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
+import type { AssistantMessage, Message } from "@mariozechner/pi-ai";
 import { PiAdapter, layer } from "./index";
 import {
   setPiManagedAgentSessionFactoryForTests,
@@ -210,6 +216,101 @@ describe("PiAdapter", () => {
         Effect.provideService(PiRuntimePathsPort, services.runtimePathsPort),
         Effect.provideService(PiSessionReferencePort, services.sessionReferencePort),
       ),
+    );
+  });
+
+  it.effect("renames a persisted pi session by appending session info", () => {
+    const fixture = piSessionLifecycleFixture();
+    const services = testPiAdapterServices({
+      reference: fixture.reference,
+      runtimePaths: fixture.paths,
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* PiAdapter;
+      yield* adapter.sessions.rename({
+        workspaceId,
+        workspaceSessionId,
+        surfacePiSessionId: fixture.surfacePiSessionId,
+        actorKind: "orchestrator",
+        title: "Manual title",
+      });
+      assert.strictEqual(
+        SessionManager.open(
+          fixture.sessionFile,
+          fixture.paths.sessionDir,
+          fixture.paths.cwd,
+        ).getSessionName(),
+        "Manual title",
+      );
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => rmSync(fixture.root, { recursive: true, force: true }))),
+      Effect.provide(layer),
+      Effect.provideService(PiSessionReferencePort, services.sessionReferencePort),
+    );
+  });
+
+  it.effect("forks a persisted pi session at the selected assistant message", () => {
+    const fixture = piSessionLifecycleFixture();
+    const services = testPiAdapterServices({
+      reference: fixture.reference,
+      runtimePaths: fixture.paths,
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* PiAdapter;
+      const forked = yield* adapter.sessions.fork({
+        workspaceId,
+        workspaceSessionId,
+        surfacePiSessionId: fixture.surfacePiSessionId,
+        actorKind: "orchestrator",
+        messageTimestamp: fixture.firstAssistantTimestamp,
+      });
+      const manager = SessionManager.open(
+        forked.reference.storageLocator,
+        fixture.paths.sessionDir,
+        fixture.paths.cwd,
+      );
+      const messages = manager.buildSessionContext().messages;
+      assert.deepStrictEqual(
+        messages.map((message) => message.role),
+        ["user", "assistant"],
+      );
+      assert.deepStrictEqual((messages[0] as Message).content, [
+        { type: "text", text: "first question" },
+      ]);
+      assert.deepStrictEqual((messages[1] as AssistantMessage).content[0], {
+        type: "text",
+        text: "first answer",
+      });
+      assert.strictEqual(manager.getHeader()?.parentSession, fixture.sessionFile);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => rmSync(fixture.root, { recursive: true, force: true }))),
+      Effect.provide(layer),
+      Effect.provideService(PiRuntimePathsPort, services.runtimePathsPort),
+      Effect.provideService(PiSessionReferencePort, services.sessionReferencePort),
+    );
+  });
+
+  it.effect("deletes a persisted pi session file even when trash is unavailable", () => {
+    const fixture = piSessionLifecycleFixture();
+    const services = testPiAdapterServices({ reference: fixture.reference });
+    return Effect.gen(function* () {
+      const adapter = yield* PiAdapter;
+      yield* adapter.sessions.delete({
+        workspaceId,
+        surfacePiSessionId: fixture.surfacePiSessionId,
+        actorKind: "orchestrator",
+      });
+      assert.strictEqual(existsSync(fixture.sessionFile), false);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => rmSync(fixture.root, { recursive: true, force: true }))),
+      Effect.provide(layer),
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.of({
+          remove: (path: string) => Effect.sync(() => rmSync(path, { force: true })),
+        } as never),
+      ),
+      Effect.provideService(PiSessionReferencePort, services.sessionReferencePort),
     );
   });
 
@@ -461,6 +562,65 @@ describe("PiAdapter", () => {
 
           yield* turn.close();
           assert.strictEqual(disposeCalls, 1);
+        } finally {
+          restoreFactory();
+        }
+      }).pipe(
+        Effect.provide(layer),
+        Effect.provideService(ProviderAuthPort, services.providerAuthPort),
+        Effect.provideService(PiRuntimePathsPort, services.runtimePathsPort),
+        Effect.provideService(PiSessionReferencePort, services.sessionReferencePort),
+      ),
+    );
+  });
+
+  it.effect("restores a completed live session through AgentSession tree navigation", () => {
+    const services = testPiAdapterServices();
+    let listener: ((event: unknown) => void) | undefined;
+    const navigationCalls: string[] = [];
+    let liveContext = ["original", "stale-assistant"];
+    const restoreFactory = setPiManagedAgentSessionFactoryForTests(async () =>
+      testManagedAgentSession({
+        onSubscribe: (nextListener) => {
+          listener = nextListener;
+        },
+        onPrompt: async () => {
+          listener?.({ type: "agent_end", messages: [] });
+        },
+        onNavigateTree: async (entryId) => {
+          navigationCalls.push(entryId);
+          liveContext = ["original"];
+        },
+      }),
+    );
+    return Effect.scoped(
+      Effect.gen(function* () {
+        try {
+          const adapter = yield* PiAdapter;
+          yield* adapter.sessions.create({
+            workspaceId,
+            workspaceSessionId,
+            surfacePiSessionId,
+            actorKind: "orchestrator",
+            generatedContextFingerprint: "gctx_test" as never,
+            model: { providerId: openaiProviderId, modelId },
+            reasoning: { effort: "high" },
+          });
+          const turn = yield* adapter.turns.run(
+            testRunTurnInput({ turnId: "turn_history" as never }),
+          );
+          yield* turn.stream.pipe(Stream.take(1), Stream.runDrain);
+          yield* turn.close();
+
+          yield* adapter.history.restoreToEntry({
+            session: { surfacePiSessionId },
+            entryId: {
+              session: { surfacePiSessionId },
+              entryId: "pi-user-entry",
+            },
+          });
+          assert.deepStrictEqual(navigationCalls, ["pi-user-entry"]);
+          assert.deepStrictEqual(liveContext, ["original"]);
         } finally {
           restoreFactory();
         }
@@ -1436,6 +1596,7 @@ function testManagedAgentSession(
     readonly readLeafEntry?: () => unknown;
     readonly onAbort?: () => Promise<void>;
     readonly onDispose?: () => void;
+    readonly onNavigateTree?: (entryId: string) => Promise<void>;
   } = {},
 ): CreatePiManagedAgentSessionResult {
   return {
@@ -1453,6 +1614,10 @@ function testManagedAgentSession(
       },
       abort: () => options.onAbort?.() ?? Promise.resolve(),
       dispose: () => options.onDispose?.(),
+      navigateTree: async (entryId: string) => {
+        await options.onNavigateTree?.(entryId);
+        return { cancelled: false };
+      },
       sessionManager: {
         getLeafEntry: () => options.readLeafEntry?.(),
       },
@@ -1484,6 +1649,74 @@ function testReference(): PiSessionReference {
   };
 }
 
+function piSessionLifecycleFixture() {
+  const root = mkdtempSync(join(tmpdir(), "svvy-pi-adapter-lifecycle-"));
+  const paths = {
+    ...runtimePaths,
+    cwd: root,
+    agentDir: join(root, ".svvy", "pi"),
+    sessionDir: join(root, ".svvy", "pi", "sessions"),
+    modelRegistryPath: join(root, ".svvy", "pi", "models.json"),
+  } as PiRuntimePathsSnapshot;
+  const manager = SessionManager.create(paths.cwd, paths.sessionDir);
+  manager.appendMessage(piUserMessage("first question"));
+  const firstAssistantTimestamp = 1_111;
+  manager.appendMessage(piAssistantMessage("first answer", firstAssistantTimestamp));
+  manager.appendMessage(piUserMessage("second question"));
+  manager.appendMessage(piAssistantMessage("second answer", 2_222));
+  const sessionFile = manager.getSessionFile()!;
+  const lifecycleSurfacePiSessionId = manager.getSessionId() as never;
+  const reference: PiSessionReference = {
+    surfacePiSessionId: lifecycleSurfacePiSessionId,
+    referenceFingerprint: "lifecycle-reference",
+    adapterKind: "svvy-pi-adapter",
+    adapterVersion: "0.0.0",
+    storageLocator: sessionFile,
+    piSessionId: manager.getSessionId(),
+    metadata: {
+      actorKind: "orchestrator",
+      generatedContextFingerprint: "gctx_test",
+      providerId: openaiProviderId,
+      modelId,
+      reasoningEffort: "high",
+      workspaceId,
+      workspaceSessionId,
+    },
+  };
+  return {
+    root,
+    paths,
+    reference,
+    sessionFile,
+    surfacePiSessionId: lifecycleSurfacePiSessionId,
+    firstAssistantTimestamp,
+  };
+}
+
+function piUserMessage(text: string): Message {
+  return { role: "user", timestamp: Date.now(), content: [{ type: "text", text }] };
+}
+
+function piAssistantMessage(text: string, timestamp: number): AssistantMessage {
+  return {
+    role: "assistant",
+    timestamp,
+    api: "openai-responses",
+    provider: "openai",
+    model: "gpt-5.5",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    content: [{ type: "text", text }],
+  };
+}
+
 function testPiAdapterServices(
   options: {
     readonly savedReferences?: PiSessionReference[];
@@ -1492,6 +1725,8 @@ function testPiAdapterServices(
     readonly validateReference?: (reference: PiSessionReference) => PiSessionReferenceValidation;
     readonly credentialSnapshot?: ProviderCredentialSnapshot;
     readonly refreshCredentialSnapshot?: () => ProviderCredentialSnapshot;
+    readonly reference?: PiSessionReference;
+    readonly runtimePaths?: PiRuntimePathsSnapshot;
   } = {},
 ) {
   const providerAuthPort = {
@@ -1519,10 +1754,10 @@ function testPiAdapterServices(
       ),
   } satisfies ProviderAuthPortService;
   const runtimePathsPort = {
-    resolve: () => Effect.succeed(runtimePaths),
+    resolve: () => Effect.succeed(options.runtimePaths ?? runtimePaths),
   } satisfies PiRuntimePathsPortService;
   const sessionReferencePort = {
-    getPiSessionReference: () => Effect.succeed(undefined),
+    getPiSessionReference: () => Effect.succeed(options.reference),
     savePiSessionReference: (input) =>
       Effect.sync(() => {
         options.savedReferences?.push(input.reference);

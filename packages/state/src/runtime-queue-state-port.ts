@@ -60,6 +60,27 @@ export function runtimeQueueStatePortFromStructuredSessionState(
             ),
           ),
         ),
+    acceptEditedCommittedSurfaceMessage: (input) =>
+      state
+        .acceptEditedCommittedSurfaceMessage(input)
+        .pipe(
+          Effect.map((result) =>
+            mutationResult(
+              result,
+              result.accepted === "existing"
+                ? []
+                : [
+                    ...surfaceAndSessionNavigationInvalidations(
+                      state.workspaceId,
+                      result.queuedMessage.surfacePiSessionId,
+                    ),
+                    ...(input.promptHistoryText !== null
+                      ? [promptHistoryInvalidation(state.workspaceId)]
+                      : []),
+                  ],
+            ),
+          ),
+        ),
     enqueueSurfaceMessage: (input) =>
       state
         .enqueueSurfaceMessage(input)

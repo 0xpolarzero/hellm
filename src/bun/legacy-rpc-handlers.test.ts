@@ -74,8 +74,16 @@ const FACADE_BACKED_REQUESTS = [
   "importComposerAttachments",
   "openWorkspacePath",
   "updateComposerDraft",
+  "editCommittedUserMessage",
   "editQueuedSurfaceMessage",
   "reorderQueuedSurfaceMessage",
+  "recordRendererTelemetry",
+  "setSurfaceModel",
+  "setSurfaceThoughtLevel",
+  "setSurfaceExtensionUsage",
+  "renameSession",
+  "forkSession",
+  "deleteSession",
 ] as const satisfies readonly ChatRpcRequestName[];
 
 const HOST_BACKED_REQUESTS = [
@@ -106,14 +114,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "setExtensionEnvSecret",
   "removeExtensionEnvSecret",
   "openGeneratedAgentContextExternalSourceInEditor",
-  "renameSession",
-  "forkSession",
-  "deleteSession",
-  "recordRendererTelemetry",
-  "editCommittedUserMessage",
-  "setSurfaceModel",
-  "setSurfaceThoughtLevel",
-  "setSurfaceExtensionUsage",
 ] as const satisfies readonly ChatRpcRequestName[];
 
 describe("legacy RPC handler seam", () => {

@@ -33,6 +33,8 @@ import {
   type AbsolutePath,
   type ActorKind,
   type AgentProfileId,
+  type AcceptEditedCommittedRuntimeSurfaceMessageInput,
+  type AcceptEditedCommittedRuntimeSurfaceMessageResult,
   type ApplyRuntimeExtensionSnapshotContextImpactInput,
   type ComposerAttachment,
   type ComposerSnippetMention,
@@ -68,6 +70,7 @@ import {
   type CloseSurfaceResult,
   type CreateOrchestratorSurfaceInput,
   type CreateSurfaceResult,
+  type DeleteOrchestratorSurfaceResult,
   type OpenSurfaceInput,
   type OpenSurfaceResult,
   type ListProviderStatusesInput,
@@ -101,6 +104,7 @@ import {
   type ReconcileGeneratedPackageManifestInput,
   type ReleaseWorkspaceInput,
   type ReleaseWorkspaceResult,
+  type RenameOrchestratorSurfaceResult,
   type RecordExtensionDependencyReadinessInput,
   type RecordGeneratedPackageBuildInput,
   type RecordGeneratedPackageFailureInput,
@@ -109,6 +113,7 @@ import {
   type RuntimeSourceRootFingerprintFactRecord,
   type RuntimeSourceScanFactRecord,
   type RuntimeSurfaceTranscriptSnapshot,
+  type RuntimeSurfaceTarget,
   type RuntimeTranscriptAssistantContent,
   type RuntimeTranscriptAssistantMessage,
   type RuntimeTranscriptAssistantMutation,
@@ -123,10 +128,13 @@ import {
   type RuntimeGeneratedPackageFactRecord,
   type RuntimeGeneratedPackageWorkspaceLinkRecord,
   type SurfacePiSessionId,
+  type ThreadId,
   type UpsertRuntimeTranscriptAssistantToolCallInput,
   type SavePiSessionReferenceInput,
   type ValidatePiSessionReferenceInput,
   type WorkspaceId,
+  type WorkspaceSessionId,
+  type WorkflowTaskAttemptId,
   type WorkspacePaneRecord,
   CheckedWorkspaceLayoutSlotContentSchema,
   type RuntimeTurnDecision,
@@ -1308,6 +1316,29 @@ export interface StructuredSessionStateStore {
   acquireDefaultWorkspace(input: AcquireDefaultWorkspaceInput): AcquireWorkspaceResult;
   releaseWorkspace(input: ReleaseWorkspaceInput): ReleaseWorkspaceResult;
   createOrchestratorSurface(input: CreateOrchestratorSurfaceInput): CreateSurfaceResult;
+  readOrchestratorLifecycle(input: {
+    workspaceId: WorkspaceId;
+    workspaceSessionId: WorkspaceSessionId;
+  }): {
+    title: string;
+    titleGenerationStatus: string;
+    targets: RuntimeSurfaceTarget[];
+  };
+  renameOrchestratorSurface(input: {
+    workspaceId: WorkspaceId;
+    workspaceSessionId: WorkspaceSessionId;
+    title: string;
+  }): RenameOrchestratorSurfaceResult;
+  forkOrchestratorSurface(input: {
+    workspaceId: WorkspaceId;
+    sourceWorkspaceSessionId: WorkspaceSessionId;
+    targetSurfacePiSessionId: SurfacePiSessionId;
+    title?: string;
+  }): CreateSurfaceResult;
+  deleteOrchestratorSurface(input: {
+    workspaceId: WorkspaceId;
+    workspaceSessionId: WorkspaceSessionId;
+  }): DeleteOrchestratorSurfaceResult;
   openSurface(input: OpenSurfaceInput): OpenSurfaceResult;
   closeSurface(input: CloseSurfaceInput): CloseSurfaceResult;
   getPiSessionReference(input: GetPiSessionReferenceInput): PiSessionReference | undefined;
@@ -1813,6 +1844,9 @@ export interface StructuredSessionStateStore {
     draftCleared: boolean;
     promptHistoryRecorded: boolean;
   };
+  acceptEditedCommittedSurfaceMessage(
+    input: AcceptEditedCommittedRuntimeSurfaceMessageInput,
+  ): AcceptEditedCommittedRuntimeSurfaceMessageResult;
   createRequestUserInputRequest(input: {
     sessionId: string;
     surfacePiSessionId: string;
@@ -3829,6 +3863,151 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       target,
       created: "new",
       stateRevision,
+    };
+  }
+
+  readOrchestratorLifecycle(input: {
+    workspaceId: WorkspaceId;
+    workspaceSessionId: WorkspaceSessionId;
+  }): {
+    title: string;
+    titleGenerationStatus: string;
+    targets: RuntimeSurfaceTarget[];
+  } {
+    if (input.workspaceId !== this.workspace.id) {
+      throw new Error(`Workspace ${input.workspaceId} is not managed by this state store.`);
+    }
+    const snapshot = this.getSessionState(input.workspaceSessionId);
+    return {
+      title: snapshot.pi.title,
+      titleGenerationStatus: snapshot.pi.titleGenerationStatus ?? "not-started",
+      targets: [
+        {
+          workspaceSessionId: input.workspaceSessionId,
+          surface: "orchestrator" as const,
+          surfacePiSessionId: snapshot.session.orchestratorPiSessionId as SurfacePiSessionId,
+        },
+        ...snapshot.threads.map((thread) => ({
+          workspaceSessionId: input.workspaceSessionId,
+          surface: "handler" as const,
+          surfacePiSessionId: thread.surfacePiSessionId as SurfacePiSessionId,
+          threadId: thread.id as ThreadId,
+        })),
+        ...snapshot.workflowTaskAttempts.flatMap((attempt) =>
+          attempt.surfacePiSessionId
+            ? [
+                {
+                  workspaceSessionId: input.workspaceSessionId,
+                  surface: "workflow-task" as const,
+                  surfacePiSessionId: attempt.surfacePiSessionId as SurfacePiSessionId,
+                  workflowTaskAttemptId: attempt.id as WorkflowTaskAttemptId,
+                  threadId: attempt.threadId as ThreadId,
+                },
+              ]
+            : [],
+        ),
+      ],
+    };
+  }
+
+  renameOrchestratorSurface(input: {
+    workspaceId: WorkspaceId;
+    workspaceSessionId: WorkspaceSessionId;
+    title: string;
+  }): RenameOrchestratorSurfaceResult {
+    const current = this.readOrchestratorLifecycle(input);
+    if (
+      current.titleGenerationStatus === "pending" ||
+      current.titleGenerationStatus === "running"
+    ) {
+      throw new Error("Session title is being generated. Rename is temporarily locked.");
+    }
+    const updated = this.markManualTitleOverride({
+      sessionId: input.workspaceSessionId,
+      title: input.title,
+    });
+    return {
+      workspaceSessionId: input.workspaceSessionId,
+      title: updated.title,
+      stateRevision: this.bumpStateRevision(),
+    };
+  }
+
+  forkOrchestratorSurface(input: {
+    workspaceId: WorkspaceId;
+    sourceWorkspaceSessionId: WorkspaceSessionId;
+    targetSurfacePiSessionId: SurfacePiSessionId;
+    title?: string;
+  }): CreateSurfaceResult {
+    if (input.workspaceId !== this.workspace.id) {
+      throw new Error(`Workspace ${input.workspaceId} is not managed by this state store.`);
+    }
+    const source = this.getSessionState(input.sourceWorkspaceSessionId).pi;
+    const timestamp = this.now();
+    const title = input.title?.trim() || source.title || "New orchestrator";
+    const stateRevision = this.db.transaction(() => {
+      this.upsertPiSession({
+        ...source,
+        sessionId: input.targetSurfacePiSessionId,
+        parentSessionId: input.sourceWorkspaceSessionId,
+        title,
+        titleGenerationStatus: "not-started",
+        titleGenerationTriggeredAt: null,
+        titleGenerationFinishedAt: null,
+        titleGenerationError: null,
+        titleAutoFrozen: false,
+        titleManualOverride: Boolean(input.title?.trim()),
+        status: "idle",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      this.upsertSurfaceLifecycle({
+        surfacePiSessionId: input.targetSurfacePiSessionId,
+        sessionId: input.targetSurfacePiSessionId,
+        surfaceKind: "orchestrator",
+        threadId: null,
+        workflowTaskAttemptId: null,
+        status: "open",
+        openedAt: timestamp,
+        closedAt: null,
+        closeReason: null,
+      });
+      this.recordEvent({
+        sessionId: input.targetSurfacePiSessionId,
+        kind: "surface.lifecycle.created",
+        subjectKind: "session",
+        subjectId: input.targetSurfacePiSessionId,
+        at: timestamp,
+        data: { surface: "orchestrator", parentSessionId: input.sourceWorkspaceSessionId },
+      });
+      return this.bumpStateRevision();
+    })();
+    const target = {
+      workspaceSessionId: input.targetSurfacePiSessionId as unknown as WorkspaceSessionId,
+      surface: "orchestrator" as const,
+      surfacePiSessionId: input.targetSurfacePiSessionId,
+    };
+    return {
+      workspaceSessionId: target.workspaceSessionId,
+      surfacePiSessionId: target.surfacePiSessionId,
+      target,
+      created: "new",
+      stateRevision,
+    };
+  }
+
+  deleteOrchestratorSurface(input: {
+    workspaceId: WorkspaceId;
+    workspaceSessionId: WorkspaceSessionId;
+  }): DeleteOrchestratorSurfaceResult {
+    if (input.workspaceId !== this.workspace.id) {
+      throw new Error(`Workspace ${input.workspaceId} is not managed by this state store.`);
+    }
+    this.deleteSessionState(input.workspaceSessionId);
+    return {
+      workspaceSessionId: input.workspaceSessionId,
+      deleted: true,
+      stateRevision: this.bumpStateRevision(),
     };
   }
 
@@ -10731,6 +10910,130 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     });
 
     return accept();
+  }
+
+  acceptEditedCommittedSurfaceMessage(
+    input: AcceptEditedCommittedRuntimeSurfaceMessageInput,
+  ): AcceptEditedCommittedRuntimeSurfaceMessageResult {
+    if (input.workspaceId !== this.workspace.id) {
+      throw new StateContractError({
+        operation: "structured-session.acceptEditedCommittedSurfaceMessage",
+        reason: "not-found",
+        message: `Workspace ${input.workspaceId} is not managed by this state store.`,
+      });
+    }
+    return this.db.transaction(() => {
+      const existing = this.db
+        .query(
+          `SELECT * FROM surface_message_queue
+           WHERE surface_pi_session_id = ? AND idempotency_key = ?
+           ORDER BY created_at ASC, id ASC LIMIT 1`,
+        )
+        .get(input.target.surfacePiSessionId, input.idempotencyKey) as
+        | SurfaceQueuedMessageRow
+        | undefined;
+      if (existing) {
+        return {
+          queuedMessage: this.mapSurfaceQueuedMessage(existing),
+          accepted: "existing" as const,
+        };
+      }
+
+      const pending = this.db
+        .query(
+          `SELECT id FROM surface_message_queue
+           WHERE surface_pi_session_id = ?
+             AND status IN ('queued', 'steering', 'dispatching') LIMIT 1`,
+        )
+        .get(input.target.surfacePiSessionId) as { id: string } | undefined;
+      if (pending) {
+        throw new StateContractError({
+          operation: "structured-session.acceptEditedCommittedSurfaceMessage",
+          reason: "conflict",
+          message: `Surface ${input.target.surfacePiSessionId} has pending queued message ${pending.id}.`,
+        });
+      }
+
+      const source = this.mustFindTranscriptMessageRow(input.sourceMessageId);
+      if (
+        source.role !== "user" ||
+        source.session_id !== input.target.workspaceSessionId ||
+        source.surface_pi_session_id !== input.target.surfacePiSessionId ||
+        source.committed_at !== input.expectedCommittedAt ||
+        source.pi_history_entry_json !== JSON.stringify(input.sourcePiHistoryEntry)
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.acceptEditedCommittedSurfaceMessage",
+          reason: "conflict",
+          message: `Transcript message ${input.sourceMessageId} is not the expected committed user message.`,
+        });
+      }
+      const cursor = this.readRuntimeTranscriptStreamCursorRow(input.target.surfacePiSessionId);
+      if (cursor?.active_assistant_message_id) {
+        throw new StateContractError({
+          operation: "structured-session.acceptEditedCommittedSurfaceMessage",
+          reason: "conflict",
+          message: `Transcript surface ${input.target.surfacePiSessionId} still has an active assistant message.`,
+        });
+      }
+
+      this.db
+        .query(
+          `DELETE FROM transcript_content_block WHERE message_id IN (
+             SELECT message_id FROM transcript_message
+             WHERE surface_pi_session_id = ? AND ordinal >= ?
+           )`,
+        )
+        .run(input.target.surfacePiSessionId, source.ordinal);
+      this.db
+        .query(
+          `DELETE FROM transcript_message
+           WHERE surface_pi_session_id = ? AND ordinal >= ?`,
+        )
+        .run(input.target.surfacePiSessionId, source.ordinal);
+
+      const queuedMessage = this.enqueueSurfaceMessage({
+        sessionId: input.target.workspaceSessionId,
+        surfacePiSessionId: input.target.surfacePiSessionId,
+        threadId: input.target.surface === "handler" ? input.target.threadId : null,
+        kind: "user_message",
+        idempotencyKey: input.idempotencyKey,
+        priority: "interactive",
+        orderingKey: `surface:${input.target.surfacePiSessionId}`,
+        messageJson: input.messageJson,
+        payloadJson: input.payloadJson,
+      });
+      if (input.promptHistoryText !== null) {
+        this.db
+          .query(
+            `INSERT INTO prompt_history (
+               workspace_id, workspace_session_id, surface_pi_session_id,
+               queue_item_id, text, sent_at
+             ) VALUES (?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            this.workspace.id,
+            input.target.workspaceSessionId,
+            input.target.surfacePiSessionId,
+            queuedMessage.id,
+            input.promptHistoryText,
+            queuedMessage.createdAt,
+          );
+      }
+      const existingDraft = this.getComposerDraft(input.target.surfacePiSessionId);
+      if (existingDraft) {
+        this.setComposerDraft({
+          sessionId: input.target.workspaceSessionId,
+          surfacePiSessionId: input.target.surfacePiSessionId,
+          threadId: input.target.surface === "handler" ? input.target.threadId : null,
+          text: "",
+          attachments: [],
+          snippetMentions: [],
+        });
+      }
+      this.bumpStateRevision();
+      return { queuedMessage, accepted: "created" as const };
+    })();
   }
 
   listQueuedSurfaceMessages(input: {

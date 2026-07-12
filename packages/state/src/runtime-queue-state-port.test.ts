@@ -197,6 +197,118 @@ describe("RuntimeQueueStatePort", () => {
     );
   });
 
+  it("atomically accepts committed edits, rejects queued work, clears drafts, and replays after rebase", async () => {
+    await runTestEffect(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* StructuredSessionState;
+          const workspaceSessionId = "session-runtime-queue-edit" as WorkspaceSessionId;
+          const surfacePiSessionId = "surface-runtime-queue-edit" as SurfacePiSessionId;
+          const committedAt = "2026-07-12T09:00:00.000Z";
+          yield* state.upsertPiSession({
+            sessionId: workspaceSessionId,
+            title: "Edit queue",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            messageCount: 0,
+            status: "idle",
+            createdAt: committedAt,
+            updatedAt: committedAt,
+          });
+          const turn = yield* state.startTurn({
+            sessionId: workspaceSessionId,
+            surfacePiSessionId,
+            requestSummary: "Original",
+          });
+          const committed = yield* state.commitRuntimeTranscriptUserMessage({
+            workspaceSessionId,
+            surfacePiSessionId,
+            turnId: turn.id as never,
+            queueItemId: "queue-original-edit" as never,
+            message: { text: "Original" },
+            submittedAt: committedAt as never,
+            committedAt: committedAt as never,
+            streamGenerationId: "stream-original-edit" as never,
+            expectedCursor: null,
+          });
+          const sourcePiHistoryEntry = {
+            session: { surfacePiSessionId },
+            entryId: "pi-original-edit",
+            messageId: committed.message.messageId,
+          };
+          yield* state.bindRuntimeTranscriptPiHistoryEntry({
+            messageId: committed.message.messageId,
+            piHistoryEntry: sourcePiHistoryEntry,
+          });
+          yield* state.setComposerDraft({
+            sessionId: workspaceSessionId,
+            surfacePiSessionId,
+            text: "local draft",
+            attachments: [],
+            snippetMentions: [],
+          });
+
+          const port = yield* RuntimeQueueStatePort;
+          const pending = yield* port.enqueueSurfaceMessage({
+            sessionId: workspaceSessionId,
+            surfacePiSessionId,
+            messageJson: JSON.stringify({ text: "pending" }),
+          });
+          const request = {
+            workspaceId: workspace.id as never,
+            target: {
+              workspaceSessionId,
+              surface: "orchestrator" as const,
+              surfacePiSessionId,
+            },
+            sourceMessageId: committed.message.messageId,
+            expectedCommittedAt: committedAt as never,
+            sourcePiHistoryEntry,
+            idempotencyKey: "committed-edit:atomic",
+            promptHistoryText: "Replacement",
+            messageJson: JSON.stringify({ text: "Replacement" }),
+            payloadJson: JSON.stringify({
+              source: "committed-user-message-edit",
+              sourceMessageId: committed.message.messageId,
+              expectedCommittedAt: committedAt,
+              sourcePiHistoryEntry,
+            }),
+          };
+          const rejected = yield* Effect.exit(port.acceptEditedCommittedSurfaceMessage(request));
+          expect(rejected._tag).toBe("Failure");
+          expect(
+            (yield* state.readRuntimeSurfaceTranscript(surfacePiSessionId)).messages,
+          ).toHaveLength(1);
+          expect((yield* state.getComposerDraft(surfacePiSessionId))?.text).toBe("local draft");
+
+          yield* port.cancelSurfaceMessage({ id: pending.value.id });
+          const accepted = yield* port.acceptEditedCommittedSurfaceMessage(request);
+          expect(accepted.value.accepted).toBe("created");
+          expect(accepted.value.queuedMessage.priority).toBe("interactive");
+          expect((yield* state.readRuntimeSurfaceTranscript(surfacePiSessionId)).messages).toEqual(
+            [],
+          );
+          expect(yield* state.getComposerDraft(surfacePiSessionId)).toBeNull();
+
+          yield* port.markSurfaceMessageDelivered({ id: accepted.value.queuedMessage.id });
+          const replay = yield* port.acceptEditedCommittedSurfaceMessage(request);
+          expect(replay.value).toEqual({
+            queuedMessage: expect.objectContaining({ id: accepted.value.queuedMessage.id }),
+            accepted: "existing",
+          });
+          expect(replay.afterCommit).toEqual([]);
+        }).pipe(
+          Effect.provide(
+            layerRuntimeQueueStatePort.pipe(
+              Layer.provideMerge(layerStructuredSessionState({ workspace })),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it("exposes runtime queue lifecycle operations through an Effect service", async () => {
     await runTestEffect(
       Effect.scoped(

@@ -132,6 +132,11 @@ export class PiAdapter extends Context.Service<
         input: InterruptPiTurnInput,
       ): Effect.Effect<void, PiAdapterError, PiSessionReferencePort>;
     };
+    history: {
+      restoreToEntry(
+        input: RestorePiHistoryEntryInput,
+      ): Effect.Effect<void, PiAdapterError, PiSessionReferencePort>;
+    };
     models: {
       list(
         input: ListModelsInput,
@@ -152,12 +157,13 @@ interface PiAdapterTurnStream {
 }
 ```
 
-Core-owned history DTOs exist only as reserved pi-adapter contracts. The root `PiAdapter` service
-does not expose a `history` group. A history group may be added only with concrete
-`restoreToEntry(...)` and `forkFromEntry(...)` contracts covering scoped live-handle behavior,
-persisted-reference writes, active-turn exclusion, and package tests. Runtime-owned edit-and-resend
-and handler forked-history flows must use an explicitly specified adapter history surface and must
-not mutate pi history through a package-private escape hatch.
+The root `PiAdapter` service exposes the narrow `history.restoreToEntry(...)` operation used by
+runtime-owned committed-message edit-and-resend. It validates the live session and persisted
+reference, rejects active turns, and calls pi's public
+`AgentSession.navigateTree(userEntryId, { summarize: false })` seam so pi selects the user's parent
+and rebuilds its live agent context. The adapter retains the most recent successfully completed
+idle `AgentSession` until the next turn or surface close so tree navigation never mutates
+`SessionManager` behind a stale live agent context.
 
 `sessions.create(...)` and `sessions.open(...)` are single-live-handle acquisitions for a durable
 `surfacePiSessionId`. If a scoped live handle for the same surface already exists, the adapter
@@ -311,8 +317,14 @@ adapter backend version before returning a scoped `PiSessionRef`.
 
 Package API surface includes the `PiAdapter` Effect service, scoped session lifecycle, turn stream,
 model metadata reads, helper jobs, provider-auth port use, pi-session-reference port use, and
-packaged runtime path port. History DTOs are core-owned reserved contracts only; they are not a
-public pi-adapter service group and cannot be called through the restricted session subpath.
+packaged runtime path port. Restore history DTOs are core-owned contracts consumed only by the
+narrow runtime-facing `PiAdapter.history.restoreToEntry(...)` service method. Fork history DTOs
+remain reserved, and neither operation is callable through the restricted session subpath.
+
+Confirmed product session deletion is a hard delete. After validating the state-backed reference
+and releasing any live session, `PiAdapter.sessions.delete(...)` removes the persisted session file
+through the injected Effect `FileSystem` service. Pi-adapter does not import host filesystem or
+child-process modules and does not invoke a platform trash command.
 
 Runtime passes `@svvy/core` `NativeToolDeclaration` values into `turns.run(...)`.
 `NativeToolDeclaration` is schema/metadata only. It contains no `execute`, `prepareArguments`, pi
@@ -855,19 +867,12 @@ type ForkPiHistoryEntryInput = {
 ```
 
 Runtime owns product decisions such as edit-and-resend, durable surface creation, and fork target
-ownership. Core-owned `RestorePiHistoryEntryInput` and `ForkPiHistoryEntryInput` are reserved data
-contracts only: they have no public `PiAdapter` service method, no package-root execution surface,
-and no restricted-session subpath implementation. Runtime expresses forked handler history through product-filtered prompt
-context and edit-and-resend through runtime-owned surface state; no package may call a partial
-history implementation or mutate pi history through the restricted session subpath.
-
-Promoting those DTOs into callable pi history methods requires the same change to add exact
-`PiAdapter` service methods, core method contracts, package-boundary export expectations, runtime
-callers, and focused tests. The promoted methods must serialize operations against the live
-live-session registry entry, reject active-turn mutation with typed `PiAdapterError`, mutate only
-pi-owned history/reference state, and persist opaque reference changes only through
-`PiSessionReferencePort`. Runtime still owns queue rows, turn records, transcript projections, and
-product-visible surface changes.
+ownership. Core-owned `RestorePiHistoryEntryInput` is consumed only by
+`PiAdapter.history.restoreToEntry(...)`; `ForkPiHistoryEntryInput` remains reserved data with no
+callable adapter method. Runtime owns prompt-lock admission, dispatch reconciliation, and renderer
+invalidation; state owns the atomic transcript compare-and-swap plus replacement queue acceptance.
+Pi-adapter owns only pi tree navigation and the persisted
+reference write; no package mutates pi history through the restricted session subpath.
 
 Model normalization maps pi model/provider metadata into the core-owned `ModelInfo` contract.
 
@@ -979,7 +984,8 @@ protocol, or child-process handle types outside that restricted subpath.
 Product source areas owned by this package:
 
 - `packages/pi-adapter/src/**`
-- adapter services for pi session creation/open/close and schema validation of reserved core history DTOs in package tests
+- adapter services for pi session creation/open/close, runtime-only
+  `history.restoreToEntry(...)`, and schema validation of reserved fork-history DTOs in package tests
 - provider/model metadata adapters
 - prompt execution context adapters
 - title/namer model execution seams
@@ -1014,7 +1020,8 @@ package export map.
 
 Pi-adapter service/layer tests use local fake pi services and local harness state for session
 open/create/close, system-prompt delivery, pi-native resource disabling, turn stream events,
-reserved history DTO validation, model metadata reads, helper jobs, and scope finalizers. Those
+runtime-only history navigation, reserved fork-history DTO validation, model metadata reads, helper
+jobs, and scope finalizers. Those
 harnesses are test-local implementation details; they do not create manual `ManagedRuntime`
 instances and do not expose pi-native objects through public package contracts.
 

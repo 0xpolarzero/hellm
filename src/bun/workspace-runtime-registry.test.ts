@@ -109,6 +109,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(Object.keys(facades.appActions).toSorted()).toEqual([
       "artifacts",
       "git",
+      "telemetry",
       "workspaceFiles",
       "workspaces",
     ]);
@@ -126,6 +127,7 @@ describe("WorkspaceRuntimeRegistry", () => {
       "importComposerAttachments",
       "resolvePathTarget",
     ]);
+    expect(Object.keys(facades.appActions.telemetry)).toEqual(["recordRenderer"]);
     expect("events" in facades.runtimeActions).toBeFalse();
     expect("commands" in facades.runtimeActions).toBeFalse();
     expect("close" in facades.runtimeActions).toBeFalse();
@@ -761,13 +763,24 @@ describe("WorkspaceRuntimeRegistry", () => {
       { title: "Follow composer", agentProfileId: "default-orchestrator" },
       { provider: "zai", model: "glm-5-turbo", thinkingLevel: "off" },
     );
+    const runtimeFacade = await registry.getAppRuntimeOperations(runtime.workspaceId);
 
-    await runtime.catalog.setSurfaceModel(created.target, "openai", "gpt-4.1-mini");
-    await runtime.catalog.setSurfaceThoughtLevel(created.target, "high");
-    await runtime.catalog.setSurfaceExtensionUsage({
-      target: created.target,
-      extensionId: "smithers",
-      state: "loaded",
+    await runtimeFacade.surfaces.updateModel({
+      workspaceId: runtime.workspaceId as never,
+      target: created.target as never,
+      provider: "openai",
+      model: "gpt-5.4",
+    });
+    await runtimeFacade.surfaces.updateReasoning({
+      workspaceId: runtime.workspaceId as never,
+      target: created.target as never,
+      reasoningEffort: "high",
+    });
+    await runtimeFacade.surfaces.updateExtensionUsage({
+      workspaceId: runtime.workspaceId as never,
+      target: created.target as never,
+      extensionId: "smithers" as never,
+      usage: "loaded",
     });
 
     const state = await registry.getRendererStateFacade();
@@ -779,7 +792,7 @@ describe("WorkspaceRuntimeRegistry", () => {
         (profile) => profile.profileId === "default-orchestrator",
       ),
     ).toMatchObject({
-      modelId: "gpt-4.1-mini",
+      modelId: "gpt-5.4",
       reasoning: { effort: "high" },
       followComposer: true,
       extensionUsage: { smithers: "loaded" },

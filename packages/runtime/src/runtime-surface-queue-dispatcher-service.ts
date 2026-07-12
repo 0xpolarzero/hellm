@@ -3,7 +3,9 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import {
+  CommittedUserMessageEditQueuePayloadSchema,
   RuntimeActorExtensionBindingStatePort,
   RuntimeCommandStatePort,
   RuntimeEpisodeStatePort,
@@ -59,6 +61,10 @@ import {
   type RuntimeAcceptedNativeToolExecutionService,
 } from "./accepted-native-tool-execution-service";
 import { RuntimeShutdownAdmission } from "./runtime-shutdown-admission";
+
+const decodeCommittedUserMessageEditQueuePayload = Schema.decodeUnknownEffect(
+  CommittedUserMessageEditQueuePayloadSchema,
+);
 
 export interface RuntimeSurfaceQueueDispatcherServiceService {
   acceptWakeHint(input: {
@@ -203,6 +209,10 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
               workspaceId,
               target,
             }),
+          acquirePromptLock: ({ surface }) =>
+            typeof surface.acquirePromptLock === "function"
+              ? surface.acquirePromptLock()
+              : Effect.succeed(Effect.void),
           releaseSurface: ({ surface }) =>
             surfaceScopes.release({ surfacePiSessionId: surface.surfacePiSessionId }),
           isSurfaceActive: ({ surface }) => surface.isPromptActive(),
@@ -215,11 +225,13 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
               actorBindingState,
               generatedContextRefresh,
             }),
-          materializeQueuedMessage: ({ queued }) =>
-            ({
-              kind: "dispatch",
-              message: parseRuntimeSubmittedMessage(queued),
-            }) as const,
+          materializeQueuedMessage: ({ queued, surface }) =>
+            reconcileCommittedEditIntent({ queued, surface }).pipe(
+              Effect.as({
+                kind: "dispatch" as const,
+                message: parseRuntimeSubmittedMessage(queued),
+              }),
+            ),
           prepareTurn: ({ target, queued, message, metadata }) =>
             prepareRuntimePromptTurn({
               workspaceId,
@@ -526,28 +538,25 @@ function startRuntimePrompt(input: {
         sourceInvalidation: input.sourceInvalidation,
       }),
     });
-    const execute = input.surface
-      .withPromptLock(
-        input.promptExecution
-          .executeClaimedPrompt({
-            workspaceId: input.workspaceId,
-            target: input.target,
-            claimedMessage: input.queued,
-            turn: input.turn,
-            promptContext,
-            piTurnInput,
-          })
-          .pipe(
-            Effect.tap((result) =>
-              Effect.sync(() => {
-                if (input.requestedPromptResults.has(input.queued.id)) {
-                  input.completedPromptResults.set(input.queued.id, result);
-                }
-              }),
-            ),
-          )
-          .pipe(Effect.provideService(RuntimeSurfaceRuntimeService, input.surface)),
+    const execute = input.promptExecution
+      .executeClaimedPrompt({
+        workspaceId: input.workspaceId,
+        target: input.target,
+        claimedMessage: input.queued,
+        turn: input.turn,
+        promptContext,
+        piTurnInput,
+      })
+      .pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            if (input.requestedPromptResults.has(input.queued.id)) {
+              input.completedPromptResults.set(input.queued.id, result);
+            }
+          }),
+        ),
       )
+      .pipe(Effect.provideService(RuntimeSurfaceRuntimeService, input.surface))
       .pipe(Effect.asVoid)
       .pipe(Effect.ensuring(input.surface.clearActivePrompt({ turnId: input.turn.id })));
     const startGate = yield* Deferred.make<void>();
@@ -566,4 +575,45 @@ function startRuntimePrompt(input: {
       continueAfterPrompt: () => true,
     };
   });
+}
+
+function reconcileCommittedEditIntent(input: {
+  readonly queued: RuntimeSurfaceMessageRecord;
+  readonly surface: RuntimeSurfaceRuntimeServiceService;
+}): Effect.Effect<void, RuntimeContractError> {
+  if (!input.queued.payloadJson) return Effect.void;
+  return Effect.try({
+    try: () => JSON.parse(input.queued.payloadJson as string) as unknown,
+    catch: (cause) =>
+      new RuntimeContractError({
+        operation: "runtime.queue.dispatch.reconcileCommittedEdit",
+        reason: "invalid-input",
+        message: "Queued committed-message edit intent is invalid JSON.",
+        cause,
+      }),
+  }).pipe(
+    Effect.flatMap((payload) => {
+      if (
+        !payload ||
+        typeof payload !== "object" ||
+        (payload as { source?: unknown }).source !== "committed-user-message-edit"
+      ) {
+        return Effect.void;
+      }
+      return decodeCommittedUserMessageEditQueuePayload(payload).pipe(
+        Effect.mapError(
+          (cause) =>
+            new RuntimeContractError({
+              operation: "runtime.queue.dispatch.reconcileCommittedEdit",
+              reason: "invalid-input",
+              message: "Queued committed-message edit intent does not match its durable schema.",
+              cause,
+            }),
+        ),
+        Effect.flatMap((intent) =>
+          input.surface.restorePiHistory({ entryId: intent.sourcePiHistoryEntry }),
+        ),
+      );
+    }),
+  );
 }

@@ -142,6 +142,7 @@ export type WorkspaceRuntimeOperations = Pick<
   | "messages"
   | "queues"
   | "requestInput"
+  | "surfaces"
   | "sourceEdits"
   | "sourceInvalidation"
 >;
@@ -812,6 +813,33 @@ export class WorkspaceRuntimeRegistry {
               resolvePathTarget: async ({ workspaceId, workspaceRelativePath }) => {
                 const host = this.getRuntime(workspaceId);
                 return resolveWorkspacePathTarget({ cwd: host.cwd, workspaceRelativePath });
+              },
+            },
+            telemetry: {
+              recordRenderer: async (input) => {
+                const host = this.getRuntime(input.workspaceId);
+                const level = input.level ?? "debug";
+                const details = {
+                  eventName: input.eventName,
+                  correlationId: input.correlationId ?? null,
+                  panelId: input.panelId ?? null,
+                  ...input.details,
+                  workspaceSessionId: input.target?.workspaceSessionId,
+                  surfacePiSessionId: input.target?.surfacePiSessionId,
+                  surface: input.target?.surface,
+                  threadId: input.target?.threadId,
+                };
+                const message = input.message ?? `Renderer telemetry: ${input.eventName}`;
+                if (level === "error") {
+                  host.appLog.error("renderer", message, input.error, details);
+                } else if (level === "warn") {
+                  host.appLog.warning("renderer", message, details);
+                } else if (level === "info") {
+                  host.appLog.info("renderer", message, details);
+                } else {
+                  host.appLog.debug("renderer", message, details);
+                }
+                return { ok: true };
               },
             },
           },

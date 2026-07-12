@@ -27,10 +27,15 @@ import type {
   CloseSurfaceResult,
   CreateOrchestratorSurfaceInput,
   CreateSurfaceResult,
+  DeleteOrchestratorSurfaceInput,
+  DeleteOrchestratorSurfaceResult,
+  ForkOrchestratorSurfaceInput,
   GeneratedPackagesRefreshResult,
   OpenSurfaceInput,
   OpenSurfaceResult,
   PromptTarget,
+  RenameOrchestratorSurfaceInput,
+  RenameOrchestratorSurfaceResult,
   RefreshGeneratedContextRequest,
   RefreshGeneratedPackagesRequest,
   ReleaseWorkspaceInput,
@@ -41,6 +46,7 @@ import type {
   RuntimeApprovalStatePort,
   RuntimeCommandStatePort,
   RuntimeComposerDraftStatePort,
+  RuntimeComposerProfileStatePort,
   RuntimeEventError,
   RuntimeEvent,
   RuntimeEventSubscriptionClose,
@@ -96,6 +102,12 @@ import type {
   ReorderQueuedMessageResult,
   SubmitMessageInput,
   SubmitMessageResult,
+  EditCommittedUserMessageInput,
+  EditCommittedUserMessageResult,
+  UpdateSurfaceExtensionUsageInput,
+  UpdateSurfaceModelInput,
+  UpdateSurfaceReasoningInput,
+  UpdateSurfaceSettingsResult,
   WriteCommandStdinInput,
   WriteCommandStdinResult,
   AuthenticatedRunTaskAgentInput,
@@ -127,6 +139,9 @@ import {
   decodeUnknownCloseSurfaceResultEffect,
   decodeUnknownCreateOrchestratorSurfaceInputEffect,
   decodeUnknownCreateSurfaceResultEffect,
+  decodeUnknownDeleteOrchestratorSurfaceInputEffect,
+  decodeUnknownDeleteOrchestratorSurfaceResultEffect,
+  decodeUnknownForkOrchestratorSurfaceInputEffect,
   decodeUnknownRuntimeCreateWorkflowAgentSourceInputEffect,
   decodeUnknownRuntimeDeleteWorkflowAgentSourceInputEffect,
   decodeUnknownRuntimeDuplicateWorkflowAgentSourceInputEffect,
@@ -135,6 +150,8 @@ import {
   decodeUnknownOpenExtensionSourceEditInputEffect,
   decodeUnknownOpenSurfaceInputEffect,
   decodeUnknownOpenSurfaceResultEffect,
+  decodeUnknownRenameOrchestratorSurfaceInputEffect,
+  decodeUnknownRenameOrchestratorSurfaceResultEffect,
   decodeUnknownRefreshGeneratedContextRequestEffect,
   decodeUnknownRefreshGeneratedPackagesRequestEffect,
   decodeUnknownReleaseWorkspaceInputEffect,
@@ -156,12 +173,18 @@ import {
   decodeUnknownSteerQueuedMessageInputEffect,
   decodeUnknownUpdateComposerDraftInputEffect,
   decodeUnknownUpdateComposerDraftResultEffect,
+  decodeUnknownUpdateSurfaceExtensionUsageInputEffect,
+  decodeUnknownUpdateSurfaceModelInputEffect,
+  decodeUnknownUpdateSurfaceReasoningInputEffect,
+  decodeUnknownUpdateSurfaceSettingsResultEffect,
   decodeUnknownRestoreQueuedMessageToComposerInputEffect,
   decodeUnknownRestoreQueuedMessageToComposerResultEffect,
   decodeUnknownReorderQueuedMessageInputEffect,
   decodeUnknownReorderQueuedMessageResultEffect,
   decodeUnknownSubmitMessageInputEffect,
   decodeUnknownSubmitMessageResultEffect,
+  decodeUnknownEditCommittedUserMessageInputEffect,
+  decodeUnknownEditCommittedUserMessageResultEffect,
   decodeUnknownWriteCommandStdinInputEffect,
   decodeUnknownWriteCommandStdinResultEffect,
   decodeUnknownWorkflowAgentSourceDeleteResultEffect,
@@ -377,6 +400,7 @@ export namespace Runtime {
     RuntimeLayerError,
     | RuntimeLayerConfigService
     | RuntimePromptDefaultsStatePort
+    | RuntimeComposerProfileStatePort
     | PiAdapter
     | ProviderAuthPort
     | ProviderAuthStatusStatePort
@@ -452,6 +476,30 @@ interface RuntimeSurfacesFacade {
   ): Promise<CreateSurfaceResult>;
   open(input: OpenSurfaceInput, options?: RuntimeFacadeCallOptions): Promise<OpenSurfaceResult>;
   close(input: CloseSurfaceInput, options?: RuntimeFacadeCallOptions): Promise<CloseSurfaceResult>;
+  renameOrchestrator(
+    input: RenameOrchestratorSurfaceInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<RenameOrchestratorSurfaceResult>;
+  forkOrchestrator(
+    input: ForkOrchestratorSurfaceInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<CreateSurfaceResult>;
+  deleteOrchestrator(
+    input: DeleteOrchestratorSurfaceInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<DeleteOrchestratorSurfaceResult>;
+  updateModel(
+    input: UpdateSurfaceModelInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<UpdateSurfaceSettingsResult>;
+  updateReasoning(
+    input: UpdateSurfaceReasoningInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<UpdateSurfaceSettingsResult>;
+  updateExtensionUsage(
+    input: UpdateSurfaceExtensionUsageInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<UpdateSurfaceSettingsResult>;
 }
 
 interface RuntimeMessagesFacade {
@@ -459,6 +507,10 @@ interface RuntimeMessagesFacade {
     input: SubmitMessageInput,
     options?: RuntimeFacadeCallOptions,
   ): Promise<SubmitMessageResult>;
+  editCommitted(
+    input: EditCommittedUserMessageInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<EditCommittedUserMessageResult>;
   abort(input: AbortPromptInput, options?: RuntimeFacadeCallOptions): Promise<void>;
   updateDraft(
     input: UpdateComposerDraftInput,
@@ -1043,6 +1095,120 @@ export function createRuntimeFacade(
           }),
           options,
         ),
+      renameOrchestrator: (input, options) =>
+        run(
+          "runtime.surfaces.renameOrchestrator",
+          Effect.gen(function* () {
+            const decoded = yield* decodeBoundary(
+              "runtime.surfaces.renameOrchestrator",
+              decodeUnknownRenameOrchestratorSurfaceInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.surfaces.renameOrchestrator(decoded);
+            return yield* decodeBoundary(
+              "runtime.surfaces.renameOrchestrator",
+              decodeUnknownRenameOrchestratorSurfaceResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
+      forkOrchestrator: (input, options) =>
+        run(
+          "runtime.surfaces.forkOrchestrator",
+          Effect.gen(function* () {
+            const decoded = yield* decodeBoundary(
+              "runtime.surfaces.forkOrchestrator",
+              decodeUnknownForkOrchestratorSurfaceInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.surfaces.forkOrchestrator(decoded);
+            return yield* decodeBoundary(
+              "runtime.surfaces.forkOrchestrator",
+              decodeUnknownCreateSurfaceResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
+      deleteOrchestrator: (input, options) =>
+        run(
+          "runtime.surfaces.deleteOrchestrator",
+          Effect.gen(function* () {
+            const decoded = yield* decodeBoundary(
+              "runtime.surfaces.deleteOrchestrator",
+              decodeUnknownDeleteOrchestratorSurfaceInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.surfaces.deleteOrchestrator(decoded);
+            return yield* decodeBoundary(
+              "runtime.surfaces.deleteOrchestrator",
+              decodeUnknownDeleteOrchestratorSurfaceResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
+      updateModel: (input, options) =>
+        run(
+          "runtime.surfaces.updateModel",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.surfaces.updateModel",
+              decodeUnknownUpdateSurfaceModelInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.surfaces.updateModel(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.surfaces.updateModel",
+              decodeUnknownUpdateSurfaceSettingsResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
+      updateReasoning: (input, options) =>
+        run(
+          "runtime.surfaces.updateReasoning",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.surfaces.updateReasoning",
+              decodeUnknownUpdateSurfaceReasoningInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.surfaces.updateReasoning(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.surfaces.updateReasoning",
+              decodeUnknownUpdateSurfaceSettingsResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
+      updateExtensionUsage: (input, options) =>
+        run(
+          "runtime.surfaces.updateExtensionUsage",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.surfaces.updateExtensionUsage",
+              decodeUnknownUpdateSurfaceExtensionUsageInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.surfaces.updateExtensionUsage(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.surfaces.updateExtensionUsage",
+              decodeUnknownUpdateSurfaceSettingsResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
     },
     messages: {
       submit: (input, options) =>
@@ -1059,6 +1225,25 @@ export function createRuntimeFacade(
             return yield* decodeBoundary(
               "runtime.messages.submit",
               decodeUnknownSubmitMessageResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
+      editCommitted: (input, options) =>
+        run(
+          "runtime.messages.editCommitted",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.messages.editCommitted",
+              decodeUnknownEditCommittedUserMessageInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.messages.editCommitted(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.messages.editCommitted",
+              decodeUnknownEditCommittedUserMessageResultEffect,
               result,
             );
           }),

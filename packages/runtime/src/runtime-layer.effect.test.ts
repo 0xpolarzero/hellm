@@ -13,6 +13,7 @@ import {
   RuntimeApprovalStatePort,
   RuntimeCommandStatePort,
   RuntimeComposerDraftStatePort,
+  RuntimeComposerProfileStatePort,
   RuntimeContractError,
   RuntimeEpisodeStatePort,
   RuntimeEventStreamError,
@@ -238,6 +239,8 @@ function fakeRuntimeSurfaceScopeService() {
         surfacePiSessionId,
         session: { surfacePiSessionId },
         withPromptLock: (effect) => effect,
+        acquirePromptLock: () => Effect.succeed(Effect.void),
+        restorePiHistory: () => Effect.void,
         runPiTurn: () => Effect.die("unused"),
         interruptActivePrompt: () => Effect.void,
         isPromptActive: () => false,
@@ -250,6 +253,8 @@ function fakeRuntimeSurfaceScopeService() {
         surfacePiSessionId,
         session: { surfacePiSessionId },
         withPromptLock: (effect) => effect,
+        acquirePromptLock: () => Effect.succeed(Effect.void),
+        restorePiHistory: () => Effect.void,
         runPiTurn: () => Effect.die("unused"),
         interruptActivePrompt: () => Effect.void,
         isPromptActive: () => false,
@@ -262,6 +267,8 @@ function fakeRuntimeSurfaceScopeService() {
         surfacePiSessionId,
         session: { surfacePiSessionId },
         withPromptLock: (effect) => effect,
+        acquirePromptLock: () => Effect.succeed(Effect.void),
+        restorePiHistory: () => Effect.void,
         runPiTurn: () => Effect.die("unused"),
         interruptActivePrompt: () => Effect.void,
         isPromptActive: () => false,
@@ -1876,6 +1883,11 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
               model: "gpt-4o",
               reasoningEffort: "medium" as const,
             }),
+          updatePromptDefaults: () => Effect.die("unused"),
+        }),
+        Layer.succeed(RuntimeComposerProfileStatePort, {
+          readSurfaceProfileId: () => Effect.succeed(null),
+          updateFromComposer: () => Effect.succeed({ value: false, afterCommit: [] }),
         }),
         Layer.succeed(
           RuntimeLayerProviderAuthPort,
@@ -1913,6 +1925,7 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
               model: "gpt-4o",
               reasoningEffort: "medium" as const,
             }),
+          update: () => Effect.die("unused"),
         }),
         Layer.succeed(RuntimeQueueWakeService, {
           wakeSurface: (input) =>
@@ -1999,7 +2012,7 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
         ),
         layerRuntimeBunPlatform,
         overrides.piAdapter
-          ? Layer.succeed(PiAdapter, overrides.piAdapter)
+          ? Layer.merge(testPiAdapterHostLayer(), Layer.succeed(PiAdapter, overrides.piAdapter))
           : testPiAdapterHostLayer(),
         Layer.succeed(RuntimeGeneratedContextRefreshHostPort, {
           refresh: () => Promise.resolve(),
@@ -2114,6 +2127,10 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
               },
               afterCommit: [surfaceInvalidation],
             })),
+          readOrchestratorLifecycle: () => Effect.die("unused"),
+          renameOrchestrator: () => Effect.die("unused"),
+          forkOrchestrator: () => Effect.die("unused"),
+          deleteOrchestrator: () => Effect.die("unused"),
         }),
         Layer.succeed(
           RuntimeSourceStatePort,
@@ -2184,6 +2201,11 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
               model: "gpt-4o",
               reasoningEffort: "medium" as const,
             }),
+          updatePromptDefaults: () => Effect.die("unused"),
+        }),
+        Layer.succeed(RuntimeComposerProfileStatePort, {
+          readSurfaceProfileId: () => Effect.succeed(null),
+          updateFromComposer: () => Effect.succeed({ value: false, afterCommit: [] }),
         }),
         Layer.succeed(RuntimeLayerProviderAuthPort, {
           ensureUsableProviderAuth: () => Effect.succeed("test-api-key"),

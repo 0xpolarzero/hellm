@@ -38,6 +38,9 @@ function surfaceScopeDependencies(
             return { surfacePiSessionId: input.surfacePiSessionId };
           }),
         close: () => options.close?.() ?? Effect.void,
+        rename: () => Effect.die("unused"),
+        fork: () => Effect.die("unused"),
+        delete: () => Effect.die("unused"),
       },
       turns: {
         run: () =>
@@ -48,6 +51,7 @@ function surfaceScopeDependencies(
           }),
         interrupt: () => options.interrupt?.() ?? Effect.void,
       },
+      history: { restoreToEntry: () => Effect.die("unused") },
       models: { list: () => Effect.succeed([]) },
       helperJobs: { generateTitle: () => Effect.die("unused") },
     }),

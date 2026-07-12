@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import type * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import {
   AppLogWritePort,
   boundarySchemaErrorDetails,
@@ -11,6 +12,7 @@ import {
   RuntimeApprovalStatePort,
   RuntimeCommandStatePort,
   RuntimeComposerDraftStatePort,
+  RuntimeComposerProfileStatePort,
   RuntimeContractError,
   RuntimeEventStreamError,
   ExtensionError,
@@ -33,11 +35,14 @@ import {
   RuntimePromptDefaultsStatePort,
   PiRuntimePathsPort,
   PiSessionReferencePort,
+  type PiSessionReferencePortService,
+  type PiRuntimePathsPortService,
   ProviderAuthPort,
   ProviderAuthStatusStatePort,
   encodeSourceReconcileRecoveryPayloadEffect,
   decodeUnknownTaskAgentParametersSourceEffect,
   runtimeClientSubmissionLogDetails,
+  normalizeRuntimeClientSubmissionMetadata,
   type AcquireDefaultWorkspaceInput,
   type AcquireWorkspaceInput,
   type AcquireWorkspaceResult,
@@ -54,6 +59,11 @@ import {
   type CloseSurfaceResult,
   type CreateOrchestratorSurfaceInput,
   type CreateSurfaceResult,
+  type DeleteOrchestratorSurfaceInput,
+  type DeleteOrchestratorSurfaceResult,
+  type EditCommittedUserMessageInput,
+  type EditCommittedUserMessageResult,
+  type ForkOrchestratorSurfaceInput,
   type OpenSurfaceInput,
   type OpenSurfaceResult,
   type PromptTarget,
@@ -65,8 +75,11 @@ import {
   type InternalRefreshGeneratedPackagesRequest,
   type ReleaseWorkspaceInput,
   type ReleaseWorkspaceResult,
+  type RenameOrchestratorSurfaceInput,
+  type RenameOrchestratorSurfaceResult,
   type RuntimeApprovalStatePortService,
   type RuntimeCommandStatePortService,
+  type RuntimeComposerProfileStatePortService,
   type RuntimeEventsInput,
   type RuntimeQueueStatePortService,
   type RuntimeCreateWorkflowAgentSourceInput,
@@ -104,6 +117,10 @@ import {
   type ReorderQueuedMessageInput,
   type SubmitMessageInput,
   type SubmitMessageResult,
+  type UpdateSurfaceExtensionUsageInput,
+  type UpdateSurfaceModelInput,
+  type UpdateSurfaceReasoningInput,
+  type UpdateSurfaceSettingsResult,
   type WriteCommandStdinInput,
   type WriteCommandStdinResult,
   type WorkspaceId,
@@ -218,6 +235,7 @@ import {
 export type RuntimeLayerRequirements =
   | RuntimeLayerConfigService
   | RuntimePromptDefaultsStatePort
+  | RuntimeComposerProfileStatePort
   | PiAdapter
   | ProviderAuthPort
   | ProviderAuthStatusStatePort
@@ -288,12 +306,16 @@ export function makeRuntimeService() {
     const extensionSourceRoots = yield* ExtensionSourceRootsPort;
     const queueState = yield* RuntimeQueueStatePort;
     const composerDraftState = yield* RuntimeComposerDraftStatePort;
+    const composerProfileState = yield* RuntimeComposerProfileStatePort;
     const requestState = yield* RuntimeRequestStatePort;
     const approvalState = yield* RuntimeApprovalStatePort;
     const commandState = yield* RuntimeCommandStatePort;
     const sessionWaitState = yield* RuntimeSessionWaitStatePort;
     const workflowTaskAgentBridge = yield* RuntimeWorkflowTaskAgentBridgeService;
     const shutdownAdmission = yield* RuntimeShutdownAdmission;
+    const piAdapter = yield* PiAdapter;
+    const piRuntimePaths = yield* PiRuntimePathsPort;
+    const piSessionReferences = yield* PiSessionReferencePort;
 
     const admit = <A, R>(
       operation: string,
@@ -376,6 +398,85 @@ export function makeRuntimeService() {
               approvalWaitService,
             }),
           ),
+        renameOrchestrator: (input: RenameOrchestratorSurfaceInput) =>
+          admit(
+            "runtime.surfaces.renameOrchestrator",
+            renameOrchestratorSurface({
+              input,
+              piAdapter,
+              piSessionReferences,
+              surfaceLifecycleState,
+              eventBus,
+              surfaceEvents,
+            }),
+          ),
+        forkOrchestrator: (input: ForkOrchestratorSurfaceInput) =>
+          admit(
+            "runtime.surfaces.forkOrchestrator",
+            forkOrchestratorSurface({
+              input,
+              piAdapter,
+              piRuntimePaths,
+              piSessionReferences,
+              surfaceLifecycleState,
+              surfaceScopes,
+              eventBus,
+              surfaceEvents,
+            }),
+          ),
+        deleteOrchestrator: (input: DeleteOrchestratorSurfaceInput) =>
+          admit(
+            "runtime.surfaces.deleteOrchestrator",
+            deleteOrchestratorSurface({
+              input,
+              piAdapter,
+              fileSystem,
+              piSessionReferences,
+              surfaceLifecycleState,
+              surfaceScopes,
+              eventBus,
+              surfaceEvents,
+              requestInputWaitService,
+              approvalState,
+              approvalWaitService,
+            }),
+          ),
+        updateModel: (input: UpdateSurfaceModelInput) =>
+          admit(
+            "runtime.surfaces.updateModel",
+            updateSurfaceModel({
+              input,
+              promptDefaults,
+              composerProfileState,
+              modelResolver,
+              eventBus,
+              surfaceEvents,
+            }),
+          ),
+        updateReasoning: (input: UpdateSurfaceReasoningInput) =>
+          admit(
+            "runtime.surfaces.updateReasoning",
+            updateSurfaceReasoning({
+              input,
+              promptDefaults,
+              composerProfileState,
+              modelResolver,
+              eventBus,
+              surfaceEvents,
+            }),
+          ),
+        updateExtensionUsage: (input: UpdateSurfaceExtensionUsageInput) =>
+          admit(
+            "runtime.surfaces.updateExtensionUsage",
+            updateSurfaceExtensionUsage({
+              input,
+              actorBindingState,
+              composerProfileState,
+              sourceInvalidation,
+              eventBus,
+              surfaceEvents,
+            }),
+          ),
       },
       messages: {
         submit: (input: SubmitMessageInput) =>
@@ -383,6 +484,22 @@ export function makeRuntimeService() {
             "runtime.messages.submit",
             submitMessage({
               input,
+              promptDefaults,
+              queueWake,
+              queueState,
+              providerAuth,
+              modelResolver,
+              appLog,
+              eventBus,
+            }),
+          ),
+        editCommitted: (input: EditCommittedUserMessageInput) =>
+          admit(
+            "runtime.messages.editCommitted",
+            editCommittedUserMessage({
+              input,
+              surfaceScopes,
+              transcriptState,
               promptDefaults,
               queueWake,
               queueState,
@@ -882,6 +999,225 @@ function openSurface(input: {
   });
 }
 
+function renameOrchestratorSurface(input: {
+  input: RenameOrchestratorSurfaceInput;
+  piAdapter: PiAdapter["Service"];
+  piSessionReferences: PiSessionReferencePortService;
+  surfaceLifecycleState: RuntimeSurfaceLifecycleStatePortService;
+  eventBus: RuntimeEventBus["Service"];
+  surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
+}): Effect.Effect<RenameOrchestratorSurfaceResult, RuntimeContractError> {
+  const operation = "runtime.surfaces.renameOrchestrator";
+  return Effect.gen(function* () {
+    const title = input.input.title.trim();
+    if (!title)
+      return yield* Effect.fail(
+        new RuntimeContractError({
+          operation,
+          reason: "invalid-input",
+          message: "Session title cannot be empty.",
+        }),
+      );
+    const lifecycle = yield* input.surfaceLifecycleState
+      .readOrchestratorLifecycle(input.input)
+      .pipe(Effect.mapError((cause) => runtimeStateError(operation, cause)));
+    if (
+      lifecycle.titleGenerationStatus === "pending" ||
+      lifecycle.titleGenerationStatus === "running"
+    ) {
+      return yield* Effect.fail(
+        new RuntimeContractError({
+          operation,
+          reason: "state-conflict",
+          message: "Session title is being generated. Rename is temporarily locked.",
+        }),
+      );
+    }
+    const target = lifecycle.targets.find((candidate) => candidate.surface === "orchestrator");
+    if (!target)
+      return yield* Effect.fail(
+        new RuntimeContractError({
+          operation,
+          reason: "target-not-found",
+          message: `Orchestrator session ${input.input.workspaceSessionId} was not found.`,
+        }),
+      );
+    yield* input.piAdapter.sessions
+      .rename({
+        workspaceId: input.input.workspaceId,
+        workspaceSessionId: input.input.workspaceSessionId,
+        surfacePiSessionId: target.surfacePiSessionId,
+        actorKind: "orchestrator",
+        title,
+      })
+      .pipe(
+        Effect.provideService(PiSessionReferencePort, input.piSessionReferences),
+        Effect.mapError((cause) => runtimeAdapterError(operation, cause)),
+      );
+    const result = yield* commitStateMutation({
+      operation,
+      effect: input.surfaceLifecycleState.renameOrchestrator({ ...input.input, title }),
+      eventBus: input.eventBus,
+    });
+    yield* publishSurfaceChanged({
+      operation,
+      workspaceId: input.input.workspaceId,
+      target,
+      reason: "surface.updated",
+      surfaceEvents: input.surfaceEvents,
+    });
+    return result;
+  });
+}
+
+function forkOrchestratorSurface(input: {
+  input: ForkOrchestratorSurfaceInput;
+  piAdapter: PiAdapter["Service"];
+  piRuntimePaths: PiRuntimePathsPortService;
+  piSessionReferences: PiSessionReferencePortService;
+  surfaceLifecycleState: RuntimeSurfaceLifecycleStatePortService;
+  surfaceScopes: RuntimeSurfaceScopeServiceService;
+  eventBus: RuntimeEventBus["Service"];
+  surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
+}): Effect.Effect<CreateSurfaceResult, RuntimeContractError> {
+  const operation = "runtime.surfaces.forkOrchestrator";
+  return Effect.gen(function* () {
+    const lifecycle = yield* input.surfaceLifecycleState
+      .readOrchestratorLifecycle(input.input)
+      .pipe(Effect.mapError((cause) => runtimeStateError(operation, cause)));
+    const source = lifecycle.targets.find((candidate) => candidate.surface === "orchestrator");
+    if (!source)
+      return yield* Effect.fail(
+        new RuntimeContractError({
+          operation,
+          reason: "target-not-found",
+          message: `Orchestrator session ${input.input.workspaceSessionId} was not found.`,
+        }),
+      );
+    const forked = yield* input.piAdapter.sessions
+      .fork({
+        workspaceId: input.input.workspaceId,
+        workspaceSessionId: input.input.workspaceSessionId,
+        surfacePiSessionId: source.surfacePiSessionId,
+        actorKind: "orchestrator",
+        ...(input.input.title !== undefined ? { title: input.input.title } : {}),
+        ...(input.input.messageTimestamp !== undefined
+          ? { messageTimestamp: input.input.messageTimestamp }
+          : {}),
+      })
+      .pipe(
+        Effect.provideService(PiRuntimePathsPort, input.piRuntimePaths),
+        Effect.provideService(PiSessionReferencePort, input.piSessionReferences),
+        Effect.mapError((cause) => runtimeAdapterError(operation, cause)),
+      );
+    const result = yield* commitStateMutation({
+      operation,
+      effect: input.surfaceLifecycleState.forkOrchestrator({
+        workspaceId: input.input.workspaceId,
+        sourceWorkspaceSessionId: input.input.workspaceSessionId,
+        targetSurfacePiSessionId: forked.surfacePiSessionId,
+        ...(input.input.title !== undefined ? { title: input.input.title } : {}),
+      }),
+      eventBus: input.eventBus,
+    });
+    const savedReference = yield* input.piSessionReferences
+      .savePiSessionReference({
+        surfacePiSessionId: forked.surfacePiSessionId,
+        reference: forked.reference,
+      })
+      .pipe(Effect.mapError((cause) => runtimeAdapterError(`${operation}.saveReference`, cause)));
+    yield* input.eventBus
+      .publishStateInvalidations({ afterCommit: savedReference.afterCommit })
+      .pipe(Effect.mapError((cause) => runtimeAdapterError(`${operation}.saveReference`, cause)));
+    yield* input.surfaceScopes.open({
+      workspaceId: input.input.workspaceId,
+      surfacePiSessionId: forked.surfacePiSessionId,
+      expectedReference: forked.reference,
+      actorKind: "orchestrator",
+    });
+    yield* publishSurfaceChanged({
+      operation,
+      workspaceId: input.input.workspaceId,
+      target: result.target,
+      reason: "surface.updated",
+      surfaceEvents: input.surfaceEvents,
+    });
+    return result;
+  });
+}
+
+function deleteOrchestratorSurface(input: {
+  input: DeleteOrchestratorSurfaceInput;
+  piAdapter: PiAdapter["Service"];
+  fileSystem: FileSystem.FileSystem;
+  piSessionReferences: PiSessionReferencePortService;
+  surfaceLifecycleState: RuntimeSurfaceLifecycleStatePortService;
+  surfaceScopes: RuntimeSurfaceScopeServiceService;
+  eventBus: RuntimeEventBus["Service"];
+  surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
+  requestInputWaitService: RuntimeRequestInputWaitService["Service"];
+  approvalState: RuntimeApprovalStatePortService;
+  approvalWaitService: RuntimeApprovalWaitService["Service"];
+}): Effect.Effect<DeleteOrchestratorSurfaceResult, RuntimeContractError> {
+  const operation = "runtime.surfaces.deleteOrchestrator";
+  return Effect.gen(function* () {
+    const lifecycle = yield* input.surfaceLifecycleState
+      .readOrchestratorLifecycle(input.input)
+      .pipe(Effect.mapError((cause) => runtimeStateError(operation, cause)));
+    for (const target of lifecycle.targets) {
+      yield* input.requestInputWaitService.cancelBlockingRequestsForSurface({
+        surfacePiSessionId: target.surfacePiSessionId,
+        reason: "Session deleted.",
+      });
+      yield* cancelApprovalRequestsForSurface({
+        surfacePiSessionId: target.surfacePiSessionId,
+        reason: "Session deleted.",
+        approvalState: input.approvalState,
+        eventBus: input.eventBus,
+        approvalWaitService: input.approvalWaitService,
+      });
+      yield* input.surfaceScopes.interrupt({
+        surfacePiSessionId: target.surfacePiSessionId,
+        reason: "surface-close",
+      });
+      yield* input.surfaceScopes.release({ surfacePiSessionId: target.surfacePiSessionId });
+      yield* input.piAdapter.sessions
+        .delete({
+          workspaceId: input.input.workspaceId,
+          surfacePiSessionId: target.surfacePiSessionId,
+          actorKind: target.surface,
+        })
+        .pipe(
+          Effect.provideService(FileSystem.FileSystem, input.fileSystem),
+          Effect.provideService(PiSessionReferencePort, input.piSessionReferences),
+          Effect.catch((cause) =>
+            cause.reason === "session-not-found"
+              ? Effect.void
+              : Effect.fail(runtimeAdapterError(operation, cause)),
+          ),
+        );
+    }
+    const result = yield* commitStateMutation({
+      operation,
+      effect: input.surfaceLifecycleState.deleteOrchestrator(input.input),
+      eventBus: input.eventBus,
+    });
+    yield* Effect.forEach(
+      lifecycle.targets,
+      (target) =>
+        publishSurfaceChanged({
+          operation,
+          workspaceId: input.input.workspaceId,
+          target,
+          reason: "surface.closed",
+          surfaceEvents: input.surfaceEvents,
+        }),
+      { discard: true },
+    );
+    return result;
+  });
+}
+
 function surfaceReopenStreamGenerationId(surfacePiSessionId: string): SurfaceStreamGenerationId {
   return `surface-reopened:${surfacePiSessionId}` as SurfaceStreamGenerationId;
 }
@@ -929,6 +1265,172 @@ function closeSurface(input: {
       surfaceEvents: input.surfaceEvents,
     });
     return result;
+  });
+}
+
+function updateSurfaceModel(input: {
+  readonly input: UpdateSurfaceModelInput;
+  readonly promptDefaults: RuntimePromptDefaultsServiceService;
+  readonly composerProfileState: RuntimeComposerProfileStatePortService;
+  readonly modelResolver: RuntimeLayerModelResolverPortService;
+  readonly eventBus: RuntimeEventBus["Service"];
+  readonly surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
+}): Effect.Effect<UpdateSurfaceSettingsResult, RuntimeContractError> {
+  const operation = "runtime.surfaces.updateModel";
+  return Effect.gen(function* () {
+    const resolved = yield* input.modelResolver.resolveModel({
+      provider: input.input.provider,
+      model: input.input.model,
+    });
+    const current = yield* input.promptDefaults.resolve({ target: input.input.target });
+    const reasoningEffort = resolved.supportedReasoning.includes(current.reasoningEffort)
+      ? current.reasoningEffort
+      : resolved.supportedReasoning.includes("medium")
+        ? "medium"
+        : (resolved.supportedReasoning[0] ?? "off");
+    const committed = yield* input.promptDefaults.update({
+      target: input.input.target,
+      provider: resolved.provider,
+      model: resolved.model,
+      reasoningEffort,
+    });
+    yield* input.eventBus
+      .publishStateInvalidations({ afterCommit: committed.afterCommit })
+      .pipe(Effect.mapError((cause) => runtimeAdapterError(operation, cause)));
+    yield* syncComposerProfile({
+      operation,
+      target: input.input.target,
+      update: { provider: resolved.provider, model: resolved.model, reasoningEffort },
+      composerProfileState: input.composerProfileState,
+      eventBus: input.eventBus,
+    });
+    yield* publishSurfaceChanged({
+      operation,
+      workspaceId: input.input.workspaceId,
+      target: input.input.target,
+      reason: "surface.updated",
+      surfaceEvents: input.surfaceEvents,
+    });
+    return { target: input.input.target };
+  });
+}
+
+function updateSurfaceReasoning(input: {
+  readonly input: UpdateSurfaceReasoningInput;
+  readonly promptDefaults: RuntimePromptDefaultsServiceService;
+  readonly composerProfileState: RuntimeComposerProfileStatePortService;
+  readonly modelResolver: RuntimeLayerModelResolverPortService;
+  readonly eventBus: RuntimeEventBus["Service"];
+  readonly surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
+}): Effect.Effect<UpdateSurfaceSettingsResult, RuntimeContractError> {
+  const operation = "runtime.surfaces.updateReasoning";
+  return Effect.gen(function* () {
+    const current = yield* input.promptDefaults.resolve({ target: input.input.target });
+    const resolved = yield* input.modelResolver.resolveModel({
+      provider: current.provider,
+      model: current.model,
+    });
+    if (!resolved.supportedReasoning.includes(input.input.reasoningEffort)) {
+      return yield* Effect.fail(
+        new RuntimeContractError({
+          operation,
+          reason: "invalid-input",
+          message: `Model ${current.provider}/${current.model} does not support reasoning effort ${input.input.reasoningEffort}.`,
+        }),
+      );
+    }
+    const committed = yield* input.promptDefaults.update({
+      target: input.input.target,
+      provider: current.provider,
+      model: current.model,
+      reasoningEffort: input.input.reasoningEffort,
+    });
+    yield* input.eventBus
+      .publishStateInvalidations({ afterCommit: committed.afterCommit })
+      .pipe(Effect.mapError((cause) => runtimeAdapterError(operation, cause)));
+    yield* syncComposerProfile({
+      operation,
+      target: input.input.target,
+      update: { reasoningEffort: input.input.reasoningEffort },
+      composerProfileState: input.composerProfileState,
+      eventBus: input.eventBus,
+    });
+    yield* publishSurfaceChanged({
+      operation,
+      workspaceId: input.input.workspaceId,
+      target: input.input.target,
+      reason: "surface.updated",
+      surfaceEvents: input.surfaceEvents,
+    });
+    return { target: input.input.target };
+  });
+}
+
+function updateSurfaceExtensionUsage(input: {
+  readonly input: UpdateSurfaceExtensionUsageInput;
+  readonly actorBindingState: RuntimeActorExtensionBindingStatePortService;
+  readonly composerProfileState: RuntimeComposerProfileStatePortService;
+  readonly sourceInvalidation: RuntimeSourceInvalidationService["Service"];
+  readonly eventBus: RuntimeEventBus["Service"];
+  readonly surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
+}): Effect.Effect<UpdateSurfaceSettingsResult, RuntimeContractError> {
+  const operation = "runtime.surfaces.updateExtensionUsage";
+  return Effect.gen(function* () {
+    yield* commitStateMutation({
+      operation,
+      effect: input.actorBindingState.updateActorExtensionBinding({
+        target: input.input.target,
+        extensionId: input.input.extensionId,
+        usage: input.input.usage,
+        reason: "composer-control",
+      }),
+      eventBus: input.eventBus,
+    });
+    yield* syncComposerProfile({
+      operation,
+      target: input.input.target,
+      update: { extensionUsage: { [input.input.extensionId]: input.input.usage } },
+      composerProfileState: input.composerProfileState,
+      eventBus: input.eventBus,
+    });
+    yield* input.sourceInvalidation.refreshGeneratedContext({
+      scope: "target",
+      target: input.input.target,
+      reason: "profile-settings-changed",
+      refreshBoundSurfaceBeforeNextTurn: true,
+    });
+    yield* publishSurfaceChanged({
+      operation,
+      workspaceId: input.input.workspaceId,
+      target: input.input.target,
+      reason: "surface.updated",
+      surfaceEvents: input.surfaceEvents,
+    });
+    return { target: input.input.target };
+  });
+}
+
+function syncComposerProfile(input: {
+  readonly operation: string;
+  readonly target: PromptTarget;
+  readonly update: Omit<
+    Parameters<RuntimeComposerProfileStatePortService["updateFromComposer"]>[0],
+    "profileId"
+  >;
+  readonly composerProfileState: RuntimeComposerProfileStatePortService;
+  readonly eventBus: RuntimeEventBus["Service"];
+}): Effect.Effect<void, RuntimeContractError> {
+  return Effect.gen(function* () {
+    const profileId = yield* input.composerProfileState
+      .readSurfaceProfileId({ target: input.target })
+      .pipe(Effect.mapError((cause) => runtimeStateError(input.operation, cause)));
+    if (!profileId) return;
+    const result = yield* input.composerProfileState
+      .updateFromComposer({ profileId, ...input.update })
+      .pipe(Effect.mapError((cause) => runtimeStateError(input.operation, cause)));
+    yield* input.eventBus
+      .publishStateInvalidations({ afterCommit: result.afterCommit })
+      .pipe(Effect.mapError((cause) => runtimeAdapterError(input.operation, cause)));
   });
 }
 
@@ -1056,6 +1558,132 @@ function submitMessage(input: {
       receipt: submitResult.receipt,
     };
   }).pipe(Effect.mapError((cause) => runtimeAdapterError("runtime.messages.submit", cause)));
+}
+
+function editCommittedUserMessage(input: {
+  readonly input: EditCommittedUserMessageInput;
+  readonly surfaceScopes: RuntimeSurfaceScopeServiceService;
+  readonly transcriptState: RuntimeTranscriptStatePortService;
+  readonly promptDefaults: RuntimePromptDefaultsServiceService;
+  readonly queueWake: RuntimeQueueWakeServiceService;
+  readonly queueState: RuntimeQueueStatePortService;
+  readonly providerAuth: RuntimeLayerProviderAuthPortService;
+  readonly modelResolver: RuntimeLayerModelResolverPortService;
+  readonly appLog: AppLogWritePortService;
+  readonly eventBus: RuntimeEventBus["Service"];
+}): Effect.Effect<EditCommittedUserMessageResult, RuntimeContractError> {
+  const operation = "runtime.messages.editCommitted";
+  return Effect.gen(function* () {
+    const expectedTimestampMs =
+      typeof input.input.messageTimestamp === "number"
+        ? input.input.messageTimestamp
+        : Date.parse(input.input.messageTimestamp);
+    if (!Number.isFinite(expectedTimestampMs)) {
+      return yield* Effect.fail(
+        new RuntimeContractError({
+          operation,
+          reason: "invalid-input",
+          message:
+            "The selected committed user message is stale or does not belong to the target surface.",
+        }),
+      );
+    }
+    const defaults = yield* input.promptDefaults.resolve({ target: input.input.target });
+    const apiKey = yield* input.providerAuth.ensureUsableProviderAuth(defaults.provider);
+    if (!apiKey) {
+      return yield* Effect.fail(
+        new RuntimeContractError({
+          operation,
+          reason: "target-not-ready",
+          message: input.providerAuth.getProviderAuthUnavailableMessage(defaults.provider),
+        }),
+      );
+    }
+    yield* input.modelResolver.resolveModel({
+      provider: defaults.provider,
+      model: defaults.model,
+    });
+    const surface = yield* input.surfaceScopes.retainOpen({
+      workspaceId: input.input.workspaceId,
+      target: input.input.target,
+    });
+    const clientSubmission = normalizeRuntimeClientSubmissionMetadata(input.input.clientSubmission);
+    const expectedDateTime = DateTime.make(expectedTimestampMs);
+    if (Option.isNone(expectedDateTime)) {
+      return yield* Effect.fail(
+        new RuntimeContractError({
+          operation,
+          reason: "invalid-input",
+          message: "The selected committed user message timestamp is invalid.",
+        }),
+      );
+    }
+    const expectedCommittedAt = DateTime.formatIso(expectedDateTime.value);
+    const idempotencyKey = `committed-edit:${input.input.target.surfacePiSessionId}:${input.input.messageId}:${expectedCommittedAt}`;
+    const accepted = yield* surface
+      .withPromptLock(
+        Effect.gen(function* () {
+          const transcript = yield* input.transcriptState
+            .readSurfaceTranscript({ surfacePiSessionId: input.input.target.surfacePiSessionId })
+            .pipe(Effect.mapError((cause) => runtimeStateError(operation, cause)));
+          const original = transcript.messages.find(
+            (message) => message.messageId === input.input.messageId,
+          );
+          const sourcePiHistoryEntry =
+            original?.role === "user" && original.piHistoryEntry
+              ? original.piHistoryEntry
+              : {
+                  session: { surfacePiSessionId: input.input.target.surfacePiSessionId },
+                  entryId: "idempotent-replay",
+                  messageId: input.input.messageId,
+                };
+          return yield* input.queueState
+            .acceptEditedCommittedSurfaceMessage({
+              workspaceId: input.input.workspaceId,
+              target: input.input.target,
+              sourceMessageId: input.input.messageId,
+              expectedCommittedAt: expectedCommittedAt as never,
+              sourcePiHistoryEntry,
+              idempotencyKey,
+              promptHistoryText: input.input.message.text.trim() ? input.input.message.text : null,
+              messageJson: JSON.stringify(input.input.message),
+              payloadJson: JSON.stringify({
+                source: "committed-user-message-edit",
+                sourceMessageId: input.input.messageId,
+                expectedCommittedAt,
+                sourcePiHistoryEntry,
+                ...(clientSubmission ? { clientSubmission } : {}),
+              }),
+            })
+            .pipe(Effect.mapError((cause) => runtimeStateError(operation, cause)));
+        }),
+      )
+      .pipe(
+        Effect.ensuring(
+          input.surfaceScopes.release({
+            surfacePiSessionId: input.input.target.surfacePiSessionId,
+          }),
+        ),
+      );
+    yield* input.eventBus
+      .publishStateInvalidations({ afterCommit: accepted.afterCommit })
+      .pipe(Effect.mapError((cause) => runtimeAdapterError(operation, cause)));
+    yield* input.queueWake.wakeSurface({ target: input.input.target, reason: "message-edited" });
+    const queued = accepted.value.queuedMessage;
+    return {
+      queuedMessageId: queued.id as EditCommittedUserMessageResult["queuedMessageId"],
+      target: input.input.target,
+      status: "queued" as const,
+      receipt: {
+        clientRequestId:
+          clientSubmission?.clientRequestId ?? clientSubmission?.submissionId ?? null,
+        outcome: accepted.value.accepted === "existing" ? "duplicate" : "accepted",
+        acceptedAt: queued.createdAt as EditCommittedUserMessageResult["receipt"]["acceptedAt"],
+        stateRevision:
+          queued.sequence as EditCommittedUserMessageResult["receipt"]["stateRevision"],
+      },
+    };
+  });
 }
 
 function writeCommandStdin(input: {

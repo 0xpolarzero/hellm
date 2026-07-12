@@ -146,6 +146,38 @@ export const ClosePiSessionInputSchema = Schema.Struct({
 });
 export type ClosePiSessionInput = typeof ClosePiSessionInputSchema.Type;
 
+export const RenamePiSessionInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  workspaceSessionId: WorkspaceSessionId,
+  surfacePiSessionId: SurfacePiSessionId,
+  actorKind: ActorKindSchema,
+  title: Schema.String,
+});
+export type RenamePiSessionInput = typeof RenamePiSessionInputSchema.Type;
+
+export const ForkPiSessionInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  workspaceSessionId: WorkspaceSessionId,
+  surfacePiSessionId: SurfacePiSessionId,
+  actorKind: ActorKindSchema,
+  title: Schema.optionalKey(Schema.String),
+  messageTimestamp: Schema.optionalKey(Schema.Union([Schema.String, Schema.Number])),
+});
+export type ForkPiSessionInput = typeof ForkPiSessionInputSchema.Type;
+
+export const ForkPiSessionResultSchema = Schema.Struct({
+  surfacePiSessionId: SurfacePiSessionId,
+  reference: PiSessionReferenceSchema,
+});
+export type ForkPiSessionResult = typeof ForkPiSessionResultSchema.Type;
+
+export const DeletePiSessionInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  surfacePiSessionId: SurfacePiSessionId,
+  actorKind: ActorKindSchema,
+});
+export type DeletePiSessionInput = typeof DeletePiSessionInputSchema.Type;
+
 export const PiToolExecutionInputSchema = Schema.Struct({
   turnId: TurnId,
   surfacePiSessionId: SurfacePiSessionId,

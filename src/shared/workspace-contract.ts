@@ -68,6 +68,7 @@ import type {
   WorkflowAgentSourceDeleteResult,
   WorkflowAgentSourceLifecycleResult,
   RuntimeSubmittedAttachment,
+  RuntimeSubmittedMessage,
   RuntimeTranscriptAssistantMessage,
   RuntimeTranscriptMessage,
   RuntimeTranscriptStreamCursor,
@@ -968,8 +969,10 @@ export interface ReorderQueuedSurfaceMessageRequest extends QueuedSurfaceMessage
 
 export interface EditCommittedUserMessageRequest {
   target: PromptTarget;
+  messageId: string;
   messageTimestamp: string | number;
-  message: RendererTranscriptUserEntry;
+  message: RuntimeSubmittedMessage;
+  clientSubmission: RuntimeClientSubmissionMetadata;
 }
 
 export interface EditQueuedSurfaceMessageResponse {

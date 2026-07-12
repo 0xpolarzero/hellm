@@ -106,6 +106,44 @@ describe("RuntimeSurfaceLifecycleStatePort", () => {
     store.close();
   });
 
+  it("renames, forks, and hard-deletes orchestrator lifecycle state", async () => {
+    const store = createStructuredSessionStateStore({ workspace });
+    const port = runtimeSurfaceLifecycleStatePortFromStore(store);
+    const created = await runTestEffect(
+      port.createOrchestratorSurface({ workspaceId, title: "Source" }),
+    );
+    const renamed = await runTestEffect(
+      port.renameOrchestrator({
+        workspaceId,
+        workspaceSessionId: created.value.workspaceSessionId,
+        title: "Manual title",
+      }),
+    );
+    const forked = await runTestEffect(
+      port.forkOrchestrator({
+        workspaceId,
+        sourceWorkspaceSessionId: created.value.workspaceSessionId,
+        targetSurfacePiSessionId: "surface-forked" as SurfacePiSessionId,
+        title: "Forked title",
+      }),
+    );
+
+    expect(renamed.value.title).toBe("Manual title");
+    expect(store.getSessionState(forked.value.workspaceSessionId).pi).toMatchObject({
+      parentSessionId: created.value.workspaceSessionId,
+      title: "Forked title",
+    });
+    const deleted = await runTestEffect(
+      port.deleteOrchestrator({
+        workspaceId,
+        workspaceSessionId: forked.value.workspaceSessionId,
+      }),
+    );
+    expect(deleted.value.deleted).toBe(true);
+    expect(store.isSessionDeleted(forked.value.workspaceSessionId)).toBe(true);
+    store.close();
+  });
+
   it("exposes surface lifecycle through a layer", async () => {
     await runTestEffect(
       Effect.scoped(

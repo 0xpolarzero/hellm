@@ -356,19 +356,6 @@ function submittedUserMessage(message: RuntimeSubmittedMessage): RendererTranscr
   };
 }
 
-function submittedMessageFromRendererEntry(message: RendererTranscriptUserEntry): { text: string } {
-  const text =
-    typeof message.content === "string"
-      ? message.content
-      : Array.isArray(message.content)
-        ? message.content
-            .map((block) => (block.type === "text" ? block.text : ""))
-            .join("")
-            .trim()
-        : "";
-  return { text };
-}
-
 function assistantMessage(
   text: string,
   options: {
@@ -2820,7 +2807,13 @@ function createFakeRpc(input: {
           rendererTelemetryRequests.push(structuredClone(request));
           return { ok: true };
         },
-        editCommittedUserMessage: async ({ target, messageTimestamp, message, workspaceId }) => {
+        editCommittedUserMessage: async ({
+          target,
+          messageTimestamp,
+          message,
+          workspaceId,
+          clientSubmission,
+        }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
           const messages = record.fixture.transcript.messages;
           const numericMessageTimestamp = Number(messageTimestamp);
@@ -2849,8 +2842,9 @@ function createFakeRpc(input: {
             workspaceId,
             panelId: "primary",
             target,
-            ...submittedMessageFromRendererEntry(message),
-            clientRequestId: "edit-committed-message",
+            text: message.text,
+            attachments: (message.attachments ?? []) as never,
+            clientRequestId: clientSubmission.clientRequestId ?? "edit-committed-message",
           });
           return { target: cloneTarget(target) };
         },
@@ -4358,6 +4352,7 @@ describe("createChatRuntime", () => {
     const target = createOrchestratorTarget(session.id);
     const firstUser = userMessage("Original request");
     firstUser.timestamp = 101;
+    firstUser.messageId = "message-original";
     const firstAssistant = assistantMessage("Original reply");
     firstAssistant.timestamp = 102;
     const secondUser = userMessage("Follow-up");
@@ -4381,6 +4376,7 @@ describe("createChatRuntime", () => {
     await controller.editCommittedUserMessage(101, {
       text: "Revised request",
       attachments: [],
+      editMessageId: "message-original",
       snippetProvenance: [
         {
           mentionId: "mention-edit",
@@ -4408,6 +4404,7 @@ describe("createChatRuntime", () => {
 
     const [promptRequest] = harness.promptRequests;
     expect(promptRequest?.message.text).toBe("Revised request");
+    expect(promptRequest?.clientRequestId).toContain("desktop-submit:");
     expect(submittedUserMessage(promptRequest!.message)).not.toHaveProperty("svvyMetadata");
 
     runtime.dispose();

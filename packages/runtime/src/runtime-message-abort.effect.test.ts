@@ -100,6 +100,7 @@ function createHarness(
   const queueStatePort = {
     acceptSubmittedSurfaceMessage: () =>
       Effect.die("Unexpected acceptSubmittedSurfaceMessage call."),
+    acceptEditedCommittedSurfaceMessage: () => Effect.die("Unexpected committed edit call."),
     enqueueSurfaceMessage: () => Effect.die("Unexpected enqueueSurfaceMessage call."),
     getSurfaceQueuedMessage: (input) =>
       Effect.sync(() => {

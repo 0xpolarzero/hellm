@@ -119,6 +119,7 @@ describe("runtime promoted service layers", () => {
             calls.push(input);
             return defaults;
           }),
+        updatePromptDefaults: () => Effect.die("unused"),
       } satisfies RuntimePromptDefaultsStatePortService),
     );
   });
@@ -142,6 +143,7 @@ describe("runtime promoted service layers", () => {
               message: "stored defaults failed",
             }),
           ),
+        updatePromptDefaults: () => Effect.die("unused"),
       } satisfies RuntimePromptDefaultsStatePortService),
     ),
   );

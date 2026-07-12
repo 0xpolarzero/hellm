@@ -563,6 +563,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "layerRuntimeArtifactStatePort",
       "layerRuntimeComposerDraftStatePort",
       "layerRuntimeCommandStatePort",
+      "layerRuntimeComposerProfileStatePort",
       "layerRuntimeEpisodeStatePort",
       "layerRuntimeExtensionContextImpactStatePort",
       "layerRuntimeExtensionStatePort",
@@ -742,6 +743,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "DesktopNotificationBridge",
       "DesktopRendererCommand",
       "DesktopRendererNotification",
+      "DesktopRendererTelemetryInput",
       "DesktopRuntimeActionsFacade",
       "DesktopSwitchWorkspaceBranchResult",
       "DesktopWindowAdapter",
@@ -3057,12 +3059,14 @@ describe("package boundaries", () => {
       "@mariozechner/pi-coding-agent",
     ]);
     const allowedNodeImports = new Set(["node:path"]);
+    const allowedTestNodeImports = new Set(["node:fs", "node:os"]);
     const allowedPrefixes = ["effect/", "@mariozechner/pi-coding-agent/", "./"];
     const violations = listTypeScriptFiles(join(packageRoot, "pi-adapter", "src")).flatMap((file) =>
       readImports(file)
         .filter((specifier) => {
           if (allowedPackageImports.has(specifier)) return false;
           if (allowedNodeImports.has(specifier)) return false;
+          if (isTestFile(file) && allowedTestNodeImports.has(specifier)) return false;
           if (isTestFile(file) && specifier === "bun:test") return false;
           if (isEffectTestLaneFile(file) && specifier === "@effect/vitest") return false;
           if (allowedPrefixes.some((prefix) => specifier.startsWith(prefix))) return false;
@@ -3397,6 +3401,7 @@ describe("package boundaries", () => {
           "RuntimeApprovalStatePort",
           "RuntimeArtifactStatePort",
           "RuntimeComposerDraftStatePort",
+          "RuntimeComposerProfileStatePort",
           "RuntimeCommandStatePort",
           "RuntimeEpisodeStatePort",
           "RuntimeExtensionContextImpactStatePort",
@@ -3836,6 +3841,7 @@ describe("package boundaries", () => {
           "packages/state/src/runtime-artifact-state-port.ts -> layerRuntimeArtifactStatePort",
           "packages/state/src/runtime-command-state-port.ts -> layerRuntimeCommandStatePort",
           "packages/state/src/runtime-composer-draft-state-port.ts -> layerRuntimeComposerDraftStatePort",
+          "packages/state/src/runtime-composer-profile-state-port.ts -> layerRuntimeComposerProfileStatePort",
           "packages/state/src/runtime-episode-state-port.ts -> layerRuntimeEpisodeStatePort",
           "packages/state/src/runtime-extension-context-impact-state-port.ts -> layerRuntimeExtensionContextImpactStatePort",
           "packages/state/src/runtime-extension-state-port.ts -> layerRuntimeExtensionStatePort",
@@ -4015,6 +4021,7 @@ describe("package boundaries", () => {
       "packages/core/src/runtime-state-ports.ts -> RuntimeArtifactStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeCommandStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeComposerDraftStatePort",
+      "packages/core/src/runtime-state-ports.ts -> RuntimeComposerProfileStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeEpisodeStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeExtensionContextImpactStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeExtensionStatePort",
@@ -4869,6 +4876,12 @@ describe("package boundaries", () => {
           "FileSystem.FileSystem",
           ["access", "exists", "readFile", "realPath", "stat"],
           ["packages/sandbox/src/sandbox.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          ["remove"],
+          ["packages/pi-adapter/src/pi-adapter.ts"],
         ],
         [
           "effect/FileSystem",
@@ -8971,8 +8984,8 @@ describe("package boundaries", () => {
         name: "facades.runtime.queues.steer",
       },
       {
-        pattern: /\bruntime\.catalog\.editCommittedUserMessage\s*\(/g,
-        name: "runtime.catalog.editCommittedUserMessage",
+        pattern: /\bfacades\.runtime\.messages\.editCommitted\s*\(/g,
+        name: "facades.runtime.messages.editCommitted",
       },
       {
         pattern: /\bruntime\.catalog\.editQueuedSurfaceMessage\s*\(/g,
@@ -8996,8 +9009,8 @@ describe("package boundaries", () => {
     expect(actual).toEqual([
       "src/bun/index.ts -> facades.runtime.messages.abort",
       "src/bun/index.ts -> facades.runtime.messages.abort",
+      "src/bun/index.ts -> facades.runtime.messages.editCommitted",
       "src/bun/index.ts -> facades.runtime.queues.steer",
-      "src/bun/index.ts -> runtime.catalog.editCommittedUserMessage",
     ]);
   });
 
