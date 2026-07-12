@@ -1,4 +1,4 @@
-import type { ToolResultMessage } from "@mariozechner/pi-ai";
+import type { RendererCommandResultEntry } from "../shared/renderer-transcript";
 import type {
   WorkspaceCommandDiagnosticSnapshot,
   WorkspaceCommandOutputEvent,
@@ -470,7 +470,7 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-export function toolResultText(message: ToolResultMessage): string {
+export function toolResultText(message: RendererCommandResultEntry): string {
   return message.content
     .filter((block): block is { type: "text"; text: string } => block.type === "text")
     .map((block) => block.text)

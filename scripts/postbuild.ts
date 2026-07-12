@@ -33,6 +33,7 @@ const nativeSandboxHelperMetadata = join(
   "svvy-sandbox-helper.metadata.json",
 );
 const generatedInstructionAssets = join(projectRoot, "generated", "instructions", "full");
+const packagedExtensionTemplates = join(projectRoot, "packages", "extensions", "src", "builtin");
 const generatedInstructionScripts = [
   "generate-api-declarations.ts",
   "generate-cx-skill.ts",
@@ -51,6 +52,19 @@ function copyGeneratedInstructionAssets(): void {
   const destination = join(appContentsDir, "MacOS", "generated", "instructions", "full");
   mkdirSync(destination, { recursive: true });
   cpSync(generatedInstructionAssets, destination, { recursive: true });
+}
+
+function copyPackagedExtensionTemplates(): void {
+  if (!existsSync(packagedExtensionTemplates)) {
+    console.error(
+      `postbuild: missing packaged extension templates at ${packagedExtensionTemplates}`,
+    );
+    process.exit(1);
+  }
+  const appContentsDir = join(appCodeDir, "..", "..");
+  const destination = join(appContentsDir, "MacOS", "generated", "extensions", "builtin");
+  mkdirSync(destination, { recursive: true });
+  cpSync(packagedExtensionTemplates, destination, { recursive: true });
 }
 
 function copyGeneratedInstructionScripts(): void {
@@ -146,6 +160,7 @@ if (buildEnv === "dev") {
   copyNativeSandboxHelper();
   copyGeneratedInstructionAssets();
   copyGeneratedInstructionScripts();
+  copyPackagedExtensionTemplates();
   console.log("postbuild: linked repo node_modules into dev bundle");
   process.exit(0);
 }
@@ -245,4 +260,5 @@ copyNativeWindowControlsLibrary();
 copyNativeSandboxHelper();
 copyGeneratedInstructionAssets();
 copyGeneratedInstructionScripts();
+copyPackagedExtensionTemplates();
 console.log(`postbuild: copied ${copied} packages to bundle`);

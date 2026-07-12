@@ -1076,15 +1076,17 @@ Queued surface work is structured product state, not committed transcript histor
 prompt-bearing item is delivered as the next real user message for the same `surfacePiSessionId`.
 Runtime queue acceptance is the only ordinary composer send boundary: the renderer submits target
 surface, one new user message, delivery intent, and optional client metadata, then leaves renderer
-composer state and prompt history unchanged until `@svvy/runtime` validates the target, durably
-creates the queued user message through `@svvy/state`, clears the durable composer draft, and emits
-a typed runtime event from committed after-commit descriptors. App/bootstrap fans that event out as
-renderer-safe notifications. The renderer clears visible composer state after refetching the
-authoritative composer and queue read models. Runtime acceptance also invalidates any older delayed
-renderer draft persistence so stale pre-send text cannot be written back after runtime clears the
-draft. If runtime acceptance fails, the renderer keeps the draft and writes no prompt history. If a
-post-acceptance local prompt-history refresh fails, the send remains accepted and the failure is
-logged as a separate non-blocking renderer refresh failure. If the user submits from a composer
+composer state unchanged until `@svvy/runtime` validates the target and `@svvy/state` atomically
+creates the queued user message, records the exact non-empty workspace prompt-history text, and
+clears the durable composer draft. State returns typed `surface`, `sessionNavigation`, and
+`promptHistory` after-commit descriptors; runtime publishes them and app/bootstrap fans them out as
+renderer-safe notifications. The renderer clears visible composer state and replaces its
+non-authoritative prompt-history cache after refetching those read models. Runtime acceptance also
+invalidates any older delayed renderer draft persistence so stale pre-send text cannot be written
+back after runtime clears the draft. If runtime acceptance fails, the renderer keeps the draft and
+state writes no prompt history. If a post-acceptance prompt-history refetch fails, the committed send
+and history row remain accepted and the renderer keeps its previous cache until a later invalidation
+or rebaseline succeeds. If the user submits from a composer
 while the target surface is idle, `svvy` still durably enqueues the message, emits runtime events
 after commit, and wakes the queue dispatcher; insertion and claim are separate committed
 transitions, and the UI learns whether the row is queued, dispatching, pending, or active by
@@ -1693,6 +1695,13 @@ It should not restore transient menus or popovers, unsaved inline edits outside 
 Composer draft text and chip-only attachments are durable surface state rather than transient UI restore state. They are saved live against the owning `surfacePiSessionId`, survive closing the surface and restarting the app, and clear only when submitted or explicitly emptied.
 
 `@svvy/runtime` recovery is separate from workspace shell UI restore. Each acquired workspace runtime scope owns one durable recovery coordinator for that workspace's sessions, pi surfaces, queues, initial handler starts, thread report notification delivery, report requests, waits, title jobs, and recovery observability. The coordinator uses durable owner scopes, idempotency keys, and transactional claims rather than active workspace, focused tab, focused panel, process cwd, or renderer state. App-global startup and workspace-tab restore decide which workspace runtime scopes exist; they do not drain workspace queues or repair workspace product work directly.
+
+Workspace startup settles active-turn recovery first, then normalizes stale claims after the store
+is registered. Runtime workspace acquisition restores surviving blocking request-input waiters and
+timeout schedules before queue replay activates. Claimed `queue_delivery` work invokes the
+runtime-owned queue wake/drain lane with a startup-recovery reason; unsupported or malformed claimed
+work, including approval-wait work outside this coordinator's ownership, fails or retries through
+its fenced recovery row and never silently completes.
 
 ## Product Outcomes
 

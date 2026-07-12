@@ -15,6 +15,7 @@ import type {
   RuntimeApprovalId,
   RuntimeClientRequestId,
   RuntimeClientSubmissionSource,
+  RuntimeSurfaceTarget,
   RequestUserInputAnswer,
   SteerQueuedMessageInput,
   SurfacePiSessionId,
@@ -48,9 +49,7 @@ import type {
 import {
   DEFAULT_AGENT_SETTINGS,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
-  DEFAULT_WORKFLOW_AGENT_SETTINGS,
   type AgentDefaults,
-  type WorkflowAgentSettings,
 } from "../shared/agent-settings";
 import {
   getCredential,
@@ -71,19 +70,11 @@ import {
   decodePromptClientSubmissionToRuntimeInput,
   type SessionDefaults,
 } from "./session-catalog";
-import {
-  buildWorkflowsGeneratedPackage,
-  getWorkflowsSourceRoot,
-} from "./smithers-runtime/workflow-library";
-import { assertAgentModelSelection, readDefaultModelCatalog } from "./svvyx-workflows-command";
+import { assertAgentModelSelection } from "./svvyx-workflows-command";
 import { resolveWorkspaceCwd } from "./workspace-context";
 import { WorkspaceRuntimeRegistry, type WorkspaceRuntime } from "./workspace-runtime-registry";
 import { createPackagedSandboxHostSupportServices } from "./runtime-service-adapter";
 import { RuntimeLayerConfigFromEnv } from "@svvy/runtime/bootstrap";
-import {
-  FILE_BACKED_EDIT_CONFLICT_CODE,
-  isFileBackedEditConflictError,
-} from "../shared/file-backed-edit";
 import { getWorkspaceRuntimeForRequest, stripWorkspaceId } from "./workspace-rpc-routing";
 import {
   normalizeDesktopBridgeHandlers,
@@ -142,16 +133,6 @@ let resolvedDefaults: AgentDefaults | null = null;
 let desktopHost: ElectrobunDesktopHostAdapter | null = null;
 const startupWorkspaceCwd = resolveWorkspaceCwd();
 
-function workflowsBuildFailedError(diagnostics: unknown[]): Error {
-  const error = new Error("Workflows build failed.") as Error & {
-    code: "build_failed";
-    diagnostics: unknown[];
-  };
-  error.code = "build_failed";
-  error.diagnostics = diagnostics;
-  return error;
-}
-
 function loadEnvFile(filePath: string): void {
   if (!existsSync(filePath)) return;
 
@@ -205,25 +186,33 @@ function quoteSvvyxCommandArg(value: string): string {
 }
 
 async function readWorkspaceExtensionsInventory(runtime: WorkspaceRuntime) {
+  const agentProfileStore = await runtime.catalog.getAgentProfileMutationStore();
   return readBuiltinExtensionsInventory({
+    agentProfileStore,
     agentSettingsStore: runtime.agentSettingsStore,
     cwd: runtime.cwd,
     envSecretStore: extensionEnvSecretStore,
     extensionsRoot: runtime.catalog.getExtensionsRoot(),
     externalInstructionSources: await runtime.catalog.getGeneratedAgentContextExternalSources(),
     includeUserExtensions: true,
+    requestInputVariant: runtime.catalog.getRequestInputSettings().mode,
   });
 }
 
 async function runWorkspaceExtensionsCommand(runtime: WorkspaceRuntime, command: string) {
-  return runSvvyxExtensionsCommand({
+  const agentProfileStore = await runtime.catalog.getAgentProfileMutationStore();
+  const result = await runSvvyxExtensionsCommand({
+    agentProfileStore,
     agentSettingsStore: runtime.agentSettingsStore,
     command,
     cwd: runtime.cwd,
     envSecretStore: extensionEnvSecretStore,
     extensionContextImpactState: runtime.catalog.getRuntimeExtensionContextImpactState(),
     extensionsRoot: runtime.catalog.getExtensionsRoot(),
+    requestInputVariant: runtime.catalog.getRequestInputSettings().mode,
   });
+  await runtime.catalog.applyAgentProfileMutations(agentProfileStore.takeMutations());
+  return result;
 }
 
 type DevBrowserToolsRecorder = {
@@ -745,13 +734,6 @@ const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
       "Unable to send artifact open request to the main view.",
     );
   },
-  onSurfaceSync: (_workspaceId, payload) => {
-    void sendLegacyRendererMessage(
-      "sendSurfaceSync",
-      payload,
-      "Unable to send surface sync to the main view.",
-    );
-  },
 });
 
 async function sendLegacyRendererMessage<Name extends keyof ChatRPCSchema["webview"]["messages"]>(
@@ -1029,9 +1011,6 @@ function buildDesktopRpcHandlers(
       rendererReady: async () => {
         lifecycle.rendererReady();
         return { ok: true };
-      },
-      getAgentSettings: async (input) => {
-        return getWorkspaceRuntime(input).agentSettingsStore.getState();
       },
       getAgentContextPreview: async (input) => {
         return getWorkspaceRuntime(input).catalog.getAgentContextPreview(stripWorkspaceId(input));
@@ -1337,14 +1316,7 @@ function buildDesktopRpcHandlers(
           extensionId,
           envName,
         });
-        return readBuiltinExtensionsInventory({
-          agentSettingsStore: runtime.agentSettingsStore,
-          envSecretStore: extensionEnvSecretStore,
-          extensionsRoot: runtime.catalog.getExtensionsRoot(),
-          externalInstructionSources:
-            await runtime.catalog.getGeneratedAgentContextExternalSources(),
-          includeUserExtensions: true,
-        });
+        return readWorkspaceExtensionsInventory(runtime);
       },
       removeExtensionEnvSecret: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -1355,14 +1327,7 @@ function buildDesktopRpcHandlers(
           extensionId,
           envName,
         });
-        return readBuiltinExtensionsInventory({
-          agentSettingsStore: runtime.agentSettingsStore,
-          envSecretStore: extensionEnvSecretStore,
-          extensionsRoot: runtime.catalog.getExtensionsRoot(),
-          externalInstructionSources:
-            await runtime.catalog.getGeneratedAgentContextExternalSources(),
-          includeUserExtensions: true,
-        });
+        return readWorkspaceExtensionsInventory(runtime);
       },
       setExtensionEnvOverride: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -1383,14 +1348,7 @@ function buildDesktopRpcHandlers(
           extensionId,
           envName,
         });
-        return readBuiltinExtensionsInventory({
-          agentSettingsStore: runtime.agentSettingsStore,
-          envSecretStore: extensionEnvSecretStore,
-          extensionsRoot: runtime.catalog.getExtensionsRoot(),
-          externalInstructionSources:
-            await runtime.catalog.getGeneratedAgentContextExternalSources(),
-          includeUserExtensions: true,
-        });
+        return readWorkspaceExtensionsInventory(runtime);
       },
       removeExtensionEnvOverride: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -1408,14 +1366,7 @@ function buildDesktopRpcHandlers(
           extensionId,
           envName,
         });
-        return readBuiltinExtensionsInventory({
-          agentSettingsStore: runtime.agentSettingsStore,
-          envSecretStore: extensionEnvSecretStore,
-          extensionsRoot: runtime.catalog.getExtensionsRoot(),
-          externalInstructionSources:
-            await runtime.catalog.getGeneratedAgentContextExternalSources(),
-          includeUserExtensions: true,
-        });
+        return readWorkspaceExtensionsInventory(runtime);
       },
       fetchStateReadModel: fetchDesktopStateReadModel,
       refetchStateReadModels: async (request) =>
@@ -1532,167 +1483,26 @@ function buildDesktopRpcHandlers(
       },
       openSourceEdit: (input) => facades.runtime.sourceEdits.open(input),
       saveSourceEdit: (input) => facades.runtime.sourceEdits.save(input),
-      updateWorkflowAgent: async (input) => {
+      createWorkflowAgentSource: (input) => facades.runtime.sourceEdits.createWorkflowAgent(input),
+      duplicateWorkflowAgentSource: (input) =>
+        facades.runtime.sourceEdits.duplicateWorkflowAgent(input),
+      deleteWorkflowAgentSource: (input) => facades.runtime.sourceEdits.deleteWorkflowAgent(input),
+      openSourceInEditor: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const { key, settings, baseSourceVersion, mode } = input;
-        const modelCatalog = readDefaultModelCatalog();
-        assertAgentModelSelection(
-          {
-            providerId: settings.provider,
-            modelId: settings.model,
-            reasoningEffort: settings.reasoningEffort,
-          },
-          modelCatalog,
-        );
-        const previous = runtime.agentSettingsStore.getState().workflowAgents[key] ?? null;
-        let next;
-        try {
-          next = runtime.agentSettingsStore.setWorkflowAgent(key, settings, {
-            baseSourceVersion,
-            mode,
-          });
-        } catch (error) {
-          if (isFileBackedEditConflictError<WorkflowAgentSettings>(error)) {
-            return {
-              ok: false,
-              code: FILE_BACKED_EDIT_CONFLICT_CODE,
-              state: runtime.agentSettingsStore.getState(),
-              current: error.conflict.current,
-              currentVersion: error.conflict.currentVersion,
-              baseVersion: error.conflict.baseVersion,
-            };
-          }
-          throw error;
-        }
-        const saved = next.workflowAgents[key] ?? settings;
-        runtime.appLog.info("settings", "Workflow agent settings updated.", { key });
-        try {
-          const build = await buildWorkflowsGeneratedPackage({ modelCatalog });
-          if (build.ok) {
-            runtime.appLog.info("workflow.library", "Generated Workflows package rebuilt.", {
-              reason: "workflow-agent-settings",
-              workflowDiagnosticCount: build.diagnostics.length,
-              workflowExportCount: build.items.length,
-            });
-          } else {
-            runtime.appLog.warning(
-              "workflow.library",
-              "Workflow agent settings rejected because Workflows build failed.",
-              {
-                reason: "workflow-agent-settings",
-                workflowDiagnosticCount: build.diagnostics.length,
-                workflowDiagnostics: build.diagnostics,
-              },
-            );
-            if (previous) {
-              runtime.agentSettingsStore.setWorkflowAgent(key, previous, {
-                baseSourceVersion: saved.sourceVersion,
-              });
-            } else {
-              runtime.agentSettingsStore.deleteWorkflowAgent(key, {
-                baseSourceVersion: saved.sourceVersion,
-              });
-            }
-            throw workflowsBuildFailedError(build.diagnostics);
-          }
-        } catch (error) {
-          if ((error as { code?: string }).code === "build_failed") {
-            throw error;
-          }
-          if (previous) {
-            runtime.agentSettingsStore.setWorkflowAgent(key, previous, {
-              baseSourceVersion: saved.sourceVersion,
-            });
-          } else {
-            runtime.agentSettingsStore.deleteWorkflowAgent(key, {
-              baseSourceVersion: saved.sourceVersion,
-            });
-          }
-          runtime.appLog.error(
-            "workflow.library",
-            "Workflow agent settings rejected because Workflows build errored.",
-            error,
-            { reason: "workflow-agent-settings" },
-          );
-          throw error;
-        }
-        return { ok: true, state: next, agent: saved };
-      },
-      deleteWorkflowAgent: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { key } = input;
-        if (Object.prototype.hasOwnProperty.call(DEFAULT_WORKFLOW_AGENT_SETTINGS, key)) {
-          throw new Error(`Default workflow agent cannot be deleted: ${key}`);
-        }
-        const previous = runtime.agentSettingsStore.getState().workflowAgents[key] ?? null;
-        if (!previous) {
-          return runtime.agentSettingsStore.getState();
-        }
-        const next = runtime.agentSettingsStore.deleteWorkflowAgent(key);
-        runtime.appLog.info("settings", "Workflow agent deleted.", { key });
-        try {
-          const build = await buildWorkflowsGeneratedPackage({
-            modelCatalog: readDefaultModelCatalog(),
-          });
-          if (!build.ok) {
-            runtime.agentSettingsStore.setWorkflowAgent(key, previous);
-            throw workflowsBuildFailedError(build.diagnostics);
-          }
-        } catch (error) {
-          if ((error as { code?: string }).code !== "build_failed") {
-            runtime.appLog.error(
-              "workflow.library",
-              "Workflow agent delete rejected because Workflows build errored.",
-              error,
-              { reason: "workflow-agent-delete" },
-            );
-          }
-          runtime.agentSettingsStore.setWorkflowAgent(key, previous);
-          throw error;
-        }
-        return next;
-      },
-      openWorkflowAgentSourceInEditor: (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { key } = input;
-        const agent = runtime.agentSettingsStore.getState().workflowAgents[key];
-        if (!agent) {
-          throw new Error(`Workflow agent not found: ${key}`);
-        }
-        const path = join(getWorkflowsSourceRoot(), "agents", `${key}.agent.json`);
-        const result = openPathInPreferredEditor(runtime, path);
-        runtime.appLog.info("external-editor", "Workflow agent source opened in external editor.", {
-          path,
+        const session = await facades.runtime.sourceEdits.open(stripWorkspaceId(input));
+        const result = openPathInPreferredEditor(runtime, session.path);
+        runtime.appLog.info("external-editor", "Source opened in external editor.", {
+          sourceKind: session.sourceKind,
+          sourceId: session.sourceId,
+          path: session.path,
           editor: result.editor,
           opened: result.opened,
         });
-        return { ...result, path };
+        return { ...result, path: session.path };
       },
-      setAgentProfileExtensionUsage: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const result = await runtime.catalog.setExtensionUsage({
-          agentProfile: input.agentProfile,
-          extensionId: input.extensionId,
-          state: input.state,
-        });
-        runtime.appLog.info("settings", "Agent profile extension usage updated.", {
-          agentProfile: input.agentProfile,
-          extensionId: input.extensionId,
-          state: input.state,
-          actor: result.actor,
-        });
-        return result.settings;
-      },
-      updateRequestUserInputSettings: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const settings = stripWorkspaceId(input);
-        runtime.appLog.info("settings", "Request User Input settings updated.", {
-          mode: settings.mode,
-          timeoutEnabled: settings.blockingTimeout.enabled,
-          timeoutDurationMs: settings.blockingTimeout.durationMs,
-        });
-        return runtime.catalog.updateRequestUserInputSettings(settings);
-      },
+      setRequestInputVariant: (input) => facades.runtime.requestInput.setVariant(input),
+      setRequestInputBlockingTimeout: (input) =>
+        facades.runtime.requestInput.setBlockingTimeout(input),
       openWorkspace: async (input: OpenWorkspaceRequest = {}) => {
         const { cwd } = input;
         let startingFolder = workspaceRuntimeRegistry.getInitialCwd();
@@ -1908,7 +1718,7 @@ function buildDesktopRpcHandlers(
           parentSessionId: parentSessionId ?? null,
           workspaceSessionId: session.target.workspaceSessionId,
         });
-        return session;
+        return { target: session.target };
       },
       openSession: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -1920,7 +1730,7 @@ function buildDesktopRpcHandlers(
         runtime.appLog.info("session", "Workspace session opened.", {
           workspaceSessionId: sessionId,
         });
-        return session;
+        return { target: session.target };
       },
       openSurface: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -1938,7 +1748,7 @@ function buildDesktopRpcHandlers(
           surfacePiSessionId: target.surfacePiSessionId,
           threadId: target.threadId,
         });
-        return session;
+        return { target: session.target };
       },
       closeSurface: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -1985,7 +1795,7 @@ function buildDesktopRpcHandlers(
           messageTimestamp: messageTimestamp ?? null,
           title: title?.trim() || null,
         });
-        return session;
+        return { target: session.target };
       },
       deleteSession: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -2437,10 +2247,57 @@ desktopHost = createElectrobunDesktopHostAdapter({
       getOpenWorkspaces: () => workspaceRuntimeRegistry.listOpenWorkspaces(),
       getWorkspaceBranch,
       listProviderAuthSummaries,
-      listOpenSurfaceSnapshots: async (workspaceId) =>
-        (await workspaceRuntimeRegistry
-          .getRuntimeOrNull(workspaceId)
-          ?.catalog.listOpenSurfaceSnapshots()) ?? [],
+      listOpenSurfaceReadModels: async (workspaceId) => {
+        if (!workspaceRuntimeRegistry.getRuntimeOrNull(workspaceId)) {
+          return [];
+        }
+        const state = await workspaceRuntimeRegistry.getRendererStateFacade();
+        const navigation = requireStateReadModel(
+          await state.readModels.fetch({
+            kind: "sessionNavigation",
+            workspaceId: workspaceId as WorkspaceId,
+          }),
+          "sessionNavigation",
+        ).value;
+        const sessions = [
+          ...navigation.pinnedSessions,
+          ...navigation.activeSessions,
+          ...navigation.archived.sessions,
+        ];
+        const targets = sessions.flatMap((session) => [
+          {
+            workspaceSessionId: session.id,
+            surface: "orchestrator",
+            surfacePiSessionId: session.id,
+          } as RuntimeSurfaceTarget,
+          ...(session.sidebarThreads ?? []).map(
+            (thread) =>
+              ({
+                workspaceSessionId: session.id,
+                surface: "handler",
+                surfacePiSessionId: thread.surfacePiSessionId,
+                threadId: thread.threadId,
+              }) as RuntimeSurfaceTarget,
+          ),
+        ]);
+
+        return Promise.all(
+          targets.map(async (target) => {
+            const [transcript, summary, composer, queuedMessages] = await Promise.all([
+              state.readModels.fetch({ kind: "surfaceTranscript", target }),
+              state.readModels.fetch({ kind: "surfaceSummary", target }),
+              state.readModels.fetch({ kind: "surfaceComposer", target }),
+              state.readModels.fetch({ kind: "surfaceQueuedMessages", target }),
+            ]);
+            return {
+              transcript: requireStateReadModel(transcript, "surfaceTranscript").value,
+              summary: requireStateReadModel(summary, "surfaceSummary").value,
+              composer: requireStateReadModel(composer, "surfaceComposer").value,
+              queuedMessages: requireStateReadModel(queuedMessages, "surfaceQueuedMessages").value,
+            };
+          }),
+        );
+      },
       listWorkspaceSessions: async (workspaceId) => {
         if (!workspaceRuntimeRegistry.getRuntimeOrNull(workspaceId)) {
           return { sessions: [] };

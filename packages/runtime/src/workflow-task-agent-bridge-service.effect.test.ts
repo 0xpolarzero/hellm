@@ -23,6 +23,7 @@ import {
   RuntimeWorkflowTaskAgentBridgeBearerVerifier,
   RuntimeWorkflowTaskAgentBridgeService,
 } from "./workflow-task-agent-bridge-service";
+import { layerRuntimeShutdownAdmission } from "./runtime-shutdown-admission";
 
 const workspaceId = "workspace_workflow_task_bridge" as WorkspaceId;
 const workspaceSessionId = "wsess_workflow_task_bridge" as WorkspaceSessionId;
@@ -128,6 +129,7 @@ describe("@svvy/runtime workflow task-agent bridge service", () => {
         accepted,
       });
       const bridgeLayer = Layer.mergeAll(
+        layerRuntimeShutdownAdmission,
         Layer.succeed(RuntimeWorkflowTaskAgentBridgeBearerVerifier, {
           verify: () => Effect.succeed(true),
         }),
@@ -254,6 +256,7 @@ describe("@svvy/runtime workflow task-agent bridge service", () => {
       Effect.provide(layerRuntimeWorkflowTaskAgentBridgeService),
       Effect.provide(
         Layer.mergeAll(
+          layerRuntimeShutdownAdmission,
           Layer.succeed(RuntimeWorkflowTaskAgentBridgeBearerVerifier, {
             verify: () => Effect.succeed(false),
           }),
@@ -313,6 +316,7 @@ describe("@svvy/runtime workflow task-agent bridge service", () => {
       Effect.provide(layerRuntimeWorkflowTaskAgentBridgeService),
       Effect.provide(
         Layer.mergeAll(
+          layerRuntimeShutdownAdmission,
           Layer.succeed(RuntimeWorkflowTaskAgentBridgeBearerVerifier, {
             verify: () => Effect.succeed(true),
           }),

@@ -14,10 +14,13 @@ import {
   PositiveDurationMsSchema,
   RecoveryWorkId,
   RuntimeApprovalStatePort,
-  RuntimeCommandStatePort,
-  RuntimeSessionWaitStatePort,
+  RuntimeRecoveryStatePort,
+  RuntimeTurnStatePort,
   strictBoundaryParseOptions,
   type IsoDateTimeString,
+  type RuntimeOwnerId,
+  type RuntimeRecoveryStatePortService,
+  type RuntimeTurnStatePortService,
 } from "@svvy/core";
 import {
   RuntimeRequestInputWaitService,
@@ -26,6 +29,13 @@ import {
 import { RuntimeEventBus } from "./runtime-event-bus";
 import { RuntimeApprovalWaitService } from "./runtime-approval-wait-service";
 import { cancelAllRuntimeApprovalRequests } from "./runtime-approval-cancellation";
+import { RuntimeSurfaceScopeService } from "./surface-runtime-scope-service";
+import {
+  RuntimeWorkflowAgentSourceIndex,
+  type RuntimeWorkflowAgentSourceIndexService,
+} from "./runtime-workflow-agent-source-index";
+import { RuntimeShutdownAdmission } from "./runtime-shutdown-admission";
+import { RuntimeLayerCommandControlPort } from "./runtime-command-host-ports";
 
 const PositiveSafeIntegerSchema = Schema.Number.check(
   Schema.isFinite(),
@@ -398,8 +408,19 @@ export const layerRuntimeStartupReadiness = Layer.effect(
   Effect.gen(function* () {
     const runtimeConfig = yield* RuntimeLayerConfigService;
     const requestInputWaitService = yield* RuntimeRequestInputWaitService;
+    const workflowAgentSources = yield* RuntimeWorkflowAgentSourceIndex;
+    const recoveryState = yield* RuntimeRecoveryStatePort;
+    const turnState = yield* RuntimeTurnStatePort;
+    const eventBus = yield* RuntimeEventBus;
     return RuntimeStartupReadiness.of({
-      awaitReady: makeRuntimeStartupReadinessEffect(runtimeConfig, requestInputWaitService).pipe(
+      awaitReady: makeRuntimeStartupReadinessEffect(
+        runtimeConfig,
+        requestInputWaitService,
+        workflowAgentSources,
+        recoveryState,
+        turnState,
+        eventBus,
+      ).pipe(
         Effect.timeoutOrElse({
           duration: Duration.millis(runtimeConfig.runtimeStartupReadinessTimeoutMs),
           orElse: () =>
@@ -422,36 +443,111 @@ export const layerRuntimeShutdownPreparation = Layer.effect(
   Effect.gen(function* () {
     yield* RuntimeLayerConfigService;
     const approvalState = yield* RuntimeApprovalStatePort;
-    const commandState = yield* RuntimeCommandStatePort;
-    const sessionWaitState = yield* RuntimeSessionWaitStatePort;
+    const commandControl = yield* RuntimeLayerCommandControlPort;
+    const turnState = yield* RuntimeTurnStatePort;
     const eventBus = yield* RuntimeEventBus;
     const approvalWaitService = yield* RuntimeApprovalWaitService;
+    const requestInputWaitService = yield* RuntimeRequestInputWaitService;
+    const surfaceScopes = yield* RuntimeSurfaceScopeService;
+    const shutdownAdmission = yield* RuntimeShutdownAdmission;
     return RuntimeShutdownPreparation.of({
       prepareShutdown: (input) =>
-        cancelAllRuntimeApprovalRequests({
-          reason: `Runtime shutdown: ${input.reason}.`,
-        }).pipe(
-          Effect.provideService(RuntimeApprovalStatePort, approvalState),
-          Effect.provideService(RuntimeCommandStatePort, commandState),
-          Effect.provideService(RuntimeSessionWaitStatePort, sessionWaitState),
-          Effect.provideService(RuntimeEventBus, eventBus),
-          Effect.provideService(RuntimeApprovalWaitService, approvalWaitService),
-          Effect.mapError(
-            (cause) =>
-              new RuntimeLayerError({
-                operation: "runtime.shutdown.prepare",
-                reason: "shutdown-failed",
-                message: "Runtime shutdown preparation failed while cancelling open approvals.",
-                cause,
+        shutdownAdmission.runShutdown(
+          Effect.gen(function* () {
+            const reason = `Runtime shutdown: ${input.reason}.`;
+            const activeAtStart = (yield* surfaceScopes.snapshot()).filter(
+              (entry) => entry.activeTurnId !== null,
+            );
+            yield* Effect.forEach(
+              activeAtStart,
+              (entry) =>
+                requestInputWaitService.cancelBlockingRequestsForSurface({
+                  surfacePiSessionId: entry.surfacePiSessionId,
+                  reason,
+                }),
+              { discard: true },
+            );
+            yield* cancelAllRuntimeApprovalRequests({ reason }).pipe(
+              Effect.provideService(RuntimeApprovalStatePort, approvalState),
+              Effect.provideService(RuntimeEventBus, eventBus),
+              Effect.provideService(RuntimeApprovalWaitService, approvalWaitService),
+            );
+            yield* Effect.forEach(
+              activeAtStart,
+              (entry) =>
+                surfaceScopes.interrupt({
+                  surfacePiSessionId: entry.surfacePiSessionId,
+                  turnId: entry.activeTurnId,
+                  reason: "runtime-shutdown",
+                }),
+              { discard: true },
+            );
+
+            let timedOut = false;
+            yield* Effect.gen(function* () {
+              while (
+                (yield* surfaceScopes.snapshot()).some((entry) => entry.activeTurnId !== null)
+              ) {
+                yield* Effect.sleep(Duration.millis(10));
+              }
+            }).pipe(
+              Effect.timeoutOrElse({
+                duration: Duration.millis(input.drainTimeoutMs),
+                orElse: () =>
+                  Effect.sync(() => {
+                    timedOut = true;
+                  }),
               }),
+            );
+
+            const stillActive = timedOut
+              ? (yield* surfaceScopes.snapshot()).filter((entry) => entry.activeTurnId !== null)
+              : [];
+            let interruptedCommands = 0;
+            let releasedQueueClaims = 0;
+            for (const entry of stillActive) {
+              yield* surfaceScopes.interrupt({
+                surfacePiSessionId: entry.surfacePiSessionId,
+                turnId: entry.activeTurnId,
+                reason: "runtime-shutdown",
+                force: true,
+              });
+              const recovered = yield* turnState.recoverInterruptedTurn({
+                turnId: entry.activeTurnId! as never,
+                terminalStatus: "cancelled",
+                reason,
+              });
+              interruptedCommands += recovered.value.terminalizedCommandIds.length;
+              releasedQueueClaims += recovered.value.settledQueueItemId ? 1 : 0;
+              yield* Effect.forEach(
+                recovered.value.terminalizedCommandIds,
+                (commandId) =>
+                  commandControl
+                    .cancel({ commandId, reason })
+                    .pipe(Effect.catch(() => Effect.void)),
+                { discard: true },
+              );
+              yield* eventBus.publishStateInvalidations({ afterCommit: recovered.afterCommit });
+            }
+
+            return {
+              status: stillActive.length > 0 ? ("forced" as const) : ("drained" as const),
+              interruptedTurns: activeAtStart.length,
+              interruptedCommands,
+              releasedQueueClaims,
+              recoveryRowsScheduled: 0,
+            };
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new RuntimeLayerError({
+                  operation: "runtime.shutdown.prepare",
+                  reason: "shutdown-failed",
+                  message: "Runtime shutdown preparation failed while settling active work.",
+                  cause,
+                }),
+            ),
           ),
-          Effect.as({
-            status: "drained" as const,
-            interruptedTurns: 0,
-            interruptedCommands: 0,
-            releasedQueueClaims: 0,
-            recoveryRowsScheduled: 0,
-          }),
         ),
     });
   }),
@@ -484,8 +580,86 @@ const awaitRuntimeStartupReadinessEffect = Effect.gen(function* () {
 function makeRuntimeStartupReadinessEffect(
   _runtimeConfig: RuntimeLayerConfig,
   requestInputWaitService: RuntimeRequestInputWaitServiceService,
+  workflowAgentSources: RuntimeWorkflowAgentSourceIndexService,
+  recoveryState: RuntimeRecoveryStatePortService,
+  turnState: RuntimeTurnStatePortService,
+  eventBus: RuntimeEventBus["Service"],
 ): Effect.Effect<RuntimeStartupReadinessReceipt, RuntimeStartupError> {
   return Effect.gen(function* () {
+    yield* workflowAgentSources.scaffoldAndReconcile.pipe(
+      Effect.mapError(
+        (cause) =>
+          new RuntimeStartupError({
+            operation: "runtime.startup.awaitReadiness",
+            phase: "app-source-reconcile",
+            reason: "required-startup-check-failed",
+            message: "Runtime startup could not scaffold and reconcile workflow-agent sources.",
+            cause,
+          }),
+      ),
+    );
+    const recoveryFailure = (message: string, cause: unknown) =>
+      new RuntimeStartupError({
+        operation: "runtime.startup.awaitReadiness",
+        phase: "recovery-startup-scan",
+        reason: "required-startup-check-failed",
+        message,
+        cause,
+      });
+    const snapshots = yield* recoveryState
+      .listWorkspaceRecoveryStartupSnapshots()
+      .pipe(
+        Effect.mapError((cause) =>
+          recoveryFailure(
+            "Runtime startup could not inspect durable workspace recovery state.",
+            cause,
+          ),
+        ),
+      );
+    for (const snapshot of snapshots) {
+      for (const turn of snapshot.turns) {
+        if (turn.status !== "running" && turn.status !== "waiting") {
+          continue;
+        }
+        const recovered = yield* turnState
+          .recoverInterruptedTurn({
+            turnId: turn.id,
+            terminalStatus: "cancelled",
+            reason: "Runtime restarted before the active turn committed terminal facts.",
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              recoveryFailure(`Runtime startup could not recover turn ${turn.id}.`, cause),
+            ),
+          );
+        yield* eventBus
+          .publishStateInvalidations({ afterCommit: recovered.afterCommit })
+          .pipe(
+            Effect.mapError((cause) =>
+              recoveryFailure(
+                `Runtime startup could not publish recovery facts for turn ${turn.id}.`,
+                cause,
+              ),
+            ),
+          );
+      }
+    }
+    const normalized = yield* recoveryState
+      .normalizeWorkspaceRecoveryState({
+        claimedBy: "runtime-startup-recovery" as RuntimeOwnerId,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          recoveryFailure("Runtime startup could not normalize stale recovery claims.", cause),
+        ),
+      );
+    yield* eventBus
+      .publishStateInvalidations({ afterCommit: normalized.afterCommit })
+      .pipe(
+        Effect.mapError((cause) =>
+          recoveryFailure("Runtime startup could not publish normalized recovery state.", cause),
+        ),
+      );
     yield* requestInputWaitService.restoreOpenBlockingRequests().pipe(
       Effect.mapError(
         (cause) =>
@@ -502,7 +676,12 @@ function makeRuntimeStartupReadinessEffect(
     return {
       status: "ready",
       readyAt: DateTime.formatIso(now),
-      completedPhases: ["layer-acquisition", "recovery-startup-scan", "event-bus"],
+      completedPhases: [
+        "layer-acquisition",
+        "app-source-reconcile",
+        "recovery-startup-scan",
+        "event-bus",
+      ],
       degradedPhases: [],
     };
   });

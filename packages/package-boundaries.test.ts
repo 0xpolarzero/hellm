@@ -37,7 +37,6 @@ const packageArchitectureSpecRoot = join(projectRoot, "docs", "specs", "package-
 const packageOwnedNativeToolModules = [
   join(projectRoot, "src", "bun", "execute-typescript-tool.ts"),
   join(projectRoot, "src", "bun", "extension-tools.ts"),
-  join(projectRoot, "src", "bun", "request-user-input-tool.ts"),
   join(projectRoot, "src", "bun", "runtime-state-tools.ts"),
   join(projectRoot, "src", "bun", "svvy-direct-tools.ts"),
   join(projectRoot, "src", "bun", "thread-report-tool.ts"),
@@ -319,6 +318,9 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "ProviderAuthReadModel",
       "ProviderAuthReadModelRequest",
       "ProviderAuthStateCommands",
+      "PromptHistoryReadModel",
+      "PromptHistoryReadModelEntry",
+      "PromptHistoryReadModelRequest",
       "RecordProviderAuthStatusCommandInput",
       "RecordProviderAuthStatusCommandInputSchema",
       "RemoveExtensionEnvOverrideCommandInput",
@@ -342,6 +344,8 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "SessionNavigationReadModelRequest",
       "SessionNavigationStateCommands",
       "SessionNavigationSummary",
+      "SetAgentActorExtensionDefaultsCommandInput",
+      "SetAgentActorExtensionDefaultsCommandInputSchema",
       "SetExtensionEnvOverrideCommandInput",
       "SetExtensionEnvOverrideCommandInputSchema",
       "SetExternalInstructionActorUsageCommandInput",
@@ -406,6 +410,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "UpdateOrchestratorProfileCommandInputSchema",
       "UpdateThreadHandlerProfileCommandInput",
       "UpdateThreadHandlerProfileCommandInputSchema",
+      "WorkflowAgentSourceReadModelRecord",
       "WorkflowTaskAttemptInspectorReadModel",
       "WorkflowTaskAttemptInspectorReadModelRequest",
       "WorkflowsGeneratedExportReadModelRecord",
@@ -458,6 +463,8 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "decodeUnknownResetActorExtensionDefaultsCommandInputExit",
       "decodeUnknownSaveWorkspaceLayoutSlotCommandInputEffect",
       "decodeUnknownSaveWorkspaceLayoutSlotCommandInputExit",
+      "decodeUnknownSetAgentActorExtensionDefaultsCommandInputEffect",
+      "decodeUnknownSetAgentActorExtensionDefaultsCommandInputExit",
       "decodeUnknownSelectWorkspaceLayoutSlotCommandInputEffect",
       "decodeUnknownSelectWorkspaceLayoutSlotCommandInputExit",
       "decodeUnknownSelectWorkspaceTabCommandInputEffect",
@@ -514,6 +521,8 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "encodeResetActorExtensionDefaultsCommandInputExit",
       "encodeSaveWorkspaceLayoutSlotCommandInputEffect",
       "encodeSaveWorkspaceLayoutSlotCommandInputExit",
+      "encodeSetAgentActorExtensionDefaultsCommandInputEffect",
+      "encodeSetAgentActorExtensionDefaultsCommandInputExit",
       "encodeSelectWorkspaceLayoutSlotCommandInputEffect",
       "encodeSelectWorkspaceLayoutSlotCommandInputExit",
       "encodeSelectWorkspaceTabCommandInputEffect",
@@ -565,6 +574,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "layerRuntimeSourceStatePort",
       "layerRuntimeSurfaceLifecycleStatePort",
       "layerRuntimeThreadStatePort",
+      "layerRuntimeTranscriptStatePort",
       "layerRuntimeTurnStatePort",
       "layerRuntimeWorkflowTaskStatePort",
       "layerRuntimeWorkspaceStatePort",
@@ -650,6 +660,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "RequestUserInputInputSchema",
       "RequestUserInputResult",
       "RequestUserInputResultSchema",
+      "ParsedWorkflowAgentSource",
       "SvvyActorKind",
       "ThreadStartHandlerInvocation",
       "ThreadStartInput",
@@ -687,6 +698,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "generatedExtensionsPackageContentsFromHost",
       "getExtensionRecord",
       "getNativeToolCommandMetadata",
+      "getRequestUserInputVariantInstructions",
       "layerExtensionSourceRootsPort",
       "layerGeneratedPackageRootPort",
       "layer",
@@ -760,7 +772,6 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "acquireAcceptedDirectToolLaunch",
       "requestAcceptedDirectToolApproval",
       "runAcceptedLoadExtension",
-      "runAcceptedRequestUserInput",
     ],
   ],
   [
@@ -918,6 +929,8 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "runtimeSurfaceLifecycleStatePortFromStructuredSessionState",
       "runtimeThreadStatePortFromStore",
       "runtimeThreadStatePortFromStructuredSessionState",
+      "runtimeTranscriptStatePortFromStore",
+      "runtimeTranscriptStatePortFromStructuredSessionState",
       "runtimeTurnStatePortFromStore",
       "runtimeTurnStatePortFromStructuredSessionState",
       "runtimeWorkflowTaskStatePortFromStore",
@@ -996,13 +1009,18 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "StructuredWorkspaceInput",
       "StructuredPiSessionRecord",
       "StructuredComposerDraftRecord",
+      "StructuredPromptHistoryRecord",
       "StructuredWaitState",
       "StructuredSessionWaitOwner",
       "StructuredSessionWaitState",
       "StructuredTurnRecord",
+      "StructuredPromptTurnSettlementResult",
       "StructuredThreadRecord",
       "StructuredGeneratedAgentContextBindingRecord",
       "StructuredCommandRecord",
+      "StructuredStreamingCommandInput",
+      "StructuredFinishCommandInput",
+      "StructuredCommandMutationResult",
       "StructuredEpisodeRecord",
       "StructuredWorkflowRunRecord",
       "StructuredWorkflowTaskAttemptRecord",
@@ -1017,7 +1035,9 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "StructuredRequestUserInputQuestionRecord",
       "StructuredRequestUserInputAnswerRecord",
       "StructuredRequestUserInputRequestRecord",
+      "StructuredRequestUserInputMutationResult",
       "StructuredRuntimeApprovalRequestRecord",
+      "StructuredRuntimeApprovalResolutionResult",
       "StructuredArtifactRecord",
       "StructuredEventSubjectKind",
       "StructuredLifecycleEventRecord",
@@ -1033,6 +1053,7 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "StructuredGeneratedWorkflowsExportRecord",
       "ReadGeneratedWorkflowsExportsInput",
       "StructuredGeneratedPackageWorkspaceLinkRecord",
+      "StructuredWorkflowAgentSourceIndexRecord",
       "StructuredExtensionDependencyApprovalRecord",
       "StructuredExtensionDependencyReadinessRecord",
       "StructuredSurfaceQueuedMessageRecord",
@@ -1042,6 +1063,7 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "StructuredStartRuntimeHandlerThreadsInput",
       "StructuredStartedRuntimeHandlerThread",
       "StructuredStartRuntimeHandlerThreadsResult",
+      "StructuredInterruptedTurnRecoveryResult",
       "StructuredSessionSnapshot",
       "StructuredWorkspaceSidebarState",
       "StructuredSessionNavigationCommandInput",
@@ -3376,6 +3398,7 @@ describe("package boundaries", () => {
           "RuntimeSourceStatePort",
           "RuntimeSurfaceLifecycleStatePort",
           "RuntimeThreadStatePort",
+          "RuntimeTranscriptStatePort",
           "RuntimeTurnStatePort",
           "RuntimeWorkflowTaskStatePort",
           "RuntimeWorkspaceStatePort",
@@ -3443,13 +3466,13 @@ describe("package boundaries", () => {
       },
       {
         packageName: "runtime",
-        file: "runtime-layer.ts",
-        names: [
-          "RuntimeLayerCommandControlPort",
-          "RuntimeLayerCommandStdinPort",
-          "RuntimeLayerModelResolverPort",
-          "RuntimeLayerProviderAuthPort",
-        ],
+        file: "runtime-command-host-ports.ts",
+        names: ["RuntimeLayerCommandControlPort", "RuntimeLayerCommandStdinPort"],
+      },
+      {
+        packageName: "runtime",
+        file: "runtime-layer-provider-ports.ts",
+        names: ["RuntimeLayerModelResolverPort", "RuntimeLayerProviderAuthPort"],
       },
       {
         packageName: "runtime",
@@ -3591,7 +3614,6 @@ describe("package boundaries", () => {
 
     expect([...conditionalEffectModules].toSorted()).toEqual([
       "effect/Cache",
-      "effect/Fiber",
       "effect/FiberHandle",
       "effect/FiberMap",
       "effect/FiberSet",
@@ -3814,6 +3836,7 @@ describe("package boundaries", () => {
           "packages/state/src/runtime-source-state-port.ts -> layerRuntimeSourceStatePort",
           "packages/state/src/runtime-surface-lifecycle-state-port.ts -> layerRuntimeSurfaceLifecycleStatePort",
           "packages/state/src/runtime-thread-state-port.ts -> layerRuntimeThreadStatePort",
+          "packages/state/src/runtime-transcript-state-port.ts -> layerRuntimeTranscriptStatePort",
           "packages/state/src/runtime-turn-state-port.ts -> layerRuntimeTurnStatePort",
           "packages/state/src/runtime-workflow-task-state-port.ts -> layerRuntimeWorkflowTaskStatePort",
           "packages/state/src/runtime-workspace-state-port.ts -> layerRuntimeWorkspaceStatePort",
@@ -3897,6 +3920,8 @@ describe("package boundaries", () => {
           "packages/runtime/src/runtime-effect-requests.ts -> layerRuntimeExecutionPlanExecutor",
           "packages/runtime/src/runtime-request-input-wait-service.ts -> RuntimeRequestInputWaitService",
           "packages/runtime/src/runtime-request-input-wait-service.ts -> layerRuntimeRequestInputWaitService",
+          "packages/runtime/src/runtime-shutdown-admission.ts -> RuntimeShutdownAdmission",
+          "packages/runtime/src/runtime-shutdown-admission.ts -> layerRuntimeShutdownAdmission",
           "packages/runtime/src/runtime-prompt-execution-service.ts -> RuntimePromptExecutionService",
           "packages/runtime/src/runtime-prompt-execution-service.ts -> layerRuntimePromptExecutionService",
           "packages/runtime/src/runtime-surface-queue-dispatcher-service.ts -> RuntimeSurfaceQueueDispatcherService",
@@ -3907,6 +3932,10 @@ describe("package boundaries", () => {
           "packages/runtime/src/workflow-task-agent-bridge-service.ts -> RuntimeWorkflowTaskAgentBridgeBearerVerifier",
           "packages/runtime/src/workflow-task-agent-bridge-service.ts -> layerRuntimeWorkflowTaskAgentBridgeService",
           "packages/runtime/src/runtime-source-invalidation-service.ts -> RuntimeSourceInvalidationScanPort",
+          "packages/runtime/src/runtime-source-reconcile-recovery-worker.ts -> RuntimeSourceReconcileRecoveryWorker",
+          "packages/runtime/src/runtime-source-reconcile-recovery-worker.ts -> layerRuntimeSourceReconcileRecoveryWorker",
+          "packages/runtime/src/runtime-workflow-agent-source-index.ts -> RuntimeWorkflowAgentSourceIndex",
+          "packages/runtime/src/runtime-workflow-agent-source-index.ts -> layerRuntimeWorkflowAgentSourceIndex",
           "packages/runtime/src/surface-runtime-scope-service.ts -> RuntimeSurfaceRuntimeService",
           "packages/runtime/src/surface-runtime-scope-service.ts -> RuntimeSurfaceScopeService",
           "packages/runtime/src/surface-runtime-scope-service.ts -> layerRuntimeSurfaceScopeService",
@@ -3927,12 +3956,14 @@ describe("package boundaries", () => {
           "Active turn fiber",
           "Queue dispatcher and wakeup queue",
           "Recovery coordinator",
+          "Source reconcile recovery worker",
           "Title worker",
           "Approval wait registry",
           "Request-input wait registry",
           "App-log commit notification service",
           "RuntimeSourceInvalidationScanPort",
           "Runtime startup readiness barrier",
+          "Runtime shutdown admission service",
           "Runtime shutdown preparation service",
           "RuntimeExecutionPlanExecutor",
           "Artifact file materialization lane",
@@ -3984,6 +4015,7 @@ describe("package boundaries", () => {
       "packages/core/src/runtime-state-ports.ts -> RuntimeSourceStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeSurfaceLifecycleStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeThreadStatePort",
+      "packages/core/src/runtime-state-ports.ts -> RuntimeTranscriptStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeTurnStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeWorkflowTaskStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeWorkspaceStatePort",
@@ -4000,13 +4032,13 @@ describe("package boundaries", () => {
       "packages/runtime/src/runtime-layer-config.ts -> RuntimeStartupReadiness",
       "packages/runtime/src/runtime-event-bus.ts -> RuntimeEventBus",
       "packages/runtime/src/runtime-event-bus.ts -> layerRuntimeEventBus",
-      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerCommandControlPort",
-      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerCommandStdinPort",
+      "packages/runtime/src/runtime-command-host-ports.ts -> RuntimeLayerCommandControlPort",
+      "packages/runtime/src/runtime-command-host-ports.ts -> RuntimeLayerCommandStdinPort",
       "packages/runtime/src/runtime-layer.ts -> RuntimeGeneratedContextRefreshHostPort",
       "packages/runtime/src/runtime-layer.ts -> RuntimeGeneratedPackageRefreshHostPort",
-      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerModelResolverPort",
-      "packages/runtime/src/runtime-layer.ts -> RuntimeLayerProviderAuthPort",
-      "packages/runtime/src/runtime-queue-wake-service.ts -> RuntimeQueueWakeService",
+      "packages/runtime/src/runtime-layer-provider-ports.ts -> RuntimeLayerModelResolverPort",
+      "packages/runtime/src/runtime-layer-provider-ports.ts -> RuntimeLayerProviderAuthPort",
+      "packages/runtime/src/runtime-queue-wake-port.ts -> RuntimeQueueWakeService",
       "packages/runtime/src/runtime-queue-wake-service.ts -> layerRuntimeQueueWakeService",
       "packages/runtime/src/runtime-prompt-defaults-service.ts -> RuntimePromptDefaultsService",
       "packages/runtime/src/runtime-prompt-defaults-service.ts -> layerRuntimePromptDefaultsService",
@@ -4602,8 +4634,8 @@ describe("package boundaries", () => {
       auditedPolicyModulesMatchExports: true,
       auditedPolicyDuplicateModules: [],
       auditPolicyCounts: {
-        "adoptable-member-gated": 39,
-        conditional: 22,
+        "adoptable-member-gated": 40,
+        conditional: 21,
         "scoped-adoptable-member-gated": 8,
         "test-only": 3,
       },
@@ -4675,6 +4707,21 @@ describe("package boundaries", () => {
           ["packages/extensions/src/generated-package-writer.ts"],
         ],
         [
+          "effect/Effect",
+          "exit",
+          "adopted-source-gated",
+          ["packages/runtime/src/runtime-shutdown-admission.ts"],
+        ],
+        [
+          "effect/Effect",
+          "uninterruptibleMask",
+          "adopted-source-gated",
+          [
+            "packages/runtime/src/runtime-shutdown-admission.ts",
+            "packages/runtime/src/runtime-surface-queue-dispatcher-service.ts",
+          ],
+        ],
+        [
           "effect/Redacted",
           "make",
           "adopted-source-gated",
@@ -4692,8 +4739,26 @@ describe("package boundaries", () => {
           "adopted-source-gated",
           ["packages/core/src/errors.ts"],
         ],
-        ["effect/Fiber", "interrupt", "test-only", ["packages/**/*.effect.test.ts"]],
-        ["effect/Fiber", "join", "test-only", ["packages/**/*.effect.test.ts"]],
+        [
+          "effect/Fiber",
+          "interrupt",
+          "adopted-source-gated",
+          [
+            "packages/**/*.effect.test.ts",
+            "packages/runtime/src/runtime-surface-queue-dispatcher-service.ts",
+            "packages/runtime/src/surface-runtime-scope-service.ts",
+          ],
+        ],
+        [
+          "effect/Fiber",
+          "join",
+          "adopted-source-gated",
+          [
+            "packages/**/*.effect.test.ts",
+            "packages/runtime/src/runtime-surface-queue-dispatcher-service.ts",
+            "packages/runtime/src/surface-runtime-scope-service.ts",
+          ],
+        ],
         [
           "effect/Schema",
           "encodeSync",
@@ -4795,8 +4860,23 @@ describe("package boundaries", () => {
         [
           "effect/FileSystem",
           "FileSystem.FileSystem",
-          ["exists", "makeDirectory", "readFileString", "rename", "stat", "writeFileString"],
+          [
+            "exists",
+            "link",
+            "makeDirectory",
+            "readFileString",
+            "remove",
+            "rename",
+            "stat",
+            "writeFileString",
+          ],
           ["packages/extensions/src/source-edit-sessions.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          ["exists", "makeDirectory", "readDirectory", "readFileString", "stat", "writeFileString"],
+          ["packages/extensions/src/workflow-agent-source-records.ts"],
         ],
         [
           "effect/FileSystem",
@@ -4843,6 +4923,12 @@ describe("package boundaries", () => {
         [
           "effect/Path",
           "Path.Path",
+          ["join", "resolve"],
+          ["packages/extensions/src/workflow-agent-source-records.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
           ["basename", "dirname", "join"],
           ["packages/extensions/src/generated-package-writer.ts"],
         ],
@@ -4874,11 +4960,30 @@ describe("package boundaries", () => {
           ["packages/extensions/src/source-edit-sessions.ts"],
         ],
         [
+          "effect/Crypto",
+          "Crypto.Crypto",
+          ["randomUUIDv4"],
+          ["packages/runtime/src/runtime-source-reconcile-recovery-worker.ts"],
+        ],
+        [
+          "effect/Crypto",
+          "Crypto.Crypto",
+          ["digest"],
+          ["packages/extensions/src/workflow-agent-source-records.ts"],
+        ],
+        [
+          "effect/Crypto",
+          "Crypto.Crypto",
+          ["digest"],
+          ["packages/runtime/src/runtime-workflow-agent-source-index.ts"],
+        ],
+        [
           "effect/Semaphore",
           "Semaphore.Semaphore",
           ["withPermit"],
           [
             "packages/runtime/src/runtime-event-bus.ts",
+            "packages/runtime/src/runtime-shutdown-admission.ts",
             "packages/runtime/src/runtime-surface-event-publisher.ts",
             "packages/runtime/src/surface-runtime-scope-service.ts",
           ],
@@ -4991,6 +5096,7 @@ describe("package boundaries", () => {
     }).toEqual({
       serviceOptionCalls: [
         "packages/runtime/src/accepted-native-tool-execution-service.ts -> RuntimeHandlerThreadStartPreparationHost",
+        "packages/runtime/src/accepted-native-tool-execution-service.ts -> RuntimeQueueWakeService",
         "packages/runtime/src/runtime-effect-requests.ts -> RuntimeHandlerThreadStartPreparationHost",
       ],
       queueFailCalls: [
@@ -5372,6 +5478,7 @@ describe("package boundaries", () => {
       [
         "packages/state/src/state-facade.test.ts",
         [
+          "ManagedRuntime.make",
           "ManagedRuntime.make",
           "ManagedRuntime.make",
           "ManagedRuntime.make",
@@ -6921,6 +7028,7 @@ describe("package boundaries", () => {
     expect(runtimeSource).toContain('| "request-input-answer-queued"');
     expect(runtimeSource).toContain('| "queue-steered"');
     expect(runtimeSource).toContain('| "runtime-queue-inserted"');
+    expect(runtimeSource).toContain('| "startup-recovery"');
     expect(runtimeSource).toContain(
       "It exposes package-private `acceptWakeHint(...)` and\n  `drain(...)` effects.",
     );
@@ -7126,7 +7234,6 @@ describe("package boundaries", () => {
   it("accepted native-tool bootstrap helper symbols stay out of the runtime bootstrap surface", () => {
     const acceptedHelperSymbols = [
       "runAcceptedLoadExtensionToolCallAtRuntimeBoundary",
-      "runAcceptedRequestUserInputToolCallAtRuntimeBoundary",
       "runAcceptedThreadStartToolCallAtRuntimeBoundary",
     ];
     const bootstrapSymbols = [
@@ -7429,25 +7536,18 @@ describe("package boundaries", () => {
       source.slice(sourceEditPromiseStart, sourceEditPromiseEnd),
     ].join("\n");
     const rejectedCurrentMethods = [
-      "createWorkflowAgent(",
-      "duplicateWorkflowAgent(",
-      "deleteWorkflowAgent(",
       "createWorkflowPrompt(",
       "deleteWorkflowPrompt(",
       "createWorkflowComponent(",
       "deleteWorkflowComponent(",
       "createWorkflow(",
       "deleteWorkflow(",
-      "CreateWorkflowAgentSourceInput",
-      "DuplicateWorkflowAgentSourceInput",
-      "DeleteWorkflowAgentSourceInput",
       "CreateWorkflowPromptSourceInput",
       "DeleteWorkflowPromptSourceInput",
       "CreateWorkflowComponentSourceInput",
       "DeleteWorkflowComponentSourceInput",
       "CreateWorkflowSourceInput",
       "DeleteWorkflowSourceInput",
-      "WorkflowAgentSourceLifecycleResult",
       "WorkflowPromptSourceLifecycleResult",
       "WorkflowComponentSourceLifecycleResult",
       "WorkflowWorkflowSourceLifecycleResult",
@@ -7458,7 +7558,15 @@ describe("package boundaries", () => {
 
     expect(violations).toEqual([]);
     expect(sourceEditContracts).toContain("OpenExtensionSourceEditInput");
-    expect(sourceEditContracts).toContain("SaveExtensionSourceEditInput");
+    expect(sourceEditContracts).toContain("RuntimeSaveExtensionSourceEditInput");
+    expect(sourceEditContracts).toContain("createWorkflowAgent(");
+    expect(sourceEditContracts).toContain("RuntimeCreateWorkflowAgentSourceInput");
+    expect(sourceEditContracts).toContain("duplicateWorkflowAgent(");
+    expect(sourceEditContracts).toContain("RuntimeDuplicateWorkflowAgentSourceInput");
+    expect(sourceEditContracts).toContain("deleteWorkflowAgent(");
+    expect(sourceEditContracts).toContain("RuntimeDeleteWorkflowAgentSourceInput");
+    expect(sourceEditContracts).toContain("WorkflowAgentSourceLifecycleResult");
+    expect(sourceEditContracts).toContain("WorkflowAgentSourceDeleteResult");
     expect(source).toContain("are not public runtime");
     expect(source).toContain("No public runtime `sourceEdits.rename*` or");
   });
@@ -7551,7 +7659,6 @@ describe("package boundaries", () => {
       "src/bun/extension-tools.ts -> @svvy/runtime/prompt-execution-context",
       "src/bun/index.ts -> @svvy/runtime/bootstrap",
       "src/bun/live-command-stdin-registry.ts -> @svvy/runtime/bootstrap",
-      "src/bun/request-user-input-tool.ts -> @svvy/runtime/prompt-execution-context",
       "src/bun/runtime-service-adapter.ts -> @svvy/runtime/bootstrap",
       "src/bun/runtime-state-tools.ts -> @svvy/runtime/prompt-execution-context",
       "src/bun/session-catalog.ts -> @svvy/pi-adapter/messages",
@@ -7805,34 +7912,19 @@ describe("package boundaries", () => {
     expect(loadToolSource).not.toContain("onContextRefreshed");
   });
 
-  it("request_user_input app wrapper delegates handler invocation and effect application to @svvy/runtime", () => {
-    const source = readSource(join(projectRoot, "src", "bun", "request-user-input-tool.ts"));
-    const start = source.indexOf("async function runAcceptedRequestUserInputHandler");
-    const end = source.indexOf("export function createRequestUserInputTool");
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
+  it("request_user_input has no Bun wrapper and enters runtime accepted-tool execution", () => {
+    expect(existsSync(join(projectRoot, "src", "bun", "request-user-input-tool.ts"))).toBe(false);
+    const catalogSource = readSource(join(projectRoot, "src", "bun", "session-catalog.ts"));
+    expect(catalogSource).not.toContain("createRequestUserInputTool");
+    expect(catalogSource).not.toContain("RequestUserInputRuntime");
+    expect(catalogSource).not.toContain("runAcceptedRequestUserInput");
 
-    const acceptedRunnerSource = source.slice(start, end);
-    const wrapperStart = source.indexOf("export function createRequestUserInputTool");
-    const wrapperEnd = source.indexOf("async function missingAcceptedRequestUserInputRunner");
-    expect(wrapperStart).toBeGreaterThanOrEqual(0);
-    expect(wrapperEnd).toBeGreaterThan(wrapperStart);
-    const wrapperSource = source.slice(wrapperStart, wrapperEnd);
-
-    expect(acceptedRunnerSource).toContain("input.runAcceptedRequestUserInput(");
-    expect(acceptedRunnerSource).toContain("mode: input.settings.mode");
-    expect(acceptedRunnerSource).not.toContain(
-      "runAcceptedRequestUserInputToolCallAtRuntimeBoundary(",
+    const promptExecutionSource = readSource(
+      join(packageRoot, "runtime", "src", "runtime-prompt-execution-service.ts"),
     );
-    expect(acceptedRunnerSource).not.toContain("commandStatePort:");
-    expect(acceptedRunnerSource).not.toContain("requestStatePort:");
-    expect(acceptedRunnerSource).not.toContain("invokeRequestUserInputHandlerAtRuntimeBoundary");
-    expect(acceptedRunnerSource).not.toContain("applyRuntimeEffectRequestsAtRuntimeBoundary");
-    expect(acceptedRunnerSource).not.toContain("requestUserInputHandler.invoke");
-    expect(acceptedRunnerSource).not.toContain("applyRuntimeEffectRequests(");
-    expect(wrapperSource).toContain("runAcceptedRequestUserInputHandler(");
-    expect(wrapperSource).not.toContain("requestState.createRequestInput(");
-    expect(wrapperSource).not.toContain("recordRequestUserInputProgress(");
+    expect(promptExecutionSource).toContain('toolInput.toolName === "request_user_input"');
+    expect(promptExecutionSource).toContain("input.acceptedNativeTools");
+    expect(promptExecutionSource).toContain(".runRequestUserInput({");
   });
 
   it("only @svvy/runtime applies RuntimeEffectRequest values", () => {
@@ -8282,11 +8374,19 @@ describe("package boundaries", () => {
     expect(runtimeLayerSource).toContain("input.extensions.sources.saveEditSession");
     expect(runtimeLayerSource).toContain("RuntimeSourceStatePort");
     expect(runtimeLayerSource).toContain(".readSourceVersion({");
-    expect(runtimeLayerSource).toContain(".recordSourceSave({");
+    expect(runtimeLayerSource).toContain(".recordSourceSave(record)");
+    expect(runtimeLayerSource).toContain(".recordWorkflowAgentSourceSave({");
+    expect(runtimeLayerSource).toContain(".recordWorkflowAgentSourceDelete({ source: record })");
+    expect(runtimeLayerSource).toContain("admitRuntimeWorkflowAgentModel");
+    expect(runtimeLayerSource).toContain("RuntimeRecoveryStatePort");
+    expect(runtimeLayerSource).toContain('kind: "source_reconcile"');
     expect(runtimeLayerSource).not.toContain("RuntimeLayerSourceEditsPort");
     expect(extensionsServiceSource).toContain("sources: {");
     expect(extensionsServiceSource).toContain("openEditSession");
     expect(extensionsServiceSource).toContain("saveEditSession");
+    expect(extensionsServiceSource).toContain("createWorkflowAgent");
+    expect(extensionsServiceSource).toContain("duplicateWorkflowAgent");
+    expect(extensionsServiceSource).toContain("deleteWorkflowAgent");
     expect(runtimeLayerSource).not.toContain("open?(input: OpenExtensionSourceEditInput)");
     expect(runtimeLayerSource).not.toContain("save?(input: SaveExtensionSourceEditInput)");
     expect(runtimeLayerSource).not.toContain(
@@ -8444,7 +8544,7 @@ describe("package boundaries", () => {
       .filter((file) => readSource(file).includes('type: "surface.stream"'))
       .map(display);
 
-    expect(streamPatchProducers).toEqual(["src/bun/workspace-runtime-registry.ts"]);
+    expect(streamPatchProducers).toEqual([]);
   });
 
   it("runtime prompt post-commit lanes use runtime queue wake service over primitive surface queue wake ports", () => {
@@ -8466,10 +8566,14 @@ describe("package boundaries", () => {
     const requestInputWaitServiceSource = readSource(
       join(packageRoot, "runtime", "src", "runtime-request-input-wait-service.ts"),
     );
-    expect(requestInputWaitServiceSource).toContain("RuntimeQueueWakeService");
+    expect(requestInputWaitServiceSource).toContain("wakeSurface:");
     expect(requestInputWaitServiceSource).toContain('reason: "request-input-answer-queued"');
+    expect(runtimeLayerSource).toContain("answerRuntimeRequestInput(input, queueWake.wakeSurface)");
 
     const appRuntimeBootstrapSource = readSource(appRuntimeBootstrapModule);
+    const runtimeLayerProviderPortsSource = readSource(
+      join(packageRoot, "runtime", "src", "runtime-layer-provider-ports.ts"),
+    );
     const runtimeStructuralPortTags = [
       "RuntimePromptDefaultsStatePort",
       "RuntimeLayerProviderAuthPort",
@@ -8487,7 +8591,7 @@ describe("package boundaries", () => {
     }
     expect(appRuntimeBootstrapSource).not.toContain("RuntimeLayerPromptControlHostPort");
     expect(appRuntimeBootstrapSource).not.toContain("RuntimeLayerSurfaceQueueWakePort");
-    expect(runtimeLayerSource).toMatch(
+    expect(runtimeLayerProviderPortsSource).toMatch(
       /ensureUsableProviderAuth\(\s*provider:\s*string,\s*\):\s*Effect\.Effect<string \| undefined, RuntimeContractError>/,
     );
     expect(runtimeLayerSource).toContain(
@@ -8547,8 +8651,15 @@ describe("package boundaries", () => {
     expect(pauseSource).not.toContain("runtime.catalog.setRequestUserInputTimerPaused(");
     expect(pauseSource).not.toContain("runtime.catalog.afterRequestInputTimerPaused(");
 
+    expect(source).toContain(
+      "setRequestInputVariant: (input) => facades.runtime.requestInput.setVariant(input)",
+    );
+    expect(source).toContain("facades.runtime.requestInput.setBlockingTimeout(input)");
+
     const runtimeLayerSource = readSource(join(packageRoot, "runtime", "src", "runtime-layer.ts"));
-    expect(runtimeLayerSource).toContain("answerRuntimeRequestInput(input)");
+    expect(runtimeLayerSource).toContain("answerRuntimeRequestInput(input, queueWake.wakeSurface)");
+    expect(runtimeLayerSource).toContain("setRuntimeRequestInputVariant(input)");
+    expect(runtimeLayerSource).toContain("setRuntimeRequestInputBlockingTimeout(input)");
     expect(runtimeLayerSource).toContain("setRuntimeRequestInputTimerPaused(input)");
     expect(runtimeLayerSource).not.toContain("RuntimeLayerCatalogPort");
     const appRuntimeBootstrapSource = readSource(appRuntimeBootstrapModule);
@@ -9125,6 +9236,49 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
+  it("renderer and shared roots use product-native transcript types without pi message aliases", () => {
+    const roots = [mainviewSourceRoot, sharedSourceRoot];
+    const forbiddenMessageIdentifiers =
+      /\b(?:AgentMessage|AssistantMessage|UserMessage|ToolResultMessage|RendererMessage|RendererAssistantMessage|RendererUserMessage|RendererToolResultMessage)\b/g;
+    const forbiddenPiRoleLiterals =
+      /\brole\s*:\s*["'](?:toolResult|bashExecution|custom|branchSummary|compactionSummary)["']/g;
+    const forbiddenPiContentLiterals = /\btype\s*:\s*["']toolCall["']/g;
+    const violations = roots.flatMap((root) =>
+      listTypeScriptFiles(root).flatMap((file) => {
+        const source = readSource(file);
+        const importViolations = readImports(file)
+          .filter(
+            (specifier) =>
+              specifier.startsWith("@mariozechner/") ||
+              specifier === "@svvy/pi-adapter" ||
+              specifier.startsWith("@svvy/pi-adapter/"),
+          )
+          .map((specifier) => `${display(file)} -> ${specifier}`);
+        const identifierViolations = [...source.matchAll(forbiddenMessageIdentifiers)].map(
+          (match) => `${display(file)} -> retired message identifier ${match[0]}`,
+        );
+        const roleViolations = [...source.matchAll(forbiddenPiRoleLiterals)].map(
+          (match) => `${display(file)} -> retired pi role ${match[0]}`,
+        );
+        const contentViolations = [...source.matchAll(forbiddenPiContentLiterals)].map(
+          (match) => `${display(file)} -> retired pi content discriminant ${match[0]}`,
+        );
+        return [
+          ...importViolations,
+          ...identifierViolations,
+          ...roleViolations,
+          ...contentViolations,
+        ];
+      }),
+    );
+
+    expect(violations).toEqual([]);
+    expect(existsSync(join(sharedSourceRoot, "renderer-message.ts"))).toBe(false);
+    const rendererTranscriptSource = readSource(join(sharedSourceRoot, "renderer-transcript.ts"));
+    expect(rendererTranscriptSource).toContain("RuntimeTranscriptAssistantMessage");
+    expect(rendererTranscriptSource).toContain("RuntimeTranscriptMessage");
+  });
+
   it("renderer and shared browser contracts do not import state implementation subpaths", () => {
     const roots = [join(projectRoot, "src", "mainview"), sharedSourceRoot].filter((root) =>
       existsSync(root),
@@ -9160,6 +9314,7 @@ describe("package boundaries", () => {
     expect(actual).toEqual([
       "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseExitWith",
       "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseExitWith",
+      "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseWith",
       "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseWith",
       "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseWith",
       "packages/pi-adapter/src/pi-adapter.ts -> Effect.runPromiseWith",
@@ -10047,11 +10202,6 @@ describe("package boundaries", () => {
       "src/bun/ordered-runtime-state-write-lane.test.ts -> Effect.runSync",
       "src/bun/ordered-runtime-state-write-lane.test.ts -> Effect.runSync",
       "src/bun/ordered-runtime-state-write-lane.test.ts -> Effect.runSync",
-      "src/bun/request-user-input-tool.test.ts -> Effect.runPromise",
-      "src/bun/request-user-input-tool.test.ts -> Effect.runPromise",
-      "src/bun/request-user-input-tool.test.ts -> Effect.runPromise",
-      "src/bun/request-user-input-tool.test.ts -> Effect.runPromise",
-      "src/bun/request-user-input-tool.test.ts -> Effect.runSync",
       "src/bun/runtime-service-adapter.test.ts -> Effect.runSync",
       "src/bun/runtime-service-adapter.test.ts -> Effect.runSync",
       "src/bun/runtime-state-tools.test.ts -> Effect.runSync",
@@ -10147,6 +10297,9 @@ describe("package boundaries", () => {
         "MarkSessionReadCommandInput",
         "MarkSessionUnreadCommandInput",
         "PromoteProfileExtensionDefaultCommandInput",
+        "PromptHistoryReadModel",
+        "PromptHistoryReadModelEntry",
+        "PromptHistoryReadModelRequest",
         "ReorderOrchestratorProfilesCommandInput",
         "ResetActorExtensionDefaultsCommandInput",
         "SaveWorkspaceLayoutSlotCommandInput",

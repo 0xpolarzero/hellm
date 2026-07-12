@@ -66,7 +66,7 @@ test("keeps expanded agent token counts visible across extension state refresh",
     async ({ page }) => {
       await openAgentsPane(page);
 
-      await page.getByRole("button", { name: "Expand Default" }).click({ force: true });
+      await page.locator('button[aria-label="Expand Default"]').click({ force: true });
       const initialText = await waitForAgentsPaneTokens(page);
 
       expect(initialText).toContain("tokens total");

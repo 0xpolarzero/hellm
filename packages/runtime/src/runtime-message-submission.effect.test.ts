@@ -200,10 +200,12 @@ describe("runtime message submission", () => {
         {
           target: harness.acceptCalls[0]?.target,
           idempotencyKey: harness.acceptCalls[0]?.idempotencyKey,
+          promptHistoryText: harness.acceptCalls[0]?.promptHistoryText,
         },
         {
           target: orchestratorTarget,
           idempotencyKey: "client_request_01",
+          promptHistoryText: input.message.text,
         },
       );
       assert.deepStrictEqual(
@@ -263,6 +265,28 @@ describe("runtime message submission", () => {
       assert.instanceOf(error, RuntimeContractError);
       assert.deepStrictEqual(harness.acceptCalls, []);
       assert.deepStrictEqual(harness.calls, []);
+    }),
+  );
+
+  it.effect("omits prompt history for accepted attachment-only submissions", () =>
+    Effect.gen(function* () {
+      const harness = createHarness("queue_runtime_submit_attachment" as QueueItemId);
+
+      yield* harness.run({
+        target: orchestratorTarget,
+        message: {
+          text: "   ",
+          attachments: [
+            {
+              kind: "file",
+              path: "/repo/notes.md" as AbsolutePath,
+              name: "notes.md" as AttachmentDisplayName,
+            },
+          ],
+        },
+      });
+
+      assert.strictEqual(harness.acceptCalls[0]?.promptHistoryText, null);
     }),
   );
 

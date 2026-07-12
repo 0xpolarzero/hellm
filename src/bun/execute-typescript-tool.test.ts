@@ -37,6 +37,10 @@ import {
   type ExecuteTypescriptResult,
 } from "./execute-typescript-tool";
 import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
+import type {
+  AgentProfileAuthoritySnapshot,
+  AgentProfileMutation,
+} from "./agent-profile-mutation-store";
 
 const testDigest = {
   sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
@@ -52,6 +56,51 @@ function tsFacts(result: {
   readonly details?: { readonly commandFacts?: unknown } | undefined;
 }): ExecuteTypescriptResult {
   return result.details?.commandFacts as ExecuteTypescriptResult;
+}
+
+function createAgentProfileSnapshot(): AgentProfileAuthoritySnapshot {
+  const updatedAt = "2026-07-11T00:00:00.000Z" as never;
+  return {
+    configuredProfiles: [
+      {
+        profileId: "default-orchestrator" as never,
+        actor: "orchestrator",
+        name: "Default orchestrator",
+        providerId: "openai" as never,
+        modelId: "gpt-5.4" as never,
+        reasoning: { effort: "medium" },
+        followComposer: false,
+        extensionUsage: {},
+        extensionOrder: [],
+        position: 0,
+        updatedAt,
+        builtin: true,
+        locked: true,
+        deletable: false,
+      },
+      {
+        profileId: "thread-handler" as never,
+        actor: "handler",
+        name: "Thread handler",
+        providerId: "openai" as never,
+        modelId: "gpt-5.4-mini" as never,
+        reasoning: { effort: "medium" },
+        followComposer: false,
+        extensionUsage: {},
+        extensionOrder: [],
+        position: 0,
+        updatedAt,
+        builtin: true,
+        locked: true,
+        deletable: false,
+      },
+    ],
+    workflowAgents: [],
+    actorExtensionDefaults: [
+      { actor: "orchestrator", extensionUsage: {}, extensionOrder: [], updatedAt },
+      { actor: "workflow-task", extensionUsage: {}, extensionOrder: [], updatedAt },
+    ],
+  };
 }
 import {
   resolveActorExtensionState,
@@ -1728,6 +1777,80 @@ describe("execute_typescript tool", () => {
         }),
       }),
     );
+  });
+
+  it("routes generated Workflows agent saves through parent runtime source intent", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const workflowsSourceRoot = join(workspaceCwd, "app-workflows-source");
+    const authoringRoot = join(workspaceCwd, ".smithers", "workflows");
+    mkdirSync(authoringRoot, { recursive: true });
+    writeFileSync(
+      join(authoringRoot, "reviewer.ts"),
+      [
+        "export const reviewerSource = Agents.defineTaskAgent({",
+        '  id: "sourceReviewer",',
+        '  label: "Reviewer",',
+        '  provider: "openai",',
+        '  model: "gpt-5.4",',
+        '  reasoning: { effort: "medium" },',
+        '  instructions: "Review strictly.",',
+        '  overrides: { shell: "loaded" },',
+        "});",
+      ].join("\n"),
+    );
+    const appliedMutations: AgentProfileMutation[] = [];
+    const store = createStore("session-workflows-agent-save", workspaceCwd);
+    const runtime = createHandlerRuntime(store, "session-workflows-agent-save");
+    const tool = createExecuteTypescriptTool({
+      agentProfileSnapshot: createAgentProfileSnapshot(),
+      applyAgentProfileMutations: async (mutations) => {
+        appliedMutations.push(...structuredClone(mutations));
+      },
+      cwd: workspaceCwd,
+      runtime,
+      store,
+      workflowsSourceRoot,
+    });
+
+    const result = await tool.execute("tool-call-workflows-agent-save", {
+      typescriptCode: [
+        'const saved = await extensions.workflows.run("save", {',
+        "  options: {",
+        '    from: ".smithers/workflows/reviewer.ts",',
+        '    kind: "agent",',
+        '    export: "reviewerSource",',
+        '    as: "reviewerAgent",',
+        "  },",
+        "});",
+        "return { kind: saved.data.kind, exportName: saved.data.exportName };",
+      ].join("\n"),
+    });
+
+    expect(tsFacts(result)).toMatchObject({
+      success: true,
+      result: { kind: "agent", exportName: "reviewerAgent" },
+    });
+    expect(existsSync(join(workflowsSourceRoot, "agents", "reviewerAgent.agent.json"))).toBe(false);
+    expect(appliedMutations).toHaveLength(1);
+    expect(appliedMutations[0]).toMatchObject({
+      kind: "workflow-agent-source.upsert",
+      sourceId: "reviewerAgent",
+      overwrite: false,
+      draft: {
+        label: "Reviewer",
+        provider: "openai",
+        model: "gpt-5.4",
+        reasoningEffort: "medium",
+        instructions: "Review strictly.",
+        overrides: { shell: "loaded" },
+        extensionOrder: [],
+      },
+    });
+    expect(
+      store
+        .getSessionState("session-workflows-agent-save")
+        .commands.find((command) => command.toolName === "extensions.workflows.run")?.status,
+    ).toBe("succeeded");
   });
 
   it("forwards Extension prebuild CLI failures through the Workflows generated runtime facade", async () => {

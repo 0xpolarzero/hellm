@@ -1,9 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import {
   SandboxPolicyError,
   RuntimeGeneratedPackageStatePort,
   RuntimePromptDefaultsStatePort,
+  RuntimeWorkspaceStatePort,
   RuntimeContractError,
   StateCommandPostCommitNotificationPort,
   StateContractError,
@@ -32,6 +34,7 @@ import {
   type TurnId,
   type WorkspaceId,
   type WorkspaceSessionId,
+  type WorkflowAgentSourceObservation,
 } from "@svvy/core";
 import {
   Extensions,
@@ -72,6 +75,15 @@ import {
   RuntimeAppLogCommitNotification,
 } from "./runtime-app-log-commit-notification";
 import { RuntimeSurfaceQueueDispatcherService } from "./runtime-surface-queue-dispatcher-service";
+import {
+  RuntimeWorkflowAgentSourceIndex,
+  type RuntimeWorkflowAgentSourceIndexReconcileResult,
+  type RuntimeWorkflowAgentSourceIndexService,
+} from "./runtime-workflow-agent-source-index";
+import {
+  RuntimeShutdownAdmission,
+  layerRuntimeShutdownAdmission,
+} from "./runtime-shutdown-admission";
 
 const workspaceId = "workspace_runtime_service_layers" as WorkspaceId;
 const target = {
@@ -201,15 +213,36 @@ describe("runtime promoted service layers", () => {
 
     return Effect.gen(function* () {
       const service = yield* RuntimeQueueWakeService;
+      const shutdown = yield* RuntimeShutdownAdmission;
 
       yield* service.wakeSurface({ target, reason: "message-submitted" });
 
-      assert.deepStrictEqual(calls, [{ target, reason: "message-submitted" }]);
+      assert.deepStrictEqual(calls, [{ workspaceId, target, reason: "message-submitted" }]);
+      yield* shutdown.runShutdown(
+        Effect.succeed({
+          status: "drained",
+          interruptedTurns: 0,
+          interruptedCommands: 0,
+          releasedQueueClaims: 0,
+          recoveryRowsScheduled: 0,
+        }),
+      );
+      const rejected = yield* service
+        .wakeSurface({ target, reason: "message-submitted" })
+        .pipe(Effect.flip);
+      assert.strictEqual(rejected.reason, "runtime-shutdown");
+      assert.strictEqual(calls.length, 1);
     }).pipe(
-      Effect.provide(layerRuntimeQueueWakeService),
+      Effect.provide(
+        layerRuntimeQueueWakeService.pipe(Layer.provideMerge(layerRuntimeShutdownAdmission)),
+      ),
       Effect.provideService(RuntimeSurfaceQueueDispatcherService, {
         acceptWakeHint: (input) => {
-          calls.push({ target: input.target, reason: input.reason });
+          calls.push({
+            workspaceId: input.workspaceId,
+            target: input.target,
+            reason: input.reason,
+          });
           return Effect.void;
         },
         drain: () => Effect.succeed(false),
@@ -221,6 +254,12 @@ describe("runtime promoted service layers", () => {
               message: "unused",
             }),
           ),
+      }),
+      Effect.provideService(RuntimeWorkspaceStatePort, {
+        resolvePromptTargetWorkspaceId: () => Effect.succeed(workspaceId),
+        acquireWorkspace: () => Effect.die("unused"),
+        acquireDefaultWorkspace: () => Effect.die("unused"),
+        releaseWorkspace: () => Effect.die("unused"),
       }),
     );
   });
@@ -379,6 +418,7 @@ describe("runtime promoted service layers", () => {
       }),
       Effect.provideService(RuntimeGeneratedPackageStatePort, generatedPackageStatePort()),
       Effect.provideService(RuntimeEventBus, eventBus({ published })),
+      Effect.provideService(RuntimeWorkflowAgentSourceIndex, workflowAgentSourceIndexService()),
     );
   });
 
@@ -397,6 +437,7 @@ describe("runtime promoted service layers", () => {
       const result = yield* service.refresh(request);
 
       assert.deepStrictEqual(calls, [
+        "reconcile-workflow-agent-sources",
         "materialize-core-type-contract",
         "build:@svvyx/workflows",
         "list-workspaces",
@@ -459,6 +500,106 @@ describe("runtime promoted service layers", () => {
       }),
       Effect.provideService(RuntimeGeneratedPackageStatePort, generatedPackageStatePort()),
       Effect.provideService(RuntimeEventBus, eventBus({ published })),
+      Effect.provideService(
+        RuntimeWorkflowAgentSourceIndex,
+        workflowAgentSourceIndexService(calls),
+      ),
+    );
+  });
+
+  it.effect("blocks workflow builds after a published source index reports invalid agents", () => {
+    const calls: string[] = [];
+    const published: StateInvalidationDescriptor[][] = [];
+    const observedAt = "2026-04-18T09:00:00.000Z" as WorkflowAgentSourceObservation["observedAt"];
+    const invalidObservation = {
+      sourceId: "invalidAgent",
+      path: "/tmp/svvy/workflows/agents/invalidAgent.agent.json" as AbsolutePath,
+      sourceVersion: "invalid-agent-version",
+      fingerprint: "invalid-agent-fingerprint",
+      validationStatus: "invalid",
+      diagnostics: [
+        {
+          severity: "error",
+          code: "workflow_agent_model_unavailable",
+          message: "Invalid model.",
+        },
+      ],
+      parameters: null,
+      extensionOrder: [],
+      observedAt,
+    } satisfies WorkflowAgentSourceObservation;
+
+    return Effect.gen(function* () {
+      const service = yield* RuntimeGeneratedPackageRefreshService;
+      const result = yield* service.refresh({
+        scope: "app-global",
+        packages: ["@svvyx/workflows"],
+        reason: "source-changed",
+      });
+
+      assert.deepStrictEqual(calls, ["reconcile-workflow-agent-sources"]);
+      assert.deepStrictEqual(result, {
+        scope: "app-global",
+        packages: [
+          {
+            packageName: "@svvyx/workflows",
+            action: "failed",
+            diagnostics: [
+              "Generated Workflows package build is blocked by invalid workflow-agent sources: invalidAgent.",
+            ],
+          },
+        ],
+        workspaceLinks: [],
+        recoveryWorkIds: [],
+      });
+      assert.deepStrictEqual(published, [[appInvalidation]]);
+    }).pipe(
+      Effect.provide(layerRuntimeGeneratedPackageRefreshService),
+      Effect.provideService(
+        Extensions,
+        Extensions.of({
+          generatedPackages: {
+            refresh: () =>
+              Effect.sync(() => {
+                calls.push("build");
+                return { packages: [], workflowsExports: [] };
+              }),
+            planWorkspaceLink: () => Effect.die("unused"),
+          },
+        } as unknown as ExtensionsService),
+      ),
+      Effect.provideService(RuntimeGeneratedPackageRefreshHostPort, {
+        listAcquiredWorkspaceIds: () => Effect.die("unused"),
+        listRecoverableWorkspaceIds: () => Effect.succeed([]),
+        materializeCoreTypeContractPackage: () =>
+          Effect.sync(() => {
+            calls.push("materialize");
+          }),
+        now: () => Effect.succeed(observedAt),
+        workspaceLinkFileHost: {
+          pathExists: () => false,
+          isDirectory: () => false,
+          isSymbolicLink: () => false,
+          readSymbolicLink: () => null,
+          makeDirectory: () => {},
+          remove: () => {},
+          symlinkDirectory: () => {},
+        },
+      }),
+      Effect.provideService(RuntimeGeneratedPackageStatePort, generatedPackageStatePort()),
+      Effect.provideService(RuntimeEventBus, eventBus({ published })),
+      Effect.provideService(RuntimeWorkflowAgentSourceIndex, {
+        reconcile: Effect.sync(() => {
+          calls.push("reconcile-workflow-agent-sources");
+          return {
+            sourceFingerprint: "invalid-workflow-agent-source-index",
+            observations: [invalidObservation],
+            diagnostics: [],
+            scannedAt: observedAt,
+          };
+        }),
+        scaffoldAndReconcile: Effect.die("unused"),
+      }),
     );
   });
 
@@ -553,6 +694,22 @@ function testSandboxPolicySnapshot(): SandboxPolicySnapshot {
       entries: [],
     },
   };
+}
+
+function workflowAgentSourceIndexService(
+  calls?: string[],
+): RuntimeWorkflowAgentSourceIndex["Service"] {
+  const reconcile: RuntimeWorkflowAgentSourceIndexService["reconcile"] = Effect.sync(() => {
+    calls?.push("reconcile-workflow-agent-sources");
+    return {
+      sourceFingerprint: "workflow-agent-source-index-test",
+      observations: [],
+      diagnostics: [],
+      scannedAt:
+        "2026-04-18T09:00:00.000Z" as unknown as RuntimeWorkflowAgentSourceIndexReconcileResult["scannedAt"],
+    } as RuntimeWorkflowAgentSourceIndexReconcileResult;
+  });
+  return { reconcile, scaffoldAndReconcile: reconcile };
 }
 
 function generatedPackageStatePort(): RuntimeGeneratedPackageStatePortService {

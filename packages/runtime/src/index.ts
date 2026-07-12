@@ -30,6 +30,7 @@ import type {
   GeneratedPackagesRefreshResult,
   OpenSurfaceInput,
   OpenSurfaceResult,
+  PromptTarget,
   RefreshGeneratedContextRequest,
   RefreshGeneratedPackagesRequest,
   ReleaseWorkspaceInput,
@@ -51,15 +52,22 @@ import type {
   PiRuntimePathsPort,
   PiSessionReferencePort,
   ProviderAuthPort,
+  ProviderAuthStatusStatePort,
   RuntimeQueuesApiEffect,
   RuntimeQueueStatePort,
   RuntimeRequestInputApiEffect,
   RuntimeRequestStatePort,
+  RuntimeCreateWorkflowAgentSourceInput,
+  RuntimeDeleteWorkflowAgentSourceInput,
+  RuntimeDuplicateWorkflowAgentSourceInput,
+  RuntimeSaveExtensionSourceEditInput,
+  RuntimeRecoveryStatePort,
   RuntimeSessionWaitStatePort,
   RuntimeSourceInvalidationApiEffect,
   RuntimeSourceStatePort,
   RuntimeSurfaceLifecycleStatePort,
   RuntimeThreadStatePort,
+  RuntimeTranscriptStatePort,
   RuntimeTurnStatePort,
   RuntimeWorkflowTaskStatePort,
   RuntimeWorkspaceStatePort,
@@ -67,14 +75,17 @@ import type {
   RuntimeWorkspacesApiEffect,
   SandboxPolicySource,
   OpenExtensionSourceEditInput,
-  SaveExtensionSourceEditInput,
   SourceEditSaveResult,
   SourceEditSession,
   SourceInvalidationHint,
   SourceReconcileRequest,
   SourceReconcileResult,
+  SetRequestInputBlockingTimeoutInput,
+  SetRequestInputBlockingTimeoutResult,
   SetRequestInputTimerPausedInput,
   SetRequestInputTimerPausedResult,
+  SetRequestInputVariantInput,
+  SetRequestInputVariantResult,
   SteerQueuedMessageInput,
   SubmitMessageInput,
   SubmitMessageResult,
@@ -82,6 +93,8 @@ import type {
   WriteCommandStdinResult,
   AuthenticatedRunTaskAgentInput,
   RunTaskAgentResult,
+  WorkflowAgentSourceDeleteResult,
+  WorkflowAgentSourceLifecycleResult,
 } from "@svvy/core";
 import type { PiAdapter } from "@svvy/pi-adapter";
 import type { AppLogWritePort, StateCommandPostCommitNotificationPort } from "@svvy/core";
@@ -107,6 +120,10 @@ import {
   decodeUnknownCloseSurfaceResultEffect,
   decodeUnknownCreateOrchestratorSurfaceInputEffect,
   decodeUnknownCreateSurfaceResultEffect,
+  decodeUnknownRuntimeCreateWorkflowAgentSourceInputEffect,
+  decodeUnknownRuntimeDeleteWorkflowAgentSourceInputEffect,
+  decodeUnknownRuntimeDuplicateWorkflowAgentSourceInputEffect,
+  decodeUnknownRuntimeSaveExtensionSourceEditInputEffect,
   decodeUnknownGeneratedPackagesRefreshResultEffect,
   decodeUnknownOpenExtensionSourceEditInputEffect,
   decodeUnknownOpenSurfaceInputEffect,
@@ -118,9 +135,12 @@ import {
   decodeUnknownRuntimeEventEffect,
   decodeUnknownRuntimeEventSubscriptionCloseEffect,
   decodeUnknownRuntimeEventsInputEffect,
-  decodeUnknownSaveExtensionSourceEditInputEffect,
+  decodeUnknownSetRequestInputBlockingTimeoutInputEffect,
+  decodeUnknownSetRequestInputBlockingTimeoutResultEffect,
   decodeUnknownSetRequestInputTimerPausedInputEffect,
   decodeUnknownSetRequestInputTimerPausedResultEffect,
+  decodeUnknownSetRequestInputVariantInputEffect,
+  decodeUnknownSetRequestInputVariantResultEffect,
   decodeUnknownSourceEditSaveResultEffect,
   decodeUnknownSourceEditSessionEffect,
   decodeUnknownSourceInvalidationHintEffect,
@@ -131,6 +151,8 @@ import {
   decodeUnknownSubmitMessageResultEffect,
   decodeUnknownWriteCommandStdinInputEffect,
   decodeUnknownWriteCommandStdinResultEffect,
+  decodeUnknownWorkflowAgentSourceDeleteResultEffect,
+  decodeUnknownWorkflowAgentSourceLifecycleResultEffect,
 } from "@svvy/core";
 import { layerRuntimeEventBus } from "./runtime-event-bus";
 import { layerRuntimeApprovalWaitService } from "./runtime-approval-wait-service";
@@ -157,6 +179,8 @@ import { layerRuntimeQueueWakeService } from "./runtime-queue-wake-service";
 import { layerRuntimeGeneratedContextRefreshService } from "./runtime-generated-context-refresh-service";
 import { layerRuntimeGeneratedPackageRefreshService } from "./runtime-generated-package-refresh-service";
 import { layerRuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
+import { layerRuntimeSourceReconcileRecoveryWorker } from "./runtime-source-reconcile-recovery-worker";
+import { layerRuntimeWorkflowAgentSourceIndex } from "./runtime-workflow-agent-source-index";
 import { layerRuntimeAcceptedNativeToolExecution } from "./accepted-native-tool-execution-service";
 import { layerRuntimeLaunchPolicyService } from "./runtime-launch-policy-service";
 import { layerStateCommandPostCommitNotificationPort } from "./state-command-post-commit-notification";
@@ -179,6 +203,7 @@ import {
   layerRuntimeWorkflowTaskAgentBridgeService,
   RuntimeWorkflowTaskAgentBridgeBearerVerifier,
 } from "./workflow-task-agent-bridge-service";
+import { layerRuntimeShutdownAdmission } from "./runtime-shutdown-admission";
 
 interface RuntimeMessagesService extends RuntimeMessagesApiEffect {}
 
@@ -191,11 +216,26 @@ interface RuntimeCommandsService extends RuntimeCommandsApiEffect {}
 interface RuntimeSourceEditsService {
   open(input: OpenExtensionSourceEditInput): Effect.Effect<SourceEditSession, RuntimeContractError>;
   save(
-    input: SaveExtensionSourceEditInput,
+    input: RuntimeSaveExtensionSourceEditInput,
   ): Effect.Effect<SourceEditSaveResult, RuntimeContractError>;
+  createWorkflowAgent(
+    input: RuntimeCreateWorkflowAgentSourceInput,
+  ): Effect.Effect<WorkflowAgentSourceLifecycleResult, RuntimeContractError>;
+  duplicateWorkflowAgent(
+    input: RuntimeDuplicateWorkflowAgentSourceInput,
+  ): Effect.Effect<WorkflowAgentSourceLifecycleResult, RuntimeContractError>;
+  deleteWorkflowAgent(
+    input: RuntimeDeleteWorkflowAgentSourceInput,
+  ): Effect.Effect<WorkflowAgentSourceDeleteResult, RuntimeContractError>;
 }
 
 interface RuntimeSourceInvalidationService extends RuntimeSourceInvalidationApiEffect {}
+
+interface RuntimeWorkspaceRecoveryService {
+  wakeSurfaceQueue(input: {
+    readonly target: PromptTarget;
+  }): Effect.Effect<void, RuntimeContractError>;
+}
 
 interface RuntimeEventSubscriptionEffect {
   readonly stream: Stream.Stream<RuntimeEvent, never>;
@@ -213,6 +253,7 @@ interface RuntimeService {
   readonly approvals: RuntimeApprovalsApiEffect;
   readonly sourceEdits: RuntimeSourceEditsService;
   readonly sourceInvalidation: RuntimeSourceInvalidationService;
+  readonly workspaceRecovery: RuntimeWorkspaceRecoveryService;
   readonly workflowTaskAgentBridge: {
     runTaskAgent(
       input: AuthenticatedRunTaskAgentInput,
@@ -225,13 +266,23 @@ interface RuntimeService {
 
 export class Runtime extends Context.Service<Runtime, RuntimeService>()("@svvy/runtime/Runtime") {}
 
-const runtimeGeneratedPackageRefreshLayer = layerRuntimeGeneratedPackageRefreshService.pipe(
+const runtimeShutdownAdmissionLayer = layerRuntimeShutdownAdmission;
+const runtimeWorkflowAgentSourceIndexLayer = layerRuntimeWorkflowAgentSourceIndex.pipe(
   Layer.provideMerge(layerRuntimeEventBus),
 );
+const runtimeGeneratedPackageRefreshLayer = layerRuntimeGeneratedPackageRefreshService.pipe(
+  Layer.provideMerge(layerRuntimeEventBus),
+  Layer.provideMerge(runtimeWorkflowAgentSourceIndexLayer),
+);
 const runtimeSourceInvalidationLayer = layerRuntimeSourceInvalidationService.pipe(
+  Layer.provideMerge(runtimeShutdownAdmissionLayer),
   Layer.provideMerge(layerRuntimeEventBus),
   Layer.provideMerge(layerRuntimeGeneratedContextRefreshService),
   Layer.provideMerge(runtimeGeneratedPackageRefreshLayer),
+);
+const runtimeSourceReconcileRecoveryWorkerLayer = layerRuntimeSourceReconcileRecoveryWorker.pipe(
+  Layer.provideMerge(runtimeSourceInvalidationLayer),
+  Layer.provideMerge(layerRuntimeEventBus),
 );
 const runtimeApprovalWaitLayer = layerRuntimeApprovalWaitService;
 const runtimeLaunchPolicyLayer = layerRuntimeLaunchPolicyService.pipe(Layer.provide(sandboxLayer));
@@ -243,27 +294,42 @@ const runtimePromptExecutionLayer = layerRuntimePromptExecutionService.pipe(
   Layer.provideMerge(layerRuntimeEventBus),
 );
 const runtimeSurfaceScopeLayer = layerRuntimeSurfaceScopeService;
+const runtimeRequestInputWaitLayer = layerRuntimeRequestInputWaitService.pipe(
+  Layer.provideMerge(layerRuntimeEventBus),
+);
+const runtimeAcceptedNativeToolExecutionLayer = layerRuntimeAcceptedNativeToolExecution.pipe(
+  Layer.provideMerge(runtimeRequestInputWaitLayer),
+  Layer.provideMerge(runtimeApprovalWaitLayer),
+  Layer.provideMerge(runtimeLaunchPolicyLayer),
+  Layer.provideMerge(runtimeSourceInvalidationLayer),
+  Layer.provideMerge(layerRuntimeEventBus),
+  Layer.provide(runtimeShutdownAdmissionLayer),
+);
 const runtimeSurfaceQueueDispatcherLayer = layerRuntimeSurfaceQueueDispatcherService.pipe(
   Layer.provideMerge(runtimeSurfaceScopeLayer),
   Layer.provideMerge(runtimePromptExecutionLayer),
   Layer.provideMerge(runtimeSourceInvalidationLayer),
   Layer.provideMerge(layerRuntimeGeneratedContextRefreshService),
   Layer.provideMerge(layerRuntimePromptDefaultsService),
+  Layer.provideMerge(runtimeAcceptedNativeToolExecutionLayer),
+  Layer.provideMerge(runtimeShutdownAdmissionLayer),
 );
 const runtimeWorkflowTaskAgentBridgeLayer = layerRuntimeWorkflowTaskAgentBridgeService.pipe(
+  Layer.provideMerge(runtimeShutdownAdmissionLayer),
   Layer.provideMerge(runtimeSurfaceQueueDispatcherLayer),
   Layer.provideMerge(layerRuntimeGeneratedContextRefreshService),
   Layer.provideMerge(runtimeSurfaceScopeLayer),
   Layer.provideMerge(layerRuntimeEventBus),
 );
 const runtimeQueueWakeLayer = layerRuntimeQueueWakeService.pipe(
+  Layer.provideMerge(runtimeShutdownAdmissionLayer),
   Layer.provideMerge(runtimeSurfaceQueueDispatcherLayer),
 );
-const runtimeRequestInputWaitLayer = layerRuntimeRequestInputWaitService.pipe(
-  Layer.provideMerge(runtimeQueueWakeLayer),
-);
 const runtimeInternalServicesLayer = Layer.mergeAll(
+  runtimeShutdownAdmissionLayer,
   runtimeSourceInvalidationLayer,
+  runtimeSourceReconcileRecoveryWorkerLayer,
+  runtimeWorkflowAgentSourceIndexLayer,
   runtimeRequestInputWaitLayer,
   runtimeApprovalWaitLayer,
   runtimeLaunchPolicyLayer,
@@ -279,12 +345,13 @@ const runtimeInternalServicesLayer = Layer.mergeAll(
 
 export namespace Runtime {
   const runtimeServiceLayer = Layer.effect(Runtime, makeRuntimeService());
-  const runtimeAcceptedNativeToolExecutionLayer = layerRuntimeAcceptedNativeToolExecution;
   const runtimeExecutionPlanExecutorLayer = layerRuntimeExecutionPlanExecutor;
   const runtimeAppLogCommitNotificationLayer = layerRuntimeAppLogCommitNotification;
   const runtimeCommittedStateInvalidationPublicationLayer =
     layerRuntimeCommittedStateInvalidationPublication;
-  const runtimeStartupReadinessLayer = layerRuntimeStartupReadiness;
+  const runtimeStartupReadinessLayer = layerRuntimeStartupReadiness.pipe(
+    Layer.provideMerge(runtimeWorkflowAgentSourceIndexLayer),
+  );
   const runtimeShutdownPreparationLayer = layerRuntimeShutdownPreparation;
 
   export const layer: Layer.Layer<
@@ -299,6 +366,7 @@ export namespace Runtime {
     | RuntimePromptDefaultsStatePort
     | PiAdapter
     | ProviderAuthPort
+    | ProviderAuthStatusStatePort
     | PiRuntimePathsPort
     | PiSessionReferencePort
     | RuntimeLayerProviderAuthPort
@@ -315,6 +383,7 @@ export namespace Runtime {
     | RuntimeWorkspaceStatePort
     | RuntimeSurfaceLifecycleStatePort
     | RuntimeSourceStatePort
+    | RuntimeRecoveryStatePort
     | RuntimeGeneratedPackageStatePort
     | Extensions
     | FileSystem.FileSystem
@@ -328,6 +397,7 @@ export namespace Runtime {
     | RuntimeCommandStatePort
     | RuntimeSessionWaitStatePort
     | RuntimeThreadStatePort
+    | RuntimeTranscriptStatePort
     | RuntimeTurnStatePort
     | RuntimeWorkflowTaskStatePort
     | RuntimeEpisodeStatePort
@@ -383,6 +453,14 @@ interface RuntimeQueuesFacade {
 }
 
 interface RuntimeRequestInputFacade {
+  setVariant(
+    input: SetRequestInputVariantInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<SetRequestInputVariantResult>;
+  setBlockingTimeout(
+    input: SetRequestInputBlockingTimeoutInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<SetRequestInputBlockingTimeoutResult>;
   answer(
     input: AnswerRequestInputInput,
     options?: RuntimeFacadeCallOptions,
@@ -417,9 +495,21 @@ interface RuntimeSourceEditsFacade {
     options?: RuntimeFacadeCallOptions,
   ): Promise<SourceEditSession>;
   save(
-    input: SaveExtensionSourceEditInput,
+    input: RuntimeSaveExtensionSourceEditInput,
     options?: RuntimeFacadeCallOptions,
   ): Promise<SourceEditSaveResult>;
+  createWorkflowAgent(
+    input: RuntimeCreateWorkflowAgentSourceInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<WorkflowAgentSourceLifecycleResult>;
+  duplicateWorkflowAgent(
+    input: RuntimeDuplicateWorkflowAgentSourceInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<WorkflowAgentSourceLifecycleResult>;
+  deleteWorkflowAgent(
+    input: RuntimeDeleteWorkflowAgentSourceInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<WorkflowAgentSourceDeleteResult>;
 }
 
 interface RuntimeSourceInvalidationFacade {
@@ -981,6 +1071,44 @@ export function createRuntimeFacade(
         ),
     },
     requestInput: {
+      setVariant: (input, options) =>
+        run(
+          "runtime.requestInput.setVariant",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.requestInput.setVariant",
+              decodeUnknownSetRequestInputVariantInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.requestInput.setVariant(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.requestInput.setVariant",
+              decodeUnknownSetRequestInputVariantResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
+      setBlockingTimeout: (input, options) =>
+        run(
+          "runtime.requestInput.setBlockingTimeout",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.requestInput.setBlockingTimeout",
+              decodeUnknownSetRequestInputBlockingTimeoutInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.requestInput.setBlockingTimeout(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.requestInput.setBlockingTimeout",
+              decodeUnknownSetRequestInputBlockingTimeoutResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
       answer: (input, options) =>
         run(
           "runtime.requestInput.answer",
@@ -1108,7 +1236,7 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const decodedInput = yield* decodeBoundary(
               "runtime.sourceEdits.save",
-              decodeUnknownSaveExtensionSourceEditInputEffect,
+              decodeUnknownRuntimeSaveExtensionSourceEditInputEffect,
               input,
             );
             const runtime = yield* Runtime;
@@ -1116,6 +1244,63 @@ export function createRuntimeFacade(
             return yield* decodeBoundary(
               "runtime.sourceEdits.save",
               decodeUnknownSourceEditSaveResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
+      createWorkflowAgent: (input, options) =>
+        run(
+          "runtime.sourceEdits.createWorkflowAgent",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.sourceEdits.createWorkflowAgent",
+              decodeUnknownRuntimeCreateWorkflowAgentSourceInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.sourceEdits.createWorkflowAgent(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.sourceEdits.createWorkflowAgent",
+              decodeUnknownWorkflowAgentSourceLifecycleResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
+      duplicateWorkflowAgent: (input, options) =>
+        run(
+          "runtime.sourceEdits.duplicateWorkflowAgent",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.sourceEdits.duplicateWorkflowAgent",
+              decodeUnknownRuntimeDuplicateWorkflowAgentSourceInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.sourceEdits.duplicateWorkflowAgent(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.sourceEdits.duplicateWorkflowAgent",
+              decodeUnknownWorkflowAgentSourceLifecycleResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
+      deleteWorkflowAgent: (input, options) =>
+        run(
+          "runtime.sourceEdits.deleteWorkflowAgent",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.sourceEdits.deleteWorkflowAgent",
+              decodeUnknownRuntimeDeleteWorkflowAgentSourceInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.sourceEdits.deleteWorkflowAgent(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.sourceEdits.deleteWorkflowAgent",
+              decodeUnknownWorkflowAgentSourceDeleteResultEffect,
               result,
             );
           }),

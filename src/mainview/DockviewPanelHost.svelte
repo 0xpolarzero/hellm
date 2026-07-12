@@ -26,9 +26,12 @@
     type TranscriptSemanticBlock,
   } from "./transcript-projection";
   import type { PromptHistoryEntry } from "./prompt-history";
-  import type { ChatRuntime } from "./chat-runtime";
-  import type { ChatSurfaceController } from "./chat-runtime";
-  import type { QueuedPrompt } from "./chat-runtime";
+  import type {
+    ChatRuntime,
+    ChatSurfaceController,
+    QueuedPrompt,
+    RendererSurfaceModel,
+  } from "./chat-runtime";
   import type { AppAppearance } from "../shared/agent-settings";
   import {
     extensionUsageItems as buildExtensionUsageItems,
@@ -41,8 +44,8 @@
     WorkspaceSessionSummary,
     WorkspaceTabInfo,
   } from "../shared/workspace-contract";
-  import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-  import { getModel, type UserMessage } from "@mariozechner/pi-ai";
+  import type { ReasoningEffort as ThinkingLevel } from "../shared/agent-settings";
+  import type { RendererTranscriptUserEntry } from "../shared/renderer-transcript";
   import { onDestroy, onMount } from "svelte";
   import type { AgentModelChoice } from "../shared/workspace-contract";
 
@@ -73,7 +76,7 @@
   let pane = $state<ReturnType<ChatRuntime["getPane"]> | null>(null);
   let sessions = $state<WorkspaceSessionSummary[]>([]);
   let promptHistory = $state<PromptHistoryEntry[]>([]);
-  let messages = $state<ChatSurfaceController["agent"]["state"]["messages"]>([]);
+  let messages = $state<ChatSurfaceController["view"]["messages"]>([]);
   let pendingToolCalls = $state(new Set<string>());
   let queuedMessages = $state<QueuedPrompt[]>([]);
   let composerDraft = $state<ChatSurfaceController["composerDraft"]>({
@@ -91,19 +94,17 @@
     attachments: [],
     snippetMentions: [],
   });
-  let promptBinding = $state<ChatSurfaceController["promptBinding"]>(undefined);
-  let resolvedSystemPrompt = $state("");
   let isStreaming = $state(false);
   let activeTurnStartedAt = $state<string | null>(null);
   let turnTimings = $state<ChatSurfaceController["turnTimings"]>([]);
   let errorMessage = $state<string | undefined>(undefined);
-  let currentModel = $state<ChatSurfaceController["agent"]["state"]["model"] | null>(null);
+  let currentModel = $state<RendererSurfaceModel | null>(null);
   let currentThinkingLevel = $state<ThinkingLevel>("off");
   let handlerThreads = $state<WorkspaceHandlerThreadSummary[]>([]);
   let controllerRevision = $state(0);
   let workspaceMentionPaths = $state<ReadonlySet<string>>(new Set());
   let editDraft = $state<ComposerEditDraft | null>(null);
-  let pendingEditMessage = $state<{ message: UserMessage; text: string } | null>(null);
+  let pendingEditMessage = $state<{ message: RendererTranscriptUserEntry; text: string } | null>(null);
   let unsubscribeRuntime = $state<(() => void) | null>(null);
   let unsubscribeController = $state<(() => void) | null>(null);
 
@@ -134,13 +135,12 @@
   );
   const visibleStreamMessage = $derived.by(() => {
     void controllerRevision;
-    const message = controller?.agent.state.streamMessage;
+    const message = controller?.view.streamMessage;
     return controller?.promptStatus === "streaming" && message?.role === "assistant"
       ? message
       : undefined;
   });
   const editingUserMessageTimestamp = $derived(editDraft?.messageTimestamp ?? null);
-  const activeSystemPrompt = $derived(resolvedSystemPrompt.trim());
   const composerExtensionActor = $derived<AgentContextActor>(
     controller?.target.surface === "handler" ? "handler" : "orchestrator",
   );
@@ -177,10 +177,6 @@
       networkAccess: runtime.appPreferencesSnapshot?.networkAccess ?? true,
     });
   });
-  const hasSurfaceMetadata = $derived(
-    Boolean(promptBinding?.stale || activeSystemPrompt),
-  );
-
   function syncSurfaceState() {
     controllerRevision += 1;
     if (!controller) {
@@ -189,8 +185,6 @@
       queuedMessages = [];
       composerDraft = { text: "", attachments: [], snippetMentions: [], updatedAt: null };
       composerBuffer = { text: "", attachments: [], snippetMentions: [] };
-      promptBinding = undefined;
-      resolvedSystemPrompt = "";
       isStreaming = false;
       activeTurnStartedAt = null;
       turnTimings = [];
@@ -201,8 +195,8 @@
       return;
     }
 
-    messages = [...controller.agent.state.messages];
-    pendingToolCalls = new Set(controller.agent.state.pendingToolCalls);
+    messages = [...controller.view.messages];
+    pendingToolCalls = new Set(controller.view.pendingToolCalls);
     queuedMessages = [...controller.queuedPrompts];
     composerDraft = structuredClone(controller.composerDraft);
     if (!editDraft) {
@@ -212,19 +206,18 @@
         snippetMentions: structuredClone(controller.composerDraft.snippetMentions ?? []),
       };
     }
-    promptBinding = controller.promptBinding;
-    resolvedSystemPrompt = controller.resolvedSystemPrompt;
-    isStreaming = controller.agent.state.isStreaming || controller.promptStatus === "streaming";
+    isStreaming = controller.view.isStreaming || controller.promptStatus === "streaming";
     activeTurnStartedAt = controller.activeTurnStartedAt;
     turnTimings = structuredClone(controller.turnTimings);
-    errorMessage = controller.agent.state.error;
-    currentModel = controller.agent.state.model;
-    currentThinkingLevel = controller.agent.state.thinkingLevel as ThinkingLevel;
+    errorMessage = controller.view.error;
+    currentModel = controller.view.model;
+    currentThinkingLevel = controller.view.thinkingLevel as ThinkingLevel;
   }
 
   function syncPanel() {
     pane = runtime.getPane(panelId) ?? null;
     sessions = [...runtime.sessions];
+    promptHistory = [...runtime.promptHistorySnapshot];
     const nextController = runtime.getPaneController(panelId);
     if (nextController !== controller) {
       unsubscribeController?.();
@@ -400,37 +393,6 @@
         threadId: controller.target.threadId,
 	        details: surfaceSendTelemetryDetails(sendInput),
 	      });
-	      try {
-	        promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
-	        runtime.recordRendererTelemetry({
-	          eventName: "surface_composer.send.prompt_history_refreshed",
-	          correlationId,
-	          level: "debug",
-	          source: "renderer",
-	          message: "Surface composer send refreshed prompt history.",
-	          workspaceId: runtime.workspaceId,
-	          workspaceSessionId: controller.target.workspaceSessionId,
-	          surfacePiSessionId: controller.target.surfacePiSessionId,
-	          threadId: controller.target.threadId,
-	          details: surfaceSendTelemetryDetails(sendInput, {
-	            promptHistoryCount: promptHistory.length,
-	          }),
-	        });
-	      } catch (error) {
-	        runtime.recordRendererTelemetry({
-	          eventName: "surface_composer.send.prompt_history_refresh_failed",
-	          correlationId,
-	          level: "warn",
-	          source: "renderer",
-	          message: "Surface composer send completed, but prompt history refresh failed.",
-	          workspaceId: runtime.workspaceId,
-	          workspaceSessionId: controller.target.workspaceSessionId,
-	          surfacePiSessionId: controller.target.surfacePiSessionId,
-	          threadId: controller.target.threadId,
-	          details: surfaceSendTelemetryDetails(sendInput),
-	          error: normalizeTelemetryError(error),
-	        });
-	      }
 	      return true;
 	    } catch (error) {
 	      runtime.recordRendererTelemetry({
@@ -455,7 +417,7 @@
     await controller.abort();
   }
 
-  function startEditingUserMessage(message: UserMessage, text: string): void {
+  function startEditingUserMessage(message: RendererTranscriptUserEntry, text: string): void {
     editDraft = {
       messageTimestamp: message.timestamp,
       text,
@@ -463,7 +425,7 @@
     pendingEditMessage = null;
   }
 
-  function editUserMessageFromTranscript(message: UserMessage, text: string): void {
+  function editUserMessageFromTranscript(message: RendererTranscriptUserEntry, text: string): void {
     if (!text.trim()) return;
     if (String(editDraft?.messageTimestamp) === String(message.timestamp)) return;
     const hasComposerDraft =
@@ -487,23 +449,22 @@
     if (choice.authStatus.health !== "usable" && modelChoiceValue(choice) !== currentValue) {
       return null;
     }
-    try {
-      const model = getModel(
-        choice.providerId as Parameters<typeof getModel>[0],
-        choice.modelId as Parameters<typeof getModel>[1],
-      );
-      return {
-        value: modelChoiceValue(choice),
-        label: model.name,
-        triggerLabel: model.name,
-        searchText: `${model.name} ${choice.modelId} ${choice.providerId}`,
-        disabled: choice.authStatus.health !== "usable",
-        model,
-        supportedThinkingLevels: choice.supportedReasoning,
-      };
-    } catch {
-      return null;
-    }
+    const model: RendererSurfaceModel = {
+      provider: choice.providerId,
+      id: choice.modelId,
+      name: choice.displayName,
+      ...(choice.contextWindow ? { contextWindow: choice.contextWindow } : {}),
+      input: choice.inputModalities,
+    };
+    return {
+      value: modelChoiceValue(choice),
+      label: model.name,
+      triggerLabel: model.name,
+      searchText: `${model.name} ${choice.modelId} ${choice.providerId}`,
+      disabled: choice.authStatus.health !== "usable",
+      model,
+      supportedThinkingLevels: choice.supportedReasoning,
+    };
   }
 
   async function listModelsForComposer(): Promise<ComposerModelOption[]> {
@@ -626,14 +587,6 @@
   onMount(() => {
     syncPanel();
     unsubscribeRuntime = runtime.subscribe(syncPanel);
-    void runtime.storage.promptHistory
-      .list(runtime.workspaceId)
-      .then((entries) => {
-        promptHistory = entries;
-      })
-      .catch(() => {
-        promptHistory = [];
-      });
     void runtime
       .listWorkspacePaths()
       .then((paths) => {
@@ -707,47 +660,15 @@
 {:else if controller}
   <section
     class="dockview-chat-panel"
-    class:has-surface-metadata={hasSurfaceMetadata}
     data-testid="workspace-pane"
     data-panel-id={panelId}
   >
-    {#if hasSurfaceMetadata}
-      <div class="surface-metadata-stack" aria-label="Surface metadata">
-        {#if promptBinding?.stale}
-          <div class="prompt-stale-banner" role="status">
-            <span>
-              Extensions changed and will require system prompt to refresh.
-            </span>
-            <label class="prompt-stale-checkbox">
-              <input
-                type="checkbox"
-                checked={promptBinding.updateExtensionContextBeforeNextTurn}
-                onchange={(event) =>
-                  void controller.setExtensionContextAutoUpdate(event.currentTarget.checked)}
-              />
-              <span>Update before next turn</span>
-            </label>
-          </div>
-        {/if}
-        {#if activeSystemPrompt}
-          <details class="surface-prompt-metadata">
-            <summary>
-              <strong>{controller.target.surface === "handler" ? "Handler system prompt" : "Surface system prompt"}</strong>
-              {#if promptBinding}
-                <span>revision {promptBinding.currentRevision}</span>
-              {/if}
-            </summary>
-            <pre>{activeSystemPrompt}</pre>
-          </details>
-        {/if}
-      </div>
-    {/if}
     <ChatTranscript
       {conversation}
       target={controller.target}
-      sessionId={controller.agent.sessionId ?? controller.target.surfacePiSessionId}
+      sessionId={controller.view.sessionId ?? controller.target.surfacePiSessionId}
       streamMessage={visibleStreamMessage}
-      currentModel={currentModel ?? controller.agent.state.model}
+      currentModel={currentModel ?? controller.view.model}
       {pendingToolCalls}
       {isStreaming}
       {turnTimings}
@@ -767,7 +688,7 @@
       onRetryFailure={(block) => void retryFailureFromTranscript(block)}
     />
     <ChatComposer
-      currentModel={currentModel ?? controller.agent.state.model}
+      currentModel={currentModel ?? controller.view.model}
       thinkingLevel={currentThinkingLevel}
       {isStreaming}
       {activeTurnStartedAt}
@@ -785,7 +706,7 @@
       onListModels={listModelsForComposer}
       onModelChange={(model) => {
         currentModel = model;
-        controller?.agent.setModel(model);
+        controller?.setModel(model);
       }}
       onSend={send}
       onTelemetry={recordComposerTelemetry}
@@ -802,7 +723,7 @@
       onSteerQueuedMessage={(promptId) => void controller.steerQueuedPrompt(promptId)}
       onReorderQueuedMessage={(promptId, beforePromptId) =>
         void controller.reorderQueuedPrompt(promptId, beforePromptId)}
-      onThinkingChange={(level) => controller?.agent.setThinkingLevel(level)}
+      onThinkingChange={(level) => controller?.setThinkingLevel(level)}
       extensionActor={composerExtensionActor}
       extensionUsageItems={composerExtensionUsageItems}
       onExtensionUsageChange={(extensionId, state) =>
@@ -866,105 +787,6 @@
     height: 100%;
     min-height: 0;
     overflow: hidden;
-  }
-
-  .dockview-chat-panel.has-surface-metadata {
-    grid-template-rows: auto minmax(0, 1fr) auto;
-  }
-
-  .surface-metadata-stack {
-    display: grid;
-    border-bottom: 1px solid var(--ui-border-soft);
-    background: color-mix(in oklab, var(--ui-surface-subtle) 62%, transparent);
-  }
-
-  .prompt-stale-banner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.45rem 0.75rem;
-    border-bottom: 1px solid color-mix(in oklab, var(--ui-warning-border, var(--ui-border-soft)) 84%, transparent);
-    background: color-mix(in oklab, var(--ui-warning-surface, var(--ui-surface-subtle)) 88%, transparent);
-    color: var(--ui-text-secondary);
-    font-size: var(--text-xs);
-  }
-
-  .prompt-stale-banner span {
-    display: flex;
-    align-items: baseline;
-    gap: 0.46rem;
-    min-width: 0;
-  }
-
-  .prompt-stale-checkbox {
-    flex: 0 0 auto;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    border: 1px solid color-mix(in oklab, var(--ui-warning-border, var(--ui-border-soft)) 82%, transparent);
-    border-radius: 0.25rem;
-    background: var(--ui-surface);
-    color: var(--ui-text-primary);
-    font: inherit;
-    font-weight: 700;
-    padding: 0.24rem 0.5rem;
-    cursor: pointer;
-  }
-
-  .prompt-stale-checkbox:hover {
-    border-color: var(--ui-border-strong);
-    background: var(--ui-surface-hover);
-  }
-
-  .prompt-stale-checkbox input {
-    margin: 0;
-  }
-
-  .surface-prompt-metadata {
-    min-width: 0;
-    color: var(--ui-text-secondary);
-    font-size: var(--text-xs);
-  }
-
-  .surface-prompt-metadata summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    min-height: 2rem;
-    padding: 0 0.75rem;
-    cursor: pointer;
-  }
-
-  .surface-prompt-metadata summary:focus-visible {
-    outline: none;
-    box-shadow: var(--ui-focus-ring);
-  }
-
-  .surface-prompt-metadata strong {
-    color: var(--ui-text-primary);
-    font-size: var(--text-xs);
-  }
-
-  .surface-prompt-metadata span {
-    color: var(--ui-text-tertiary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-  }
-
-  .surface-prompt-metadata pre {
-    max-height: min(36vh, 22rem);
-    overflow: auto;
-    margin: 0;
-    padding: 0.7rem 0.75rem;
-    border-top: 1px solid var(--ui-border-soft);
-    background: var(--ui-code);
-    color: var(--ui-text-secondary);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    line-height: 1.5;
-    white-space: pre-wrap;
   }
 
   .dockview-empty-panel {

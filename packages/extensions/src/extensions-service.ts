@@ -7,6 +7,9 @@ import * as Path from "effect/Path";
 import {
   type AbsolutePath,
   type BuildExecuteTypescriptFacadeDeclarationsInput,
+  type CreateWorkflowAgentSourceInput,
+  type DeleteWorkflowAgentSourceInput,
+  type DuplicateWorkflowAgentSourceInput,
   type ExecuteTypescriptFacadeDeclarations,
   ExtensionError as CoreExtensionError,
   type ExtensionError,
@@ -19,9 +22,14 @@ import {
   type NativeToolDeclaration,
   type NativeToolHandlerLookupInput,
   type OpenExtensionSourceEditInput,
+  type RequestInputVariant,
   type SaveExtensionSourceEditInput,
+  type ScaffoldMissingWorkflowAgentSourcesResult,
   type SourceEditSaveResult,
   type SourceEditSession,
+  type WorkflowAgentSourceDeleteResult,
+  type WorkflowAgentSourceLifecycleResult,
+  type WorkflowAgentSourceObservation,
 } from "@svvy/core";
 import {
   GENERATED_EXTENSIONS_PACKAGE_NAME,
@@ -45,6 +53,9 @@ import { threadStartHandler } from "./thread-start-handler";
 import { ExtensionSourceRootsPort } from "./extension-source-roots-port";
 import { PackagedExtensionTemplatesPort } from "./packaged-extension-templates-port";
 import {
+  createWorkflowAgentSource,
+  deleteWorkflowAgentSource,
+  duplicateWorkflowAgentSource,
   openExtensionSourceEditSession,
   saveExtensionSourceEditSession,
 } from "./source-edit-sessions";
@@ -63,6 +74,10 @@ import {
   visibleExtensionRecords,
 } from "./extension-records";
 import { buildExecuteTypescriptFacadeDeclarations } from "./execute-typescript-facade-declarations";
+import {
+  scaffoldMissingWorkflowAgentSources,
+  scanWorkflowAgentSources,
+} from "./workflow-agent-source-records";
 
 export interface ExtensionRegistryInspectInput {
   id: string;
@@ -92,9 +107,12 @@ export interface VisibleExtensionRecordsResult {
 export interface ToolDeclarationInput {
   actorKind: NativeToolHandlerLookupInput["actorKind"];
   actorBinding: NativeToolHandlerLookupInput["actorBinding"];
+  requestInputVariant: RequestInputVariant;
 }
 
-export interface ToolMetadataInput extends ToolDeclarationInput {
+export interface ToolMetadataInput {
+  actorKind: NativeToolHandlerLookupInput["actorKind"];
+  actorBinding: NativeToolHandlerLookupInput["actorBinding"];
   toolName?: NativeToolHandlerLookupInput["toolName"];
 }
 
@@ -136,6 +154,20 @@ export interface ExtensionsService {
     saveEditSession(
       input: SaveExtensionSourceEditInput,
     ): Effect.Effect<SourceEditSaveResult, ExtensionError>;
+    createWorkflowAgent(
+      input: CreateWorkflowAgentSourceInput,
+    ): Effect.Effect<WorkflowAgentSourceLifecycleResult, ExtensionError>;
+    duplicateWorkflowAgent(
+      input: DuplicateWorkflowAgentSourceInput,
+    ): Effect.Effect<WorkflowAgentSourceLifecycleResult, ExtensionError>;
+    deleteWorkflowAgent(
+      input: DeleteWorkflowAgentSourceInput,
+    ): Effect.Effect<WorkflowAgentSourceDeleteResult, ExtensionError>;
+    scanWorkflowAgents(): Effect.Effect<readonly WorkflowAgentSourceObservation[], ExtensionError>;
+    scaffoldMissingWorkflowAgents(): Effect.Effect<
+      ScaffoldMissingWorkflowAgentSourcesResult,
+      ExtensionError
+    >;
   };
 }
 
@@ -163,8 +195,6 @@ export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
     const packagedExtensionTemplates = yield* PackagedExtensionTemplatesPort;
     const generatedPackageRoot = yield* GeneratedPackageRootPort;
     const workspaceSourceLink = yield* WorkspaceSourceLinkPort;
-    void packagedExtensionTemplates;
-
     return yield* Effect.succeed(
       Extensions.of({
         registry: {
@@ -191,7 +221,10 @@ export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
         nativeTools: {
           declarations: (input) =>
             tryExtensionCatalogOperation("extensions.nativeTools.declarations", () =>
-              nativeToolDeclarationsForExtensions(loadedNativeToolExtensionRecords(input)),
+              nativeToolDeclarationsForExtensions(
+                loadedNativeToolExtensionRecords(input),
+                input.requestInputVariant,
+              ),
             ),
           metadata: (input) =>
             Effect.succeed(
@@ -269,6 +302,41 @@ export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
               Effect.provideService(Crypto.Crypto, crypto),
               Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
             ),
+          createWorkflowAgent: (input) =>
+            createWorkflowAgentSource(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+            ),
+          duplicateWorkflowAgent: (input) =>
+            duplicateWorkflowAgentSource(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+            ),
+          deleteWorkflowAgent: (input) =>
+            deleteWorkflowAgentSource(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+            ),
+          scanWorkflowAgents: () =>
+            scanWorkflowAgentSources().pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+            ),
+          scaffoldMissingWorkflowAgents: () =>
+            scaffoldMissingWorkflowAgentSources().pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
         },
       }),
     );
@@ -332,7 +400,10 @@ function loadedNativeToolExtensionRecords(input: ToolDeclarationInput): readonly
 
 function isNativeToolLoadedForActor(
   metadata: NativeToolCommandMetadata,
-  input: ToolDeclarationInput,
+  input: {
+    actorKind: NativeToolHandlerLookupInput["actorKind"];
+    actorBinding: NativeToolHandlerLookupInput["actorBinding"];
+  },
 ): boolean {
   if (metadata.actorAvailability[input.actorKind] !== "loaded") {
     return false;

@@ -15,6 +15,7 @@ import {
   RuntimeSourceStatePort,
   RuntimeSurfaceLifecycleStatePort,
   RuntimeThreadStatePort,
+  RuntimeTranscriptStatePort,
   RuntimeTurnStatePort,
   RuntimeWorkflowTaskStatePort,
   RuntimeWorkspaceStatePort,
@@ -37,6 +38,7 @@ import {
   type RuntimeSurfaceLifecycleStatePortService,
   type RuntimeSurfaceMessageRecord,
   type RuntimeThreadStatePortService,
+  type RuntimeTranscriptStatePortService,
   type RuntimeTurnStatePortService,
   type RuntimeWorkflowTaskStatePortService,
   type RuntimeWorkspaceStatePortService,
@@ -58,6 +60,7 @@ import { runtimeSessionWaitStatePortFromStructuredSessionState } from "./runtime
 import { runtimeSourceStatePortFromStructuredSessionState } from "./runtime-source-state-port";
 import { runtimeSurfaceLifecycleStatePortFromStructuredSessionState } from "./runtime-surface-lifecycle-state-port";
 import { runtimeThreadStatePortFromStructuredSessionState } from "./runtime-thread-state-port";
+import { runtimeTranscriptStatePortFromStructuredSessionState } from "./runtime-transcript-state-port";
 import { runtimeTurnStatePortFromStructuredSessionState } from "./runtime-turn-state-port";
 import { runtimeWorkflowTaskStatePortFromStructuredSessionState } from "./runtime-workflow-task-state-port";
 import { runtimeWorkspaceStatePortFromStructuredSessionState } from "./runtime-workspace-state-port";
@@ -92,11 +95,15 @@ export interface WorkspaceStateRouter {
   readonly command: RuntimeCommandStatePortService;
   readonly sessionWait: RuntimeSessionWaitStatePortService;
   readonly thread: RuntimeThreadStatePortService;
+  readonly transcript: RuntimeTranscriptStatePortService;
   readonly turn: RuntimeTurnStatePortService;
   readonly workflowTask: RuntimeWorkflowTaskStatePortService;
   readonly episode: RuntimeEpisodeStatePortService;
   readonly piSessionReference: PiSessionReferencePortService;
   readonly appGlobalStructuredSession: StructuredSessionState["Service"];
+  readonly resolveRuntimeSurfaceStructuredSession: (
+    target: RuntimeSurfaceTarget,
+  ) => Effect.Effect<StructuredSessionState["Service"], StateContractError>;
   readonly resolveWorkspaceStructuredSession: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<StructuredSessionState["Service"], StateContractError>;
@@ -120,6 +127,7 @@ interface RegisteredStore {
     readonly command: RuntimeCommandStatePortService;
     readonly sessionWait: RuntimeSessionWaitStatePortService;
     readonly thread: RuntimeThreadStatePortService;
+    readonly transcript: RuntimeTranscriptStatePortService;
     readonly turn: RuntimeTurnStatePortService;
     readonly workflowTask: RuntimeWorkflowTaskStatePortService;
     readonly episode: RuntimeEpisodeStatePortService;
@@ -150,6 +158,7 @@ function registerStore(store: StructuredSessionStateStore): RegisteredStore {
       command: runtimeCommandStatePortFromStructuredSessionState(structuredSession),
       sessionWait: runtimeSessionWaitStatePortFromStructuredSessionState(structuredSession),
       thread: runtimeThreadStatePortFromStructuredSessionState(structuredSession),
+      transcript: runtimeTranscriptStatePortFromStructuredSessionState(structuredSession),
       turn: runtimeTurnStatePortFromStructuredSessionState(structuredSession),
       workflowTask: runtimeWorkflowTaskStatePortFromStructuredSessionState(structuredSession),
       episode: runtimeEpisodeStatePortFromStructuredSessionState(structuredSession),
@@ -430,6 +439,10 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
     );
 
   const workspace: RuntimeWorkspaceStatePortService = {
+    resolvePromptTargetWorkspaceId: ({ target }) =>
+      locatePromptTarget("resolvePromptTargetWorkspaceId", target).pipe(
+        Effect.map((registered) => registered.workspaceId),
+      ),
     acquireWorkspace: (request) =>
       via(resolveCwd("acquireWorkspace", request.cwd), (registered) =>
         registered.ports.workspace.acquireWorkspace(request),
@@ -478,6 +491,18 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
     recordSourceDelete: (request) =>
       via(resolveScope("recordSourceDelete", request.scope), (registered) =>
         registered.ports.source.recordSourceDelete(request),
+      ),
+    recordWorkflowAgentSourceSave: (request) =>
+      via(resolveScope("recordWorkflowAgentSourceSave", { kind: "app-global" }), (registered) =>
+        registered.ports.source.recordWorkflowAgentSourceSave(request),
+      ),
+    recordWorkflowAgentSourceDelete: (request) =>
+      via(resolveScope("recordWorkflowAgentSourceDelete", { kind: "app-global" }), (registered) =>
+        registered.ports.source.recordWorkflowAgentSourceDelete(request),
+      ),
+    reconcileWorkflowAgentSources: (request) =>
+      via(resolveScope("reconcileWorkflowAgentSources", { kind: "app-global" }), (registered) =>
+        registered.ports.source.reconcileWorkflowAgentSources(request),
       ),
     recordSourceScan: (request) =>
       via(resolveScope("recordSourceScan", request.scope), (registered) =>
@@ -622,6 +647,10 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
   };
 
   const request: RuntimeRequestStatePortService = {
+    readRequestInputSettings: () => appGlobal.ports.request.readRequestInputSettings(),
+    setRequestInputVariant: (input_) => appGlobal.ports.request.setRequestInputVariant(input_),
+    setRequestInputBlockingTimeout: (input_) =>
+      appGlobal.ports.request.setRequestInputBlockingTimeout(input_),
     createRequestInput: (input_) =>
       via(locatePromptTarget("createRequestInput", input_.target), (registered) =>
         registered.ports.request.createRequestInput(input_),
@@ -864,6 +893,97 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
       ),
   };
 
+  const transcript: RuntimeTranscriptStatePortService = {
+    commitUserMessage: (input_) =>
+      via(
+        locate(
+          "commitTranscriptUserMessage",
+          `no store owns surface ${input_.surfacePiSessionId}`,
+          [surfaceProbe(input_.surfacePiSessionId), sessionProbe(input_.workspaceSessionId)],
+        ),
+        (registered) => registered.ports.transcript.commitUserMessage(input_),
+      ),
+    beginAssistantMessage: (input_) =>
+      via(
+        locate(
+          "beginTranscriptAssistantMessage",
+          `no store owns surface ${input_.surfacePiSessionId}`,
+          [surfaceProbe(input_.surfacePiSessionId), sessionProbe(input_.workspaceSessionId)],
+        ),
+        (registered) => registered.ports.transcript.beginAssistantMessage(input_),
+      ),
+    appendAssistantContentDelta: (input_) =>
+      via(
+        locate(
+          "appendTranscriptAssistantContentDelta",
+          `no store owns surface ${input_.surfacePiSessionId}`,
+          [surfaceProbe(input_.surfacePiSessionId)],
+        ),
+        (registered) => registered.ports.transcript.appendAssistantContentDelta(input_),
+      ),
+    upsertAssistantToolCall: (input_) =>
+      via(
+        locate(
+          "upsertTranscriptAssistantToolCall",
+          `no store owns surface ${input_.surfacePiSessionId}`,
+          [surfaceProbe(input_.surfacePiSessionId)],
+        ),
+        (registered) => registered.ports.transcript.upsertAssistantToolCall(input_),
+      ),
+    linkAssistantToolCallCommand: (input_) =>
+      via(
+        locate(
+          "linkTranscriptAssistantToolCallCommand",
+          `no store owns surface ${input_.surfacePiSessionId}`,
+          [surfaceProbe(input_.surfacePiSessionId)],
+        ),
+        (registered) => registered.ports.transcript.linkAssistantToolCallCommand(input_),
+      ),
+    commitAssistantMessage: (input_) =>
+      via(
+        locate(
+          "commitTranscriptAssistantMessage",
+          `no store owns surface ${input_.surfacePiSessionId}`,
+          [surfaceProbe(input_.surfacePiSessionId)],
+        ),
+        (registered) => registered.ports.transcript.commitAssistantMessage(input_),
+      ),
+    failAssistantMessage: (input_) =>
+      via(
+        locate(
+          "failTranscriptAssistantMessage",
+          `no store owns surface ${input_.surfacePiSessionId}`,
+          [surfaceProbe(input_.surfacePiSessionId)],
+        ),
+        (registered) => registered.ports.transcript.failAssistantMessage(input_),
+      ),
+    bindPiHistoryEntry: (input_) =>
+      via(
+        locate(
+          "bindTranscriptPiHistoryEntry",
+          `no store owns surface ${input_.piHistoryEntry.session.surfacePiSessionId}`,
+          [surfaceProbe(input_.piHistoryEntry.session.surfacePiSessionId)],
+        ),
+        (registered) => registered.ports.transcript.bindPiHistoryEntry(input_),
+      ),
+    advanceStreamCursor: (input_) =>
+      via(
+        locate(
+          "advanceTranscriptStreamCursor",
+          `no store owns surface ${input_.surfacePiSessionId}`,
+          [surfaceProbe(input_.surfacePiSessionId)],
+        ),
+        (registered) => registered.ports.transcript.advanceStreamCursor(input_),
+      ),
+    readSurfaceTranscript: (input_) =>
+      via(
+        locate("readSurfaceTranscript", `no store owns surface ${input_.surfacePiSessionId}`, [
+          surfaceProbe(input_.surfacePiSessionId),
+        ]),
+        (registered) => registered.ports.transcript.readSurfaceTranscript(input_),
+      ),
+  };
+
   const turn: RuntimeTurnStatePortService = {
     startTurn: (input_) =>
       via(
@@ -892,6 +1012,20 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
       via(
         locate("finishTurn", `no store owns turn ${input_.turnId}`, [turnProbe(input_.turnId)]),
         (registered) => registered.ports.turn.finishTurn(input_),
+      ),
+    recoverInterruptedTurn: (input_) =>
+      via(
+        locate("recoverInterruptedTurn", `no store owns turn ${input_.turnId}`, [
+          turnProbe(input_.turnId),
+        ]),
+        (registered) => registered.ports.turn.recoverInterruptedTurn(input_),
+      ),
+    settlePromptTurn: (input_) =>
+      via(
+        locate("settlePromptTurn", `no store owns turn ${input_.turnId}`, [
+          turnProbe(input_.turnId),
+        ]),
+        (registered) => registered.ports.turn.settlePromptTurn(input_),
       ),
   };
 
@@ -990,11 +1124,16 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
     command,
     sessionWait,
     thread,
+    transcript,
     turn,
     workflowTask,
     episode,
     piSessionReference,
     appGlobalStructuredSession: appGlobal.structuredSession,
+    resolveRuntimeSurfaceStructuredSession: (target) =>
+      locateRuntimeSurfaceTarget("resolveRuntimeSurfaceStructuredSession", target).pipe(
+        Effect.map((registered) => registered.structuredSession),
+      ),
     resolveWorkspaceStructuredSession: (workspaceId) =>
       resolveWorkspace("resolveWorkspaceStructuredSession", workspaceId).pipe(
         Effect.map((registered) => registered.structuredSession),
@@ -1017,6 +1156,7 @@ export function layerWorkspaceStateRouter(
   | RuntimeCommandStatePort
   | RuntimeSessionWaitStatePort
   | RuntimeThreadStatePort
+  | RuntimeTranscriptStatePort
   | RuntimeTurnStatePort
   | RuntimeWorkflowTaskStatePort
   | RuntimeEpisodeStatePort
@@ -1035,6 +1175,7 @@ export function layerWorkspaceStateRouter(
     Layer.succeed(RuntimeCommandStatePort, router.command),
     Layer.succeed(RuntimeSessionWaitStatePort, router.sessionWait),
     Layer.succeed(RuntimeThreadStatePort, router.thread),
+    Layer.succeed(RuntimeTranscriptStatePort, router.transcript),
     Layer.succeed(RuntimeTurnStatePort, router.turn),
     Layer.succeed(RuntimeWorkflowTaskStatePort, router.workflowTask),
     Layer.succeed(RuntimeEpisodeStatePort, router.episode),

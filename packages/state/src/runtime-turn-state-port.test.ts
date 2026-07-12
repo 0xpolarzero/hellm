@@ -6,6 +6,7 @@ import {
   StateContractError,
   type SurfacePiSessionId,
   type RuntimeTurnStatePortService,
+  type TurnId,
   type WorkspaceId,
 } from "@svvy/core";
 import { layerRuntimeTurnStatePort } from "./index";
@@ -61,6 +62,67 @@ describe("RuntimeTurnStatePort", () => {
             assistantText: "Turn complete.",
           });
           const finished = finishedResult.value;
+          const interruptedTurnResult = yield* port.startTurn({
+            sessionId: "session-runtime-turn-state-port",
+            surfacePiSessionId: "surface-runtime-turn-state-port",
+            requestSummary: "Interrupt the next turn.",
+          });
+          const recoveredResult = yield* port.recoverInterruptedTurn({
+            turnId: interruptedTurnResult.value.id as TurnId,
+            terminalStatus: "failed",
+            reason: "Synthetic runtime interruption.",
+          });
+          const repeatedRecoveryResult = yield* port.recoverInterruptedTurn({
+            turnId: interruptedTurnResult.value.id as TurnId,
+            terminalStatus: "failed",
+            reason: "Synthetic runtime interruption.",
+          });
+          const queued = yield* state.enqueueSurfaceMessage({
+            sessionId: "session-runtime-turn-state-port",
+            surfacePiSessionId: "surface-runtime-turn-state-port",
+            messageJson: JSON.stringify({ text: "Settle the prompt atomically." }),
+          });
+          const claimed = yield* state.claimNextQueuedSurfaceMessage({
+            surfacePiSessionId: "surface-runtime-turn-state-port",
+            claimOwnerId: "owner-runtime-turn-state-port",
+          });
+          const settlementTurnResult = yield* port.startTurn({
+            sessionId: "session-runtime-turn-state-port",
+            surfacePiSessionId: "surface-runtime-turn-state-port",
+            requestSummary: "Settle the prompt atomically.",
+          });
+          const danglingCommand = yield* state.createCommand({
+            turnId: settlementTurnResult.value.id,
+            surfacePiSessionId: "surface-runtime-turn-state-port",
+            toolName: "exec_command",
+            executor: "orchestrator",
+            visibility: "surface",
+            title: "Dangling command",
+            summary: "Still running.",
+            status: "running",
+          });
+          const settlementResult = yield* port.settlePromptTurn({
+            turnId: settlementTurnResult.value.id as never,
+            queueItemId: queued.id as never,
+            status: "failed",
+            assistantText: "Partial output",
+            terminalCommandIds: [danglingCommand.id as never],
+            terminalCommandSummary: "Prompt failed.",
+            terminalCommandError: "Prompt failed.",
+            claimOwnerId: claimed!.claimOwnerId,
+            leaseVersion: claimed!.leaseVersion,
+          });
+          const repeatedSettlementResult = yield* port.settlePromptTurn({
+            turnId: settlementTurnResult.value.id as never,
+            queueItemId: queued.id as never,
+            status: "failed",
+            assistantText: "Partial output",
+            terminalCommandIds: [danglingCommand.id as never],
+            terminalCommandSummary: "Prompt failed.",
+            terminalCommandError: "Prompt failed.",
+            claimOwnerId: claimed!.claimOwnerId,
+            leaseVersion: claimed!.leaseVersion,
+          });
 
           expect(turn).toMatchObject({
             sessionId: "session-runtime-turn-state-port",
@@ -82,7 +144,54 @@ describe("RuntimeTurnStatePort", () => {
             assistantText: "Turn complete.",
             finishedAt: expect.any(String),
           });
-          for (const result of [turnResult, decidedResult, finishedResult]) {
+          expect(recoveredResult.value).toMatchObject({
+            changed: true,
+            turn: {
+              id: interruptedTurnResult.value.id,
+              status: "failed",
+            },
+            terminalizedAssistantMessageId: null,
+            terminalizedCommandIds: [],
+            settledQueueItemId: null,
+          });
+          expect(repeatedRecoveryResult.value.changed).toBeFalse();
+          expect(repeatedRecoveryResult.afterCommit).toEqual([]);
+          expect(settlementResult.value).toMatchObject({
+            changed: true,
+            turn: { id: settlementTurnResult.value.id, status: "failed" },
+            queuedMessage: { id: queued.id, status: "failed" },
+            terminalizedCommandIds: [danglingCommand.id],
+          });
+          expect(settlementResult.afterCommit).toEqual([
+            {
+              scope: "workspace",
+              workspaceId: "workspace_runtime_turn_state_port" as WorkspaceId,
+              invalidation: {
+                model: "surface",
+                ids: ["surface-runtime-turn-state-port" as SurfacePiSessionId],
+              },
+            },
+            {
+              scope: "workspace",
+              workspaceId: "workspace_runtime_turn_state_port" as WorkspaceId,
+              invalidation: { model: "sessionNavigation" },
+            },
+            {
+              scope: "workspace",
+              workspaceId: "workspace_runtime_turn_state_port" as WorkspaceId,
+              invalidation: { model: "commandInspector", ids: [danglingCommand.id as never] },
+            },
+          ]);
+          expect(repeatedSettlementResult.value.changed).toBeFalse();
+          expect(repeatedSettlementResult.afterCommit).toEqual([]);
+          for (const result of [
+            turnResult,
+            decidedResult,
+            finishedResult,
+            interruptedTurnResult,
+            recoveredResult,
+            settlementTurnResult,
+          ]) {
             expect(result.afterCommit).toEqual([
               {
                 scope: "workspace",

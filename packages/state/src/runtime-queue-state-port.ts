@@ -14,6 +14,7 @@ import {
 import {
   dedupeInvalidations,
   mutationResult,
+  promptHistoryInvalidation,
   surfaceAndSessionNavigationInvalidations,
   surfaceInvalidation,
 } from "./state-mutation-result";
@@ -47,10 +48,15 @@ export function runtimeQueueStatePortFromStructuredSessionState(
               result.queuedMessage,
               result.accepted === "existing"
                 ? []
-                : surfaceAndSessionNavigationInvalidations(
-                    state.workspaceId,
-                    result.queuedMessage.surfacePiSessionId,
-                  ),
+                : [
+                    ...surfaceAndSessionNavigationInvalidations(
+                      state.workspaceId,
+                      result.queuedMessage.surfacePiSessionId,
+                    ),
+                    ...(result.promptHistoryRecorded
+                      ? [promptHistoryInvalidation(state.workspaceId)]
+                      : []),
+                  ],
             ),
           ),
         ),

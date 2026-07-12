@@ -10,10 +10,12 @@ import {
   StateContractError,
   type AbsolutePath,
   type CommandId,
+  type ExtensionId,
   type RecordRuntimeSourceDeleteInput,
   type RecordRuntimeSourceSaveInput,
   type RuntimeSourceFactRecord,
   type RuntimeSourceScanFactRecord,
+  type WorkflowAgentSourceObservation,
   type WorkspaceId,
 } from "@svvy/core";
 import { layerRuntimeSourceStatePort } from "./index";
@@ -35,9 +37,149 @@ const savedAt = (value: string) => value as RecordRuntimeSourceSaveInput["savedA
 const deletedAt = (value: string) => value as RecordRuntimeSourceDeleteInput["deletedAt"];
 const factDeletedAt = (value: string) => value as RuntimeSourceFactRecord["deletedAt"];
 const observedAt = (value: string) => value as RuntimeSourceScanFactRecord["observedAt"];
+const workflowObservedAt = (value: string) => value as WorkflowAgentSourceObservation["observedAt"];
 const brandedWorkspaceId = workspace.id as WorkspaceId;
 
 describe("RuntimeSourceStatePort", () => {
+  it("atomically saves, deletes, and reconciles the durable workflow-agent source index", async () => {
+    const store = createStructuredSessionStateStore({ workspace });
+    const port = runtimeSourceStatePortFromStore(store);
+    const validObservation = {
+      sourceId: "defaultAgent",
+      path: path("/tmp/svvy-runtime-source-state-port/workflows/defaultAgent.agent.json"),
+      sourceVersion: "sha256:default",
+      fingerprint: "sha256:default",
+      validationStatus: "valid",
+      diagnostics: [],
+      parameters: {
+        id: "defaultAgent",
+        label: "Default agent",
+        provider: "openai",
+        model: "gpt-5.4",
+        reasoning: { effort: "high" },
+        instructions: "Implement the task.",
+      },
+      extensionOrder: ["shell" as ExtensionId],
+      observedAt: workflowObservedAt("2026-07-11T08:00:00.000Z"),
+    } satisfies WorkflowAgentSourceObservation;
+    const beforeSaveRevision = store.readCurrentStateRevision() as number;
+    const saved = await runTestEffect(
+      port.recordWorkflowAgentSourceSave({
+        source: {
+          scope: { kind: "app-global" },
+          sourceKind: "workflow-agent",
+          sourceId: validObservation.sourceId,
+          path: validObservation.path,
+          sourceVersion: validObservation.sourceVersion,
+          fingerprint: validObservation.fingerprint,
+          diagnostics: validObservation.diagnostics,
+          savedAt: validObservation.observedAt,
+        },
+        observation: validObservation,
+      }),
+    );
+
+    expect(store.readCurrentStateRevision() as number).toBe(beforeSaveRevision + 1);
+    expect(saved.afterCommit).toEqual([
+      { scope: "app", invalidation: { model: "agents" } },
+      { scope: "app", invalidation: { model: "workflowsGenerated" } },
+    ]);
+    expect(store.listCurrentWorkflowAgentSources()).toEqual([
+      expect.objectContaining({
+        sourceId: "defaultAgent",
+        validationStatus: "valid",
+        parameters: expect.objectContaining({ id: "defaultAgent" }),
+      }),
+    ]);
+
+    const beforeDeleteRevision = store.readCurrentStateRevision() as number;
+    const deletedAtValue = deletedAt("2026-07-11T08:01:00.000Z");
+    await runTestEffect(
+      port.recordWorkflowAgentSourceDelete({
+        source: {
+          scope: { kind: "app-global" },
+          sourceKind: "workflow-agent",
+          sourceId: validObservation.sourceId,
+          path: validObservation.path,
+          previousSourceVersion: validObservation.sourceVersion,
+          previousFingerprint: validObservation.fingerprint,
+          deletedAt: deletedAtValue,
+        },
+      }),
+    );
+    expect(store.readCurrentStateRevision() as number).toBe(beforeDeleteRevision + 1);
+    expect(store.listCurrentWorkflowAgentSources()).toEqual([]);
+
+    const invalidObservation = {
+      sourceId: "invalid-agent-name!",
+      path: path("/tmp/svvy-runtime-source-state-port/workflows/invalid-agent-name!.agent.json"),
+      sourceVersion: "sha256:invalid",
+      fingerprint: "sha256:invalid",
+      validationStatus: "invalid",
+      diagnostics: [
+        {
+          severity: "error",
+          code: "workflow_agent_source_invalid",
+          message: "Workflow-agent source filename is not a valid export name.",
+        },
+      ],
+      parameters: null,
+      extensionOrder: [],
+      observedAt: workflowObservedAt("2026-07-11T08:02:00.000Z"),
+    } satisfies WorkflowAgentSourceObservation;
+    const rescannedValidObservation = {
+      ...validObservation,
+      observedAt: invalidObservation.observedAt,
+    } satisfies WorkflowAgentSourceObservation;
+    const beforeReconcileRevision = store.readCurrentStateRevision() as number;
+    const reconciled = await runTestEffect(
+      port.reconcileWorkflowAgentSources({
+        sourceFingerprint: "sha256:workflow-scan-1",
+        observations: [rescannedValidObservation, invalidObservation],
+        diagnostics: [],
+        scannedAt: invalidObservation.observedAt,
+      }),
+    );
+    expect(store.readCurrentStateRevision() as number).toBe(beforeReconcileRevision + 1);
+    expect(reconciled.afterCommit).toEqual([
+      { scope: "app", invalidation: { model: "agents" } },
+      { scope: "app", invalidation: { model: "workflowsGenerated" } },
+    ]);
+    expect(store.listCurrentWorkflowAgentSources()).toEqual([
+      expect.objectContaining({ sourceId: "defaultAgent", validationStatus: "valid" }),
+      expect.objectContaining({
+        sourceId: "invalid-agent-name!",
+        validationStatus: "invalid",
+        parameters: null,
+      }),
+    ]);
+
+    const secondScanAt = workflowObservedAt("2026-07-11T08:03:00.000Z");
+    const beforeSecondReconcileRevision = store.readCurrentStateRevision() as number;
+    await runTestEffect(
+      port.reconcileWorkflowAgentSources({
+        sourceFingerprint: "sha256:workflow-scan-2",
+        observations: [{ ...rescannedValidObservation, observedAt: secondScanAt }],
+        diagnostics: [],
+        scannedAt: secondScanAt,
+      }),
+    );
+    expect(store.readCurrentStateRevision() as number).toBe(beforeSecondReconcileRevision + 1);
+    expect(store.listCurrentWorkflowAgentSources().map((source) => source.sourceId)).toEqual([
+      "defaultAgent",
+    ]);
+    expect(
+      await runTestEffect(
+        port.readSourceVersion({
+          scope: { kind: "app-global" },
+          sourceKind: "workflow-agent",
+          sourceId: invalidObservation.sourceId,
+        }),
+      ),
+    ).toMatchObject({ deletedAt: secondScanAt });
+    store.close();
+  });
+
   it("records, reads, updates, deletes, and persists source facts", async () => {
     const dir = mkdtempSync(join(tmpdir(), "svvy-source-port-"));
     const databasePath = join(dir, "state.sqlite");
@@ -75,7 +217,9 @@ describe("RuntimeSourceStatePort", () => {
           scope: { kind: "app-global" },
           sourceKind: "workflow-agent",
           sourceId: "agent-reviewer",
-          expectedSourceVersion: "version_02",
+          path: path("/tmp/svvy-runtime-source-state-port/.smithers/reviewer.agent.json"),
+          previousSourceVersion: "version_02",
+          previousFingerprint: "fingerprint_02",
           deletedAt: deletedAt("2026-04-18T10:02:00.000Z"),
         }),
       );
@@ -147,6 +291,101 @@ describe("RuntimeSourceStatePort", () => {
         }),
       ),
     ).rejects.toBeInstanceOf(StateContractError);
+    store.close();
+  });
+
+  it("makes source save and delete recovery retries idempotent without accepting divergence", async () => {
+    const store = createStructuredSessionStateStore({ workspace });
+    const port = runtimeSourceStatePortFromStore(store);
+    await runTestEffect(
+      port.recordSourceSave({
+        scope: { kind: "app-global" },
+        sourceKind: "workflow-agent",
+        sourceId: "reviewerCopy",
+        path: path("/tmp/svvy-runtime-source-state-port/workflows/reviewerCopy.agent.json"),
+        sourceVersion: "version_01",
+        fingerprint: "fingerprint_01",
+        diagnostics: [],
+        savedAt: savedAt("2026-04-18T11:10:00.000Z"),
+      }),
+    );
+    const saveRetryInput = {
+      scope: { kind: "app-global" as const },
+      sourceKind: "workflow-agent" as const,
+      sourceId: "reviewerCopy",
+      path: path("/tmp/svvy-runtime-source-state-port/workflows/reviewerCopy.agent.json"),
+      previousSourceVersion: "version_01",
+      sourceVersion: "version_02",
+      fingerprint: "fingerprint_02",
+      diagnostics: [{ severity: "info" as const, message: "Validated." }],
+      sourceCommandId: "command-source-retry" as CommandId,
+      savedAt: savedAt("2026-04-18T11:11:00.000Z"),
+    } satisfies RecordRuntimeSourceSaveInput;
+    const saved = await runTestEffect(port.recordSourceSave(saveRetryInput));
+    const retriedSave = await runTestEffect(port.recordSourceSave(saveRetryInput));
+
+    expect(retriedSave.value).toEqual(saved.value);
+    await expect(
+      runTestEffect(
+        port.recordSourceSave({
+          ...saveRetryInput,
+          sourceVersion: "version_03",
+          fingerprint: "fingerprint_03",
+          savedAt: savedAt("2026-04-18T11:12:00.000Z"),
+        }),
+      ),
+    ).rejects.toMatchObject({ reason: "stale-state" });
+
+    const deleteRetryInput = {
+      scope: { kind: "app-global" as const },
+      sourceKind: "workflow-agent" as const,
+      sourceId: "reviewerCopy",
+      path: saveRetryInput.path,
+      previousSourceVersion: "version_02",
+      previousFingerprint: "fingerprint_02",
+      sourceCommandId: "command-source-retry" as CommandId,
+      deletedAt: deletedAt("2026-04-18T11:13:00.000Z"),
+    } satisfies RecordRuntimeSourceDeleteInput;
+    const deleted = await runTestEffect(port.recordSourceDelete(deleteRetryInput));
+    const retriedDelete = await runTestEffect(port.recordSourceDelete(deleteRetryInput));
+
+    expect(retriedDelete.value).toEqual(deleted.value);
+    await expect(
+      runTestEffect(
+        port.recordSourceDelete({
+          ...deleteRetryInput,
+          previousFingerprint: "fingerprint_diverged",
+          deletedAt: deletedAt("2026-04-18T11:14:00.000Z"),
+        }),
+      ),
+    ).rejects.toMatchObject({ reason: "stale-state" });
+    store.close();
+  });
+
+  it("upserts a deletion tombstone when no editable source fact exists yet", async () => {
+    const store = createStructuredSessionStateStore({ workspace });
+    const port = runtimeSourceStatePortFromStore(store);
+    const deleted = await runTestEffect(
+      port.recordSourceDelete({
+        scope: { kind: "app-global" },
+        sourceKind: "workflow-agent",
+        sourceId: "preexistingAgent",
+        path: path("/tmp/svvy-runtime-source-state-port/workflows/preexistingAgent.agent.json"),
+        previousSourceVersion: "sha256:preexisting",
+        previousFingerprint: "sha256:preexisting",
+        deletedAt: deletedAt("2026-04-18T11:20:00.000Z"),
+      }),
+    );
+
+    expect(deleted.value).toMatchObject({
+      sourceKind: "workflow-agent",
+      sourceId: "preexistingAgent",
+      path: "/tmp/svvy-runtime-source-state-port/workflows/preexistingAgent.agent.json",
+      sourceVersion: "sha256:preexisting",
+      fingerprint: "sha256:preexisting",
+      diagnostics: [],
+      deletedAt: factDeletedAt("2026-04-18T11:20:00.000Z"),
+    });
     store.close();
   });
 

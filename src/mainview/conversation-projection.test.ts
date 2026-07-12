@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type {
+  RendererCommandResultEntry,
+  RendererConversationEntry,
+  RendererTranscriptAssistantEntry,
+  RendererTranscriptToolCallContent,
+} from "../shared/renderer-transcript";
 import { projectConversation, projectConversationSummary } from "./conversation-projection";
 
 function zeroUsage() {
@@ -20,7 +24,7 @@ function zeroUsage() {
   };
 }
 
-function userMessage(timestamp: number, text: string): AgentMessage {
+function userMessage(timestamp: number, text: string): RendererConversationEntry {
   return {
     role: "user",
     timestamp,
@@ -28,9 +32,13 @@ function userMessage(timestamp: number, text: string): AgentMessage {
   };
 }
 
-function toolCall(id: string, name: string, argumentsValue: Record<string, unknown>): ToolCall {
+function toolCall(
+  id: string,
+  name: string,
+  argumentsValue: Record<string, unknown>,
+): RendererTranscriptToolCallContent {
   return {
-    type: "toolCall",
+    type: "tool-call",
     id,
     name,
     arguments: argumentsValue,
@@ -42,10 +50,10 @@ function assistantMessage(
   text: string,
   options: {
     stopReason?: "stop" | "toolUse";
-    toolCalls?: ToolCall[];
+    toolCalls?: RendererTranscriptToolCallContent[];
     usage?: ReturnType<typeof zeroUsage>;
   } = {},
-): AssistantMessage {
+): RendererTranscriptAssistantEntry {
   return {
     role: "assistant",
     timestamp,
@@ -71,9 +79,9 @@ function assistantMessage(
   };
 }
 
-function toolResultMessage(timestamp: number, text: string): ToolResultMessage {
+function toolResultMessage(timestamp: number, text: string): RendererCommandResultEntry {
   return {
-    role: "toolResult",
+    role: "command-result",
     toolCallId: "tool-call-1",
     toolName: "exec_command",
     timestamp,
@@ -84,7 +92,7 @@ function toolResultMessage(timestamp: number, text: string): ToolResultMessage {
 
 describe("conversation projection", () => {
   it("projects committed rows, indexes, and summary stats in one pass", () => {
-    const messages: AgentMessage[] = [
+    const messages: RendererConversationEntry[] = [
       userMessage(1, "Hello"),
       assistantMessage(2, "First reply", {
         toolCalls: [toolCall("tool-call-1", "exec_command", { cmd: "cat docs/prd.md" })],
@@ -144,25 +152,25 @@ describe("conversation projection", () => {
         toolCalls: [toolCall("tool-call-1", "execute_typescript", { typescriptCode: "first" })],
       }),
       {
-        role: "toolResult",
+        role: "command-result",
         toolCallId: "tool-call-1",
         toolName: "execute_typescript",
         timestamp: 3,
         isError: false,
         content: [{ type: "text", text: '{"success":false}' }],
-      } satisfies ToolResultMessage,
+      } satisfies RendererCommandResultEntry,
       assistantMessage(4, "Second try", {
         stopReason: "toolUse",
         toolCalls: [toolCall("tool-call-2", "execute_typescript", { typescriptCode: "second" })],
       }),
       {
-        role: "toolResult",
+        role: "command-result",
         toolCallId: "tool-call-2",
         toolName: "execute_typescript",
         timestamp: 5,
         isError: false,
         content: [{ type: "text", text: '{"success":true}' }],
-      } satisfies ToolResultMessage,
+      } satisfies RendererCommandResultEntry,
       assistantMessage(6, "Final answer"),
     ]);
 
@@ -199,7 +207,7 @@ describe("conversation projection", () => {
     expect(committed.visibleMessages.map((message) => message.role)).toEqual([
       "user",
       "assistant",
-      "toolResult",
+      "command-result",
     ]);
     expect(committed.toolResultsById.has("tool-call-1")).toBe(true);
   });

@@ -69,7 +69,9 @@ test("renders the integrated workspace tab counters and selectable A/B/C layout 
       );
       expect(await page.locator(".workspace-layout-tab.empty").count()).toBe(2);
 
-      await layoutTabs.nth(1).click({ force: true });
+      await page
+        .locator('button[aria-label="Layout B: start a new pane arrangement"]')
+        .click({ force: true });
 
       await page.locator(".workspace-layout-tab.active.empty").waitFor({ state: "visible" });
       expect((await page.locator(".workspace-layout-tab.active").textContent())?.trim()).toBe("B");

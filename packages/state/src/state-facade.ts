@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import {
   AbsolutePath,
+  DEFAULT_WORKFLOW_AGENT_SOURCE_IDS,
   decodeUnknownWorkspaceChromeReadModelEffect,
   decodeUnknownWorkspaceLayoutReadModelEffect,
   decodeUnknownSessionNavigationReadModelEffect,
@@ -20,6 +21,7 @@ import {
   type AppLogEntry,
   type AppLogLevel,
   type IsoDateTimeString,
+  isWorkflowAgentSourceExportName,
   type AppLogQuery,
   type AppLogReadModel,
   type AppLogSource,
@@ -42,11 +44,16 @@ import {
   type RequestInputOptionId,
   type RequestInputQuestionId,
   type RequestInputRequestId,
+  type RequestInputSettings,
   type RuntimeApprovalId,
   type RuntimeApprovalRecord,
   type RuntimeMessageDelivery,
   type RuntimeRequestInputDetailsRecord,
   type RuntimeSurfaceTarget,
+  type RuntimeSurfaceTranscriptSnapshot,
+  type RuntimeTranscriptAssistantMessage,
+  type RuntimeTranscriptMessage,
+  type RuntimeTranscriptStreamCursor,
   type RuntimeActorExtensionBindingStatePort,
   type RuntimeApprovalStatePort,
   type RuntimeArtifactStatePort,
@@ -80,11 +87,13 @@ import {
   type StateInvalidationDescriptor,
   type StateMutationResult,
   type StateRevision,
+  type SourceDiagnostic,
   strictBoundaryParseOptions,
   type SnippetId,
   type SnippetMetadata,
   type SnippetSource,
   type SurfacePiSessionId,
+  type TaskAgentParametersSource,
   type ThreadId,
   type TurnId,
   type WorkflowTaskAttemptId,
@@ -150,6 +159,7 @@ import {
   decodeUnknownRemoveExtensionEnvOverrideCommandInputEffect,
   decodeUnknownReorderOrchestratorProfilesCommandInputEffect,
   decodeUnknownResetActorExtensionDefaultsCommandInputEffect,
+  decodeUnknownSetAgentActorExtensionDefaultsCommandInputEffect,
   decodeUnknownSaveWorkspaceLayoutSlotCommandInputEffect,
   decodeUnknownSelectWorkspaceLayoutSlotCommandInputEffect,
   decodeUnknownSelectWorkspaceTabCommandInputEffect,
@@ -180,6 +190,7 @@ import {
   type RemoveExtensionEnvOverrideCommandInput,
   type ReorderOrchestratorProfilesCommandInput,
   type ResetActorExtensionDefaultsCommandInput,
+  type SetAgentActorExtensionDefaultsCommandInput,
   type SaveWorkspaceLayoutSlotCommandInput,
   type SelectWorkspaceLayoutSlotCommandInput,
   type SelectWorkspaceTabCommandInput,
@@ -222,6 +233,7 @@ export type StateReadModelRequest =
   | AppPreferencesReadModelRequest
   | ProviderAuthReadModelRequest
   | SessionNavigationReadModelRequest
+  | PromptHistoryReadModelRequest
   | SurfaceTranscriptReadModelRequest
   | SurfaceSummaryReadModelRequest
   | SurfaceComposerReadModelRequest
@@ -245,6 +257,7 @@ export type StateReadModelResult =
   | { kind: "settings"; value: SettingsReadModel }
   | { kind: "providerAuth"; value: ProviderAuthReadModel }
   | { kind: "sessionNavigation"; value: SessionNavigationReadModel }
+  | { kind: "promptHistory"; value: PromptHistoryReadModel }
   | { kind: "surfaceTranscript"; value: SurfaceTranscriptReadModel }
   | { kind: "surfaceSummary"; value: SurfaceSummaryReadModel }
   | { kind: "surfaceComposer"; value: SurfaceComposerReadModel }
@@ -275,6 +288,7 @@ export interface AppPreferencesReadModel {
 
 export interface SettingsReadModel {
   preferences: AppPreferencesReadModel;
+  requestInput: RequestInputSettings;
 }
 
 export interface AppPreferencesReadModelRequest {
@@ -310,6 +324,10 @@ export const StateReadModelRequestSchema = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("sessionNavigation"),
     workspaceId: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("promptHistory"),
+    workspaceId: WorkspaceId,
   }),
   Schema.Struct({
     kind: Schema.Literal("surfaceTranscript"),
@@ -380,6 +398,7 @@ export const StateReadModelResultSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("settings"), value: Schema.Json }),
   Schema.Struct({ kind: Schema.Literal("providerAuth"), value: Schema.Json }),
   Schema.Struct({ kind: Schema.Literal("sessionNavigation"), value: Schema.Json }),
+  Schema.Struct({ kind: Schema.Literal("promptHistory"), value: Schema.Json }),
   Schema.Struct({ kind: Schema.Literal("surfaceTranscript"), value: Schema.Json }),
   Schema.Struct({ kind: Schema.Literal("surfaceSummary"), value: Schema.Json }),
   Schema.Struct({ kind: Schema.Literal("surfaceComposer"), value: Schema.Json }),
@@ -403,6 +422,24 @@ export const StateReadModelResultSchema = Schema.Union([
 export interface SessionNavigationReadModelRequest {
   kind: "sessionNavigation";
   workspaceId?: WorkspaceIdType;
+}
+
+export interface PromptHistoryReadModelRequest {
+  kind: "promptHistory";
+  workspaceId: WorkspaceIdType;
+}
+
+export interface PromptHistoryReadModel {
+  workspaceId: WorkspaceIdType;
+  entries: readonly PromptHistoryReadModelEntry[];
+}
+
+export interface PromptHistoryReadModelEntry {
+  workspaceSessionId: WorkspaceSessionId;
+  surfacePiSessionId: SurfacePiSessionId;
+  queueItemId: QueueItemId;
+  text: string;
+  sentAt: IsoDateTimeString;
 }
 
 export interface SurfaceTranscriptReadModelRequest {
@@ -498,14 +535,9 @@ export interface SurfaceTranscriptReadModel {
   surfaceStatus: "idle" | "running" | "waiting" | "error";
   promptLock: { activeTurnId: TurnId | null; queuedCount: number };
   composerDraft: { text: string; attachmentIds: readonly string[] };
-  messages: readonly {
-    messageId: MessageId;
-    role: "user" | "assistant";
-    turnId?: TurnId;
-    text?: string;
-    commandIds?: readonly CommandId[];
-    createdAt: IsoDateTimeString;
-  }[];
+  messages: readonly RuntimeTranscriptMessage[];
+  activeAssistantMessage: RuntimeTranscriptAssistantMessage | null;
+  streamCursor: RuntimeTranscriptStreamCursor | null;
 }
 
 export interface SurfaceSummaryReadModel {
@@ -616,9 +648,25 @@ export interface ApprovalReadModelRequestItem {
 
 export interface AgentsReadModel {
   configuredProfiles: readonly ConfiguredAgentProfileReadModelRecord[];
+  workflowAgents: readonly WorkflowAgentSourceReadModelRecord[];
   actorExtensionDefaults: readonly AgentActorExtensionDefaultsReadModelRecord[];
   bindings: readonly AgentBindingReadModelRecord[];
   generatedContextPreviews: readonly GeneratedContextPreviewReadModelRecord[];
+}
+
+export interface WorkflowAgentSourceReadModelRecord {
+  sourceId: string;
+  path: AbsolutePath;
+  sourceVersion: string;
+  fingerprint: string;
+  validationStatus: "valid" | "invalid";
+  diagnostics: readonly SourceDiagnostic[];
+  parameters: TaskAgentParametersSource | null;
+  extensionOrder: readonly ExtensionId[];
+  observedAt: IsoDateTimeString;
+  updatedAt: IsoDateTimeString;
+  builtin: boolean;
+  deletable: boolean;
 }
 
 export interface AgentActorExtensionDefaultsReadModelRecord {
@@ -850,6 +898,9 @@ export interface AgentProfileStateCommands {
   resetActorExtensionDefaults(
     input: ResetActorExtensionDefaultsCommandInput,
   ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  setActorExtensionDefaults(
+    input: SetAgentActorExtensionDefaultsCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
   setExternalInstructionActorUsage(
     input: SetExternalInstructionActorUsageCommandInput,
   ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
@@ -1013,6 +1064,10 @@ export interface StateCommandsFacade {
     ): Promise<StateCommandResult>;
     resetActorExtensionDefaults(
       input: ResetActorExtensionDefaultsCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    setActorExtensionDefaults(
+      input: SetAgentActorExtensionDefaultsCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
     setExternalInstructionActorUsage(
@@ -1446,6 +1501,16 @@ export function createStateCommandsFacade(
           input.clientSubmission,
           callOptions,
         ),
+      setActorExtensionDefaults: (input, callOptions) =>
+        run(
+          "stateCommands.agentProfiles.setActorExtensionDefaults",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.agentProfiles.setActorExtensionDefaults(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
       setExternalInstructionActorUsage: (input, callOptions) =>
         run(
           "stateCommands.agentProfiles.setExternalInstructionActorUsage",
@@ -1537,6 +1602,21 @@ export function stateReadModelsFromRouter(input: {
 }): StateReadModels["Service"] {
   return stateReadModelsFromState({
     appLogs: input.resolveAppLogs ?? appLogStateResolver(input.appLogs),
+    fetchStructuredSession: (request) => {
+      switch (request.kind) {
+        case "surfaceTranscript":
+        case "surfaceSummary":
+        case "surfaceComposer":
+        case "surfaceQueuedMessages":
+          return input.router.resolveRuntimeSurfaceStructuredSession(request.target);
+        default: {
+          const workspaceId = readModelWorkspaceId(request);
+          return workspaceId
+            ? input.router.resolveWorkspaceStructuredSession(workspaceId)
+            : Effect.succeed(input.router.appGlobalStructuredSession);
+        }
+      }
+    },
     structuredSession: (workspaceId) =>
       workspaceId
         ? input.router.resolveWorkspaceStructuredSession(workspaceId)
@@ -1665,18 +1745,26 @@ type StructuredSessionStateResolver = (
   workspaceId: WorkspaceIdType | undefined,
 ) => Effect.Effect<StructuredSessionState["Service"], StateContractError>;
 
+type FetchStructuredSessionStateResolver = (
+  request: StateReadModelRequest,
+) => Effect.Effect<StructuredSessionState["Service"], StateContractError>;
+
 function appLogStateResolver(appLogs: AppLogState["Service"]): AppLogStateResolver {
   return () => Effect.succeed(appLogs);
 }
 
 function stateReadModelsFromState(state: {
   appLogs: AppLogStateResolver;
+  fetchStructuredSession?: FetchStructuredSessionStateResolver;
   structuredSession: StructuredSessionStateResolver;
 }): StateReadModels["Service"] {
   return StateReadModels.of({
     fetch: (request) =>
       Effect.gen(function* () {
-        const structuredSession = yield* state.structuredSession(readModelWorkspaceId(request));
+        const structuredSession = yield* (
+          state.fetchStructuredSession?.(request) ??
+            state.structuredSession(readModelWorkspaceId(request))
+        );
         switch (request.kind) {
           case "appLogs": {
             const appLogs = yield* state.appLogs(request.workspaceId);
@@ -1692,9 +1780,12 @@ function stateReadModelsFromState(state: {
             return { kind: "appPreferences", value: preferences };
           }
           case "settings": {
-            const record = yield* structuredSession.readAppPreferences();
+            const [record, requestInput] = yield* Effect.all([
+              structuredSession.readAppPreferences(),
+              structuredSession.readRequestInputSettings(),
+            ]);
             const preferences = appPreferencesReadModel(record);
-            return { kind: "settings", value: { preferences } };
+            return { kind: "settings", value: { preferences, requestInput } };
           }
           case "providerAuth": {
             const providers = yield* structuredSession.listProviderAuthStatuses(
@@ -1706,6 +1797,11 @@ function stateReadModelsFromState(state: {
             return {
               kind: "sessionNavigation",
               value: yield* buildSessionNavigationReadModel(structuredSession),
+            };
+          case "promptHistory":
+            return {
+              kind: "promptHistory",
+              value: yield* buildPromptHistoryReadModel(structuredSession, request.workspaceId),
             };
           case "surfaceTranscript":
             return {
@@ -1810,9 +1906,12 @@ function stateReadModelsFromState(state: {
             return [{ kind: "appPreferences", value: preferences }];
           }
           case "settings": {
-            const record = yield* structuredSession.readAppPreferences();
+            const [record, requestInput] = yield* Effect.all([
+              structuredSession.readAppPreferences(),
+              structuredSession.readRequestInputSettings(),
+            ]);
             const preferences = appPreferencesReadModel(record);
-            return [{ kind: "settings", value: { preferences } }];
+            return [{ kind: "settings", value: { preferences, requestInput } }];
           }
           case "providerAuth": {
             const providers = yield* structuredSession.listProviderAuthStatuses(
@@ -1827,6 +1926,17 @@ function stateReadModelsFromState(state: {
               {
                 kind: "sessionNavigation",
                 value: yield* buildSessionNavigationReadModel(structuredSession),
+              },
+            ];
+          case "promptHistory":
+            if (request.descriptor.scope !== "workspace") return [];
+            return [
+              {
+                kind: "promptHistory",
+                value: yield* buildPromptHistoryReadModel(
+                  structuredSession,
+                  request.descriptor.workspaceId,
+                ),
               },
             ];
           case "workspaceChrome":
@@ -1946,10 +2056,11 @@ function stateReadModelsFromState(state: {
       Effect.gen(function* () {
         const appLogs = yield* state.appLogs(undefined);
         const appState = yield* state.structuredSession(undefined);
-        const [summary, appStateRevision, record] = yield* Effect.all([
+        const [summary, appStateRevision, record, requestInput] = yield* Effect.all([
           appLogs.summary(),
           appState.readCurrentStateRevision(),
           appState.readAppPreferences(),
+          appState.readRequestInputSettings(),
         ]);
         const preferences = appPreferencesReadModel(record);
         const workspaceId = request.workspaceId;
@@ -1967,6 +2078,10 @@ function stateReadModelsFromState(state: {
                   {
                     kind: "sessionNavigation",
                     value: yield* buildSessionNavigationReadModel(workspaceState),
+                  },
+                  {
+                    kind: "promptHistory",
+                    value: yield* buildPromptHistoryReadModel(workspaceState, workspaceId),
                   },
                   {
                     kind: "requestInput",
@@ -1998,7 +2113,7 @@ function stateReadModelsFromState(state: {
           app: [
             { kind: "appLogSummary", value: summary },
             { kind: "appPreferences", value: preferences },
-            { kind: "settings", value: { preferences } },
+            { kind: "settings", value: { preferences, requestInput } },
             {
               kind: "providerAuth",
               value: providerAuthReadModel(yield* appState.listProviderAuthStatuses({})),
@@ -2039,6 +2154,7 @@ function readModelWorkspaceId(request: StateReadModelRequest): WorkspaceIdType |
     case "appLogSummary":
     case "providerAuth":
     case "sessionNavigation":
+    case "promptHistory":
     case "commandInspector":
     case "requestInput":
     case "approvals":
@@ -2090,6 +2206,24 @@ function buildSessionNavigationReadModel(
       Effect.mapError(sessionNavigationProjectionError),
     );
   });
+}
+
+function buildPromptHistoryReadModel(
+  state: StructuredSessionState["Service"],
+  workspaceId: WorkspaceIdType,
+): Effect.Effect<PromptHistoryReadModel, StateContractError> {
+  return state.listPromptHistory({ workspaceId }).pipe(
+    Effect.map((entries) => ({
+      workspaceId,
+      entries: entries.map((entry) => ({
+        workspaceSessionId: entry.workspaceSessionId as WorkspaceSessionId,
+        surfacePiSessionId: entry.surfacePiSessionId as SurfacePiSessionId,
+        queueItemId: entry.queueItemId as QueueItemId,
+        text: entry.text,
+        sentAt: entry.sentAt as IsoDateTimeString,
+      })),
+    })),
+  );
 }
 
 function sessionNavigationSummary(snapshot: StructuredSessionSnapshot, composerDraftText: string) {
@@ -2204,7 +2338,8 @@ function buildSurfaceTranscriptReadModel(
       activeTurnForSurface(snapshot, request.target.surfacePiSessionId)?.id ?? null;
     const queuedCount = countQueuedMessages(snapshot, request.target.surfacePiSessionId);
     const draft = yield* state.getComposerDraft(request.target.surfacePiSessionId);
-    const messages = transcriptMessages(snapshot, request);
+    const transcript = yield* state.readRuntimeSurfaceTranscript(request.target.surfacePiSessionId);
+    const messages = transcriptMessages(transcript, request);
 
     return {
       target: request.target,
@@ -2218,6 +2353,8 @@ function buildSurfaceTranscriptReadModel(
         attachmentIds: (draft?.attachments ?? []).map((attachment) => attachment.id),
       },
       messages,
+      activeAssistantMessage: transcript.activeAssistantMessage,
+      streamCursor: transcript.streamCursor,
     };
   });
 }
@@ -2357,10 +2494,29 @@ function buildAgentsReadModel(
   return Effect.gen(function* () {
     const snapshots = yield* state.listSessionStates();
     const persistedProfiles = yield* state.listAgentProfiles();
+    const persistedWorkflowAgents = yield* state.listCurrentWorkflowAgentSources();
     const persistedActorExtensionDefaults = yield* state.listAgentActorExtensionDefaults();
     const configuredProfiles = persistedProfiles
       .map(configuredAgentProfileRecord)
       .filter((profile) => (request.profileId ? profile.profileId === request.profileId : true));
+    const builtinWorkflowAgentSourceIds = new Set<string>(DEFAULT_WORKFLOW_AGENT_SOURCE_IDS);
+    const workflowAgents = persistedWorkflowAgents.map((source) => {
+      const builtin = builtinWorkflowAgentSourceIds.has(source.sourceId);
+      return {
+        sourceId: source.sourceId,
+        path: source.path,
+        sourceVersion: source.sourceVersion,
+        fingerprint: source.fingerprint,
+        validationStatus: source.validationStatus,
+        diagnostics: source.diagnostics,
+        parameters: source.parameters,
+        extensionOrder: source.extensionOrder as readonly ExtensionId[],
+        observedAt: source.observedAt,
+        updatedAt: source.updatedAt as IsoDateTimeString,
+        builtin,
+        deletable: !builtin && isWorkflowAgentSourceExportName(source.sourceId),
+      } satisfies WorkflowAgentSourceReadModelRecord;
+    });
     const bindings = snapshots
       .flatMap(agentBindingRecordsFromSnapshot)
       .filter((binding) => (request.profileId ? binding.profileId === request.profileId : true));
@@ -2386,7 +2542,13 @@ function buildAgentsReadModel(
         availableExtensionIds: binding.availableExtensionIds as ExtensionId[],
         externalSourceHashes: binding.externalSourceHashes,
       }));
-    return { configuredProfiles, actorExtensionDefaults, bindings, generatedContextPreviews };
+    return {
+      configuredProfiles,
+      workflowAgents,
+      actorExtensionDefaults,
+      bindings,
+      generatedContextPreviews,
+    };
   });
 }
 
@@ -2777,36 +2939,10 @@ function countQueuedMessages(
 }
 
 function transcriptMessages(
-  snapshot: StructuredSessionSnapshot,
+  transcript: RuntimeSurfaceTranscriptSnapshot,
   request: SurfaceTranscriptReadModelRequest,
 ): SurfaceTranscriptReadModel["messages"] {
-  const messages = snapshot.turns
-    .filter((turn) => turn.surfacePiSessionId === request.target.surfacePiSessionId)
-    .flatMap((turn) => {
-      const userMessage: SurfaceTranscriptReadModel["messages"][number] = {
-        messageId: turn.id as unknown as MessageId,
-        role: "user",
-        turnId: turn.id as TurnId,
-        text: turn.requestSummary,
-        createdAt: turn.startedAt as IsoDateTimeString,
-      };
-      if (turn.assistantMessageId === null && turn.assistantText === null) {
-        return [userMessage];
-      }
-      return [
-        userMessage,
-        {
-          messageId: (turn.assistantMessageId ?? `${turn.id}:assistant`) as MessageId,
-          role: "assistant" as const,
-          turnId: turn.id as TurnId,
-          text: turn.assistantText ?? "",
-          commandIds: snapshot.commands
-            .filter((command) => command.turnId === turn.id)
-            .map((command) => command.id as CommandId),
-          createdAt: turn.startedAt as IsoDateTimeString,
-        },
-      ];
-    });
+  const messages = transcript.messages;
   const afterIndex = request.afterMessageId
     ? messages.findIndex((message) => message.messageId === request.afterMessageId)
     : -1;
@@ -3419,6 +3555,19 @@ function stateCommandsFromState(state: {
             agentsStateInvalidations(),
           );
         }),
+      setActorExtensionDefaults: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSetAgentActorExtensionDefaultsInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          return yield* commitStructuredCommand(
+            receipts,
+            "stateCommands.agentProfiles.setActorExtensionDefaults",
+            decoded,
+            decoded.actor,
+            () => structuredSession.setAgentActorExtensionDefaults(decoded),
+            agentsStateInvalidations(),
+          );
+        }),
       setExternalInstructionActorUsage: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeSetExternalInstructionActorUsageInput(commandInput);
@@ -3965,6 +4114,11 @@ const decodePromoteProfileExtensionDefaultInput = (input: unknown) =>
 const decodeResetActorExtensionDefaultsInput = (input: unknown) =>
   decodeUnknownResetActorExtensionDefaultsCommandInputEffect(input).pipe(
     Effect.mapError(commandDecodeError("stateCommands.agentProfiles.resetActorExtensionDefaults")),
+  );
+
+const decodeSetAgentActorExtensionDefaultsInput = (input: unknown) =>
+  decodeUnknownSetAgentActorExtensionDefaultsCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.agentProfiles.setActorExtensionDefaults")),
   );
 
 const decodeSetExternalInstructionActorUsageInput = (input: unknown) =>

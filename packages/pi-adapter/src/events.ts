@@ -1,16 +1,28 @@
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   type NativeToolResult,
   NativeToolResultSchema,
   PiAdapterError,
+  type PiHistoryEntryRef,
   strictBoundaryParseOptions,
+  type ModelId,
   type PiRuntimeEvent,
   type PiSessionRef,
+  type ProviderId,
+  type RuntimeTranscriptAssistantContent,
+  type RuntimeTranscriptAssistantStopReason,
+  type RuntimeTranscriptUsage,
   type SurfacePiSessionId,
   type ToolCallId,
   type TurnId,
 } from "@svvy/core";
+
+type RuntimeEventIsoDateTime = Extract<
+  PiRuntimeEvent,
+  { readonly type: "pi.assistant_message.committed" }
+>["finishedAt"];
 
 const decodeNativeToolResultSync = Schema.decodeUnknownSync(
   NativeToolResultSchema,
@@ -22,6 +34,9 @@ export type NormalizePiAgentEventInput = {
   readonly turnId: TurnId;
   readonly surfacePiSessionId: SurfacePiSessionId;
   readonly event: unknown;
+  readonly assistantMessageRef?: string;
+  readonly piHistoryEntry?: PiHistoryEntryRef | null;
+  readonly occurredAt: string;
 };
 
 export function normalizePiAgentEventToRuntimeEvents(
@@ -48,8 +63,10 @@ export function normalizePiAgentEventToRuntimeEventsSync(
   switch (type) {
     case "agent_start":
     case "turn_start":
-    case "message_start":
       return [];
+
+    case "message_start":
+      return normalizeMessageStart(input, event);
 
     case "message_end":
       return normalizeMessageEnd(input, event);
@@ -100,13 +117,24 @@ export function normalizePiAgentEventToRuntimeEventsSync(
       ];
     }
 
-    case "agent_end":
     case "turn_end": {
       const stopReason = readTurnStopReason(event);
       return [
         {
           ...eventBase(input),
           type: "pi.turn.finished",
+          status: readTurnStatus(event, type),
+          ...(stopReason ? { stopReason } : {}),
+        },
+      ];
+    }
+
+    case "agent_end": {
+      const stopReason = readTurnStopReason(event);
+      return [
+        {
+          ...eventBase(input),
+          type: "pi.agent.finished",
           status: readTurnStatus(event, type),
           ...(stopReason ? { stopReason } : {}),
         },
@@ -203,14 +231,9 @@ function adaptAssistantMessageEvent(
     }
 
     case "error":
-      return [
-        {
-          ...eventBase(input),
-          type: "pi.turn.finished",
-          status: "failed",
-          ...(typeof event.reason === "string" ? { stopReason: event.reason } : {}),
-        },
-      ];
+      // The assistant stream error is message-local. The owning Agent always emits
+      // agent_end (or rejects the prompt), which is the only whole-prompt terminal.
+      return [];
 
     default:
       throw eventDecodeError(type ?? "unknown", "Unknown assistant message event type.");
@@ -222,14 +245,60 @@ function normalizeMessageEnd(
   event: Record<string, unknown>,
 ): readonly PiRuntimeEvent[] {
   const message = readObject(event.message);
-  if (!message || message.role !== "user") {
+  if (!message) {
+    return [];
+  }
+  if (message.role === "user") {
+    return [
+      {
+        ...eventBase(input),
+        type: "pi.user_message.committed",
+        piMessageRef: readUserMessageRef(input, message),
+        piHistoryEntry: input.piHistoryEntry ?? null,
+        committedAt: readOccurredAt(input),
+      },
+    ];
+  }
+  if (message.role === "assistant") {
+    return [
+      {
+        ...eventBase(input),
+        type: "pi.assistant_message.committed",
+        piMessageRef: readPiMessageRef(input, message),
+        content: readAssistantContent(message, "message_end"),
+        api: readString(message.api),
+        providerId: readRequiredString(message.provider, "message_end") as ProviderId,
+        modelId: readRequiredString(message.model, "message_end") as ModelId,
+        responseId: readString(message.responseId),
+        usage: readAssistantUsage(message.usage, "message_end"),
+        stopReason: readAssistantStopReason(message.stopReason, "message_end"),
+        errorMessage: readString(message.errorMessage),
+        piHistoryEntry: input.piHistoryEntry ?? null,
+        messageTimestamp: readMessageTimestamp(message),
+        finishedAt: readOccurredAt(input),
+      },
+    ];
+  }
+  return [];
+}
+
+function normalizeMessageStart(
+  input: NormalizePiAgentEventInput,
+  event: Record<string, unknown>,
+): readonly PiRuntimeEvent[] {
+  const message = readObject(event.message);
+  if (!message || message.role !== "assistant") {
     return [];
   }
   return [
     {
       ...eventBase(input),
-      type: "pi.user_message.committed",
-      piMessageRef: readUserMessageRef(input, message),
+      type: "pi.assistant_message.started",
+      piMessageRef: readPiMessageRef(input, message),
+      api: readString(message.api),
+      providerId: readRequiredString(message.provider, "message_start") as ProviderId,
+      modelId: readRequiredString(message.model, "message_start") as ModelId,
+      startedAt: readMessageTimestamp(message) ?? readOccurredAt(input),
     },
   ];
 }
@@ -354,13 +423,124 @@ function readPiMessageRef(
   input: NormalizePiAgentEventInput,
   event: Record<string, unknown>,
 ): string {
+  if (input.assistantMessageRef) return input.assistantMessageRef;
   const direct = readString(event.piMessageRef);
   if (direct) return direct;
   const partial = readObject(event.partial);
   const partialId = readString(partial?.id);
   if (partialId) return partialId;
-  const contentIndex = typeof event.contentIndex === "number" ? `:${event.contentIndex}` : "";
-  return `${input.surfacePiSessionId}:${input.turnId}:assistant${contentIndex}`;
+  return `${input.surfacePiSessionId}:${input.turnId}:assistant`;
+}
+
+function readAssistantContent(
+  message: Record<string, unknown>,
+  eventType: string,
+): RuntimeTranscriptAssistantContent {
+  if (!Array.isArray(message.content)) {
+    throw eventDecodeError(eventType, "Assistant message content is not an array.");
+  }
+  return message.content.map((rawBlock, contentIndex) => {
+    const block = readObject(rawBlock);
+    if (!block) {
+      throw eventDecodeError(eventType, "Assistant message content block is not an object.");
+    }
+    switch (block.type) {
+      case "text":
+        return {
+          kind: "text" as const,
+          contentIndex,
+          text: readRequiredStringField(block.text, eventType),
+        };
+      case "thinking":
+        return {
+          kind: "thinking" as const,
+          contentIndex,
+          thinking: readRequiredStringField(block.thinking, eventType),
+          ...(typeof block.redacted === "boolean" ? { redacted: block.redacted } : {}),
+          ...(readString(block.thinkingSignature)
+            ? { thinkingSignature: readString(block.thinkingSignature)! }
+            : {}),
+        };
+      case "toolCall":
+        return {
+          kind: "tool-call" as const,
+          contentIndex,
+          toolCallId: readRequiredString(block.id, eventType) as ToolCallId,
+          toolName: readRequiredString(block.name, eventType),
+          argumentsJson: JSON.stringify(block.arguments ?? {}),
+          argumentsStatus: "accepted" as const,
+          commandId: null,
+          ...(readString(block.thoughtSignature)
+            ? { thoughtSignature: readString(block.thoughtSignature)! }
+            : {}),
+        };
+      default:
+        throw eventDecodeError(eventType, "Unknown assistant message content block type.");
+    }
+  });
+}
+
+function readAssistantUsage(value: unknown, eventType: string): RuntimeTranscriptUsage {
+  const usage = readObject(value);
+  const cost = readObject(usage?.cost);
+  if (!usage || !cost) {
+    throw eventDecodeError(eventType, "Assistant message usage is missing.");
+  }
+  return {
+    input: readNonNegativeSafeInteger(usage.input, eventType),
+    output: readNonNegativeSafeInteger(usage.output, eventType),
+    cacheRead: readNonNegativeSafeInteger(usage.cacheRead, eventType),
+    cacheWrite: readNonNegativeSafeInteger(usage.cacheWrite, eventType),
+    totalTokens: readNonNegativeSafeInteger(usage.totalTokens, eventType),
+    cost: {
+      input: readNonNegativeFiniteNumber(cost.input, eventType),
+      output: readNonNegativeFiniteNumber(cost.output, eventType),
+      cacheRead: readNonNegativeFiniteNumber(cost.cacheRead, eventType),
+      cacheWrite: readNonNegativeFiniteNumber(cost.cacheWrite, eventType),
+      total: readNonNegativeFiniteNumber(cost.total, eventType),
+    },
+  };
+}
+
+function readAssistantStopReason(
+  value: unknown,
+  eventType: string,
+): RuntimeTranscriptAssistantStopReason {
+  if (
+    value === "stop" ||
+    value === "length" ||
+    value === "toolUse" ||
+    value === "error" ||
+    value === "aborted"
+  ) {
+    return value;
+  }
+  throw eventDecodeError(eventType, "Assistant message stop reason is invalid.");
+}
+
+function readMessageTimestamp(message: Record<string, unknown>): RuntimeEventIsoDateTime | null {
+  if (typeof message.timestamp !== "number" || !Number.isFinite(message.timestamp)) {
+    return null;
+  }
+  return DateTime.formatIso(DateTime.makeUnsafe(message.timestamp)) as RuntimeEventIsoDateTime;
+}
+
+function readOccurredAt(input: NormalizePiAgentEventInput): RuntimeEventIsoDateTime {
+  return input.occurredAt as RuntimeEventIsoDateTime;
+}
+
+function readNonNegativeSafeInteger(value: unknown, eventType: string): number {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return value;
+  }
+  throw eventDecodeError(eventType, "Expected a non-negative safe integer field.");
+}
+
+function readNonNegativeFiniteNumber(value: unknown, eventType: string): number {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  throw eventDecodeError(eventType, "Expected a non-negative finite number field.");
 }
 
 function readUserMessageRef(

@@ -1,16 +1,12 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   AMBIENT_AGENT_RESOURCE_CATEGORIES,
   DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ARTIFACT_DIRECTORY,
   DEFAULT_EXTERNAL_INSTRUCTION_ACTORS,
-  DEFAULT_WORKFLOW_AGENT_SETTINGS,
-  DEFAULT_ORCHESTRATOR_PROFILE_ID,
   normalizeExternalInstructionsSettings,
   type AgentSettingsState,
-  type AgentProfileId,
-  type AgentProfileSettings,
   type ApprovalMode,
   type AmbientAgentResourceEnablementRecord,
   type AmbientAgentResourceHost,
@@ -21,51 +17,18 @@ import {
   type AppAppearance,
   type AppPreferences,
   type ExtensionEnvSettings,
-  type ExtensionDefaultsSettings,
   type PreferredExternalEditor,
-  type RequestUserInputSettings,
   type AgentPromptSettings,
-  type WorkflowAgentKey,
-  type WorkflowAgentSettings,
 } from "../shared/agent-settings";
-import type { Agents } from "./smithers-runtime/workflow-authoring-contract";
-import { getWorkflowsSourceRoot } from "./smithers-runtime/workflow-library";
-import {
-  assertFileBackedSaveAllowed,
-  fileBackedTextVersion,
-  readFileBackedVersion,
-  writeTextFileAtomically,
-} from "./file-backed-resource";
-import type { FileBackedSaveMode } from "../shared/file-backed-edit";
 
 export type AgentSettingsStore = {
   getState(): AgentSettingsState;
-  setAgentProfile(profile: AgentProfileSettings): AgentSettingsState;
-  deleteAgentProfile(id: AgentProfileId): AgentSettingsState;
-  reorderOrchestratorProfiles(ids: AgentProfileId[]): AgentSettingsState;
-  setWorkflowAgent(
-    key: WorkflowAgentKey,
-    settings: WorkflowAgentSettings,
-    options?: { baseSourceVersion?: string; mode?: FileBackedSaveMode },
-  ): AgentSettingsState;
-  deleteWorkflowAgent(
-    key: WorkflowAgentKey,
-    options?: { baseSourceVersion?: string; mode?: FileBackedSaveMode },
-  ): AgentSettingsState;
-  setExtensionDefaults(settings: ExtensionDefaultsSettings): AgentSettingsState;
   setExtensionEnv(settings: ExtensionEnvSettings): AgentSettingsState;
-  setRequestUserInput(settings: RequestUserInputSettings): AgentSettingsState;
-  setAppPreferences(preferences: AppPreferences): AgentSettingsState;
   hydrateStateOwnedAppPreferences(preferences: AppPreferences): AgentSettingsState;
 };
 
-export function createAgentSettingsStore(input: {
-  cwd: string;
-  agentDir: string;
-  workflowsSourceRoot?: string;
-}): AgentSettingsStore {
+export function createAgentSettingsStore(input: { agentDir: string }): AgentSettingsStore {
   const settingsPath = join(input.agentDir, "agent-settings.json");
-  const workflowsSourceRoot = input.workflowsSourceRoot ?? getWorkflowsSourceRoot();
   let stateOwnedAppPreferencesOverlay: AppPreferences | null = null;
 
   const readState = (): AgentSettingsState => {
@@ -74,13 +37,8 @@ export function createAgentSettingsStore(input: {
           JSON.parse(readFileSync(settingsPath, "utf8")) as Partial<AgentSettingsState>,
         )
       : structuredClone(DEFAULT_AGENT_SETTINGS_STATE);
-    ensureWorkflowAgentSourceRecords(workflowsSourceRoot, DEFAULT_WORKFLOW_AGENT_SETTINGS);
     return {
       ...normalized,
-      workflowAgents: readWorkflowAgentSourceRecords(
-        workflowsSourceRoot,
-        normalized.workflowAgents,
-      ),
       appPreferences: stateOwnedAppPreferencesOverlay
         ? normalizeAppPreferences({
             ...normalized.appPreferences,
@@ -92,137 +50,15 @@ export function createAgentSettingsStore(input: {
 
   const writeState = (state: AgentSettingsState): AgentSettingsState => {
     mkdirSync(dirname(settingsPath), { recursive: true });
-    writeFileSync(
-      settingsPath,
-      `${JSON.stringify(stripSourceVersionsFromState(state), null, 2)}\n`,
-    );
+    writeFileSync(settingsPath, `${JSON.stringify(state, null, 2)}\n`);
     return state;
   };
 
   return {
     getState: readState,
-    setAgentProfile: (profile) => {
-      const state = readState();
-      const normalizedProfile = normalizeAgentProfile(profile);
-      const existingOrchestratorIndex = state.agents.orchestrators.findIndex(
-        (agent) => agent.id === normalizedProfile.id,
-      );
-      const orchestrators =
-        normalizedProfile.kind === "orchestrator"
-          ? existingOrchestratorIndex >= 0
-            ? state.agents.orchestrators.map((agent, index) =>
-                index === existingOrchestratorIndex
-                  ? normalizeAgentProfile({
-                      ...normalizedProfile,
-                      builtin: agent.builtin,
-                      locked: agent.locked,
-                    })
-                  : agent,
-              )
-            : [
-                ...state.agents.orchestrators,
-                normalizeAgentProfile({
-                  ...normalizedProfile,
-                  builtin: false,
-                  locked: false,
-                }),
-              ]
-          : state.agents.orchestrators;
-      state.agents = normalizeAgentProfileState({
-        ...state.agents,
-        orchestrators,
-        special:
-          normalizedProfile.kind === "special"
-            ? {
-                ...state.agents.special,
-                threadHandler:
-                  normalizedProfile.id === state.agents.special.threadHandler.id
-                    ? normalizeAgentProfile({
-                        ...normalizedProfile,
-                        kind: "special",
-                        builtin: true,
-                        locked: true,
-                      })
-                    : state.agents.special.threadHandler,
-              }
-            : state.agents.special,
-      });
-      return writeState(state);
-    },
-    deleteAgentProfile: (id) => {
-      const state = readState();
-      state.agents = normalizeAgentProfileState({
-        ...state.agents,
-        orchestrators: state.agents.orchestrators.filter(
-          (agent) => agent.id !== id || agent.locked,
-        ),
-      });
-      return writeState(state);
-    },
-    reorderOrchestratorProfiles: (ids) => {
-      const state = readState();
-      const byId = new Map(state.agents.orchestrators.map((agent) => [agent.id, agent]));
-      const locked = state.agents.orchestrators.filter((agent) => agent.locked);
-      const ordered = ids
-        .map((id) => byId.get(id))
-        .filter((agent): agent is AgentProfileSettings => agent !== undefined && !agent.locked);
-      const missing = state.agents.orchestrators.filter(
-        (agent) => !agent.locked && !ids.includes(agent.id),
-      );
-      state.agents = normalizeAgentProfileState({
-        ...state.agents,
-        orchestrators: [...locked, ...ordered, ...missing],
-      });
-      return writeState(state);
-    },
-    setWorkflowAgent: (key, settings, options) => {
-      const state = readState();
-      const normalizedWorkflowAgent = normalizeWorkflowAgentSettings(key, settings);
-      const path = workflowAgentSourcePath(workflowsSourceRoot, normalizedWorkflowAgent.id);
-      assertFileBackedSaveAllowed({
-        baseVersion: options?.baseSourceVersion,
-        current: state.workflowAgents[key] ?? normalizedWorkflowAgent,
-        currentVersion: readFileBackedVersion(path),
-        mode: options?.mode,
-      });
-      state.workflowAgents[key] = normalizedWorkflowAgent;
-      const saved = writeWorkflowAgentSourceRecord(workflowsSourceRoot, normalizedWorkflowAgent);
-      state.workflowAgents[key] = saved;
-      const next = writeState(state);
-      return next;
-    },
-    deleteWorkflowAgent: (key, options) => {
-      const state = readState();
-      const path = workflowAgentSourcePath(workflowsSourceRoot, key);
-      assertFileBackedSaveAllowed({
-        baseVersion: options?.baseSourceVersion,
-        current: state.workflowAgents[key] ?? null,
-        currentVersion: readFileBackedVersion(path),
-        mode: options?.mode,
-      });
-      delete state.workflowAgents[key];
-      const next = writeState(state);
-      rmSync(path, { force: true });
-      return next;
-    },
-    setExtensionDefaults: (settings) => {
-      const state = readState();
-      state.extensionDefaults = normalizeExtensionDefaultsSettings(settings);
-      return writeState(state);
-    },
     setExtensionEnv: (settings) => {
       const state = readState();
       state.extensionEnv = normalizeExtensionEnvSettings(settings);
-      return writeState(state);
-    },
-    setRequestUserInput: (settings) => {
-      const state = readState();
-      state.requestUserInput = normalizeRequestUserInputSettings(settings);
-      return writeState(state);
-    },
-    setAppPreferences: (preferences) => {
-      const state = readState();
-      state.appPreferences = normalizeAppPreferences(preferences);
       return writeState(state);
     },
     hydrateStateOwnedAppPreferences: (preferences) => {
@@ -232,171 +68,27 @@ export function createAgentSettingsStore(input: {
   };
 }
 
-function writeWorkflowAgentSourceRecord(
-  workflowsSourceRoot: string,
-  settings: WorkflowAgentSettings,
-): WorkflowAgentSettings {
-  const path = workflowAgentSourcePath(workflowsSourceRoot, settings.id);
-  const content = workflowAgentSourceContent(settings);
-  writeTextFileAtomically(path, content);
-  return { ...settings, sourceVersion: fileBackedTextVersion(content) };
-}
-
-function ensureWorkflowAgentSourceRecords(
-  workflowsSourceRoot: string,
-  settings: Record<string, WorkflowAgentSettings>,
-): void {
-  for (const agent of Object.values(settings)) {
-    const path = join(workflowsSourceRoot, "agents", `${agent.id}.agent.json`);
-    if (!existsSync(path)) {
-      writeWorkflowAgentSourceRecord(workflowsSourceRoot, agent);
-    }
-  }
-}
-
-function readWorkflowAgentSourceRecords(
-  workflowsSourceRoot: string,
-  fallback: Record<string, WorkflowAgentSettings>,
-): Record<string, WorkflowAgentSettings> {
-  const agentsDir = join(workflowsSourceRoot, "agents");
-  if (!existsSync(agentsDir)) {
-    return fallback;
-  }
-  const records: Record<string, WorkflowAgentSettings> = {};
-  for (const entry of readdirSync(agentsDir).toSorted()) {
-    if (!entry.endsWith(".agent.json")) continue;
-    const path = join(agentsDir, entry);
-    try {
-      const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-      const id = basename(entry, ".agent.json");
-      const sourceVersion = readFileBackedVersion(path);
-      const normalized = normalizeWorkflowAgentSettings(id, {
-        id,
-        label: typeof raw.label === "string" ? raw.label : id,
-        provider: typeof raw.provider === "string" ? raw.provider : "",
-        model: typeof raw.model === "string" ? raw.model : "",
-        reasoningEffort: readWorkflowAgentSourceReasoning(raw),
-        instructions: typeof raw.instructions === "string" ? raw.instructions : "",
-        overrides: normalizeExtensionUsage(raw.overrides as WorkflowAgentSettings["overrides"]),
-        extensionOrder: normalizeExtensionOrder(
-          raw.extensionOrder as WorkflowAgentSettings["extensionOrder"],
-        ),
-        sourceVersion,
-      });
-      records[id] = hasObsoleteWorkflowAgentSourceFields(raw)
-        ? writeWorkflowAgentSourceRecord(workflowsSourceRoot, normalized)
-        : normalized;
-    } catch (error) {
-      throw new Error(`Workflow agent source is not valid JSON: ${path}`, { cause: error });
-    }
-  }
-  return Object.keys(records).length > 0 ? records : fallback;
-}
-
-function hasObsoleteWorkflowAgentSourceFields(raw: Record<string, unknown>): boolean {
-  return Object.hasOwn(raw, "extensions") || Object.hasOwn(raw, "extensionUsage");
-}
-
-function readWorkflowAgentSourceReasoning(
-  raw: Record<string, unknown>,
-): WorkflowAgentSettings["reasoningEffort"] {
-  const reasoning = raw.reasoning;
-  return reasoning &&
-    typeof reasoning === "object" &&
-    !Array.isArray(reasoning) &&
-    typeof (reasoning as { effort?: unknown }).effort === "string"
-    ? ((reasoning as { effort: string }).effort as WorkflowAgentSettings["reasoningEffort"])
-    : ("" as WorkflowAgentSettings["reasoningEffort"]);
-}
-
-function workflowAgentSourcePath(workflowsSourceRoot: string, id: string): string {
-  return join(workflowsSourceRoot, "agents", `${id}.agent.json`);
-}
-
-function workflowAgentSourceContent(settings: WorkflowAgentSettings): string {
-  return `${JSON.stringify(
-    {
-      id: settings.id,
-      label: settings.label,
-      provider: settings.provider,
-      model: settings.model,
-      reasoning: { effort: settings.reasoningEffort },
-      instructions: settings.instructions,
-      overrides: settings.overrides ?? {},
-      extensionOrder: settings.extensionOrder ?? [],
-    },
-    null,
-    2,
-  )}\n`;
-}
-
-function stripSourceVersionsFromState(state: AgentSettingsState): AgentSettingsState {
-  return {
-    ...state,
-    workflowAgents: Object.fromEntries(
-      Object.entries(state.workflowAgents).map(([key, agent]) => [
-        key,
-        stripWorkflowAgentSourceVersion(agent),
-      ]),
-    ),
-  };
-}
-
-function stripWorkflowAgentSourceVersion(agent: WorkflowAgentSettings): WorkflowAgentSettings {
-  const { sourceVersion: _sourceVersion, ...rest } = agent;
-  return rest;
-}
-
 export function normalizeAgentSettingsState(
   input: Partial<AgentSettingsState>,
 ): AgentSettingsState {
   const defaults = structuredClone(DEFAULT_AGENT_SETTINGS_STATE);
-  const workflowAgents = (input.workflowAgents ?? {}) as Partial<
-    AgentSettingsState["workflowAgents"]
-  >;
 
   return {
-    version: 2,
-    agents: normalizeAgentProfileState(
-      (input.agents ?? {}) as Partial<AgentSettingsState["agents"]>,
-    ),
-    workflowAgents: normalizeWorkflowAgentSettingsRecords({
-      ...defaults.workflowAgents,
-      ...workflowAgents,
-    }),
-    extensionDefaults: normalizeExtensionDefaultsSettings({
-      ...defaults.extensionDefaults,
-      ...input.extensionDefaults,
-    }),
+    version: 3,
+    agents: {
+      titleNamer: normalizeAgentPromptSettings({
+        ...defaults.agents.titleNamer,
+        ...input.agents?.titleNamer,
+      }),
+    },
     extensionEnv: normalizeExtensionEnvSettings({
       ...defaults.extensionEnv,
       ...input.extensionEnv,
-    }),
-    requestUserInput: normalizeRequestUserInputSettings({
-      ...defaults.requestUserInput,
-      ...input.requestUserInput,
-      blockingTimeout: {
-        ...defaults.requestUserInput.blockingTimeout,
-        ...input.requestUserInput?.blockingTimeout,
-      },
     }),
     appPreferences: normalizeAppPreferences({
       ...defaults.appPreferences,
       ...input.appPreferences,
     }),
-  };
-}
-
-function normalizeExtensionDefaultsSettings(
-  input: Partial<ExtensionDefaultsSettings> | undefined,
-): ExtensionDefaultsSettings {
-  const usage: ExtensionDefaultsSettings["usage"] = {};
-  for (const actor of DEFAULT_EXTERNAL_INSTRUCTION_ACTORS) {
-    usage[actor] = normalizeExtensionUsage(input?.usage?.[actor]);
-  }
-  return {
-    order: normalizeExtensionOrder(input?.order),
-    usage,
   };
 }
 
@@ -424,116 +116,6 @@ function normalizeExtensionEnvSettings(
   return { nonSecretOverrides };
 }
 
-function normalizeRequestUserInputSettings(
-  input: Partial<RequestUserInputSettings>,
-): RequestUserInputSettings {
-  const defaults = DEFAULT_AGENT_SETTINGS_STATE.requestUserInput;
-  const durationMs = Number(
-    input.blockingTimeout?.durationMs ?? defaults.blockingTimeout.durationMs,
-  );
-  return {
-    mode: input.mode === "blocking" ? "blocking" : "nonblocking",
-    blockingTimeout: {
-      enabled: input.blockingTimeout?.enabled ?? defaults.blockingTimeout.enabled,
-      durationMs:
-        Number.isFinite(durationMs) && durationMs >= 1_000
-          ? Math.floor(durationMs)
-          : defaults.blockingTimeout.durationMs,
-    },
-  };
-}
-
-function normalizeAgentProfileState(
-  input: Partial<AgentSettingsState["agents"]>,
-): AgentSettingsState["agents"] {
-  const defaults = structuredClone(DEFAULT_AGENT_SETTINGS_STATE.agents);
-  const orchestratorsInput = Array.isArray(input.orchestrators) ? input.orchestrators : [];
-  const orchestrators = orchestratorsInput
-    .map((profile) => normalizeAgentProfile(profile))
-    .filter((profile) => profile.kind === "orchestrator")
-    .map((profile) =>
-      profile.id === DEFAULT_ORCHESTRATOR_PROFILE_ID
-        ? { ...profile, builtin: true, locked: true }
-        : profile,
-    );
-  if (!orchestrators.some((profile) => profile.id === DEFAULT_ORCHESTRATOR_PROFILE_ID)) {
-    const defaultOrchestrator = defaults.orchestrators[0];
-    if (defaultOrchestrator) {
-      orchestrators.unshift(defaultOrchestrator);
-    }
-  }
-  const byId = new Map<string, AgentProfileSettings>();
-  for (const profile of orchestrators) {
-    byId.set(profile.id, profile);
-  }
-
-  const threadHandler = normalizeAgentProfile({
-    ...defaults.special.threadHandler,
-    ...input.special?.threadHandler,
-    id: defaults.special.threadHandler.id,
-    kind: "special",
-    locked: true,
-    builtin: true,
-  });
-  const titleNamer = normalizeAgentPromptSettings({
-    ...defaults.titleNamer,
-    ...input.titleNamer,
-  });
-  return {
-    orchestrators: [...byId.values()].toSorted((left, right) => {
-      if (left.id === DEFAULT_ORCHESTRATOR_PROFILE_ID) return -1;
-      if (right.id === DEFAULT_ORCHESTRATOR_PROFILE_ID) return 1;
-      return 0;
-    }),
-    special: { threadHandler },
-    titleNamer,
-  };
-}
-
-function normalizeAgentProfile(input: AgentProfileSettings): AgentProfileSettings {
-  return {
-    id: requireNonEmpty(input.id, "id"),
-    kind: input.kind === "special" ? "special" : "orchestrator",
-    name: requireNonEmpty(input.name, "name"),
-    provider: requireNonEmpty(input.provider, "provider"),
-    model: requireNonEmpty(input.model, "model"),
-    reasoningEffort: input.reasoningEffort,
-    systemPrompt: "",
-    extensionUsage: normalizeExtensionUsage(input.extensionUsage),
-    extensionOrder: normalizeExtensionOrder(input.extensionOrder),
-    updateFromComposer: Boolean(input.updateFromComposer),
-    builtin: Boolean(input.builtin),
-    locked: Boolean(input.locked),
-  };
-}
-
-function normalizeExtensionUsage(
-  input: AgentProfileSettings["extensionUsage"] | null | undefined,
-): AgentProfileSettings["extensionUsage"] {
-  const usage: AgentProfileSettings["extensionUsage"] = {};
-  for (const [rawId, rawState] of Object.entries(input ?? {})) {
-    const id = rawId.trim();
-    if (!id) continue;
-    if (rawState === "loaded" || rawState === "available" || rawState === "unavailable") {
-      usage[id] = rawState;
-    }
-  }
-  return usage;
-}
-
-function normalizeExtensionOrder(input: string[] | null | undefined): string[] {
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  for (const rawId of input ?? []) {
-    if (typeof rawId !== "string") continue;
-    const id = rawId.trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    ids.push(id);
-  }
-  return ids;
-}
-
 function normalizeAgentPromptSettings(input: AgentPromptSettings): AgentPromptSettings {
   return {
     provider: requireNonEmpty(input.provider, "provider"),
@@ -541,49 +123,6 @@ function normalizeAgentPromptSettings(input: AgentPromptSettings): AgentPromptSe
     reasoningEffort: input.reasoningEffort,
     systemPrompt: requireNonEmpty(input.systemPrompt, "systemPrompt"),
   };
-}
-
-function normalizeWorkflowAgentSettings(
-  key: WorkflowAgentKey,
-  input: WorkflowAgentSettings,
-): WorkflowAgentSettings {
-  const normalized = {
-    id: key,
-    label: requireNonEmpty(input.label, "label"),
-    provider: requireNonEmpty(input.provider, "provider"),
-    model: requireNonEmpty(input.model, "model"),
-    reasoningEffort: input.reasoningEffort,
-    instructions: requireNonEmpty(input.instructions, "instructions"),
-    overrides: normalizeExtensionUsage(input.overrides),
-    extensionOrder: normalizeExtensionOrder(input.extensionOrder),
-    sourceVersion: input.sourceVersion,
-  } satisfies WorkflowAgentSettings;
-  assertWorkflowAgentSettingsAssignableToParameters({
-    id: key,
-    label: normalized.label,
-    provider: normalized.provider,
-    model: normalized.model,
-    reasoning: { effort: normalized.reasoningEffort },
-    instructions: normalized.instructions,
-    overrides: normalized.overrides,
-  });
-  return normalized;
-}
-
-function assertWorkflowAgentSettingsAssignableToParameters<
-  T extends Agents.TaskAgentParametersSource,
->(settings: T): T {
-  return settings;
-}
-
-function normalizeWorkflowAgentSettingsRecords(
-  input: Record<string, WorkflowAgentSettings>,
-): Record<string, WorkflowAgentSettings> {
-  const records: Record<string, WorkflowAgentSettings> = {};
-  for (const [key, settings] of Object.entries(input)) {
-    records[key] = normalizeWorkflowAgentSettings(key, settings);
-  }
-  return records;
 }
 
 function requireNonEmpty(value: string, label: string): string {

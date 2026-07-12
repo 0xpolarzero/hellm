@@ -443,7 +443,7 @@ describe("default system prompt", () => {
         mode: "nonblocking",
         blockingTimeout: {
           enabled: true,
-          durationMs: 300_000,
+          durationMs: 300_000 as never,
         },
       },
     });
@@ -457,7 +457,7 @@ describe("default system prompt", () => {
         mode: "blocking",
         blockingTimeout: {
           enabled: true,
-          durationMs: 300_000,
+          durationMs: 300_000 as never,
         },
       },
     });

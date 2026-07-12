@@ -22,6 +22,8 @@ export * from "./native-tool-metadata";
 export * from "./packaged-extension-templates-port";
 export * from "./request-user-input-contracts";
 export * from "./request-user-input-handler";
+export * from "./request-user-input-variant-instructions";
 export * from "./thread-start-contracts";
 export * from "./thread-start-handler";
 export * from "./workspace-source-link-port";
+export type { ParsedWorkflowAgentSource } from "./workflow-agent-source-records";

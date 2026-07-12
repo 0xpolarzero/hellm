@@ -49,6 +49,9 @@ describe("RelatedInspectorPane", () => {
     expect(source).toContain("const activeRuntime = runtime");
     expect(source).toContain("const activeTarget = target");
     expect(source).toContain("activeRuntime.subscribe(refresh)");
+    expect(source).toContain("const unsubscribe =");
+    expect(source).toContain("refresh();");
+    expect(source).not.toContain("if (!unsubscribe) refresh()");
     expect(source).toContain("revision === loadRevision");
     expect(source).toContain('activeTarget.surface === "workflow-task-attempt"');
   });

@@ -13,6 +13,7 @@ import {
   decodeUnknownSetSessionArchivedCommandInputExit,
   decodeUnknownSetSessionNavigationSectionStateCommandInputExit,
   decodeUnknownSetSessionPinnedCommandInputExit,
+  decodeUnknownSetAgentActorExtensionDefaultsCommandInputExit,
   decodeUnknownSetWorkspaceTabsCommandInputExit,
   decodeUnknownUpdateAppPreferencesCommandInputExit,
   decodeUnknownUpdateManagedSnippetCommandInputExit,
@@ -27,12 +28,49 @@ import {
   encodeSetSessionArchivedCommandInputExit,
   encodeSetSessionNavigationSectionStateCommandInputExit,
   encodeSetSessionPinnedCommandInputExit,
+  encodeSetAgentActorExtensionDefaultsCommandInputExit,
   encodeSetWorkspaceTabsCommandInputExit,
   encodeUpdateAppPreferencesCommandInputExit,
   encodeUpdateManagedSnippetCommandInputExit,
 } from "./state-command-schemas";
 
 describe("@svvy/state command schemas", () => {
+  it("strictly decodes and encodes full actor extension-default commands", () => {
+    const decoded = decodeUnknownSetAgentActorExtensionDefaultsCommandInputExit({
+      actor: "workflow-task",
+      extensionUsage: {
+        shell: "loaded",
+        smithers: "available",
+      },
+      extensionOrder: ["smithers", "shell"],
+      clientSubmission: {
+        clientRequestId: "request_actor_extension_defaults",
+        source: "runtime",
+      },
+    });
+    const excess = decodeUnknownSetAgentActorExtensionDefaultsCommandInputExit({
+      actor: "workflow-task",
+      extensionUsage: { shell: "loaded" },
+      extensionOrder: ["shell"],
+      partial: true,
+    });
+
+    expect(Exit.isSuccess(decoded)).toBe(true);
+    expect(Exit.isFailure(excess)).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeUnknownSetAgentActorExtensionDefaultsCommandInputExit({
+          actor: "handler",
+          extensionUsage: {},
+          extensionOrder: [],
+        }),
+      ),
+    ).toBe(true);
+    if (Exit.isSuccess(decoded)) {
+      expect(encodeSetAgentActorExtensionDefaultsCommandInputExit(decoded.value)).toEqual(decoded);
+    }
+  });
+
   it("decodes and encodes app-log read state commands", () => {
     const decoded = decodeUnknownMarkAppLogReadCommandInputExit({
       workspaceId: "workspace_01",

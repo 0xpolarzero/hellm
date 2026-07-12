@@ -19,15 +19,21 @@ import type * as Effect from "effect/Effect";
 
 export interface WorkspaceRecoveryCoordinatorHandlers {
   recoverSurfaceTurn(surfacePiSessionId: string): Promise<void>;
-  drainSurfaceQueue(target: PromptTarget): Promise<void>;
+  wakeSurfaceQueue(target: PromptTarget): Promise<void>;
   generateTitle(owner: { sessionId?: string; threadId?: string }): Promise<void>;
   refreshGeneratedPackages(input: InternalRefreshGeneratedPackagesRequest): Promise<void>;
   resolveSurfaceTarget(surfacePiSessionId: string): PromptTarget;
 }
 
+const ACTIVE_TURN_RECOVERY_WORK_KINDS = [
+  "active_turn_recovery",
+] as const satisfies readonly RuntimeRecoveryWorkKind[];
+
 export class WorkspaceRecoveryCoordinator {
   private readonly claimedBy: RuntimeOwnerId;
-  private running = false;
+  private started = false;
+  private queueReplayEnabled = false;
+  private running: Promise<void> | null = null;
   private rerunRequested = false;
   private closed = false;
 
@@ -41,17 +47,17 @@ export class WorkspaceRecoveryCoordinator {
   }
 
   seedFromDurableState(): void {
-    this.runState(
-      this.recoveryState.normalizeWorkspaceRecoveryState({ claimedBy: this.claimedBy }),
-    );
+    this.seedActiveTurnRecoveryFromDurableState();
+    this.normalizeAndSeedRemainingRecoveryFromDurableState();
+  }
+
+  seedActiveTurnRecoveryFromDurableState(): void {
     for (const snapshot of this.runState(
       this.recoveryState.listWorkspaceRecoveryStartupSnapshots(),
     )) {
       const sessionId = snapshot.session.id;
-      const runningTurnsBySurface = new Set<SurfacePiSessionId>();
       for (const turn of snapshot.turns) {
         if (turn.status === "running" || turn.status === "waiting") {
-          runningTurnsBySurface.add(turn.surfacePiSessionId);
           this.enqueue({
             kind: "active_turn_recovery",
             ownerScope: {
@@ -67,6 +73,17 @@ export class WorkspaceRecoveryCoordinator {
           });
         }
       }
+    }
+  }
+
+  normalizeAndSeedRemainingRecoveryFromDurableState(): void {
+    this.runState(
+      this.recoveryState.normalizeWorkspaceRecoveryState({ claimedBy: this.claimedBy }),
+    );
+    for (const snapshot of this.runState(
+      this.recoveryState.listWorkspaceRecoveryStartupSnapshots(),
+    )) {
+      const sessionId = snapshot.session.id;
 
       const queuedSurfaces = new Set<SurfacePiSessionId>();
       for (const message of snapshot.queuedMessages ?? []) {
@@ -103,7 +120,7 @@ export class WorkspaceRecoveryCoordinator {
           idempotencyKey: `queue_delivery:${surfacePiSessionId}`,
           orderingKey: `surface:${surfacePiSessionId}`,
           orderingSeq: 100,
-          priority: runningTurnsBySurface.has(surfacePiSessionId) ? 40 : 30,
+          priority: 30,
         });
       }
 
@@ -152,27 +169,43 @@ export class WorkspaceRecoveryCoordinator {
     }
   }
 
-  start(): void {
-    if (this.closed) return;
-    if (this.running) {
-      this.rerunRequested = true;
-      return;
-    }
-    this.running = true;
-    queueMicrotask(
-      () =>
-        void this.drain().finally(() => {
-          this.running = false;
-          if (this.rerunRequested && !this.closed) {
-            this.rerunRequested = false;
-            this.start();
-          }
-        }),
-    );
+  start(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    this.started = true;
+    this.queueReplayEnabled = true;
+    return this.scheduleDrain();
+  }
+
+  startActiveTurnRecovery(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    this.started = true;
+    return this.scheduleDrain();
   }
 
   wake(): void {
-    this.start();
+    if (!this.started || this.closed) return;
+    void this.scheduleDrain();
+  }
+
+  private scheduleDrain(): Promise<void> {
+    if (this.running) {
+      this.rerunRequested = true;
+      return this.running;
+    }
+    const running = Promise.resolve().then(async () => {
+      do {
+        this.rerunRequested = false;
+        await this.drain();
+      } while (this.rerunRequested && !this.closed);
+    });
+    this.running = running;
+    const clearRunning = () => {
+      if (this.running === running) {
+        this.running = null;
+      }
+    };
+    void running.then(clearRunning, clearRunning);
+    return running;
   }
 
   close(): void {
@@ -206,10 +239,11 @@ export class WorkspaceRecoveryCoordinator {
         this.recoveryState.claimNextRecoveryWork({
           claimedBy: this.claimedBy,
           scope: { kind: "workspace", workspaceId: this.workspaceId },
+          ...(this.queueReplayEnabled ? {} : { kinds: ACTIVE_TURN_RECOVERY_WORK_KINDS }),
         }),
       ).value;
       if (!work) return;
-      void this.executeClaimedWork(work);
+      await this.executeClaimedWork(work);
     }
   }
 
@@ -249,7 +283,7 @@ export class WorkspaceRecoveryCoordinator {
         await this.handlers.recoverSurfaceTurn(readSurfacePiSessionId(work));
         return;
       case "queue_delivery":
-        await this.handlers.drainSurfaceQueue(
+        await this.handlers.wakeSurfaceQueue(
           this.handlers.resolveSurfaceTarget(readSurfacePiSessionId(work)),
         );
         return;
@@ -257,17 +291,34 @@ export class WorkspaceRecoveryCoordinator {
         await this.handlers.refreshGeneratedPackages(readRefreshGeneratedPackagesRequest(work));
         return;
       case "title_generation":
-        await this.handlers.generateTitle({
-          sessionId: typeof payload.sessionId === "string" ? payload.sessionId : undefined,
-          threadId: typeof payload.threadId === "string" ? payload.threadId : undefined,
-        });
+        {
+          const sessionId = readNonEmptyString(payload.sessionId);
+          const threadId = readNonEmptyString(payload.threadId);
+          if ((sessionId ? 1 : 0) + (threadId ? 1 : 0) !== 1) {
+            throw new Error(
+              `Recovery work ${work.id} must identify exactly one session or thread title job.`,
+            );
+          }
+          await this.handlers.generateTitle({
+            ...(sessionId ? { sessionId } : {}),
+            ...(threadId ? { threadId } : {}),
+          });
+        }
         return;
+      default:
+        throw new Error(
+          `Workspace recovery work ${work.id} has no owner handler for ${work.kind}.`,
+        );
     }
   }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function readSurfacePiSessionId(work: RuntimeRecoveryWorkRecord): string {

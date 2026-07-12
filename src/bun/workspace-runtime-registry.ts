@@ -34,24 +34,25 @@ import {
   SandboxPolicyError,
   StateContractError,
   type AbsolutePath,
+  type CommandId,
+  type ExtensionId,
   type ExtensionStatePortService,
   type GeneratedPackageWorkspaceLinkRepairInput,
   type IsoDateTimeString,
-  type PromptTarget,
-  type RuntimeEvent,
+  type PromptTarget as RuntimePromptTarget,
   type RefreshGeneratedContextRequest,
   type RuntimeGeneratedPackageStatePortService,
   type RuntimeSourceStatePortService,
+  type SourceEditSession,
   type RuntimeOwnerId,
   type RuntimeOwnerRef,
   type ReleaseWorkspaceResult,
   type WorkspaceId,
+  type WorkflowAgentSourceExportName,
 } from "@svvy/core";
 import type { ExtensionSourceRoots, GeneratedPackageRoots } from "@svvy/extensions";
 import type {
   ArtifactOpenMessage,
-  SurfaceStreamPatch,
-  SurfaceSyncMessage,
   WorkspaceInfoResponse,
   WorkspaceKind,
 } from "../shared/workspace-contract";
@@ -69,6 +70,7 @@ import {
   getSvvyDataDir,
   STRUCTURED_SESSION_DB_FILENAME,
   type CatalogAgentProfileAuthority,
+  type CatalogRequestInputSettingsAuthority,
   type WorkspaceSessionCatalog,
   type TitleGenerationLogEvent,
   type WorkflowsGeneratedPackageLogEvent,
@@ -99,6 +101,7 @@ import {
 } from "./source-watch-inputs";
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
 import { DEFAULT_AGENT_SETTINGS_STATE, type AppPreferences } from "../shared/agent-settings";
+import { resolvePackagedExtensionTemplatesRoot } from "./packaged-extension-templates";
 
 type WorkspaceGeneratedPackageBoundaryHost = RuntimeGeneratedPackageRefreshBoundaryHost & {
   readonly sourceRoots: ExtensionSourceRoots;
@@ -108,7 +111,6 @@ type WorkspaceGeneratedPackageBoundaryHost = RuntimeGeneratedPackageRefreshBound
 };
 
 type RuntimeFacade = AppRuntimeBootstrap["facade"];
-type RuntimeEventSubscription = Awaited<ReturnType<RuntimeFacade["events"]>>;
 type RuntimeSourceInvalidationReactionInput =
   | {
       readonly scope: { readonly kind: "app-global" };
@@ -194,7 +196,6 @@ type WorkspaceRuntimeRegistryOptions = {
     details?: Record<string, unknown>,
     error?: unknown,
   ) => void;
-  onSurfaceSync?: (workspaceId: string, payload: SurfaceSyncMessage) => void;
   onArtifactOpen?: (workspaceId: string, payload: ArtifactOpenMessage) => void;
   runtimeDependencies?: Partial<RuntimeProviderAuthDependencies>;
   runtimeLayerConfig: RuntimeLayerConfig;
@@ -205,6 +206,7 @@ type WorkspaceRuntimeRegistryOptions = {
   workflowsExtensionsGeneratedPackagePath?: string;
   coreTypeContractPackagePath?: string;
   workflowsSourceRoot?: string;
+  packagedExtensionTemplatesRoot?: string;
 };
 
 type OpenWorkspaceOptions = {
@@ -230,7 +232,6 @@ type RuntimeRecord = Omit<WorkspaceRuntime, "dispose"> & {
   refCount: number;
   commandStdin: ReturnType<typeof createLiveCommandStdinRegistry>;
   sourceInvalidationCoordinator: RuntimeSourceInvalidationCoordinatorHandle;
-  unsubscribeRuntimeEvents: () => void;
   latestOwnerReleaseResult: ReleaseWorkspaceResult | null;
   reactivate(): Promise<void>;
   dispose(): Promise<void>;
@@ -266,120 +267,6 @@ type AppGlobalHostRecord = {
   dispose(): Promise<void>;
 };
 
-const RUNTIME_STREAM_ZERO_USAGE = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    total: 0,
-  },
-};
-
-function isPromptTarget(
-  target: Extract<RuntimeEvent, { readonly target: unknown }>["target"],
-): target is PromptTarget {
-  return target.surface === "orchestrator" || target.surface === "handler";
-}
-
-function rendererStreamPatchesFromRuntimeEvent(input: {
-  readonly event: Extract<RuntimeEvent, { readonly type: "surface.stream" }>;
-  readonly startedBlocks: Set<string>;
-}): SurfaceStreamPatch[] {
-  const patch = input.event.patch;
-  const sequence = Number(input.event.streamSequence) * 2;
-  const blockKey = (kind: "text" | "thinking", contentIndex: number) =>
-    `${input.event.target.surfacePiSessionId}:${input.event.streamGenerationId}:${kind}:${contentIndex}`;
-  switch (patch.type) {
-    case "assistant_message_started":
-      for (const key of Array.from(input.startedBlocks)) {
-        if (key.startsWith(`${input.event.target.surfacePiSessionId}:`)) {
-          input.startedBlocks.delete(key);
-        }
-      }
-      return [
-        {
-          type: "start",
-          sequence,
-          message: {
-            role: "assistant",
-            content: [],
-            api: "runtime",
-            provider: "runtime",
-            model: "runtime",
-            usage: RUNTIME_STREAM_ZERO_USAGE,
-            stopReason: "stop",
-            timestamp: Date.parse(patch.createdAt) || Date.now(),
-          },
-        } as SurfaceStreamPatch,
-      ];
-    case "assistant_text_delta": {
-      const key = blockKey("text", patch.contentIndex);
-      const patches: SurfaceStreamPatch[] = [];
-      if (!input.startedBlocks.has(key)) {
-        input.startedBlocks.add(key);
-        patches.push({
-          type: "text_start",
-          sequence: sequence - 1,
-          contentIndex: patch.contentIndex,
-        });
-      }
-      patches.push({
-        type: "text_delta",
-        sequence,
-        contentIndex: patch.contentIndex,
-        delta: patch.delta,
-      });
-      return patches;
-    }
-    case "assistant_thinking_delta": {
-      const key = blockKey("thinking", patch.contentIndex);
-      const patches: SurfaceStreamPatch[] = [];
-      if (!input.startedBlocks.has(key)) {
-        input.startedBlocks.add(key);
-        patches.push({
-          type: "thinking_start",
-          sequence: sequence - 1,
-          contentIndex: patch.contentIndex,
-        });
-      }
-      patches.push({
-        type: "thinking_delta",
-        sequence,
-        contentIndex: patch.contentIndex,
-        delta: patch.delta,
-      });
-      return patches;
-    }
-    case "assistant_message_finished":
-      return [
-        {
-          type: "clear",
-          sequence,
-          reason: patch.status === "completed" ? "done" : "error",
-        },
-      ];
-    case "stream_reset":
-      return [
-        {
-          type: "clear",
-          sequence,
-          reason: "error",
-        },
-      ];
-    case "active_command":
-    case "prompt_status":
-    case "tool_arguments_snapshot":
-    case "user_message_committed":
-      return [];
-  }
-}
-
 export class WorkspaceRuntimeRegistry {
   private readonly runtimes = new Map<string, RuntimeRecord>();
   private readonly dormantRuntimes = new Map<string, RuntimeRecord>();
@@ -390,6 +277,7 @@ export class WorkspaceRuntimeRegistry {
   private appGlobalHost: Promise<AppGlobalHostRecord> | null = null;
   private appRuntimeBootstrap: Promise<AppRuntimeBootstrap> | null = null;
   private resolvedAppRuntimeBootstrap: AppRuntimeBootstrap | null = null;
+  private stateOwnedAppPreferences: AppPreferences | null = null;
   private catalogAgentProfileAuthority: {
     runtime: AppRuntimeBootstrap;
     authority: CatalogAgentProfileAuthority;
@@ -489,92 +377,6 @@ export class WorkspaceRuntimeRegistry {
 
   ready(): Promise<void> {
     return this.startupReady;
-  }
-
-  private async startRuntimeEventForwarder(input: {
-    readonly workspaceId: string;
-    readonly runtime: AppRuntimeBootstrap;
-  }): Promise<() => void> {
-    let stopped = false;
-    const startedBlocks = new Set<string>();
-    const subscription = await input.runtime.facade.events({
-      workspaceId: input.workspaceId as WorkspaceId,
-      includeAppEvents: true,
-    });
-    const stop = () => {
-      stopped = true;
-      void subscription.close().catch((error) => {
-        this.options.forwardBridgeLog?.(
-          "warn",
-          "Runtime event subscription did not close cleanly.",
-          "runtime.events",
-          { workspaceId: input.workspaceId },
-          error,
-        );
-      });
-    };
-    void this.forwardRuntimeEvents({
-      workspaceId: input.workspaceId,
-      subscription,
-      startedBlocks,
-      isStopped: () => stopped,
-    });
-    return stop;
-  }
-
-  private async forwardRuntimeEvents(input: {
-    readonly workspaceId: string;
-    readonly subscription: RuntimeEventSubscription;
-    readonly startedBlocks: Set<string>;
-    readonly isStopped: () => boolean;
-  }): Promise<void> {
-    try {
-      for await (const event of input.subscription) {
-        if (input.isStopped()) {
-          break;
-        }
-        this.forwardRuntimeEventToRenderer({
-          workspaceId: input.workspaceId,
-          event,
-          startedBlocks: input.startedBlocks,
-        });
-      }
-    } catch (error) {
-      if (!input.isStopped()) {
-        this.options.forwardBridgeLog?.(
-          "warn",
-          "Runtime event subscription stopped unexpectedly.",
-          "runtime.events",
-          { workspaceId: input.workspaceId },
-          error,
-        );
-      }
-    }
-  }
-
-  private forwardRuntimeEventToRenderer(input: {
-    readonly workspaceId: string;
-    readonly event: RuntimeEvent;
-    readonly startedBlocks: Set<string>;
-  }): void {
-    if (input.event.type !== "surface.stream") {
-      return;
-    }
-    if (!isPromptTarget(input.event.target)) {
-      return;
-    }
-    const patches = rendererStreamPatchesFromRuntimeEvent({
-      event: input.event,
-      startedBlocks: input.startedBlocks,
-    });
-    for (const patch of patches) {
-      this.options.onSurfaceSync?.(input.workspaceId, {
-        workspaceId: input.workspaceId,
-        reason: "stream.patch",
-        target: input.event.target,
-        streamPatch: patch,
-      });
-    }
   }
 
   openWorkspace(cwd: string, options: OpenWorkspaceOptions = {}): Promise<WorkspaceRuntime> {
@@ -1061,6 +863,7 @@ export class WorkspaceRuntimeRegistry {
       }
       this.appRuntimeBootstrapState = "closed";
       this.resolvedAppRuntimeBootstrap = null;
+      this.stateOwnedAppPreferences = null;
       this.catalogAgentProfileAuthority = null;
       this.desktopAppFacades = null;
       this.appGlobalHost = null;
@@ -1083,6 +886,9 @@ export class WorkspaceRuntimeRegistry {
     cwd: string,
     kind: WorkspaceKind,
   ): Promise<RuntimeRecord> {
+    const initialAppRuntime = await this.getAppRuntimeBootstrap();
+    const stateOwnedAppPreferences =
+      this.stateOwnedAppPreferences ?? (await this.hydrateStateOwnedAppPreferencesFromStateRows());
     const label = kind === "default" ? "Default Workspace" : basename(cwd) || "workspace";
     const sessionDir = getSvvySessionDir(cwd, this.agentDir);
     const commandStdin = createLiveCommandStdinRegistry();
@@ -1093,6 +899,10 @@ export class WorkspaceRuntimeRegistry {
       join(sessionDir, "namer"),
       requestedWorkspaceId,
       {
+        artifactDirectory: resolveConfiguredArtifactDirectory(
+          stateOwnedAppPreferences.artifactDirectory,
+          cwd,
+        ),
         workflowsExtensionsGeneratedPackagePath:
           this.options.workflowsExtensionsGeneratedPackagePath,
         workflowsGeneratedPackagePath: this.options.workflowsGeneratedPackagePath,
@@ -1100,6 +910,10 @@ export class WorkspaceRuntimeRegistry {
         refreshGeneratedPackages: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();
           return runtime.internal.sourceInvalidation.refreshGeneratedPackages(request);
+        },
+        wakeSurfaceQueue: async (target) => {
+          const runtime = await this.getAppRuntimeBootstrap();
+          await runtime.internal.workspaceRecovery.wakeSurfaceQueue(target as RuntimePromptTarget);
         },
         acquireExecuteTypescriptLaunch: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();
@@ -1112,10 +926,6 @@ export class WorkspaceRuntimeRegistry {
         runAcceptedLoadExtension: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();
           return runtime.internal.acceptedNativeTools.runLoadExtension(request);
-        },
-        runAcceptedRequestUserInput: async (request) => {
-          const runtime = await this.getAppRuntimeBootstrap();
-          return runtime.internal.acceptedNativeTools.runRequestUserInput(request);
         },
         requestDirectToolApproval: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();
@@ -1134,12 +944,10 @@ export class WorkspaceRuntimeRegistry {
     let appLogs: StateAppLogsFacade | null = null;
     let appLog: ReturnType<typeof createAppLogger> | null = null;
     let sourceInvalidationCoordinator: RuntimeSourceInvalidationCoordinatorHandle | null = null;
-    let appRuntime: AppRuntimeBootstrap | null = null;
+    let appRuntime: AppRuntimeBootstrap | null = initialAppRuntime;
     let workspaceStateRegistered = false;
     let desktopOwnerReleaseRequired = false;
-    let unsubscribeRuntimeEvents: (() => void) | null = null;
     let cleanupComplete = false;
-    let runtimeEventsDetached = false;
     let catalogListenersDetached = false;
     let sourceCoordinatorClosed = false;
     let workspaceStateUnregistered = false;
@@ -1151,7 +959,6 @@ export class WorkspaceRuntimeRegistry {
     const detachCatalogListeners = (): void => {
       void catalog.setCommittedStateInvalidationPublisher(null);
       catalog.setArtifactOpenListener(null);
-      catalog.setSurfaceSyncListener(null);
       catalog.setTitleGenerationLogListener(null);
       catalog.setWorkflowsGeneratedPackageLogListener(null);
       catalog.setAppLogListener(null);
@@ -1182,15 +989,6 @@ export class WorkspaceRuntimeRegistry {
         return;
       }
       const errors: unknown[] = [];
-      if (!runtimeEventsDetached) {
-        try {
-          unsubscribeRuntimeEvents?.();
-          unsubscribeRuntimeEvents = null;
-          runtimeEventsDetached = true;
-        } catch (error) {
-          errors.push(error);
-        }
-      }
       if (!catalogListenersDetached) {
         try {
           detachCatalogListeners();
@@ -1230,7 +1028,6 @@ export class WorkspaceRuntimeRegistry {
         workspaceStateRegistered &&
         !workspaceStateUnregistered &&
         shutdownRuntime &&
-        runtimeEventsDetached &&
         catalogListenersDetached &&
         sourceCoordinatorClosed &&
         !desktopOwnerReleaseRequired
@@ -1248,7 +1045,6 @@ export class WorkspaceRuntimeRegistry {
       }
       if (
         !catalogDisposed &&
-        runtimeEventsDetached &&
         catalogListenersDetached &&
         sourceCoordinatorClosed &&
         workspaceStateUnregistered &&
@@ -1273,7 +1069,6 @@ export class WorkspaceRuntimeRegistry {
         }
       }
       cleanupComplete =
-        runtimeEventsDetached &&
         catalogListenersDetached &&
         sourceCoordinatorClosed &&
         workspaceStateUnregistered &&
@@ -1294,9 +1089,7 @@ export class WorkspaceRuntimeRegistry {
       resolvedWorkspaceId = workspaceId;
       const pathIndex = new WorkspacePathIndex(cwd);
       const agentSettingsStore = createAgentSettingsStore({
-        cwd,
         agentDir: this.agentDir,
-        workflowsSourceRoot: this.options.workflowsSourceRoot,
       });
       appLogs = this.acquireAppLogFacade(cwd);
       appLog = createAppLogger({
@@ -1341,12 +1134,6 @@ export class WorkspaceRuntimeRegistry {
             workspaceId: workspaceId as WorkspaceId,
           });
         });
-        catalog.setSurfaceSyncListener((payload) => {
-          this.options.onSurfaceSync?.(workspaceId, {
-            ...payload,
-            workspaceId,
-          });
-        });
         catalog.setTitleGenerationLogListener((event) => {
           recordTitleGenerationLog(workspaceAppLog, event);
         });
@@ -1360,6 +1147,11 @@ export class WorkspaceRuntimeRegistry {
         });
         appRuntime = await this.getAppRuntimeBootstrap();
         catalog.setAgentProfileAuthority(this.createCatalogAgentProfileAuthority(appRuntime));
+        catalog.setRequestInputSettingsAuthority(
+          this.createCatalogRequestInputSettingsAuthority(
+            (await this.getAppGlobalHostRecord()).catalog,
+          ),
+        );
         workspaceStateRegistered = true;
         await appRuntime.internal.workspaceStates.register(
           kind === "default"
@@ -1370,6 +1162,7 @@ export class WorkspaceRuntimeRegistry {
         await catalog.setCommittedStateInvalidationPublisher((afterCommit) =>
           appRuntime!.internal.committedStateInvalidations.publish(afterCommit),
         );
+        await catalog.prepareWorkspaceRecoveryAfterRegistration();
         if (kind === "default") {
           desktopOwnerReleaseRequired = true;
           await appRuntime.facade.workspaces.acquireDefault({
@@ -1395,6 +1188,7 @@ export class WorkspaceRuntimeRegistry {
           "Workflows build/link recovery refreshed package links.",
           { reason: "startup-recovery" },
         );
+        catalog.startWorkspaceRecovery();
         sourceInvalidationCoordinator = createRuntimeSourceInvalidationCoordinatorHandle({
           debounceMs: this.options.runtimeLayerConfig.sourceDebounceMs,
           host: this.sourceInvalidationHost,
@@ -1439,10 +1233,6 @@ export class WorkspaceRuntimeRegistry {
         });
         openingRuntime.sourceInvalidationCoordinator = sourceInvalidationCoordinator;
         await sourceInvalidationCoordinator.ready();
-        unsubscribeRuntimeEvents = await this.startRuntimeEventForwarder({
-          workspaceId,
-          runtime: appRuntime,
-        });
       } finally {
         this.openingRuntimes.delete(workspaceId);
         this.openingWorkspaceCwds.delete(workspaceId);
@@ -1487,7 +1277,6 @@ export class WorkspaceRuntimeRegistry {
         appLogs,
         appLog: workspaceAppLog,
         sourceInvalidationCoordinator,
-        unsubscribeRuntimeEvents,
         latestOwnerReleaseResult: null,
         getInfo: () => ({
           workspaceId,
@@ -1812,9 +1601,15 @@ export class WorkspaceRuntimeRegistry {
       record,
       appGlobal.agentSettingsStore.getState().appPreferences,
     );
-    appGlobal.agentSettingsStore.hydrateStateOwnedAppPreferences(preferences);
-    for (const runtime of this.workspaceHostRecords()) {
-      runtime.agentSettingsStore.hydrateStateOwnedAppPreferences(preferences);
+    this.stateOwnedAppPreferences = preferences;
+    const hosts = [appGlobal, ...this.workspaceHostRecords()];
+    for (const host of new Set(hosts)) {
+      host.agentSettingsStore.hydrateStateOwnedAppPreferences(preferences);
+      host.catalog
+        .workspaceStateRouterRegistration()
+        .store.setWorkspaceArtifactDirectory(
+          resolveConfiguredArtifactDirectory(preferences.artifactDirectory, host.cwd),
+        );
     }
     return preferences;
   }
@@ -1838,8 +1633,12 @@ export class WorkspaceRuntimeRegistry {
       ...this.retainedWorkspaceHostRecords().map((host) => host.catalog),
     ]);
     const agentProfileAuthority = this.createCatalogAgentProfileAuthority(runtime);
+    const requestInputSettingsAuthority = this.createCatalogRequestInputSettingsAuthority(
+      appGlobal.catalog,
+    );
     for (const catalog of catalogs) {
       catalog.setAgentProfileAuthority(agentProfileAuthority);
+      catalog.setRequestInputSettingsAuthority(requestInputSettingsAuthority);
     }
     await Promise.all(
       [...catalogs].map((catalog) =>
@@ -1848,6 +1647,10 @@ export class WorkspaceRuntimeRegistry {
         ),
       ),
     );
+    for (const catalog of this.retainedWorkspaceHostRecords().map((host) => host.catalog)) {
+      await catalog.prepareWorkspaceRecoveryAfterRegistration();
+      catalog.startWorkspaceRecovery();
+    }
     return runtime;
   }
 
@@ -1865,6 +1668,7 @@ export class WorkspaceRuntimeRegistry {
         }
         return {
           configuredProfiles: result.value.configuredProfiles,
+          workflowAgents: result.value.workflowAgents,
           actorExtensionDefaults: result.value.actorExtensionDefaults,
         };
       },
@@ -1877,9 +1681,132 @@ export class WorkspaceRuntimeRegistry {
       setProfileExtensionUsage: async (input) => {
         await runtime.stateCommands.agentProfiles.setProfileExtensionUsage(input);
       },
+      setActorExtensionDefaults: async (input) => {
+        await runtime.stateCommands.agentProfiles.setActorExtensionDefaults({
+          actor: input.actor,
+          extensionUsage: Object.fromEntries(
+            Object.entries(input.extensionUsage).map(([extensionId, usage]) => [
+              extensionId as ExtensionId,
+              usage,
+            ]),
+          ),
+          extensionOrder: input.extensionOrder.map((extensionId) => extensionId as ExtensionId),
+        });
+      },
+      saveWorkflowAgentSource: async (input) => {
+        const appGlobal = await this.getAppGlobalHostRecord();
+        const result = await runtime.facade.sourceEdits.save({
+          workspaceId: appGlobal.workspaceId as WorkspaceId,
+          source: {
+            sourceKind: "workflow-agent",
+            sourceId: input.sourceId,
+            expectedSourceVersion: input.expectedSourceVersion,
+            text: input.text,
+            saveMode: "compare-and-swap",
+          },
+        });
+        if (result.status === "stale") {
+          throw new RuntimeContractError({
+            operation: "runtime.sourceEdits.saveWorkflowAgentExtensionUsage",
+            reason: "state-conflict",
+            message: `Workflow-agent source ${input.sourceId} changed before the extension usage update committed.`,
+          });
+        }
+      },
+      upsertWorkflowAgentSource: async (input) => {
+        const appGlobal = await this.getAppGlobalHostRecord();
+        const workspaceId = appGlobal.workspaceId as WorkspaceId;
+        let current: SourceEditSession | null = null;
+        try {
+          current = await runtime.facade.sourceEdits.open({
+            sourceKind: "workflow-agent",
+            sourceId: input.sourceId,
+          });
+        } catch (error) {
+          const runtimeError =
+            error &&
+            typeof error === "object" &&
+            (error as Record<string, unknown>).type === "runtime-facade-error"
+              ? (error as Record<string, unknown>).error
+              : error;
+          if (
+            !(runtimeError instanceof RuntimeContractError) ||
+            runtimeError.reason !== "target-not-found"
+          ) {
+            throw error;
+          }
+        }
+
+        if (!current) {
+          await runtime.facade.sourceEdits.createWorkflowAgent({
+            workspaceId,
+            source: {
+              draft: {
+                exportName: input.sourceId as WorkflowAgentSourceExportName,
+                displayName: input.draft.label,
+                provider: input.draft.provider,
+                model: input.draft.model,
+                reasoning: { effort: input.draft.reasoningEffort },
+                instructionText: input.draft.instructions,
+                extensionUsageOverrides: Object.entries(input.draft.overrides).map(
+                  ([extensionId, usage]) => ({
+                    extensionId: extensionId as ExtensionId,
+                    usage,
+                  }),
+                ),
+                extensionOrder: input.draft.extensionOrder.map(
+                  (extensionId) => extensionId as ExtensionId,
+                ),
+              },
+              sourceOwner: "svvyx-workflows-command",
+              ...(input.sourceCommandId
+                ? { sourceCommandId: input.sourceCommandId as CommandId }
+                : {}),
+            },
+          });
+          return;
+        }
+
+        if (!input.overwrite) {
+          throw new RuntimeContractError({
+            operation: "runtime.sourceEdits.upsertWorkflowAgent",
+            reason: "invalid-input",
+            message: `Workflow source already exists: ${input.sourceId}`,
+          });
+        }
+        const result = await runtime.facade.sourceEdits.save({
+          workspaceId,
+          source: {
+            sourceKind: "workflow-agent",
+            sourceId: input.sourceId,
+            expectedSourceVersion: current.sourceVersion,
+            text: input.text,
+            saveMode: "compare-and-swap",
+            ...(input.sourceCommandId
+              ? { sourceCommandId: input.sourceCommandId as CommandId }
+              : {}),
+          },
+        });
+        if (result.status === "stale") {
+          throw new RuntimeContractError({
+            operation: "runtime.sourceEdits.upsertWorkflowAgent",
+            reason: "state-conflict",
+            message: `Workflow-agent source ${input.sourceId} changed before the save committed.`,
+          });
+        }
+      },
     };
     this.catalogAgentProfileAuthority = { runtime, authority };
     return authority;
+  }
+
+  private createCatalogRequestInputSettingsAuthority(
+    appGlobalCatalog: WorkspaceSessionCatalog,
+  ): CatalogRequestInputSettingsAuthority {
+    return {
+      read: () =>
+        appGlobalCatalog.workspaceStateRouterRegistration().store.readRequestInputSettings(),
+    };
   }
 
   private async getAppGlobalHostRecord(): Promise<AppGlobalHostRecord> {
@@ -1901,6 +1828,7 @@ export class WorkspaceRuntimeRegistry {
       join(sessionDir, "namer"),
       workspaceId,
       {
+        runtimeStartupOwnsRecovery: true,
         workflowsExtensionsGeneratedPackagePath:
           this.options.workflowsExtensionsGeneratedPackagePath,
         workflowsGeneratedPackagePath: this.options.workflowsGeneratedPackagePath,
@@ -1908,6 +1836,10 @@ export class WorkspaceRuntimeRegistry {
         refreshGeneratedPackages: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();
           return runtime.internal.sourceInvalidation.refreshGeneratedPackages(request);
+        },
+        wakeSurfaceQueue: async (target) => {
+          const runtime = await this.getAppRuntimeBootstrap();
+          await runtime.internal.workspaceRecovery.wakeSurfaceQueue(target as RuntimePromptTarget);
         },
         acquireExecuteTypescriptLaunch: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();
@@ -1920,10 +1852,6 @@ export class WorkspaceRuntimeRegistry {
         runAcceptedLoadExtension: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();
           return runtime.internal.acceptedNativeTools.runLoadExtension(request);
-        },
-        runAcceptedRequestUserInput: async (request) => {
-          const runtime = await this.getAppRuntimeBootstrap();
-          return runtime.internal.acceptedNativeTools.runRequestUserInput(request);
         },
         requestDirectToolApproval: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();
@@ -1940,9 +1868,7 @@ export class WorkspaceRuntimeRegistry {
       this.options.runtimeLayerConfig,
     );
     const agentSettingsStore = createAgentSettingsStore({
-      cwd,
       agentDir: this.agentDir,
-      workflowsSourceRoot: this.options.workflowsSourceRoot,
     });
     const appLogs = this.acquireAppLogFacade(cwd);
     const appLog = createAppLogger({
@@ -1992,7 +1918,13 @@ export class WorkspaceRuntimeRegistry {
         cwd: appGlobal.cwd,
       },
     );
-    return await createAppRuntimeBootstrap({
+    const packagedExtensionTemplatesRoot = resolvePackagedExtensionTemplatesRoot({
+      explicitRoot: this.options.packagedExtensionTemplatesRoot,
+    });
+    const sandboxPolicySource = this.createSandboxPolicySource();
+    const generatedPackageStatePort = this.createGeneratedPackageStatePort(appGlobal.catalog);
+    const commandRegistry = this.createAppCommandRegistry(appGlobal.commandStdin);
+    const bootstrap = await createAppRuntimeBootstrap({
       appGlobalState: appGlobal.catalog.workspaceStateRouterRegistration(),
       workspaceStates: this.retainedWorkspaceHostRecords().map((runtime) =>
         runtime.kind === "default"
@@ -2000,10 +1932,11 @@ export class WorkspaceRuntimeRegistry {
           : runtime.catalog.workspaceStateRouterRegistration(),
       ),
       sourceRoots: generatedPackageBoundaryHost.sourceRoots,
+      packagedExtensionTemplatesRoot,
       generatedPackageRoots: generatedPackageBoundaryHost.generatedPackageRoots,
       extensionStatePort: generatedPackageBoundaryHost.extensionStatePort,
       generatedPackageLinkPath: generatedPackageBoundaryHost.generatedPackageLinkPath,
-      sandboxPolicySource: this.createSandboxPolicySource(),
+      sandboxPolicySource,
       appLogs: appGlobal.appLogs,
       resolveWorkspaceAppLogs: async (workspaceId) => {
         const runtime =
@@ -2030,7 +1963,7 @@ export class WorkspaceRuntimeRegistry {
       appLogWritePort: appGlobal.appLogs.writePort,
       sandboxHostSupport: this.options.sandboxHostSupport,
       runtimeLayerConfig: this.options.runtimeLayerConfig,
-      commandRegistry: this.createAppCommandRegistry(appGlobal.commandStdin),
+      commandRegistry,
       providerAuth: this.runtimeDependencies(),
       piRuntimePaths: {
         resolve: async (workspaceId) => this.resolvePiRuntimePaths(workspaceId),
@@ -2046,7 +1979,7 @@ export class WorkspaceRuntimeRegistry {
         materializeCoreTypeContractPackage:
           generatedPackageBoundaryHost.materializeCoreTypeContractPackage,
       },
-      generatedPackageStatePort: this.createGeneratedPackageStatePort(appGlobal.catalog),
+      generatedPackageStatePort,
       sourceInvalidation: {
         appGlobalCoordinator: this.appGlobalSourceInvalidationCoordinator,
         listAcquiredWorkspaceIds: () =>
@@ -2078,14 +2011,8 @@ export class WorkspaceRuntimeRegistry {
           appGlobal.catalog.workspaceStateRouterRegistration().store.hasAppPreferencesRow(),
         read: () => appGlobal.agentSettingsStore.getState().appPreferences,
       },
-      agentSettingsSeed: {
-        hasAgentProfileRows: () =>
-          appGlobal.catalog.workspaceStateRouterRegistration().store.hasAgentProfileRows(),
-        hasExtensionEnvRows: () =>
-          appGlobal.catalog.workspaceStateRouterRegistration().store.hasExtensionEnvOverrideRows(),
-        read: () => appGlobal.agentSettingsStore.getState(),
-      },
     });
+    return bootstrap;
   }
 
   private async resolvePiRuntimePaths(workspaceId: WorkspaceId) {
@@ -2446,11 +2373,10 @@ export class WorkspaceRuntimeRegistry {
   private persistedWorkspaceStateStoreOptions(workspace: WorkspaceInfoResponse) {
     const workspaceCwd = canonicalizeWorkspaceCwd(workspace.cwd);
     const sessionDir = getSvvySessionDir(workspaceCwd, this.agentDir);
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd: workspaceCwd,
-      agentDir: this.agentDir,
-      workflowsSourceRoot: this.options.workflowsSourceRoot,
-    });
+    const hasStatePreferenceAuthority = this.stateOwnedAppPreferences !== null;
+    const preferences =
+      this.stateOwnedAppPreferences ??
+      createAgentSettingsStore({ agentDir: this.agentDir }).getState().appPreferences;
     return {
       digest: {
         sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
@@ -2462,10 +2388,13 @@ export class WorkspaceRuntimeRegistry {
         label: workspace.workspaceLabel,
         cwd: workspaceCwd,
         artifactDir: resolveConfiguredArtifactDirectory(
-          agentSettingsStore.getState().appPreferences.artifactDirectory,
+          preferences.artifactDirectory,
           workspaceCwd,
         ),
       },
+      workspaceArtifactDirectoryAuthority: hasStatePreferenceAuthority
+        ? ("state-preference" as const)
+        : ("seed" as const),
       databasePath: join(sessionDir, STRUCTURED_SESSION_DB_FILENAME),
     };
   }

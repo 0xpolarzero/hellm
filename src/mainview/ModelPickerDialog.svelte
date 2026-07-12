@@ -1,22 +1,22 @@
 <script lang="ts">
-	import { getModel, modelsAreEqual, type Model } from "@mariozechner/pi-ai";
-	import { searchScore, formatModelCost, formatTokenCount } from "./chat-format";
+	import { searchScore, formatTokenCount } from "./chat-format";
+	import type { RendererSurfaceModel } from "./chat-runtime";
 	import type { AgentModelChoice } from "../shared/workspace-contract";
 	import Button from "./ui/Button.svelte";
 	import Dialog from "./ui/Dialog.svelte";
 	import Input from "./ui/Input.svelte";
 
 	type Props = {
-		currentModel: Model<any>;
+		currentModel: RendererSurfaceModel;
 		modelChoices: AgentModelChoice[];
 		onClose: () => void;
-		onSelect: (model: Model<any>, choice: AgentModelChoice) => void;
+		onSelect: (model: RendererSurfaceModel, choice: AgentModelChoice) => void;
 	};
 
 	type ModelEntry = {
 		id: string;
 		provider: string;
-		model: Model<any>;
+		model: RendererSurfaceModel;
 		choice: AgentModelChoice;
 	};
 
@@ -34,8 +34,8 @@
 	let filterVision = $state(false);
 
 	function compareModelEntries(left: ModelEntry, right: ModelEntry): number {
-		const leftIsCurrent = modelsAreEqual(currentModel, left.model);
-		const rightIsCurrent = modelsAreEqual(currentModel, right.model);
+		const leftIsCurrent = currentModel.provider === left.provider && currentModel.id === left.id;
+		const rightIsCurrent = currentModel.provider === right.provider && currentModel.id === right.id;
 		if (leftIsCurrent && !rightIsCurrent) return -1;
 		if (!leftIsCurrent && rightIsCurrent) return 1;
 		const providerComparison = left.provider.localeCompare(right.provider);
@@ -54,15 +54,14 @@
 		const entries: ModelEntry[] = [];
 		for (const choice of modelChoices) {
 			if (choice.authStatus.health !== "usable") continue;
-			try {
-				const model = getModel(
-					choice.providerId as Parameters<typeof getModel>[0],
-					choice.modelId as Parameters<typeof getModel>[1],
-				);
-				entries.push({ id: choice.modelId, provider: choice.providerId, model, choice });
-			} catch {
-				continue;
-			}
+			const model: RendererSurfaceModel = {
+				provider: choice.providerId,
+				id: choice.modelId,
+				name: choice.displayName,
+				...(choice.contextWindow ? { contextWindow: choice.contextWindow } : {}),
+				input: choice.inputModalities,
+			};
+			entries.push({ id: choice.modelId, provider: choice.providerId, model, choice });
 		}
 		let visible = entries;
 
@@ -187,7 +186,6 @@
 								{#if isCurrent}
 									<span class="model-state">Current</span>
 								{/if}
-								<span>{formatModelCost(entry.model)}</span>
 								<span>{formatTokenCount(entry.model.contextWindow)} ctx</span>
 							</div>
 						</button>

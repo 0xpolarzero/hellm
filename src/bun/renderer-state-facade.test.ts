@@ -75,6 +75,7 @@ describe("narrowRendererStateFacade", () => {
         deleteOrchestrator: async () => ({ receipt: {} }) as never,
         reorderOrchestrators: async () => ({ receipt: {} }) as never,
         setProfileExtensionUsage: async () => ({ receipt: {} }) as never,
+        setActorExtensionDefaults: async () => ({ receipt: {} }) as never,
         promoteExtensionDefault: async () => ({ receipt: {} }) as never,
         resetActorExtensionDefaults: async () => ({ receipt: {} }) as never,
         setExternalInstructionActorUsage: async () => ({ receipt: {} }) as never,

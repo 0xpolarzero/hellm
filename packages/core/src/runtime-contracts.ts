@@ -17,7 +17,6 @@ import {
   MessageId,
   MimeType,
   NonNegativeSafeIntegerSchema,
-  PositiveDurationMsSchema,
   QueueItemId,
   RecoveryWorkId,
   RequestInputAnswerId,
@@ -101,6 +100,12 @@ import {
   type CommandFactsPayload,
   type CommandResultEnvelope,
 } from "./native-tool-contracts";
+import type {
+  SetRequestInputBlockingTimeoutInput,
+  SetRequestInputBlockingTimeoutResult,
+  SetRequestInputVariantInput,
+  SetRequestInputVariantResult,
+} from "./request-input-settings-contracts";
 export {
   CommandFactsPayloadSchema,
   CommandResultEnvelopeSchema,
@@ -732,7 +737,7 @@ export const SurfaceStreamPatchInputSchema = Schema.Union([
     type: Schema.Literal("user_message_committed"),
     messageId: MessageId,
     queueItemId: Schema.optionalKey(QueueItemId),
-    text: Schema.String,
+    message: RuntimeSubmittedMessageSchema,
     submittedAt: IsoDateTimeStringSchema,
   }),
   Schema.Struct({
@@ -758,6 +763,7 @@ export const SurfaceStreamPatchInputSchema = Schema.Union([
     messageId: MessageId,
     toolCallId: ToolCallId,
     commandId: Schema.optionalKey(CommandId),
+    contentIndex: NonNegativeSafeIntegerSchema,
     snapshotRef: ToolItemId,
   }),
   Schema.Struct({
@@ -765,6 +771,7 @@ export const SurfaceStreamPatchInputSchema = Schema.Union([
     messageId: MessageId,
     toolCallId: ToolCallId,
     commandId: CommandId,
+    contentIndex: NonNegativeSafeIntegerSchema,
     status: Schema.Literals(["accepted", "running", "waiting", "finished"]),
   }),
   Schema.Struct({
@@ -1508,16 +1515,6 @@ export type RequestInputQuestionRequest = typeof RequestInputQuestionRequestSche
 export const CreateRequestInputRequestSchema = Schema.Struct({
   target: PromptTargetSchema,
   sourceCommandId: CommandId,
-  mode: Schema.Literals(["nonblocking", "blocking"]),
-  timeout: Schema.optionalKey(
-    Schema.Union([
-      Schema.Null,
-      Schema.Struct({
-        enabled: Schema.Boolean,
-        durationMs: PositiveDurationMsSchema,
-      }),
-    ]),
-  ),
   questions: Schema.Array(RequestInputQuestionRequestSchema).pipe(
     Schema.check(Schema.isLengthBetween(1, 3)),
   ),
@@ -1807,6 +1804,12 @@ export interface RuntimeApprovalsApiEffect {
 }
 
 export interface RuntimeRequestInputApiEffect {
+  setVariant(
+    input: SetRequestInputVariantInput,
+  ): Effect.Effect<SetRequestInputVariantResult, RuntimeContractError>;
+  setBlockingTimeout(
+    input: SetRequestInputBlockingTimeoutInput,
+  ): Effect.Effect<SetRequestInputBlockingTimeoutResult, RuntimeContractError>;
   answer(
     input: AnswerRequestInputInput,
   ): Effect.Effect<AnswerRequestInputResult, RuntimeContractError>;

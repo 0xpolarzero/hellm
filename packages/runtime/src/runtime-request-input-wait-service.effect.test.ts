@@ -16,6 +16,7 @@ import {
   RuntimeRequestStatePort,
   RuntimeSessionWaitStatePort,
   type RuntimeSessionWaitStatePortService,
+  type StateInvalidationDescriptor,
   type RequestInputRequestId,
   type SurfacePiSessionId,
   type ThreadId,
@@ -29,6 +30,7 @@ import {
   layerRuntimeRequestInputWaitService,
   RuntimeRequestInputWaitService,
 } from "./runtime-request-input-wait-service";
+import { RuntimeEventBus, type RuntimeEventBusService } from "./runtime-event-bus";
 import { RuntimeQueueWakeService } from "./runtime-queue-wake-service";
 
 const requestId = "rui_wait_service_01" as RequestInputRequestId;
@@ -40,8 +42,16 @@ const commandId = "cmd_wait_service_01" as CommandId;
 const questionId = "ruiq_wait_service_01" as RequestInputQuestionId;
 const SHORT_TIMEOUT_MS = 500 as PositiveDurationMs;
 
-function stateMutation<T>(value: T) {
-  return { value, afterCommit: [] };
+function stateMutation<T>(value: T, afterCommit: readonly StateInvalidationDescriptor[] = []) {
+  return { value, afterCommit };
+}
+
+function invalidation(marker: string): StateInvalidationDescriptor {
+  return {
+    scope: "workspace",
+    workspaceId: "workspace_wait_service" as never,
+    invalidation: { model: "surface", ids: [marker as never] },
+  };
 }
 
 function target(input: { readonly threadId: ThreadId | null } = { threadId: null }): PromptTarget {
@@ -62,6 +72,9 @@ function target(input: { readonly threadId: ThreadId | null } = { threadId: null
 
 function requestState(): RuntimeRequestStatePortService {
   return {
+    readRequestInputSettings: () => Effect.die("Unexpected request input settings read."),
+    setRequestInputVariant: () => Effect.die("Unexpected request input variant mutation."),
+    setRequestInputBlockingTimeout: () => Effect.die("Unexpected request input timeout mutation."),
     createRequestInput: () => Effect.die("Unexpected createRequestInput call."),
     getRequestInput: () => Effect.die("Unexpected getRequestInput call."),
     listOpenBlockingRequestInputs: () =>
@@ -79,6 +92,9 @@ function waitRequestState(input: {
 }): RuntimeRequestStatePortService {
   let currentRequest = input.request;
   return {
+    readRequestInputSettings: () => Effect.die("Unexpected request input settings read."),
+    setRequestInputVariant: () => Effect.die("Unexpected request input variant mutation."),
+    setRequestInputBlockingTimeout: () => Effect.die("Unexpected request input timeout mutation."),
     createRequestInput: () => Effect.die("Unexpected createRequestInput call."),
     getRequestInput: () => Effect.succeed(currentRequest),
     listOpenBlockingRequestInputs: () =>
@@ -108,7 +124,7 @@ function waitRequestState(input: {
             },
           ],
         };
-        return stateMutation(currentRequest);
+        return stateMutation(currentRequest, [invalidation("request:default")]);
       }),
     cancelRequestInput: () => Effect.die("Unexpected cancelRequestInput call."),
   };
@@ -119,14 +135,17 @@ function waitCommandState(calls: unknown[]): RuntimeCommandStatePortService {
     finishCommand: (input) =>
       Effect.sync(() => {
         calls.push(input);
-        return stateMutation({
-          ...command(),
-          status: input.status,
-          summary: input.summary ?? "CI scope",
-          facts: input.facts ?? null,
-          error: input.error ?? null,
-          finishedAt: input.status === "waiting" ? null : "2026-06-21T00:00:01.500Z",
-        });
+        return stateMutation(
+          {
+            ...command(),
+            status: input.status,
+            summary: input.summary ?? "CI scope",
+            facts: input.facts ?? null,
+            error: input.error ?? null,
+            finishedAt: input.status === "waiting" ? null : "2026-06-21T00:00:01.500Z",
+          },
+          [invalidation(`command:${input.status}`)],
+        );
       }),
     createCommand: () => Effect.die("Unexpected createCommand call."),
     createOrReuseStreamingCommand: () =>
@@ -147,43 +166,56 @@ function waitSessionState(calls: unknown[]): RuntimeSessionWaitStatePortService 
     setUserWait: (input) =>
       Effect.sync(() => {
         calls.push({ kind: "set", input });
-        return stateMutation(undefined);
+        return stateMutation(undefined, [invalidation("wait:set")]);
       }),
     clearSessionWait: (input) =>
       Effect.sync(() => {
         calls.push({ kind: "clear", input });
-        return stateMutation(undefined);
+        return stateMutation(undefined, [invalidation("wait:clear")]);
       }),
   };
 }
 
-function testLayer(calls: string[]) {
+function eventBusLayer(published?: StateInvalidationDescriptor[][]) {
+  const service: RuntimeEventBusService = {
+    publishLive: () => Effect.die("Unexpected live runtime event publication."),
+    publishStateInvalidations: ({ afterCommit }) =>
+      Effect.sync(() => {
+        if (afterCommit.length > 0) {
+          published?.push([...afterCommit]);
+        }
+        return [];
+      }),
+    subscribe: () => Effect.die("Unexpected runtime event subscription."),
+  };
+  return Layer.succeed(RuntimeEventBus, service);
+}
+
+function testLayer() {
   return layerRuntimeRequestInputWaitService.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(RuntimeRequestStatePort, requestState()),
         Layer.succeed(RuntimeCommandStatePort, {} as RuntimeCommandStatePortService),
         Layer.succeed(RuntimeSessionWaitStatePort, {} as RuntimeSessionWaitStatePortService),
-        Layer.succeed(
-          RuntimeQueueWakeService,
-          RuntimeQueueWakeService.of({
-            wakeSurface: (input) =>
-              Effect.sync(() => {
-                calls.push(
-                  `wake:${input.reason}:${input.target.surface}:${input.target.surfacePiSessionId}`,
-                );
-              }),
-          }),
-        ),
+        eventBusLayer(),
       ),
     ),
   );
+}
+
+function recordingWakeSurface(calls: string[]) {
+  return (input: Parameters<RuntimeQueueWakeService["Service"]["wakeSurface"]>[0]) =>
+    Effect.sync(() => {
+      calls.push(`wake:${input.reason}:${input.target.surface}:${input.target.surfacePiSessionId}`);
+    });
 }
 
 function blockingWaitLayer(input: {
   readonly request: RuntimeRequestInputDetailsRecord;
   readonly commandCalls: unknown[];
   readonly waitCalls: unknown[];
+  readonly published?: StateInvalidationDescriptor[][];
 }) {
   return layerRuntimeRequestInputWaitService.pipe(
     Layer.provide(
@@ -191,12 +223,7 @@ function blockingWaitLayer(input: {
         Layer.succeed(RuntimeRequestStatePort, waitRequestState({ request: input.request })),
         Layer.succeed(RuntimeCommandStatePort, waitCommandState(input.commandCalls)),
         Layer.succeed(RuntimeSessionWaitStatePort, waitSessionState(input.waitCalls)),
-        Layer.succeed(
-          RuntimeQueueWakeService,
-          RuntimeQueueWakeService.of({
-            wakeSurface: () => Effect.die("Unexpected wakeSurface call."),
-          }),
-        ),
+        eventBusLayer(input.published),
       ),
     ),
   );
@@ -206,6 +233,7 @@ describe("RuntimeRequestInputWaitService", () => {
   it.effect("waits for blocking requests using runtime-owned state ports", () => {
     const commandCalls: unknown[] = [];
     const waitCalls: unknown[] = [];
+    const published: StateInvalidationDescriptor[][] = [];
     return Effect.gen(function* () {
       const request = openBlockingRequest();
       const commandRecord = command();
@@ -230,25 +258,16 @@ describe("RuntimeRequestInputWaitService", () => {
           },
         ],
       });
-      assert.deepStrictEqual(commandEventSummaries(commandCalls), [
-        {
-          commandId,
-          status: "waiting",
-          facts: { questionCount: 1, answeredBy: "pending" },
-        },
-        {
-          commandId,
-          status: "succeeded",
-          facts: { questionCount: 1, answeredBy: "timeout_default" },
-        },
-      ]);
-      assert.deepStrictEqual(waitKinds(waitCalls), ["set", "clear"]);
+      assert.deepStrictEqual(commandEventSummaries(commandCalls), []);
+      assert.deepStrictEqual(waitKinds(waitCalls), []);
+      assert.deepStrictEqual(publicationMarkers(published), ["request:default"]);
     }).pipe(
       Effect.provide(
         blockingWaitLayer({
           request: openBlockingRequest(),
           commandCalls,
           waitCalls,
+          published,
         }),
       ),
     );
@@ -264,12 +283,13 @@ describe("RuntimeRequestInputWaitService", () => {
         requestId,
         delivery: { kind: "nonblocking-queued", queuedItemId },
         target: target(),
+        wakeSurface: recordingWakeSurface(calls),
       });
 
       assert.deepStrictEqual(calls, [
         `wake:request-input-answer-queued:orchestrator:${surfacePiSessionId}`,
       ]);
-    }).pipe(Effect.provide(testLayer(calls)));
+    }).pipe(Effect.provide(testLayer()));
   });
 
   it.effect("wakes the owning handler surface for nonblocking queued answers", () => {
@@ -282,12 +302,13 @@ describe("RuntimeRequestInputWaitService", () => {
         requestId,
         delivery: { kind: "nonblocking-queued", queuedItemId },
         target: target({ threadId }),
+        wakeSurface: recordingWakeSurface(calls),
       });
 
       assert.deepStrictEqual(calls, [
         `wake:request-input-answer-queued:handler:${surfacePiSessionId}`,
       ]);
-    }).pipe(Effect.provide(testLayer(calls)));
+    }).pipe(Effect.provide(testLayer()));
   });
 
   it.effect("does not read state or wake queues for nonblocking recorded answers", () => {
@@ -300,10 +321,11 @@ describe("RuntimeRequestInputWaitService", () => {
         requestId,
         delivery: { kind: "nonblocking-recorded", queuedItemId: null },
         target: target(),
+        wakeSurface: recordingWakeSurface(calls),
       });
 
       assert.deepStrictEqual(calls, []);
-    }).pipe(Effect.provide(testLayer(calls)));
+    }).pipe(Effect.provide(testLayer()));
   });
 
   it.effect("does not read state or wake queues for partial blocking answers", () => {
@@ -316,10 +338,11 @@ describe("RuntimeRequestInputWaitService", () => {
         requestId,
         delivery: { kind: "blocking-open", queuedItemId: null },
         target: target(),
+        wakeSurface: recordingWakeSurface(calls),
       });
 
       assert.deepStrictEqual(calls, []);
-    }).pipe(Effect.provide(testLayer(calls)));
+    }).pipe(Effect.provide(testLayer()));
   });
 });
 
@@ -345,6 +368,16 @@ function commandEventSummaries(events: unknown[]) {
 
 function waitKinds(waits: unknown[]) {
   return waits.map((wait) => (wait as { kind: string }).kind);
+}
+
+function publicationMarkers(publications: readonly StateInvalidationDescriptor[][]): string[] {
+  return publications.flatMap((batch) =>
+    batch.flatMap((descriptor) =>
+      descriptor.invalidation.model === "surface"
+        ? descriptor.invalidation.ids.map((id) => id as string)
+        : [],
+    ),
+  );
 }
 
 function command(): RuntimeCommandRecord {
@@ -388,6 +421,7 @@ function openBlockingRequest(): RuntimeRequestInputDetailsRecord {
     createdAt: "2026-06-21T00:00:01.000Z",
     completedAt: null,
     timeout: {
+      timerVersion: 1,
       enabled: true,
       durationMs: SHORT_TIMEOUT_MS,
       startedAt: "2026-06-21T00:00:01.000Z",

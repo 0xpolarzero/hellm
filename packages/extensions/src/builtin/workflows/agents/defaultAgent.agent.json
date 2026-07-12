@@ -1,0 +1,12 @@
+{
+  "id": "defaultAgent",
+  "label": "Default",
+  "provider": "zai",
+  "model": "glm-5-turbo",
+  "reasoning": {
+    "effort": "medium"
+  },
+  "instructions": "Handle the assigned task and return the requested result.",
+  "overrides": {},
+  "extensionOrder": []
+}

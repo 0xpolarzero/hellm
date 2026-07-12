@@ -25,6 +25,11 @@ import {
   type ArtifactMetadataRecord,
   decodeUnknownExtensionDependencyApprovalIdentityExit,
   decodeUnknownRequestUserInputAnswerQueuePayloadExit,
+  decodeUnknownRequestInputSettingsExit,
+  PiHistoryEntryRefSchema,
+  RuntimeSubmittedMessageSchema,
+  RuntimeTranscriptAssistantContentSchema,
+  RuntimeTranscriptUsageSchema,
   type AbsolutePath,
   type ActorKind,
   type AgentProfileId,
@@ -48,6 +53,14 @@ import {
   type DeletePiSessionReferenceInput,
   type MarkGeneratedPackageRefreshNeededInput,
   type MessageId,
+  type AdvanceRuntimeTranscriptStreamCursorInput,
+  type AppendRuntimeTranscriptAssistantContentDeltaInput,
+  type BeginRuntimeTranscriptAssistantMessageInput,
+  type BindRuntimeTranscriptPiHistoryEntryInput,
+  type CommitRuntimeTranscriptAssistantMessageInput,
+  type CommitRuntimeTranscriptUserMessageInput,
+  type FailRuntimeTranscriptAssistantMessageInput,
+  type LinkRuntimeTranscriptAssistantToolCallCommandInput,
   type AcquireDefaultWorkspaceInput,
   type AcquireWorkspaceInput,
   type AcquireWorkspaceResult,
@@ -74,9 +87,15 @@ import {
   type RecordRuntimeSourceDeleteInput,
   type RecordRuntimeSourceScanInput,
   type RecordRuntimeSourceSaveInput,
+  type RecordRuntimeWorkflowAgentSourceDeleteInput,
+  type RecordRuntimeWorkflowAgentSourceSaveInput,
+  type ReconcileRuntimeWorkflowAgentSourcesInput,
   type RequestInputAnswerId,
   type RequestInputQuestionId,
   type RequestInputRequestId,
+  type RequestInputSettings,
+  type SetRequestInputBlockingTimeoutInput,
+  type SetRequestInputVariantInput,
   type RequestUserInputAnswerDeliveryPayload,
   type RequestUserInputAnswerQueuePayload,
   type ReconcileGeneratedPackageManifestInput,
@@ -89,11 +108,22 @@ import {
   type RuntimeSourceFactRecord,
   type RuntimeSourceRootFingerprintFactRecord,
   type RuntimeSourceScanFactRecord,
+  type RuntimeSurfaceTranscriptSnapshot,
+  type RuntimeTranscriptAssistantContent,
+  type RuntimeTranscriptAssistantMessage,
+  type RuntimeTranscriptAssistantMutation,
+  type RuntimeTranscriptMessage,
+  type RuntimeTranscriptStreamCursor,
+  type RuntimeTranscriptToolCallBlock,
+  type RuntimeTranscriptUserMessage,
+  type RuntimeTranscriptUserMutation,
+  type WorkflowAgentSourceObservation,
   type RuntimeExtensionContextChangedSurface,
   type RuntimeExtensionUsageProfileKey,
   type RuntimeGeneratedPackageFactRecord,
   type RuntimeGeneratedPackageWorkspaceLinkRecord,
   type SurfacePiSessionId,
+  type UpsertRuntimeTranscriptAssistantToolCallInput,
   type SavePiSessionReferenceInput,
   type ValidatePiSessionReferenceInput,
   type WorkspaceId,
@@ -110,6 +140,8 @@ import {
   decodeUnknownExternalInstructionsSettingsExit,
   decodeUnknownGeneratedWorkflowsExportBuildEvidenceExit,
   normalizeExternalInstructionsSettings,
+  normalizeRuntimeClientSubmissionMetadata,
+  type RuntimeClientSubmissionInput,
 } from "@svvy/core";
 import type {
   CreateManagedSnippetCommandInput,
@@ -141,6 +173,7 @@ const DEFAULT_SIDEBAR_SECTION_SIZES = {
 
 const GLOBAL_PROVIDER_AUTH_WORKSPACE_KEY = "";
 const EMPTY_WORKSPACE_LAYOUT_UPDATED_AT = "1970-01-01T00:00:00.000Z";
+const DEFAULT_AGENT_PROFILE_UPDATED_AT = "1970-01-01T00:00:00.000Z";
 const MIN_SIDEBAR_SECTION_SIZE_PX = 64;
 const MAX_SIDEBAR_SECTION_SIZE_PX = 1000;
 const DEFAULT_EXTERNAL_INSTRUCTIONS_JSON = JSON.stringify(DEFAULT_EXTERNAL_INSTRUCTIONS);
@@ -148,6 +181,13 @@ const DEFAULT_EXTERNAL_INSTRUCTIONS_SQL_JSON = DEFAULT_EXTERNAL_INSTRUCTIONS_JSO
   "'",
   "''",
 );
+const DEFAULT_REQUEST_INPUT_SETTINGS = {
+  mode: "nonblocking",
+  blockingTimeout: {
+    enabled: true,
+    durationMs: 300000 as RequestInputSettings["blockingTimeout"]["durationMs"],
+  },
+} satisfies RequestInputSettings;
 const decodeSnippetMetadataContract = Schema.decodeUnknownSync(
   SnippetMetadataSchema,
   strictBoundaryParseOptions,
@@ -158,6 +198,22 @@ const decodeSnippetSourceContract = Schema.decodeUnknownSync(
 );
 const decodeWorkspaceLayoutSlotContentContract = Schema.decodeUnknownSync(
   CheckedWorkspaceLayoutSlotContentSchema,
+  strictBoundaryParseOptions,
+);
+const decodeRuntimeSubmittedMessageContract = Schema.decodeUnknownSync(
+  RuntimeSubmittedMessageSchema,
+  strictBoundaryParseOptions,
+);
+const decodeRuntimeTranscriptAssistantContentContract = Schema.decodeUnknownSync(
+  RuntimeTranscriptAssistantContentSchema,
+  strictBoundaryParseOptions,
+);
+const decodeRuntimeTranscriptUsageContract = Schema.decodeUnknownSync(
+  RuntimeTranscriptUsageSchema,
+  strictBoundaryParseOptions,
+);
+const decodePiHistoryEntryRefContract = Schema.decodeUnknownSync(
+  PiHistoryEntryRefSchema,
   strictBoundaryParseOptions,
 );
 
@@ -191,6 +247,7 @@ function recoveryWorkScopeSql(scope: StructuredRecoveryWorkScope): {
 function assertRecoveryWorkScopeMatchesKind(input: {
   scope: StructuredRecoveryWorkScope;
   kind: StructuredRecoveryWorkKind;
+  ownerScope: StructuredRecoveryWorkOwnerScope;
 }): void {
   if (input.kind === "generated_package_refresh" && input.scope.kind !== "app") {
     throw new Error("generated_package_refresh recovery work must be app-scoped.");
@@ -202,6 +259,15 @@ function assertRecoveryWorkScopeMatchesKind(input: {
     throw new Error(
       "workspace_generated_package_link_repair recovery work must be workspace-scoped.",
     );
+  }
+  if (input.kind === "source_reconcile" && input.scope.kind !== "app") {
+    throw new Error("source_reconcile recovery work must be app-scoped.");
+  }
+  if (input.kind === "source_reconcile" && input.ownerScope.kind !== "source") {
+    throw new Error("source_reconcile recovery work must be owned by a source.");
+  }
+  if (input.ownerScope.kind === "source" && input.kind !== "source_reconcile") {
+    throw new Error("source recovery ownership is reserved for source_reconcile work.");
   }
 }
 
@@ -237,7 +303,7 @@ function runtimeSourceScanFallbackFingerprint(
 }
 
 export type StructuredSessionStatus = "idle" | "running" | "waiting" | "error";
-export type StructuredTurnStatus = "running" | "waiting" | "completed" | "failed";
+export type StructuredTurnStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
 export const STRUCTURED_TURN_DECISIONS = ["pending", ...RUNTIME_TURN_DECISIONS] as const;
 export type StructuredTurnDecision = "pending" | RuntimeTurnDecision;
 export type StructuredThreadStatus =
@@ -482,6 +548,15 @@ export interface StructuredComposerDraftRecord {
   updatedAt: string;
 }
 
+export interface StructuredPromptHistoryRecord {
+  workspaceId: string;
+  workspaceSessionId: string;
+  surfacePiSessionId: string;
+  queueItemId: string;
+  text: string;
+  sentAt: string;
+}
+
 export interface StructuredWaitState {
   owner: StructuredThreadWaitOwner;
   kind: StructuredWaitKind;
@@ -515,6 +590,24 @@ export interface StructuredTurnRecord {
   startedAt: string;
   updatedAt: string;
   finishedAt: string | null;
+}
+
+export interface StructuredInterruptedTurnRecoveryResult {
+  changed: boolean;
+  turn: StructuredTurnRecord;
+  terminalizedAssistantMessageId: string | null;
+  terminalizedCommandIds: string[];
+  settledQueueItemId: string | null;
+  cancelledRequestInputIds: string[];
+  cancelledApprovalIds: string[];
+  sessionWaitCleared: boolean;
+}
+
+export interface StructuredPromptTurnSettlementResult {
+  changed: boolean;
+  turn: StructuredTurnRecord;
+  queuedMessage: StructuredSurfaceQueuedMessageRecord;
+  terminalizedCommandIds: string[];
 }
 
 export interface StructuredThreadRecord {
@@ -583,6 +676,38 @@ export interface StructuredCommandRecord {
   startedAt: string;
   updatedAt: string;
   finishedAt: string | null;
+}
+
+export interface StructuredStreamingCommandInput {
+  toolCallId: string;
+  turnId?: string | null;
+  workflowTaskAttemptId?: string | null;
+  surfacePiSessionId?: string;
+  threadId?: string | null;
+  workflowRunId?: string | null;
+  parentCommandId?: string | null;
+  toolName: string;
+  executor: StructuredCommandExecutor;
+  visibility: StructuredCommandVisibility;
+  title: string;
+  summary: string;
+  arguments?: unknown;
+  facts?: Record<string, unknown> | null;
+}
+
+export interface StructuredFinishCommandInput {
+  commandId: string;
+  status: Exclude<StructuredCommandStatus, "requested" | "running">;
+  visibility?: StructuredCommandVisibility;
+  summary?: string;
+  facts?: Record<string, unknown> | null;
+  error?: string | null;
+  at?: string;
+}
+
+export interface StructuredCommandMutationResult {
+  record: StructuredCommandRecord;
+  changed: boolean;
 }
 
 export interface StructuredEpisodeRecord {
@@ -727,6 +852,7 @@ export interface StructuredRequestUserInputRequestRecord {
   createdAt: string;
   completedAt: string | null;
   timeout: null | {
+    timerVersion: number;
     enabled: boolean;
     durationMs: number;
     startedAt: string;
@@ -736,6 +862,11 @@ export interface StructuredRequestUserInputRequestRecord {
   };
   questions: StructuredRequestUserInputQuestionRecord[];
   answers: StructuredRequestUserInputAnswerRecord[];
+}
+
+export interface StructuredRequestUserInputMutationResult {
+  record: StructuredRequestUserInputRequestRecord;
+  changed: boolean;
 }
 
 export interface StructuredRuntimeApprovalRequestRecord {
@@ -763,6 +894,11 @@ export interface StructuredRuntimeApprovalRequestRecord {
   reviewer: "auto-review" | "user" | null;
   createdAt: string;
   completedAt: string | null;
+}
+
+export interface StructuredRuntimeApprovalResolutionResult {
+  record: StructuredRuntimeApprovalRequestRecord;
+  changed: boolean;
 }
 
 export interface StructuredArtifactRecord {
@@ -865,6 +1001,7 @@ export type StructuredRecoveryWorkStatus =
 
 export type StructuredRecoveryWorkOwnerScope =
   | { kind: "workspace" }
+  | { kind: "source"; sourceKind: RuntimeSourceFactRecord["sourceKind"]; sourceId: string }
   | { kind: "workspace_session"; workspaceSessionId: string }
   | { kind: "surface"; workspaceSessionId: string; surfacePiSessionId: string }
   | {
@@ -1085,6 +1222,7 @@ export interface CreateStructuredSessionStateStoreOptions {
   idFactory?: (prefix: string) => string;
   now?: () => string;
   workspace: StructuredWorkspaceInput;
+  workspaceArtifactDirectoryAuthority?: "seed" | "state-preference";
 }
 
 export type StateDigestHelper = {
@@ -1095,9 +1233,13 @@ export interface StructuredSessionStateStore {
   readonly workspaceId: string;
   readonly databasePath: string;
   getWorkspaceRecord(): StructuredWorkspaceRecord;
+  setWorkspaceArtifactDirectory(artifactDir: string): StructuredWorkspaceRecord;
   getCurrentTimestamp(): string;
   getDigestHelper(): StateDigestHelper;
   readCurrentStateRevision(): StateRevision;
+  readRequestInputSettings(): RequestInputSettings;
+  setRequestInputVariant(input: SetRequestInputVariantInput): RequestInputSettings;
+  setRequestInputBlockingTimeout(input: SetRequestInputBlockingTimeoutInput): RequestInputSettings;
   hasAppPreferencesRow(): boolean;
   readAppPreferences(): StructuredAppPreferencesRecord;
   updateAppPreferences(input: StructuredAppPreferencesPatch): StructuredAppPreferencesRecord;
@@ -1180,6 +1322,16 @@ export interface StructuredSessionStateStore {
   }): RuntimeSourceRootFingerprintFactRecord | null;
   recordRuntimeSourceSave(input: RecordRuntimeSourceSaveInput): RuntimeSourceFactRecord;
   recordRuntimeSourceDelete(input: RecordRuntimeSourceDeleteInput): RuntimeSourceFactRecord;
+  recordRuntimeWorkflowAgentSourceSave(
+    input: RecordRuntimeWorkflowAgentSourceSaveInput,
+  ): RuntimeSourceFactRecord;
+  recordRuntimeWorkflowAgentSourceDelete(
+    input: RecordRuntimeWorkflowAgentSourceDeleteInput,
+  ): RuntimeSourceFactRecord;
+  reconcileRuntimeWorkflowAgentSources(
+    input: ReconcileRuntimeWorkflowAgentSourcesInput,
+  ): RuntimeSourceScanFactRecord;
+  listCurrentWorkflowAgentSources(): StructuredWorkflowAgentSourceIndexRecord[];
   recordRuntimeSourceScan(input: RecordRuntimeSourceScanInput): RuntimeSourceScanFactRecord;
   reconcileDiscoveredHostSnippets(
     input: ReconcileDiscoveredHostSnippetsInput,
@@ -1237,11 +1389,51 @@ export interface StructuredSessionStateStore {
     assistantMessageId?: string;
     assistantText?: string;
   }): StructuredTurnRecord;
-  recoverInterruptedSurfaceTurn(input: {
+  commitRuntimeTranscriptUserMessage(
+    input: CommitRuntimeTranscriptUserMessageInput,
+  ): RuntimeTranscriptUserMutation;
+  beginRuntimeTranscriptAssistantMessage(
+    input: BeginRuntimeTranscriptAssistantMessageInput,
+  ): RuntimeTranscriptAssistantMutation;
+  appendRuntimeTranscriptAssistantContentDelta(
+    input: AppendRuntimeTranscriptAssistantContentDeltaInput,
+  ): RuntimeTranscriptAssistantMutation;
+  upsertRuntimeTranscriptAssistantToolCall(
+    input: UpsertRuntimeTranscriptAssistantToolCallInput,
+  ): RuntimeTranscriptAssistantMutation;
+  linkRuntimeTranscriptAssistantToolCallCommand(
+    input: LinkRuntimeTranscriptAssistantToolCallCommandInput,
+  ): RuntimeTranscriptAssistantMutation;
+  commitRuntimeTranscriptAssistantMessage(
+    input: CommitRuntimeTranscriptAssistantMessageInput,
+  ): RuntimeTranscriptAssistantMutation;
+  failRuntimeTranscriptAssistantMessage(
+    input: FailRuntimeTranscriptAssistantMessageInput,
+  ): RuntimeTranscriptAssistantMutation;
+  bindRuntimeTranscriptPiHistoryEntry(
+    input: BindRuntimeTranscriptPiHistoryEntryInput,
+  ): RuntimeTranscriptMessage;
+  advanceRuntimeTranscriptStreamCursor(
+    input: AdvanceRuntimeTranscriptStreamCursorInput,
+  ): RuntimeTranscriptStreamCursor;
+  readRuntimeSurfaceTranscript(surfacePiSessionId: string): RuntimeSurfaceTranscriptSnapshot;
+  recoverInterruptedTurn(input: {
     turnId: string;
-    status: "waiting" | "failed";
+    terminalStatus: "failed" | "cancelled";
     reason: string;
-  }): StructuredTurnRecord;
+  }): StructuredInterruptedTurnRecoveryResult;
+  settlePromptTurn(input: {
+    turnId: string;
+    queueItemId: string;
+    status: "completed" | "failed" | "cancelled";
+    assistantMessageId?: string;
+    assistantText?: string;
+    terminalCommandIds: readonly string[];
+    terminalCommandSummary: string;
+    terminalCommandError: string;
+    claimOwnerId?: string | null;
+    leaseVersion?: number | null;
+  }): StructuredPromptTurnSettlementResult;
   createThread(input: {
     turnId: string;
     parentThreadId?: string | null;
@@ -1284,8 +1476,9 @@ export interface StructuredSessionStateStore {
     kind: StructuredWaitKind;
     reason: string;
     resumeWhen: string;
+    at?: string;
   }): StructuredSessionWaitState;
-  clearSessionWait(input: { sessionId: string }): void;
+  clearSessionWait(input: { sessionId: string; at?: string }): void;
   setSessionPinned(input: { sessionId: string; pinned: boolean }): void;
   setSessionArchived(input: { sessionId: string; archived: boolean }): void;
   markSessionUnread(input: {
@@ -1329,32 +1522,16 @@ export interface StructuredSessionStateStore {
   }): StructuredCommandRecord;
   findCommandByToolCallId(toolCallId: string): StructuredCommandRecord | null;
   findCommandById(commandId: string): StructuredCommandRecord | null;
-  createOrReuseStreamingCommand(input: {
-    toolCallId: string;
-    turnId?: string | null;
-    workflowTaskAttemptId?: string | null;
-    surfacePiSessionId?: string;
-    threadId?: string | null;
-    workflowRunId?: string | null;
-    parentCommandId?: string | null;
-    toolName: string;
-    executor: StructuredCommandExecutor;
-    visibility: StructuredCommandVisibility;
-    title: string;
-    summary: string;
-    arguments?: unknown;
-    facts?: Record<string, unknown> | null;
-  }): StructuredCommandRecord;
+  createOrReuseStreamingCommand(input: StructuredStreamingCommandInput): StructuredCommandRecord;
+  createOrReuseStreamingCommandMutation(
+    input: StructuredStreamingCommandInput,
+  ): StructuredCommandMutationResult;
   updateCommandArguments(commandId: string, args: unknown): StructuredCommandRecord;
+  updateCommandArgumentsMutation(commandId: string, args: unknown): StructuredCommandMutationResult;
   startCommand(commandId: string): StructuredCommandRecord;
-  finishCommand(input: {
-    commandId: string;
-    status: Exclude<StructuredCommandStatus, "requested" | "running">;
-    visibility?: StructuredCommandVisibility;
-    summary?: string;
-    facts?: Record<string, unknown> | null;
-    error?: string | null;
-  }): StructuredCommandRecord;
+  startCommandMutation(commandId: string, at?: string): StructuredCommandMutationResult;
+  finishCommand(input: StructuredFinishCommandInput): StructuredCommandRecord;
+  finishCommandMutation(input: StructuredFinishCommandInput): StructuredCommandMutationResult;
   createEpisode(input: {
     threadId: string;
     sourceCommandId?: string | null;
@@ -1623,6 +1800,7 @@ export interface StructuredSessionStateStore {
       threadId?: string;
     };
     idempotencyKey?: string | null;
+    promptHistoryText: string | null;
     sourceCommandId?: string | null;
     maxAttempts?: number;
     nextAttemptAt?: string | null;
@@ -1633,6 +1811,7 @@ export interface StructuredSessionStateStore {
     queuedMessage: StructuredSurfaceQueuedMessageRecord;
     accepted: "created" | "existing";
     draftCleared: boolean;
+    promptHistoryRecorded: boolean;
   };
   createRequestUserInputRequest(input: {
     sessionId: string;
@@ -1679,7 +1858,8 @@ export interface StructuredSessionStateStore {
     status: Extract<StructuredRuntimeApprovalStatus, "approved" | "denied" | "cancelled">;
     reviewer: "auto-review" | "user";
     decisionReason?: string | null;
-  }): StructuredRuntimeApprovalRequestRecord;
+    terminalCommandStatus?: "failed" | "cancelled";
+  }): StructuredRuntimeApprovalResolutionResult;
   getRuntimeApprovalRequest(requestId: string): StructuredRuntimeApprovalRequestRecord;
   listOpenRuntimeApprovalRequests(): StructuredRuntimeApprovalRequestRecord[];
   answerRequestUserInput(input: {
@@ -1688,23 +1868,29 @@ export interface StructuredSessionStateStore {
     questionId: string;
     answer: { kind: "option"; optionId: string } | { kind: "custom"; text: string };
     delivery: StructuredRequestUserInputDelivery;
+    clientSubmission?: RuntimeClientSubmissionInput;
   }): {
     request: StructuredRequestUserInputRequestRecord;
     answer: StructuredRequestUserInputAnswerRecord;
     queuedMessage: StructuredSurfaceQueuedMessageRecord | null;
+    duplicate: boolean;
   };
   defaultOpenRequestUserInputQuestions(input: {
     requestId: string;
     answeredBy: "timeout_default";
-  }): StructuredRequestUserInputRequestRecord;
+    expectedTimerVersion: number;
+    expectedExpiresAt: string;
+  }): StructuredRequestUserInputMutationResult;
   cancelRequestUserInputRequest(input: {
     requestId: string;
-  }): StructuredRequestUserInputRequestRecord;
+    terminalCommandStatus?: "failed" | "cancelled";
+    reason?: string;
+  }): StructuredRequestUserInputMutationResult;
   setRequestUserInputTimerPaused(input: {
     surfacePiSessionId: string;
     requestId: string;
     paused: boolean;
-  }): StructuredRequestUserInputRequestRecord;
+  }): StructuredRequestUserInputMutationResult;
   getRequestUserInputRequest(requestId: string): StructuredRequestUserInputRequestRecord;
   listQueuedSurfaceMessages(input: {
     surfacePiSessionId: string;
@@ -1825,6 +2011,7 @@ export interface StructuredSessionStateStore {
     error: string;
     claimedBy?: string | null;
     leaseVersion?: number | null;
+    retryAvailableAt?: string;
   }): StructuredRecoveryWorkRecord;
   getSessionState(sessionId: string): StructuredSessionSnapshot;
   listSessionStates(): StructuredSessionSnapshot[];
@@ -1845,6 +2032,7 @@ export interface StructuredSessionStateStore {
     enabled: boolean;
   }): StructuredThreadRecord;
   getComposerDraft(surfacePiSessionId: string): StructuredComposerDraftRecord | null;
+  listPromptHistory(input: { workspaceId: string }): StructuredPromptHistoryRecord[];
   setComposerDraft(input: {
     sessionId: string;
     surfacePiSessionId: string;
@@ -2055,6 +2243,35 @@ type RuntimeSourceRootFingerprintFactRow = {
   updated_at: string;
 };
 
+type WorkflowAgentSourceIndexRow = {
+  source_id: string;
+  path: string;
+  source_version: string;
+  fingerprint: string;
+  validation_status: WorkflowAgentSourceObservation["validationStatus"] | null;
+  diagnostics_json: string;
+  parameters_json: string | null;
+  extension_order_json: string;
+  observed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+export interface StructuredWorkflowAgentSourceIndexRecord {
+  sourceId: string;
+  path: AbsolutePath;
+  sourceVersion: string;
+  fingerprint: string;
+  validationStatus: WorkflowAgentSourceObservation["validationStatus"];
+  diagnostics: WorkflowAgentSourceObservation["diagnostics"];
+  parameters: WorkflowAgentSourceObservation["parameters"];
+  extensionOrder: WorkflowAgentSourceObservation["extensionOrder"];
+  observedAt: WorkflowAgentSourceObservation["observedAt"];
+  createdAt: string;
+  updatedAt: string;
+}
+
 type ExtensionDependencyApprovalRow = {
   approval_key: string;
   identity_json: string;
@@ -2174,6 +2391,15 @@ type ComposerDraftRow = {
   updated_at: string;
 };
 
+type PromptHistoryRow = {
+  workspace_id: string;
+  workspace_session_id: string;
+  surface_pi_session_id: string;
+  queue_item_id: string;
+  text: string;
+  sent_at: string;
+};
+
 type GeneratedAgentContextBindingRow = {
   id: string;
   surface_pi_session_id: string;
@@ -2267,6 +2493,67 @@ type TurnRow = {
   started_at: string;
   updated_at: string;
   finished_at: string | null;
+};
+
+type TranscriptMessageRow = {
+  message_id: string;
+  session_id: string;
+  surface_pi_session_id: string;
+  turn_id: string;
+  queue_item_id: string | null;
+  ordinal: number;
+  role: "user" | "assistant";
+  status: RuntimeTranscriptAssistantMessage["status"] | null;
+  user_message_json: string | null;
+  api: string | null;
+  provider_id: string | null;
+  model_id: string | null;
+  response_id: string | null;
+  usage_json: string | null;
+  stop_reason: RuntimeTranscriptAssistantMessage["stopReason"];
+  error_message: string | null;
+  pi_history_entry_id: string | null;
+  pi_history_entry_json: string | null;
+  submitted_at: string | null;
+  committed_at: string | null;
+  started_at: string | null;
+  message_timestamp: string | null;
+  updated_at: string;
+  finished_at: string | null;
+};
+
+type TranscriptContentBlockRow = {
+  message_id: string;
+  content_index: number;
+  kind: "text" | "thinking" | "tool-call";
+  text_content: string | null;
+  thinking_content: string | null;
+  thinking_redacted: number | null;
+  thinking_signature: string | null;
+  tool_call_id: string | null;
+  tool_name: string | null;
+  arguments_json: string | null;
+  arguments_status: "streaming" | "accepted" | null;
+  command_id: string | null;
+  thought_signature: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type TranscriptStreamCursorRow = {
+  surface_pi_session_id: string;
+  stream_generation_id: string;
+  stream_sequence: number;
+  active_assistant_message_id: string | null;
+  updated_at: string;
+};
+
+type FinalizeRuntimeTranscriptAssistantInput = Omit<
+  CommitRuntimeTranscriptAssistantMessageInput,
+  "content"
+> & {
+  readonly status: "completed" | "failed" | "cancelled";
+  readonly content: RuntimeTranscriptAssistantContent | null;
 };
 
 type ThreadRow = {
@@ -2434,6 +2721,7 @@ type RequestUserInputAnswerRow = {
   answered_by: StructuredRequestUserInputAnsweredBy;
   delivery: StructuredRequestUserInputDelivery | null;
   queued_item_id: string | null;
+  idempotency_key: string | null;
   created_at: string;
 };
 
@@ -2589,7 +2877,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   private readonly digest: StateDigestHelper | undefined;
   private readonly idFactory: ((prefix: string) => string) | undefined;
   private readonly nowFn: () => string;
-  private readonly workspace: StructuredWorkspaceRecord;
+  private workspace: StructuredWorkspaceRecord;
   readonly workspaceId: string;
   readonly databasePath: string;
 
@@ -2647,6 +2935,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         );
     }
     this.workspaceId = this.workspace.id;
+    if (
+      existingWorkspace &&
+      options.workspaceArtifactDirectoryAuthority === "state-preference" &&
+      options.workspace.artifactDir
+    ) {
+      this.setWorkspaceArtifactDirectory(options.workspace.artifactDir);
+    }
     this.ensureWorkspaceLayoutSlots();
   }
 
@@ -2658,6 +2953,24 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return { ...this.workspace };
   }
 
+  setWorkspaceArtifactDirectory(artifactDir: string): StructuredWorkspaceRecord {
+    const nextArtifactDir = resolve(artifactDir);
+    if (nextArtifactDir === this.workspace.artifactDir) {
+      return this.getWorkspaceRecord();
+    }
+    try {
+      mkdirSync(nextArtifactDir, { recursive: true });
+    } catch {
+      // Artifact materialization reports the exact failure when this configured root is used.
+    }
+    this.db
+      .query(`UPDATE workspace SET artifact_dir = ? WHERE id = ?`)
+      .run(nextArtifactDir, this.workspace.id);
+    this.workspace = { ...this.workspace, artifactDir: nextArtifactDir };
+    this.bumpStateRevision();
+    return this.getWorkspaceRecord();
+  }
+
   getCurrentTimestamp(): string {
     return this.now();
   }
@@ -2667,6 +2980,39 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       throw new Error("Structured session state digest helper is required.");
     }
     return this.digest;
+  }
+
+  readRequestInputSettings(): RequestInputSettings {
+    const row = this.db.query(`SELECT * FROM request_user_input_settings WHERE id = 1`).get() as
+      | {
+          mode: string;
+          blocking_timeout_enabled: number;
+          blocking_timeout_duration_ms: number;
+        }
+      | undefined;
+    if (!row) {
+      return structuredClone(DEFAULT_REQUEST_INPUT_SETTINGS);
+    }
+    return decodeRequestInputSettings({
+      mode: row.mode,
+      blockingTimeout: {
+        enabled: row.blocking_timeout_enabled !== 0,
+        durationMs: row.blocking_timeout_duration_ms,
+      },
+    });
+  }
+
+  setRequestInputVariant(input: SetRequestInputVariantInput): RequestInputSettings {
+    const current = this.readRequestInputSettings();
+    return this.writeRequestInputSettings({ ...current, mode: input.mode });
+  }
+
+  setRequestInputBlockingTimeout(input: SetRequestInputBlockingTimeoutInput): RequestInputSettings {
+    const current = this.readRequestInputSettings();
+    return this.writeRequestInputSettings({
+      ...current,
+      blockingTimeout: { enabled: input.enabled, durationMs: input.durationMs },
+    });
   }
 
   readAppPreferences(): StructuredAppPreferencesRecord {
@@ -3725,98 +4071,124 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   recordRuntimeSourceSave(input: RecordRuntimeSourceSaveInput): RuntimeSourceFactRecord {
     return this.db.transaction(() => {
-      const existing = this.findRuntimeSourceFact(input.scope, input.sourceKind, input.sourceId);
-      if (
-        input.previousSourceVersion !== undefined &&
-        input.previousSourceVersion !== null &&
-        existing?.sourceVersion !== input.previousSourceVersion
-      ) {
-        throw new Error(
-          `Runtime source ${input.sourceKind}:${input.sourceId} has version ${
-            existing?.sourceVersion ?? "none"
-          }, not ${input.previousSourceVersion}.`,
-        );
-      }
-      this.db
-        .query(
-          `INSERT INTO runtime_source_fact (
-             scope_kind,
-             scope_workspace_id,
-             scope_key,
-             source_kind,
-             source_id,
-             path,
-             source_version,
-             fingerprint,
-             diagnostics_json,
-             source_command_id,
-             created_at,
-             updated_at,
-             deleted_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-           ON CONFLICT(scope_key, source_kind, source_id) DO UPDATE SET
-             path = excluded.path,
-             source_version = excluded.source_version,
-             fingerprint = excluded.fingerprint,
-             diagnostics_json = excluded.diagnostics_json,
-             source_command_id = excluded.source_command_id,
-             updated_at = excluded.updated_at,
-             deleted_at = NULL`,
-        )
-        .run(
-          input.scope.kind,
-          input.scope.kind === "workspace" ? input.scope.workspaceId : null,
-          runtimeSourceScopeKey(input.scope),
-          input.sourceKind,
-          input.sourceId,
-          input.path,
-          input.sourceVersion,
-          input.fingerprint,
-          JSON.stringify(input.diagnostics),
-          input.sourceCommandId ?? null,
-          existing?.createdAt ?? input.savedAt,
-          input.savedAt,
-        );
+      const record = this.upsertRuntimeSourceSaveFact(input);
       this.bumpStateRevision();
-      return this.mustFindRuntimeSourceFact(input.scope, input.sourceKind, input.sourceId);
+      return record;
     })();
   }
 
   recordRuntimeSourceDelete(input: RecordRuntimeSourceDeleteInput): RuntimeSourceFactRecord {
     return this.db.transaction(() => {
-      const existing = this.mustFindRuntimeSourceFact(
-        input.scope,
-        input.sourceKind,
-        input.sourceId,
-      );
-      if (
-        input.expectedSourceVersion !== undefined &&
-        input.expectedSourceVersion !== null &&
-        existing.sourceVersion !== input.expectedSourceVersion
-      ) {
-        throw new Error(
-          `Runtime source ${input.sourceKind}:${input.sourceId} has version ${existing.sourceVersion}, not ${input.expectedSourceVersion}.`,
-        );
-      }
-      this.db
-        .query(
-          `UPDATE runtime_source_fact
-           SET source_command_id = ?,
-               updated_at = ?,
-               deleted_at = ?
-           WHERE scope_key = ? AND source_kind = ? AND source_id = ?`,
-        )
-        .run(
-          input.sourceCommandId ?? existing.sourceCommandId,
-          input.deletedAt,
-          input.deletedAt,
-          runtimeSourceScopeKey(input.scope),
-          input.sourceKind,
-          input.sourceId,
-        );
+      const record = this.upsertRuntimeSourceDeleteFact(input);
       this.bumpStateRevision();
-      return this.mustFindRuntimeSourceFact(input.scope, input.sourceKind, input.sourceId);
+      return record;
     })();
+  }
+
+  recordRuntimeWorkflowAgentSourceSave(
+    input: RecordRuntimeWorkflowAgentSourceSaveInput,
+  ): RuntimeSourceFactRecord {
+    return this.db.transaction(() => {
+      const record = this.upsertRuntimeSourceSaveFact(input.source);
+      this.upsertWorkflowAgentSourceObservation(input.observation);
+      this.bumpStateRevision();
+      return record;
+    })();
+  }
+
+  recordRuntimeWorkflowAgentSourceDelete(
+    input: RecordRuntimeWorkflowAgentSourceDeleteInput,
+  ): RuntimeSourceFactRecord {
+    return this.db.transaction(() => {
+      const record = this.upsertRuntimeSourceDeleteFact(input.source);
+      this.tombstoneWorkflowAgentSource(input.source);
+      this.bumpStateRevision();
+      return record;
+    })();
+  }
+
+  reconcileRuntimeWorkflowAgentSources(
+    input: ReconcileRuntimeWorkflowAgentSourcesInput,
+  ): RuntimeSourceScanFactRecord {
+    return this.db.transaction(() => {
+      const observedSourceIds = new Set(
+        input.observations.map((observation) => observation.sourceId),
+      );
+      for (const observation of input.observations) {
+        this.upsertObservedWorkflowAgentSourceFact(observation);
+        this.upsertWorkflowAgentSourceObservation(observation);
+      }
+      const currentFacts = this.db
+        .query(
+          `SELECT * FROM runtime_source_fact
+           WHERE scope_key = 'app-global'
+             AND source_kind = 'workflow-agent'
+             AND deleted_at IS NULL`,
+        )
+        .all() as RuntimeSourceFactRow[];
+      for (const fact of currentFacts) {
+        if (observedSourceIds.has(fact.source_id)) continue;
+        this.db
+          .query(
+            `UPDATE runtime_source_fact
+             SET updated_at = ?, deleted_at = ?
+             WHERE scope_key = 'app-global'
+               AND source_kind = 'workflow-agent'
+               AND source_id = ?`,
+          )
+          .run(input.scannedAt, input.scannedAt, fact.source_id);
+        this.db
+          .query(
+            `UPDATE workflow_agent_source_index
+             SET updated_at = ?, deleted_at = ?
+             WHERE source_id = ?`,
+          )
+          .run(input.scannedAt, input.scannedAt, fact.source_id);
+      }
+      const currentIndexRows = this.db
+        .query(`SELECT source_id FROM workflow_agent_source_index WHERE deleted_at IS NULL`)
+        .all() as Array<{ source_id: string }>;
+      for (const row of currentIndexRows) {
+        if (observedSourceIds.has(row.source_id)) continue;
+        this.db
+          .query(
+            `UPDATE workflow_agent_source_index
+             SET updated_at = ?, deleted_at = ?
+             WHERE source_id = ?`,
+          )
+          .run(input.scannedAt, input.scannedAt, row.source_id);
+      }
+      this.upsertRuntimeSourceScan({
+        scope: { kind: "app-global" },
+        domain: "workflows",
+        sourceFingerprint: input.sourceFingerprint,
+        ...(input.sourceRoots === undefined ? {} : { sourceRoots: input.sourceRoots }),
+        diagnostics: input.diagnostics,
+        scannedAt: input.scannedAt,
+      });
+      this.bumpStateRevision();
+      return this.mustFindRuntimeSourceScanFact({ kind: "app-global" }, "workflows");
+    })();
+  }
+
+  listCurrentWorkflowAgentSources(): StructuredWorkflowAgentSourceIndexRecord[] {
+    const rows = this.db
+      .query(
+        `SELECT workflow_agent_source_index.*
+         FROM workflow_agent_source_index
+         INNER JOIN runtime_source_fact
+           ON runtime_source_fact.scope_key = 'app-global'
+          AND runtime_source_fact.source_kind = 'workflow-agent'
+          AND runtime_source_fact.source_id = workflow_agent_source_index.source_id
+          AND runtime_source_fact.path = workflow_agent_source_index.path
+          AND runtime_source_fact.source_version = workflow_agent_source_index.source_version
+          AND runtime_source_fact.fingerprint = workflow_agent_source_index.fingerprint
+         WHERE workflow_agent_source_index.deleted_at IS NULL
+           AND runtime_source_fact.deleted_at IS NULL
+         ORDER BY workflow_agent_source_index.source_id ASC`,
+      )
+      .all() as WorkflowAgentSourceIndexRow[];
+    return rows.map((row) => this.mapWorkflowAgentSourceIndex(row));
   }
 
   recordRuntimeSourceScan(input: RecordRuntimeSourceScanInput): RuntimeSourceScanFactRecord {
@@ -4334,6 +4706,303 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       throw new Error(`Pi session reference was not found: ${surfacePiSessionId}`);
     }
     return row;
+  }
+
+  private upsertRuntimeSourceSaveFact(
+    input: RecordRuntimeSourceSaveInput,
+  ): RuntimeSourceFactRecord {
+    const existing = this.findRuntimeSourceFact(input.scope, input.sourceKind, input.sourceId);
+    const sourceCommandId = input.sourceCommandId ?? null;
+    if (
+      existing &&
+      existing.deletedAt === null &&
+      existing.path === input.path &&
+      existing.sourceVersion === input.sourceVersion &&
+      existing.fingerprint === input.fingerprint &&
+      JSON.stringify(existing.diagnostics) === JSON.stringify(input.diagnostics) &&
+      existing.sourceCommandId === sourceCommandId &&
+      existing.updatedAt === input.savedAt
+    ) {
+      return existing;
+    }
+    if (
+      (input.previousSourceVersion === null && existing?.deletedAt === null) ||
+      (input.previousSourceVersion !== undefined &&
+        input.previousSourceVersion !== null &&
+        existing?.sourceVersion !== input.previousSourceVersion)
+    ) {
+      throw new StateContractError({
+        operation: "structured-session.recordRuntimeSourceSave",
+        reason: "stale-state",
+        message: `Runtime source ${input.sourceKind}:${input.sourceId} has version ${
+          existing?.sourceVersion ?? "none"
+        }, not ${input.previousSourceVersion ?? "none"}.`,
+      });
+    }
+    this.db
+      .query(
+        `INSERT INTO runtime_source_fact (
+           scope_kind,
+           scope_workspace_id,
+           scope_key,
+           source_kind,
+           source_id,
+           path,
+           source_version,
+           fingerprint,
+           diagnostics_json,
+           source_command_id,
+           created_at,
+           updated_at,
+           deleted_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+         ON CONFLICT(scope_key, source_kind, source_id) DO UPDATE SET
+           path = excluded.path,
+           source_version = excluded.source_version,
+           fingerprint = excluded.fingerprint,
+           diagnostics_json = excluded.diagnostics_json,
+           source_command_id = excluded.source_command_id,
+           updated_at = excluded.updated_at,
+           deleted_at = NULL`,
+      )
+      .run(
+        input.scope.kind,
+        input.scope.kind === "workspace" ? input.scope.workspaceId : null,
+        runtimeSourceScopeKey(input.scope),
+        input.sourceKind,
+        input.sourceId,
+        input.path,
+        input.sourceVersion,
+        input.fingerprint,
+        JSON.stringify(input.diagnostics),
+        sourceCommandId,
+        existing?.createdAt ?? input.savedAt,
+        input.savedAt,
+      );
+    return this.mustFindRuntimeSourceFact(input.scope, input.sourceKind, input.sourceId);
+  }
+
+  private upsertRuntimeSourceDeleteFact(
+    input: RecordRuntimeSourceDeleteInput,
+  ): RuntimeSourceFactRecord {
+    const existing = this.findRuntimeSourceFact(input.scope, input.sourceKind, input.sourceId);
+    const sourceCommandId = input.sourceCommandId ?? existing?.sourceCommandId ?? null;
+    if (
+      existing &&
+      existing.path === input.path &&
+      existing.sourceVersion === input.previousSourceVersion &&
+      existing.fingerprint === input.previousFingerprint &&
+      existing.sourceCommandId === sourceCommandId &&
+      existing.updatedAt === input.deletedAt &&
+      existing.deletedAt === input.deletedAt
+    ) {
+      return existing;
+    }
+    if (
+      existing &&
+      (existing.deletedAt !== null ||
+        existing.path !== input.path ||
+        existing.sourceVersion !== input.previousSourceVersion ||
+        existing.fingerprint !== input.previousFingerprint)
+    ) {
+      throw new StateContractError({
+        operation: "structured-session.recordRuntimeSourceDelete",
+        reason: "stale-state",
+        message: `Runtime source ${input.sourceKind}:${input.sourceId} does not match the source version and fingerprint being deleted.`,
+      });
+    }
+    this.db
+      .query(
+        `INSERT INTO runtime_source_fact (
+           scope_kind,
+           scope_workspace_id,
+           scope_key,
+           source_kind,
+           source_id,
+           path,
+           source_version,
+           fingerprint,
+           diagnostics_json,
+           source_command_id,
+           created_at,
+           updated_at,
+           deleted_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)
+         ON CONFLICT(scope_key, source_kind, source_id) DO UPDATE SET
+           path = excluded.path,
+           source_version = excluded.source_version,
+           fingerprint = excluded.fingerprint,
+           source_command_id = excluded.source_command_id,
+           updated_at = excluded.updated_at,
+           deleted_at = excluded.deleted_at`,
+      )
+      .run(
+        input.scope.kind,
+        input.scope.kind === "workspace" ? input.scope.workspaceId : null,
+        runtimeSourceScopeKey(input.scope),
+        input.sourceKind,
+        input.sourceId,
+        input.path,
+        input.previousSourceVersion,
+        input.previousFingerprint,
+        sourceCommandId,
+        existing?.createdAt ?? input.deletedAt,
+        input.deletedAt,
+        input.deletedAt,
+      );
+    return this.mustFindRuntimeSourceFact(input.scope, input.sourceKind, input.sourceId);
+  }
+
+  private upsertObservedWorkflowAgentSourceFact(observation: WorkflowAgentSourceObservation): void {
+    const existing = this.findRuntimeSourceFact(
+      { kind: "app-global" },
+      "workflow-agent",
+      observation.sourceId,
+    );
+    this.db
+      .query(
+        `INSERT INTO runtime_source_fact (
+           scope_kind,
+           scope_workspace_id,
+           scope_key,
+           source_kind,
+           source_id,
+           path,
+           source_version,
+           fingerprint,
+           diagnostics_json,
+           source_command_id,
+           created_at,
+           updated_at,
+           deleted_at
+         ) VALUES ('app-global', NULL, 'app-global', 'workflow-agent', ?, ?, ?, ?, ?, NULL, ?, ?, NULL)
+         ON CONFLICT(scope_key, source_kind, source_id) DO UPDATE SET
+           path = excluded.path,
+           source_version = excluded.source_version,
+           fingerprint = excluded.fingerprint,
+           diagnostics_json = excluded.diagnostics_json,
+           updated_at = excluded.updated_at,
+           deleted_at = NULL`,
+      )
+      .run(
+        observation.sourceId,
+        observation.path,
+        observation.sourceVersion,
+        observation.fingerprint,
+        JSON.stringify(observation.diagnostics),
+        existing?.createdAt ?? observation.observedAt,
+        observation.observedAt,
+      );
+  }
+
+  private upsertWorkflowAgentSourceObservation(observation: WorkflowAgentSourceObservation): void {
+    const existing = this.db
+      .query(`SELECT created_at FROM workflow_agent_source_index WHERE source_id = ?`)
+      .get(observation.sourceId) as { created_at: string } | undefined;
+    this.db
+      .query(
+        `INSERT INTO workflow_agent_source_index (
+           source_id,
+           path,
+           source_version,
+           fingerprint,
+           validation_status,
+           diagnostics_json,
+           parameters_json,
+           extension_order_json,
+           observed_at,
+           created_at,
+           updated_at,
+           deleted_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+         ON CONFLICT(source_id) DO UPDATE SET
+           path = excluded.path,
+           source_version = excluded.source_version,
+           fingerprint = excluded.fingerprint,
+           validation_status = excluded.validation_status,
+           diagnostics_json = excluded.diagnostics_json,
+           parameters_json = excluded.parameters_json,
+           extension_order_json = excluded.extension_order_json,
+           observed_at = excluded.observed_at,
+           updated_at = excluded.updated_at,
+           deleted_at = NULL`,
+      )
+      .run(
+        observation.sourceId,
+        observation.path,
+        observation.sourceVersion,
+        observation.fingerprint,
+        observation.validationStatus,
+        JSON.stringify(observation.diagnostics),
+        observation.parameters === null ? null : JSON.stringify(observation.parameters),
+        JSON.stringify(observation.extensionOrder),
+        observation.observedAt,
+        existing?.created_at ?? observation.observedAt,
+        observation.observedAt,
+      );
+  }
+
+  private tombstoneWorkflowAgentSource(input: RecordRuntimeSourceDeleteInput): void {
+    const existing = this.db
+      .query(`SELECT created_at FROM workflow_agent_source_index WHERE source_id = ?`)
+      .get(input.sourceId) as { created_at: string } | undefined;
+    this.db
+      .query(
+        `INSERT INTO workflow_agent_source_index (
+           source_id,
+           path,
+           source_version,
+           fingerprint,
+           validation_status,
+           diagnostics_json,
+           parameters_json,
+           extension_order_json,
+           observed_at,
+           created_at,
+           updated_at,
+           deleted_at
+         ) VALUES (?, ?, ?, ?, NULL, '[]', NULL, '[]', NULL, ?, ?, ?)
+         ON CONFLICT(source_id) DO UPDATE SET
+           path = excluded.path,
+           source_version = excluded.source_version,
+           fingerprint = excluded.fingerprint,
+           updated_at = excluded.updated_at,
+           deleted_at = excluded.deleted_at`,
+      )
+      .run(
+        input.sourceId,
+        input.path,
+        input.previousSourceVersion,
+        input.previousFingerprint,
+        existing?.created_at ?? input.deletedAt,
+        input.deletedAt,
+        input.deletedAt,
+      );
+  }
+
+  private mapWorkflowAgentSourceIndex(
+    row: WorkflowAgentSourceIndexRow,
+  ): StructuredWorkflowAgentSourceIndexRecord {
+    if (row.validation_status === null || row.observed_at === null) {
+      throw new Error(`Current workflow-agent source index row is incomplete: ${row.source_id}`);
+    }
+    return {
+      sourceId: row.source_id,
+      path: row.path as AbsolutePath,
+      sourceVersion: row.source_version,
+      fingerprint: row.fingerprint,
+      validationStatus: row.validation_status,
+      diagnostics: JSON.parse(
+        row.diagnostics_json,
+      ) as WorkflowAgentSourceObservation["diagnostics"],
+      parameters: fromJson<WorkflowAgentSourceObservation["parameters"]>(row.parameters_json),
+      extensionOrder: JSON.parse(
+        row.extension_order_json,
+      ) as WorkflowAgentSourceObservation["extensionOrder"],
+      observedAt: row.observed_at as WorkflowAgentSourceObservation["observedAt"],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
   }
 
   private findRuntimeSourceFact(
@@ -5272,6 +5941,37 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return row ? this.mapComposerDraft(row) : null;
   }
 
+  listPromptHistory(input: { workspaceId: string }): StructuredPromptHistoryRecord[] {
+    if (input.workspaceId !== this.workspace.id) {
+      throw new StateContractError({
+        operation: "structured-session.listPromptHistory",
+        reason: "invalid-input",
+        message: `Workspace ${input.workspaceId} is not managed by this state store.`,
+      });
+    }
+    const rows = this.db
+      .query(
+        `SELECT workspace_id,
+                workspace_session_id,
+                surface_pi_session_id,
+                queue_item_id,
+                text,
+                sent_at
+         FROM prompt_history
+         WHERE workspace_id = ?
+         ORDER BY sent_at ASC, rowid ASC`,
+      )
+      .all(input.workspaceId) as PromptHistoryRow[];
+    return rows.map((row) => ({
+      workspaceId: row.workspace_id,
+      workspaceSessionId: row.workspace_session_id,
+      surfacePiSessionId: row.surface_pi_session_id,
+      queueItemId: row.queue_item_id,
+      text: row.text,
+      sentAt: row.sent_at,
+    }));
+  }
+
   setComposerDraft(input: {
     sessionId: string;
     surfacePiSessionId: string;
@@ -5467,6 +6167,479 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.mustFindTurnRecord(input.turnId);
   }
 
+  commitRuntimeTranscriptUserMessage(
+    input: CommitRuntimeTranscriptUserMessageInput,
+  ): RuntimeTranscriptUserMutation {
+    return this.db.transaction(() => {
+      const turn = this.mustFindTurnRow(input.turnId);
+      if (
+        turn.session_id !== input.workspaceSessionId ||
+        turn.surface_pi_session_id !== input.surfacePiSessionId
+      ) {
+        throw this.transcriptStateError(
+          "commitUserMessage",
+          "conflict",
+          `Turn ${input.turnId} does not belong to transcript surface ${input.surfacePiSessionId}.`,
+        );
+      }
+      const normalizedMessage = decodeRuntimeSubmittedMessageContract(input.message);
+      const existing = this.db
+        .query(`SELECT * FROM transcript_message WHERE queue_item_id = ? LIMIT 1`)
+        .get(input.queueItemId) as TranscriptMessageRow | undefined;
+      if (existing) {
+        if (
+          existing.role !== "user" ||
+          existing.session_id !== input.workspaceSessionId ||
+          existing.surface_pi_session_id !== input.surfacePiSessionId ||
+          existing.turn_id !== input.turnId ||
+          existing.user_message_json !== toJson(normalizedMessage) ||
+          existing.submitted_at !== input.submittedAt ||
+          existing.committed_at !== input.committedAt
+        ) {
+          throw this.transcriptStateError(
+            "commitUserMessage",
+            "conflict",
+            `Queue item ${input.queueItemId} is already bound to a different transcript message.`,
+          );
+        }
+        const cursor = this.mustReadRuntimeTranscriptStreamCursor(input.surfacePiSessionId);
+        return { message: this.mapRuntimeTranscriptUserMessage(existing), cursor };
+      }
+
+      const cursor = this.advanceRuntimeTranscriptCursorRow({
+        surfacePiSessionId: input.surfacePiSessionId,
+        streamGenerationId: input.streamGenerationId,
+        expectedCursor: input.expectedCursor,
+        activeAssistantMessageId: null,
+      });
+      const messageId = this.createId("message");
+      const ordinal = this.nextRuntimeTranscriptMessageOrdinal(input.surfacePiSessionId);
+      this.db
+        .query(
+          `INSERT INTO transcript_message (
+             message_id, session_id, surface_pi_session_id, turn_id, queue_item_id, ordinal,
+             role, status, user_message_json, api, provider_id, model_id, response_id,
+             usage_json, stop_reason, error_message, pi_history_entry_id,
+             pi_history_entry_json, submitted_at, committed_at, started_at,
+             message_timestamp, updated_at, finished_at
+           ) VALUES (?, ?, ?, ?, ?, ?, 'user', NULL, ?, NULL, NULL, NULL, NULL,
+             NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, NULL, ?, NULL)`,
+        )
+        .run(
+          messageId,
+          input.workspaceSessionId,
+          input.surfacePiSessionId,
+          input.turnId,
+          input.queueItemId,
+          ordinal,
+          toJson(normalizedMessage),
+          input.submittedAt,
+          input.committedAt,
+          input.committedAt,
+        );
+      this.bumpStateRevision();
+      return {
+        message: this.mapRuntimeTranscriptUserMessage(this.mustFindTranscriptMessageRow(messageId)),
+        cursor,
+      };
+    })();
+  }
+
+  beginRuntimeTranscriptAssistantMessage(
+    input: BeginRuntimeTranscriptAssistantMessageInput,
+  ): RuntimeTranscriptAssistantMutation {
+    return this.db.transaction(() => {
+      const turn = this.mustFindTurnRow(input.turnId);
+      if (
+        turn.session_id !== input.workspaceSessionId ||
+        turn.surface_pi_session_id !== input.surfacePiSessionId
+      ) {
+        throw this.transcriptStateError(
+          "beginAssistantMessage",
+          "conflict",
+          `Turn ${input.turnId} does not belong to transcript surface ${input.surfacePiSessionId}.`,
+        );
+      }
+      const currentCursor = this.readRuntimeTranscriptStreamCursorRow(input.surfacePiSessionId);
+      if (currentCursor?.active_assistant_message_id) {
+        throw this.transcriptStateError(
+          "beginAssistantMessage",
+          "conflict",
+          `Transcript surface ${input.surfacePiSessionId} already has an active assistant message.`,
+        );
+      }
+      const messageId = this.createId("message");
+      const cursor = this.advanceRuntimeTranscriptCursorRow({
+        surfacePiSessionId: input.surfacePiSessionId,
+        streamGenerationId: input.streamGenerationId,
+        expectedCursor: input.expectedCursor,
+        activeAssistantMessageId: messageId,
+      });
+      const ordinal = this.nextRuntimeTranscriptMessageOrdinal(input.surfacePiSessionId);
+      this.db
+        .query(
+          `INSERT INTO transcript_message (
+             message_id, session_id, surface_pi_session_id, turn_id, queue_item_id, ordinal,
+             role, status, user_message_json, api, provider_id, model_id, response_id,
+             usage_json, stop_reason, error_message, pi_history_entry_id,
+             pi_history_entry_json, submitted_at, committed_at, started_at,
+             message_timestamp, updated_at, finished_at
+           ) VALUES (?, ?, ?, ?, NULL, ?, 'assistant', 'streaming', NULL, ?, ?, ?, NULL,
+             NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?, NULL)`,
+        )
+        .run(
+          messageId,
+          input.workspaceSessionId,
+          input.surfacePiSessionId,
+          input.turnId,
+          ordinal,
+          input.api,
+          input.providerId,
+          input.modelId,
+          input.startedAt,
+          input.startedAt,
+        );
+      this.bumpStateRevision();
+      return { message: this.mustReadRuntimeTranscriptAssistantMessage(messageId), cursor };
+    })();
+  }
+
+  appendRuntimeTranscriptAssistantContentDelta(
+    input: AppendRuntimeTranscriptAssistantContentDeltaInput,
+  ): RuntimeTranscriptAssistantMutation {
+    return this.db.transaction(() => {
+      const message = this.mustFindStreamingTranscriptAssistantRow(
+        input.messageId,
+        input.surfacePiSessionId,
+        "appendAssistantContentDelta",
+      );
+      const cursor = this.advanceRuntimeTranscriptCursorRow({
+        surfacePiSessionId: input.surfacePiSessionId,
+        streamGenerationId: input.streamGenerationId,
+        expectedCursor: input.expectedCursor,
+        activeAssistantMessageId: input.messageId,
+      });
+      const timestamp = this.now();
+      const existing = this.findRuntimeTranscriptContentBlockRow(
+        input.messageId,
+        input.contentIndex,
+      );
+      if (!existing) {
+        this.db
+          .query(
+            `INSERT INTO transcript_content_block (
+               message_id, content_index, kind, text_content, thinking_content,
+               thinking_redacted, thinking_signature, tool_call_id, tool_name,
+               arguments_json, arguments_status, command_id, thought_signature,
+               created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)`,
+          )
+          .run(
+            input.messageId,
+            input.contentIndex,
+            input.kind,
+            input.kind === "text" ? input.delta : null,
+            input.kind === "thinking" ? input.delta : null,
+            input.kind === "thinking" && input.redacted !== undefined
+              ? input.redacted
+                ? 1
+                : 0
+              : null,
+            input.kind === "thinking" ? (input.thinkingSignature ?? null) : null,
+            timestamp,
+            timestamp,
+          );
+      } else {
+        if (existing.kind !== input.kind) {
+          throw this.transcriptStateError(
+            "appendAssistantContentDelta",
+            "conflict",
+            `Transcript content index ${input.contentIndex} is already ${existing.kind}.`,
+          );
+        }
+        if (
+          input.kind === "thinking" &&
+          ((existing.thinking_signature !== null &&
+            input.thinkingSignature !== undefined &&
+            existing.thinking_signature !== input.thinkingSignature) ||
+            (existing.thinking_redacted !== null &&
+              input.redacted !== undefined &&
+              Boolean(existing.thinking_redacted) !== input.redacted))
+        ) {
+          throw this.transcriptStateError(
+            "appendAssistantContentDelta",
+            "conflict",
+            `Transcript thinking metadata at content index ${input.contentIndex} is immutable.`,
+          );
+        }
+        this.db
+          .query(
+            input.kind === "text"
+              ? `UPDATE transcript_content_block
+                 SET text_content = text_content || ?, updated_at = ?
+                 WHERE message_id = ? AND content_index = ?`
+              : `UPDATE transcript_content_block
+                 SET thinking_content = thinking_content || ?,
+                     thinking_redacted = COALESCE(thinking_redacted, ?),
+                     thinking_signature = COALESCE(thinking_signature, ?),
+                     updated_at = ?
+                 WHERE message_id = ? AND content_index = ?`,
+          )
+          .run(
+            ...(input.kind === "text"
+              ? [input.delta, timestamp, input.messageId, input.contentIndex]
+              : [
+                  input.delta,
+                  input.redacted === undefined ? null : input.redacted ? 1 : 0,
+                  input.thinkingSignature ?? null,
+                  timestamp,
+                  input.messageId,
+                  input.contentIndex,
+                ]),
+          );
+      }
+      this.db
+        .query(`UPDATE transcript_message SET updated_at = ? WHERE message_id = ?`)
+        .run(timestamp, message.message_id);
+      this.bumpStateRevision();
+      return { message: this.mustReadRuntimeTranscriptAssistantMessage(input.messageId), cursor };
+    })();
+  }
+
+  upsertRuntimeTranscriptAssistantToolCall(
+    input: UpsertRuntimeTranscriptAssistantToolCallInput,
+  ): RuntimeTranscriptAssistantMutation {
+    return this.db.transaction(() => {
+      this.mustFindStreamingTranscriptAssistantRow(
+        input.messageId,
+        input.surfacePiSessionId,
+        "upsertAssistantToolCall",
+      );
+      const existing = this.findRuntimeTranscriptContentBlockRow(
+        input.messageId,
+        input.contentIndex,
+      );
+      if (
+        existing &&
+        (existing.kind !== "tool-call" ||
+          existing.tool_call_id !== input.toolCallId ||
+          existing.tool_name !== input.toolName)
+      ) {
+        throw this.transcriptStateError(
+          "upsertAssistantToolCall",
+          "conflict",
+          `Transcript content index ${input.contentIndex} is already bound to different content.`,
+        );
+      }
+      if (
+        existing?.arguments_status === "accepted" &&
+        (input.argumentsStatus !== "accepted" || existing.arguments_json !== input.argumentsJson)
+      ) {
+        throw this.transcriptStateError(
+          "upsertAssistantToolCall",
+          "conflict",
+          `Accepted tool arguments for ${input.toolCallId} are immutable.`,
+        );
+      }
+      if (
+        existing?.thought_signature &&
+        input.thoughtSignature !== undefined &&
+        existing.thought_signature !== input.thoughtSignature
+      ) {
+        throw this.transcriptStateError(
+          "upsertAssistantToolCall",
+          "conflict",
+          `Tool thought signature for ${input.toolCallId} is immutable.`,
+        );
+      }
+
+      const cursor = this.advanceRuntimeTranscriptCursorRow({
+        surfacePiSessionId: input.surfacePiSessionId,
+        streamGenerationId: input.streamGenerationId,
+        expectedCursor: input.expectedCursor,
+        activeAssistantMessageId: input.messageId,
+      });
+      const timestamp = this.now();
+      if (!existing) {
+        this.db
+          .query(
+            `INSERT INTO transcript_content_block (
+               message_id, content_index, kind, text_content, thinking_content,
+               thinking_redacted, thinking_signature, tool_call_id, tool_name,
+               arguments_json, arguments_status, command_id, thought_signature,
+               created_at, updated_at
+             ) VALUES (?, ?, 'tool-call', NULL, NULL, NULL, NULL, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+          )
+          .run(
+            input.messageId,
+            input.contentIndex,
+            input.toolCallId,
+            input.toolName,
+            input.argumentsJson,
+            input.argumentsStatus,
+            input.thoughtSignature ?? null,
+            timestamp,
+            timestamp,
+          );
+      } else {
+        this.db
+          .query(
+            `UPDATE transcript_content_block
+             SET arguments_json = ?, arguments_status = ?,
+                 thought_signature = COALESCE(thought_signature, ?), updated_at = ?
+             WHERE message_id = ? AND content_index = ?`,
+          )
+          .run(
+            input.argumentsJson,
+            input.argumentsStatus,
+            input.thoughtSignature ?? null,
+            timestamp,
+            input.messageId,
+            input.contentIndex,
+          );
+      }
+      this.db
+        .query(`UPDATE transcript_message SET updated_at = ? WHERE message_id = ?`)
+        .run(timestamp, input.messageId);
+      this.bumpStateRevision();
+      return { message: this.mustReadRuntimeTranscriptAssistantMessage(input.messageId), cursor };
+    })();
+  }
+
+  linkRuntimeTranscriptAssistantToolCallCommand(
+    input: LinkRuntimeTranscriptAssistantToolCallCommandInput,
+  ): RuntimeTranscriptAssistantMutation {
+    return this.db.transaction(() => {
+      this.mustFindStreamingTranscriptAssistantRow(
+        input.messageId,
+        input.surfacePiSessionId,
+        "linkAssistantToolCallCommand",
+      );
+      const block = this.findRuntimeTranscriptContentBlockRow(input.messageId, input.contentIndex);
+      if (!block || block.kind !== "tool-call" || block.tool_call_id !== input.toolCallId) {
+        throw this.transcriptStateError(
+          "linkAssistantToolCallCommand",
+          "not-found",
+          `Tool call ${input.toolCallId} was not found at transcript content index ${input.contentIndex}.`,
+        );
+      }
+      if (block.command_id && block.command_id !== input.commandId) {
+        throw this.transcriptStateError(
+          "linkAssistantToolCallCommand",
+          "conflict",
+          `Tool call ${input.toolCallId} is already linked to command ${block.command_id}.`,
+        );
+      }
+      if (block.command_id === input.commandId) {
+        return {
+          message: this.mustReadRuntimeTranscriptAssistantMessage(input.messageId),
+          cursor: this.mustReadRuntimeTranscriptStreamCursor(input.surfacePiSessionId),
+        };
+      }
+      const cursor = this.advanceRuntimeTranscriptCursorRow({
+        surfacePiSessionId: input.surfacePiSessionId,
+        streamGenerationId: input.streamGenerationId,
+        expectedCursor: input.expectedCursor,
+        activeAssistantMessageId: input.messageId,
+      });
+      const timestamp = this.now();
+      this.db
+        .query(
+          `UPDATE transcript_content_block
+           SET command_id = ?, updated_at = ?
+           WHERE message_id = ? AND content_index = ?`,
+        )
+        .run(input.commandId, timestamp, input.messageId, input.contentIndex);
+      this.db
+        .query(`UPDATE transcript_message SET updated_at = ? WHERE message_id = ?`)
+        .run(timestamp, input.messageId);
+      this.bumpStateRevision();
+      return { message: this.mustReadRuntimeTranscriptAssistantMessage(input.messageId), cursor };
+    })();
+  }
+
+  commitRuntimeTranscriptAssistantMessage(
+    input: CommitRuntimeTranscriptAssistantMessageInput,
+  ): RuntimeTranscriptAssistantMutation {
+    return this.finalizeRuntimeTranscriptAssistantMessage({
+      ...input,
+      status: "completed",
+      content: decodeRuntimeTranscriptAssistantContentContract(input.content),
+    });
+  }
+
+  failRuntimeTranscriptAssistantMessage(
+    input: FailRuntimeTranscriptAssistantMessageInput,
+  ): RuntimeTranscriptAssistantMutation {
+    return this.finalizeRuntimeTranscriptAssistantMessage({ ...input, content: null });
+  }
+
+  bindRuntimeTranscriptPiHistoryEntry(
+    input: BindRuntimeTranscriptPiHistoryEntryInput,
+  ): RuntimeTranscriptMessage {
+    return this.db.transaction(() => {
+      const row = this.mustFindTranscriptMessageRow(input.messageId);
+      const history = decodePiHistoryEntryRefContract(input.piHistoryEntry);
+      this.assertRuntimeTranscriptPiHistoryEntry(row, history, "bindPiHistoryEntry");
+      if (row.pi_history_entry_id) {
+        if (row.pi_history_entry_json !== toJson(history)) {
+          throw this.transcriptStateError(
+            "bindPiHistoryEntry",
+            "conflict",
+            `Transcript message ${input.messageId} already has a different Pi history entry.`,
+          );
+        }
+        return this.mapRuntimeTranscriptMessage(row);
+      }
+      this.db
+        .query(
+          `UPDATE transcript_message
+           SET pi_history_entry_id = ?, pi_history_entry_json = ?, updated_at = ?
+           WHERE message_id = ?`,
+        )
+        .run(history.entryId, toJson(history), this.now(), input.messageId);
+      this.bumpStateRevision();
+      return this.mapRuntimeTranscriptMessage(this.mustFindTranscriptMessageRow(input.messageId));
+    })();
+  }
+
+  advanceRuntimeTranscriptStreamCursor(
+    input: AdvanceRuntimeTranscriptStreamCursorInput,
+  ): RuntimeTranscriptStreamCursor {
+    return this.db.transaction(() => {
+      const current = this.readRuntimeTranscriptStreamCursorRow(input.surfacePiSessionId);
+      const cursor = this.advanceRuntimeTranscriptCursorRow({
+        surfacePiSessionId: input.surfacePiSessionId,
+        streamGenerationId: input.streamGenerationId,
+        expectedCursor: input.expectedCursor,
+        activeAssistantMessageId: current?.active_assistant_message_id ?? null,
+      });
+      this.bumpStateRevision();
+      return cursor;
+    })();
+  }
+
+  readRuntimeSurfaceTranscript(surfacePiSessionId: string): RuntimeSurfaceTranscriptSnapshot {
+    const rows = this.db
+      .query(
+        `SELECT * FROM transcript_message
+         WHERE surface_pi_session_id = ?
+         ORDER BY ordinal ASC`,
+      )
+      .all(surfacePiSessionId) as TranscriptMessageRow[];
+    const activeRow = rows.find((row) => row.role === "assistant" && row.status === "streaming");
+    return {
+      surfacePiSessionId: surfacePiSessionId as SurfacePiSessionId,
+      messages: rows
+        .filter((row) => row !== activeRow)
+        .map((row) => this.mapRuntimeTranscriptMessage(row)),
+      activeAssistantMessage: activeRow
+        ? this.mapRuntimeTranscriptAssistantMessage(activeRow)
+        : null,
+      streamCursor: this.readRuntimeTranscriptStreamCursor(surfacePiSessionId),
+    };
+  }
+
   finishTurn(input: {
     turnId: string;
     status: Exclude<StructuredTurnStatus, "running">;
@@ -5502,7 +6675,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           ? "turn.waiting"
           : input.status === "failed"
             ? "turn.failed"
-            : "turn.completed",
+            : input.status === "cancelled"
+              ? "turn.cancelled"
+              : "turn.completed",
       subjectKind: "turn",
       subjectId: input.turnId,
       at: timestamp,
@@ -5511,26 +6686,369 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.mustFindTurnRecord(input.turnId);
   }
 
-  recoverInterruptedSurfaceTurn(input: {
+  recoverInterruptedTurn(input: {
     turnId: string;
-    status: "waiting" | "failed";
+    terminalStatus: "failed" | "cancelled";
     reason: string;
-  }): StructuredTurnRecord {
+  }): StructuredInterruptedTurnRecoveryResult {
     const recover = this.db.transaction(() => {
-      const turn = this.mustFindTurnRecord(input.turnId);
-      this.recordLifecycleEvent({
-        sessionId: turn.sessionId,
-        kind: "surface.turn_recovery.interrupted",
-        subjectKind: "turn",
-        subjectId: turn.id,
-        data: {
-          surfacePiSessionId: turn.surfacePiSessionId,
+      const initialTurn = this.mustFindTurnRecord(input.turnId);
+      if (initialTurn.status !== "running" && initialTurn.status !== "waiting") {
+        return {
+          changed: false,
+          turn: initialTurn,
+          terminalizedAssistantMessageId: null,
+          terminalizedCommandIds: [],
+          settledQueueItemId: null,
+          cancelledRequestInputIds: [],
+          cancelledApprovalIds: [],
+          sessionWaitCleared: false,
+        };
+      }
+      const initialSessionWait = this.mapSessionWait(
+        this.mustFindSessionRow(initialTurn.sessionId),
+      );
+      const initialSessionWaitOwnedByTurn = initialTurn.threadId
+        ? initialSessionWait?.owner.kind === "thread" &&
+          initialSessionWait.owner.threadId === initialTurn.threadId
+        : initialSessionWait?.owner.kind === "orchestrator";
+      const terminalizedCommandIds: string[] = [];
+      const cancelledRequestInputIds = (
+        this.db
+          .query(
+            `SELECT * FROM request_user_input_request
+             WHERE turn_id = ? AND variant = 'blocking' AND status = 'open'
+             ORDER BY created_at ASC`,
+          )
+          .all(input.turnId) as RequestUserInputRequestRow[]
+      ).map((request) => {
+        const command = this.mustFindCommandRecord(request.command_id);
+        this.cancelRequestUserInputRequest({
+          requestId: request.id,
+          terminalCommandStatus: input.terminalStatus,
           reason: input.reason,
-        },
+        });
+        if (!isTerminalCommandStatus(command.status)) {
+          terminalizedCommandIds.push(command.id);
+        }
+        return request.id;
       });
-      return this.finishTurn({ turnId: input.turnId, status: input.status });
+      const cancelledApprovalIds = (
+        this.db
+          .query(
+            `SELECT * FROM runtime_approval_request
+             WHERE turn_id = ? AND status = 'pending'
+             ORDER BY created_at ASC`,
+          )
+          .all(input.turnId) as RuntimeApprovalRequestRow[]
+      ).map((approval) => {
+        const command = approval.command_id
+          ? this.mustFindCommandRecord(approval.command_id)
+          : null;
+        this.resolveRuntimeApprovalRequest({
+          requestId: approval.id,
+          status: "cancelled",
+          reviewer: "user",
+          decisionReason: input.reason,
+          terminalCommandStatus: input.terminalStatus,
+        });
+        if (command && !isTerminalCommandStatus(command.status)) {
+          terminalizedCommandIds.push(command.id);
+        }
+        return approval.id;
+      });
+
+      const remainingCommands = this.db
+        .query(
+          `SELECT * FROM command
+             WHERE turn_id = ? AND status NOT IN ('succeeded', 'failed', 'cancelled')
+             ORDER BY started_at ASC, id ASC`,
+        )
+        .all(input.turnId) as CommandRow[];
+      for (const command of remainingCommands) {
+        this.finishCommand({
+          commandId: command.id,
+          status: input.terminalStatus,
+          summary: input.reason,
+          error: input.reason,
+        });
+        terminalizedCommandIds.push(command.id);
+      }
+
+      const activeAssistant =
+        (this.db
+          .query(
+            `SELECT * FROM transcript_message
+             WHERE turn_id = ? AND role = 'assistant' AND status = 'streaming'
+             LIMIT 1`,
+          )
+          .get(input.turnId) as TranscriptMessageRow | null) ?? null;
+      if (activeAssistant) {
+        const cursorRow = this.readRuntimeTranscriptStreamCursorRow(
+          activeAssistant.surface_pi_session_id,
+        );
+        if (cursorRow?.active_assistant_message_id !== activeAssistant.message_id) {
+          throw this.transcriptStateError(
+            "recoverInterruptedTurn",
+            "conflict",
+            `Interrupted transcript assistant ${activeAssistant.message_id} is not the active assistant for its surface.`,
+          );
+        }
+        this.advanceRuntimeTranscriptCursorRow({
+          surfacePiSessionId:
+            activeAssistant.surface_pi_session_id as RuntimeTranscriptStreamCursor["surfacePiSessionId"],
+          streamGenerationId:
+            cursorRow.stream_generation_id as RuntimeTranscriptStreamCursor["streamGenerationId"],
+          expectedCursor: {
+            surfacePiSessionId:
+              cursorRow.surface_pi_session_id as RuntimeTranscriptStreamCursor["surfacePiSessionId"],
+            streamGenerationId:
+              cursorRow.stream_generation_id as RuntimeTranscriptStreamCursor["streamGenerationId"],
+            streamSequence:
+              cursorRow.stream_sequence as RuntimeTranscriptStreamCursor["streamSequence"],
+          },
+          activeAssistantMessageId: null,
+          clearingActiveAssistantMessageId: activeAssistant.message_id,
+        });
+        const timestamp = this.now();
+        this.db
+          .query(
+            `UPDATE transcript_message
+             SET status = ?, stop_reason = ?, error_message = ?, updated_at = ?, finished_at = ?
+             WHERE message_id = ? AND status = 'streaming'`,
+          )
+          .run(
+            input.terminalStatus,
+            input.terminalStatus === "cancelled" ? "aborted" : "error",
+            input.reason,
+            timestamp,
+            timestamp,
+            activeAssistant.message_id,
+          );
+        this.bumpStateRevision();
+      }
+
+      const userTranscript = this.db
+        .query(
+          `SELECT * FROM transcript_message
+           WHERE turn_id = ? AND role = 'user' AND queue_item_id IS NOT NULL
+           LIMIT 1`,
+        )
+        .get(input.turnId) as TranscriptMessageRow | undefined;
+      const queueRow = userTranscript?.queue_item_id
+        ? (this.db
+            .query(`SELECT * FROM surface_message_queue WHERE id = ? LIMIT 1`)
+            .get(userTranscript.queue_item_id) as SurfaceQueuedMessageRow | undefined)
+        : (this.db
+            .query(
+              `SELECT * FROM surface_message_queue
+               WHERE session_id = ? AND surface_pi_session_id = ? AND status = 'dispatching'
+               ORDER BY updated_at ASC, id ASC
+               LIMIT 1`,
+            )
+            .get(initialTurn.sessionId, initialTurn.surfacePiSessionId) as
+            | SurfaceQueuedMessageRow
+            | undefined);
+      let settledQueueItemId: string | null = null;
+      if (queueRow?.status === "dispatching") {
+        if (input.terminalStatus === "cancelled") {
+          this.cancelSurfaceMessage({
+            id: queueRow.id,
+            claimOwnerId: queueRow.claim_owner_id,
+            leaseVersion: queueRow.lease_version,
+            expectedStatuses: ["dispatching"],
+          });
+        } else {
+          this.markSurfaceMessageFailed({
+            id: queueRow.id,
+            failureError: input.reason,
+            claimOwnerId: queueRow.claim_owner_id,
+            leaseVersion: queueRow.lease_version,
+          });
+        }
+        settledQueueItemId = queueRow.id;
+      }
+
+      const sessionWait = this.mapSessionWait(this.mustFindSessionRow(initialTurn.sessionId));
+      const sessionWaitOwnedByTurn = initialTurn.threadId
+        ? sessionWait?.owner.kind === "thread" &&
+          sessionWait.owner.threadId === initialTurn.threadId
+        : sessionWait?.owner.kind === "orchestrator";
+      if (sessionWaitOwnedByTurn) {
+        this.clearSessionWait({ sessionId: initialTurn.sessionId });
+      }
+      const sessionWaitCleared = Boolean(initialSessionWaitOwnedByTurn || sessionWaitOwnedByTurn);
+
+      const turn =
+        initialTurn.status === "running" || initialTurn.status === "waiting"
+          ? this.finishTurn({ turnId: input.turnId, status: input.terminalStatus })
+          : initialTurn;
+      const changed =
+        turn !== initialTurn ||
+        activeAssistant !== null ||
+        terminalizedCommandIds.length > 0 ||
+        settledQueueItemId !== null ||
+        cancelledRequestInputIds.length > 0 ||
+        cancelledApprovalIds.length > 0 ||
+        sessionWaitCleared;
+      if (changed) {
+        this.recordLifecycleEvent({
+          sessionId: turn.sessionId,
+          kind: "surface.turn_recovery.interrupted",
+          subjectKind: "turn",
+          subjectId: turn.id,
+          data: {
+            surfacePiSessionId: turn.surfacePiSessionId,
+            terminalStatus: input.terminalStatus,
+            reason: input.reason,
+            terminalizedAssistantMessageId: activeAssistant?.message_id ?? null,
+            terminalizedCommandIds,
+            settledQueueItemId,
+          },
+        });
+      }
+      return {
+        changed,
+        turn,
+        terminalizedAssistantMessageId: activeAssistant?.message_id ?? null,
+        terminalizedCommandIds,
+        settledQueueItemId,
+        cancelledRequestInputIds,
+        cancelledApprovalIds,
+        sessionWaitCleared,
+      };
     });
     return recover();
+  }
+
+  settlePromptTurn(input: {
+    turnId: string;
+    queueItemId: string;
+    status: "completed" | "failed" | "cancelled";
+    assistantMessageId?: string;
+    assistantText?: string;
+    terminalCommandIds: readonly string[];
+    terminalCommandSummary: string;
+    terminalCommandError: string;
+    claimOwnerId?: string | null;
+    leaseVersion?: number | null;
+  }): StructuredPromptTurnSettlementResult {
+    const settle = this.db.transaction(() => {
+      const initialTurn = this.mustFindTurnRecord(input.turnId);
+      const initialQueue = this.mustFindSurfaceQueuedMessageRecord(input.queueItemId);
+      if (
+        initialQueue.sessionId !== initialTurn.sessionId ||
+        initialQueue.surfacePiSessionId !== initialTurn.surfacePiSessionId
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.settlePromptTurn",
+          reason: "conflict",
+          message: `Prompt queue item ${input.queueItemId} does not belong to turn ${input.turnId}.`,
+        });
+      }
+
+      const targetQueueStatus =
+        input.status === "completed"
+          ? ("delivered" as const)
+          : input.status === "cancelled"
+            ? ("cancelled" as const)
+            : ("failed" as const);
+      if (
+        initialTurn.status !== "running" &&
+        initialTurn.status !== "waiting" &&
+        initialTurn.status !== input.status
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.settlePromptTurn",
+          reason: "conflict",
+          message: `Turn ${input.turnId} is already terminal with ${initialTurn.status}.`,
+        });
+      }
+      if (initialQueue.status !== "dispatching" && initialQueue.status !== targetQueueStatus) {
+        throw new StateContractError({
+          operation: "structured-session.settlePromptTurn",
+          reason: "claim-conflict",
+          message: `Prompt queue item ${input.queueItemId} is ${initialQueue.status}, not dispatching or ${targetQueueStatus}.`,
+        });
+      }
+      if (
+        initialTurn.status === input.status &&
+        ((input.assistantMessageId !== undefined &&
+          initialTurn.assistantMessageId !== input.assistantMessageId) ||
+          (input.assistantText !== undefined && initialTurn.assistantText !== input.assistantText))
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.settlePromptTurn",
+          reason: "conflict",
+          message: `Turn ${input.turnId} is already terminal with different assistant facts.`,
+        });
+      }
+
+      const terminalizedCommandIds: string[] = [];
+      for (const commandId of new Set(input.terminalCommandIds)) {
+        const command = this.mustFindCommandRow(commandId);
+        if (command.turn_id !== input.turnId) {
+          throw new StateContractError({
+            operation: "structured-session.settlePromptTurn",
+            reason: "conflict",
+            message: `Command ${commandId} does not belong to turn ${input.turnId}.`,
+          });
+        }
+        const finished = this.finishCommandMutation({
+          commandId,
+          status: input.status === "cancelled" ? "cancelled" : "failed",
+          summary: input.terminalCommandSummary,
+          error: input.terminalCommandError,
+        });
+        if (finished.changed) terminalizedCommandIds.push(commandId);
+      }
+
+      let queuedMessage = initialQueue;
+      if (initialQueue.status !== targetQueueStatus) {
+        queuedMessage =
+          input.status === "completed"
+            ? this.markSurfaceMessageDelivered({
+                id: input.queueItemId,
+                ...(input.claimOwnerId !== undefined ? { claimOwnerId: input.claimOwnerId } : {}),
+                ...(input.leaseVersion !== undefined ? { leaseVersion: input.leaseVersion } : {}),
+              })
+            : input.status === "cancelled"
+              ? this.cancelSurfaceMessage({
+                  id: input.queueItemId,
+                  ...(input.claimOwnerId !== undefined ? { claimOwnerId: input.claimOwnerId } : {}),
+                  ...(input.leaseVersion !== undefined ? { leaseVersion: input.leaseVersion } : {}),
+                  expectedStatuses: ["dispatching"],
+                })
+              : this.markSurfaceMessageFailed({
+                  id: input.queueItemId,
+                  failureError: input.terminalCommandError,
+                  ...(input.claimOwnerId !== undefined ? { claimOwnerId: input.claimOwnerId } : {}),
+                  ...(input.leaseVersion !== undefined ? { leaseVersion: input.leaseVersion } : {}),
+                });
+      }
+
+      const turn =
+        initialTurn.status === "running" || initialTurn.status === "waiting"
+          ? this.finishTurn({
+              turnId: input.turnId,
+              status: input.status,
+              ...(input.assistantMessageId
+                ? { assistantMessageId: input.assistantMessageId as MessageId }
+                : {}),
+              ...(input.assistantText !== undefined ? { assistantText: input.assistantText } : {}),
+            })
+          : initialTurn;
+      return {
+        changed:
+          terminalizedCommandIds.length > 0 ||
+          queuedMessage !== initialQueue ||
+          turn !== initialTurn,
+        turn,
+        queuedMessage,
+        terminalizedCommandIds,
+      };
+    });
+    return settle();
   }
 
   createThread(input: {
@@ -5958,6 +7476,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     kind: StructuredWaitKind;
     reason: string;
     resumeWhen: string;
+    at?: string;
   }): StructuredSessionWaitState {
     const session = this.mustFindSessionRow(input.sessionId);
     const owner = input.owner;
@@ -5977,7 +7496,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       throw new Error("Cannot set orchestrator session wait while runnable thread work remains.");
     }
 
-    const timestamp = this.now();
+    const timestamp = input.at ?? this.now();
     this.db
       .query(
         `UPDATE session
@@ -6015,13 +7534,13 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return this.mustFindSessionWait(input.sessionId);
   }
 
-  clearSessionWait(input: { sessionId: string }): void {
+  clearSessionWait(input: { sessionId: string; at?: string }): void {
     const existing = this.mustFindSessionRow(input.sessionId);
     if (!this.mapSessionWait(existing)) {
       return;
     }
 
-    const timestamp = this.now();
+    const timestamp = input.at ?? this.now();
     this.db
       .query(
         `UPDATE session
@@ -6392,24 +7911,18 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return row ? this.mapCommand(row) : null;
   }
 
-  createOrReuseStreamingCommand(input: {
-    toolCallId: string;
-    turnId?: string | null;
-    workflowTaskAttemptId?: string | null;
-    surfacePiSessionId?: string;
-    threadId?: string | null;
-    workflowRunId?: string | null;
-    parentCommandId?: string | null;
-    toolName: string;
-    executor: StructuredCommandExecutor;
-    visibility: StructuredCommandVisibility;
-    title: string;
-    summary: string;
-    arguments?: unknown;
-    facts?: Record<string, unknown> | null;
-  }): StructuredCommandRecord {
+  createOrReuseStreamingCommand(input: StructuredStreamingCommandInput): StructuredCommandRecord {
+    return this.createOrReuseStreamingCommandMutation(input).record;
+  }
+
+  createOrReuseStreamingCommandMutation(
+    input: StructuredStreamingCommandInput,
+  ): StructuredCommandMutationResult {
     const existing = this.findCommandByToolCallId(input.toolCallId);
     if (existing) {
+      if (TERMINAL_COMMAND_STATUSES.has(existing.status)) {
+        return { record: existing, changed: false };
+      }
       if (input.arguments !== undefined) {
         this.updateCommandArguments(existing.id, input.arguments);
       }
@@ -6426,27 +7939,50 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           this.now(),
           existing.id,
         );
-      return this.mustFindCommandRecord(existing.id);
+      return { record: this.mustFindCommandRecord(existing.id), changed: true };
     }
-    return this.createCommand({
-      ...input,
-      facts: { ...input.facts, toolCallId: input.toolCallId },
-    });
+    return {
+      record: this.createCommand({
+        ...input,
+        facts: { ...input.facts, toolCallId: input.toolCallId },
+      }),
+      changed: true,
+    };
   }
 
   updateCommandArguments(commandId: string, args: unknown): StructuredCommandRecord {
+    return this.updateCommandArgumentsMutation(commandId, args).record;
+  }
+
+  updateCommandArgumentsMutation(
+    commandId: string,
+    args: unknown,
+  ): StructuredCommandMutationResult {
     const existing = this.mustFindCommandRow(commandId);
+    if (TERMINAL_COMMAND_STATUSES.has(existing.status as StructuredCommandStatus)) {
+      return { record: this.mustFindCommandRecord(commandId), changed: false };
+    }
     const timestamp = this.now();
     this.db
       .query(`UPDATE command SET arguments_json = ?, updated_at = ? WHERE id = ?`)
       .run(args === undefined ? null : toJson(args), timestamp, commandId);
     void existing;
-    return this.mustFindCommandRecord(commandId);
+    return { record: this.mustFindCommandRecord(commandId), changed: true };
   }
 
   startCommand(commandId: string): StructuredCommandRecord {
+    return this.startCommandMutation(commandId).record;
+  }
+
+  startCommandMutation(commandId: string, at?: string): StructuredCommandMutationResult {
     const existing = this.mustFindCommandRow(commandId);
-    const timestamp = this.now();
+    if (
+      existing.status === "running" ||
+      TERMINAL_COMMAND_STATUSES.has(existing.status as StructuredCommandStatus)
+    ) {
+      return { record: this.mustFindCommandRecord(commandId), changed: false };
+    }
+    const timestamp = at ?? this.now();
     this.db
       .query(`UPDATE command SET status = ?, updated_at = ? WHERE id = ?`)
       .run("running", timestamp, commandId);
@@ -6457,22 +7993,19 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       subjectId: commandId,
       at: timestamp,
     });
-    return this.mustFindCommandRecord(commandId);
+    return { record: this.mustFindCommandRecord(commandId), changed: true };
   }
 
-  finishCommand(input: {
-    commandId: string;
-    status: Exclude<StructuredCommandStatus, "requested" | "running">;
-    visibility?: StructuredCommandVisibility;
-    summary?: string;
-    facts?: Record<string, unknown> | null;
-    error?: string | null;
-  }): StructuredCommandRecord {
+  finishCommand(input: StructuredFinishCommandInput): StructuredCommandRecord {
+    return this.finishCommandMutation(input).record;
+  }
+
+  finishCommandMutation(input: StructuredFinishCommandInput): StructuredCommandMutationResult {
     const existing = this.mustFindCommandRow(input.commandId);
     if (TERMINAL_COMMAND_STATUSES.has(existing.status as StructuredCommandStatus)) {
-      return this.mustFindCommandRecord(input.commandId);
+      return { record: this.mustFindCommandRecord(input.commandId), changed: false };
     }
-    const timestamp = this.now();
+    const timestamp = input.at ?? this.now();
     const visibility = input.visibility ?? existing.visibility;
     const factsJson = input.facts === undefined ? existing.facts_json : toJson(input.facts ?? null);
     const finishedAt = input.status === "waiting" ? null : timestamp;
@@ -6508,7 +8041,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       at: timestamp,
     });
 
-    return this.mustFindCommandRecord(input.commandId);
+    return { record: this.mustFindCommandRecord(input.commandId), changed: true };
   }
 
   createEpisode(input: {
@@ -7994,12 +9527,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       }>;
     }>;
   }): StructuredRequestUserInputRequestRecord {
-    this.mustFindSessionRow(input.sessionId);
-    this.mustFindTurnRow(input.turnId);
-    this.mustFindCommandRow(input.commandId);
-    if (input.threadId) {
-      this.mustFindThreadRow(input.threadId);
-    }
     if (input.questions.length < 1 || input.questions.length > 3) {
       throw new Error("Request user input requires one to three questions.");
     }
@@ -8009,6 +9536,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const timeout =
       input.timeout && input.variant === "blocking"
         ? {
+            timerVersion: 1,
             enabled: input.timeout.enabled,
             durationMs: input.timeout.durationMs,
             startedAt: timestamp,
@@ -8020,6 +9548,38 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           }
         : null;
     const insertRequest = this.db.transaction(() => {
+      this.mustFindSessionRow(input.sessionId);
+      const turn = this.mustFindTurnRecord(input.turnId);
+      const command = this.mustFindCommandRecord(input.commandId);
+      const thread = input.threadId ? this.mustFindThreadRecord(input.threadId) : null;
+      if (
+        turn.sessionId !== input.sessionId ||
+        turn.surfacePiSessionId !== input.surfacePiSessionId ||
+        turn.threadId !== (input.threadId ?? null) ||
+        command.sessionId !== input.sessionId ||
+        command.surfacePiSessionId !== input.surfacePiSessionId ||
+        command.threadId !== (input.threadId ?? null) ||
+        command.turnId !== input.turnId ||
+        (thread &&
+          (thread.sessionId !== input.sessionId ||
+            thread.surfacePiSessionId !== input.surfacePiSessionId))
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.createRequestUserInputRequest",
+          reason: "conflict",
+          message: "Request user input lineage does not match its target surface.",
+        });
+      }
+      if (
+        (turn.status !== "running" && turn.status !== "waiting") ||
+        (command.status !== "requested" && command.status !== "running")
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.createRequestUserInputRequest",
+          reason: "conflict",
+          message: "Request user input requires an active turn and command.",
+        });
+      }
       this.db
         .query(
           `INSERT INTO request_user_input_request (
@@ -8117,6 +9677,31 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           questionCount: input.questions.length,
         },
       });
+      if (input.variant === "blocking") {
+        this.finishCommandMutation({
+          commandId: input.commandId,
+          status: "waiting",
+          summary: `Waiting for user answer: ${input.questions.map((question) => question.title).join("; ")}`,
+          facts: {
+            questionCount: input.questions.length,
+            answeredBy: "pending",
+          },
+          at: timestamp,
+        });
+        this.setSessionWait({
+          sessionId: input.sessionId,
+          owner: input.threadId
+            ? { kind: "thread", threadId: input.threadId }
+            : { kind: "orchestrator" },
+          kind: "user",
+          reason:
+            input.questions.length === 1
+              ? input.questions[0]!.title
+              : `Waiting for ${input.questions.length} clarification answers.`,
+          resumeWhen: "Resume when the user answers the clarification request.",
+          at: timestamp,
+        });
+      }
     });
     insertRequest();
     return this.mustFindRequestUserInputRequestRecord(requestId);
@@ -8139,19 +9724,47 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     typescriptCode?: string | null;
     context?: StructuredRuntimeApprovalRequestRecord["context"];
   }): StructuredRuntimeApprovalRequestRecord {
-    this.mustFindSessionRow(input.sessionId);
-    if (input.turnId) {
-      this.mustFindTurnRow(input.turnId);
-    }
-    if (input.commandId) {
-      this.mustFindCommandRow(input.commandId);
-    }
-    if (input.threadId) {
-      this.mustFindThreadRow(input.threadId);
-    }
     const requestId = this.createId("apr");
     const timestamp = this.now();
     const insert = this.db.transaction(() => {
+      this.mustFindSessionRow(input.sessionId);
+      const turn = input.turnId ? this.mustFindTurnRecord(input.turnId) : null;
+      const command = input.commandId ? this.mustFindCommandRecord(input.commandId) : null;
+      const thread = input.threadId ? this.mustFindThreadRecord(input.threadId) : null;
+      if (
+        (turn &&
+          (turn.sessionId !== input.sessionId ||
+            turn.surfacePiSessionId !== input.surfacePiSessionId ||
+            turn.threadId !== (input.threadId ?? null))) ||
+        (command &&
+          (command.sessionId !== input.sessionId ||
+            command.surfacePiSessionId !== input.surfacePiSessionId ||
+            command.threadId !== (input.threadId ?? null) ||
+            command.turnId !== (input.turnId ?? null))) ||
+        (thread &&
+          (thread.sessionId !== input.sessionId ||
+            thread.surfacePiSessionId !== input.surfacePiSessionId))
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.createRuntimeApprovalRequest",
+          reason: "conflict",
+          message: "Runtime approval request lineage does not match its target surface.",
+        });
+      }
+      if (command && command.status !== "requested" && command.status !== "running") {
+        throw new StateContractError({
+          operation: "structured-session.createRuntimeApprovalRequest",
+          reason: "conflict",
+          message: `Runtime approval command ${command.id} is already ${command.status}.`,
+        });
+      }
+      if (input.approvalMode === "user" && !command) {
+        throw new StateContractError({
+          operation: "structured-session.createRuntimeApprovalRequest",
+          reason: "invalid-input",
+          message: "User approval requests require an active command.",
+        });
+      }
       this.db
         .query(
           `INSERT INTO runtime_approval_request (
@@ -8197,6 +9810,35 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           toJson(input.context ?? null),
           timestamp,
         );
+      if (input.approvalMode === "user" && command) {
+        const summary =
+          input.toolName === "exec_command" && input.command
+            ? `Run command: ${input.command}`
+            : input.toolName === "apply_patch"
+              ? "Apply patch"
+              : "Run TypeScript";
+        this.finishCommandMutation({
+          commandId: command.id,
+          status: "waiting",
+          summary: `Waiting for approval: ${summary}`,
+          facts: {
+            ...command.facts,
+            approval: "pending",
+            approvalRequestId: requestId,
+          },
+          at: timestamp,
+        });
+        this.setSessionWait({
+          sessionId: input.sessionId,
+          owner: input.threadId
+            ? { kind: "thread", threadId: input.threadId }
+            : { kind: "orchestrator" },
+          kind: "approval",
+          reason: summary,
+          resumeWhen: "Resume when the user approves or denies the runtime action.",
+          at: timestamp,
+        });
+      }
       this.recordEvent({
         sessionId: input.sessionId,
         kind: "runtimeApproval.created",
@@ -8221,35 +9863,102 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     status: Extract<StructuredRuntimeApprovalStatus, "approved" | "denied" | "cancelled">;
     reviewer: "auto-review" | "user";
     decisionReason?: string | null;
-  }): StructuredRuntimeApprovalRequestRecord {
-    const existing = this.getRuntimeApprovalRequest(input.requestId);
-    if (existing.status !== "pending") {
-      throw new Error("Runtime approval request is no longer pending.");
-    }
-    const timestamp = this.now();
-    this.db
-      .query(
-        `UPDATE runtime_approval_request
-         SET status = ?,
-             decision_reason = ?,
-             reviewer = ?,
-             completed_at = ?
-         WHERE id = ? AND status = 'pending'`,
-      )
-      .run(input.status, input.decisionReason ?? null, input.reviewer, timestamp, input.requestId);
-    this.recordEvent({
-      sessionId: existing.sessionId,
-      kind: "runtimeApproval.resolved",
-      subjectKind: "command",
-      subjectId: existing.commandId ?? existing.requestId,
-      at: timestamp,
-      data: {
-        requestId: existing.requestId,
-        status: input.status,
-        reviewer: input.reviewer,
-      },
+    terminalCommandStatus?: "failed" | "cancelled";
+  }): StructuredRuntimeApprovalResolutionResult {
+    const resolveApproval = this.db.transaction((): StructuredRuntimeApprovalResolutionResult => {
+      const existing = this.getRuntimeApprovalRequest(input.requestId);
+      if (existing.status !== "pending") {
+        const sameDecision =
+          existing.status === input.status &&
+          existing.reviewer === input.reviewer &&
+          existing.decisionReason === (input.decisionReason ?? null);
+        if (sameDecision) {
+          return { record: existing, changed: false };
+        }
+        throw new StateContractError({
+          operation: "structured-session.resolveRuntimeApprovalRequest",
+          reason: "conflict",
+          message: `Runtime approval request ${input.requestId} already resolved with different facts.`,
+        });
+      }
+      const timestamp = this.now();
+      this.db
+        .query(
+          `UPDATE runtime_approval_request
+           SET status = ?,
+               decision_reason = ?,
+               reviewer = ?,
+               completed_at = ?
+           WHERE id = ? AND status = 'pending'`,
+        )
+        .run(
+          input.status,
+          input.decisionReason ?? null,
+          input.reviewer,
+          timestamp,
+          input.requestId,
+        );
+
+      if (existing.commandId) {
+        if (input.status === "approved") {
+          this.startCommandMutation(existing.commandId, timestamp);
+        } else {
+          const command = this.mustFindCommandRecord(existing.commandId);
+          this.finishCommandMutation({
+            commandId: existing.commandId,
+            status:
+              input.status === "cancelled"
+                ? (input.terminalCommandStatus ?? "cancelled")
+                : "cancelled",
+            summary: `Approval ${input.status}: ${existing.toolName}`,
+            facts: {
+              ...command.facts,
+              approval: input.status,
+              approvalRequestId: existing.requestId,
+            },
+            error: input.decisionReason ?? `Approval ${input.status}.`,
+            at: timestamp,
+          });
+        }
+
+        const wait = this.mapSessionWait(this.mustFindSessionRow(existing.sessionId));
+        const waitOwnedByApproval =
+          wait?.kind === "approval" &&
+          (existing.threadId
+            ? wait.owner.kind === "thread" && wait.owner.threadId === existing.threadId
+            : wait.owner.kind === "orchestrator");
+        const otherPendingApproval = this.db
+          .query(
+            `SELECT id FROM runtime_approval_request
+             WHERE session_id = ?
+               AND status = 'pending'
+               AND thread_id IS ?
+             LIMIT 1`,
+          )
+          .get(existing.sessionId, existing.threadId) as { id: string } | null;
+        if (waitOwnedByApproval && !otherPendingApproval) {
+          this.clearSessionWait({ sessionId: existing.sessionId, at: timestamp });
+        }
+      }
+
+      this.recordEvent({
+        sessionId: existing.sessionId,
+        kind: "runtimeApproval.resolved",
+        subjectKind: "command",
+        subjectId: existing.commandId ?? existing.requestId,
+        at: timestamp,
+        data: {
+          requestId: existing.requestId,
+          status: input.status,
+          reviewer: input.reviewer,
+        },
+      });
+      return {
+        record: this.getRuntimeApprovalRequest(input.requestId),
+        changed: true,
+      };
     });
-    return this.getRuntimeApprovalRequest(input.requestId);
+    return resolveApproval();
   }
 
   getRuntimeApprovalRequest(requestId: string): StructuredRuntimeApprovalRequestRecord {
@@ -8274,21 +9983,46 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     questionId: string;
     answer: { kind: "option"; optionId: string } | { kind: "custom"; text: string };
     delivery: StructuredRequestUserInputDelivery;
+    clientSubmission?: RuntimeClientSubmissionInput;
   }): {
     request: StructuredRequestUserInputRequestRecord;
     answer: StructuredRequestUserInputAnswerRecord;
     queuedMessage: StructuredSurfaceQueuedMessageRecord | null;
+    duplicate: boolean;
   } {
     const request = this.mustFindRequestUserInputRequestRecord(input.requestId);
     if (request.surfacePiSessionId !== input.surfacePiSessionId) {
       throw new Error("Request user input answer does not belong to the target surface.");
     }
-    if (request.status !== "open") {
-      throw new Error("Request user input request is no longer answerable.");
-    }
     const question = request.questions.find((entry) => entry.questionId === input.questionId);
     if (!question || question.requestId !== request.requestId) {
       throw new Error("Request user input question does not belong to the request.");
+    }
+    const clientSubmission = normalizeRuntimeClientSubmissionMetadata(input.clientSubmission);
+    const idempotencyKey =
+      clientSubmission?.submissionId ??
+      clientSubmission?.clientRequestId ??
+      clientSubmission?.correlationId ??
+      null;
+    if (idempotencyKey) {
+      const duplicate = this.findRequestUserInputAnswerByIdempotencyKey({
+        requestId: request.requestId,
+        questionId: question.questionId,
+        idempotencyKey,
+      });
+      if (duplicate) {
+        return {
+          request,
+          answer: this.mapRequestUserInputAnswer(duplicate),
+          queuedMessage: duplicate.queued_item_id
+            ? this.mustFindSurfaceQueuedMessageRecord(duplicate.queued_item_id)
+            : null,
+          duplicate: true,
+        };
+      }
+    }
+    if (request.status !== "open") {
+      throw new Error("Request user input request is no longer answerable.");
     }
     if (question.status !== "open") {
       throw new Error("Request user input question is no longer answerable.");
@@ -8319,6 +10053,44 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     } satisfies RequestUserInputAnswerQueuePayload;
     const timestamp = this.now();
     const result = this.db.transaction(() => {
+      const claimedQuestion = this.db
+        .query(
+          `UPDATE request_user_input_question
+           SET status = 'answered'
+           WHERE id = ?
+             AND request_id = ?
+             AND status = 'open'
+             AND EXISTS (
+               SELECT 1 FROM request_user_input_request AS request
+               WHERE request.id = ?
+                 AND request.surface_pi_session_id = ?
+                 AND request.status = 'open'
+             )`,
+        )
+        .run(question.questionId, request.requestId, request.requestId, input.surfacePiSessionId);
+      if (claimedQuestion.changes !== 1) {
+        const duplicate = idempotencyKey
+          ? this.findRequestUserInputAnswerByIdempotencyKey({
+              requestId: request.requestId,
+              questionId: question.questionId,
+              idempotencyKey,
+            })
+          : null;
+        if (duplicate) {
+          return {
+            answerId: duplicate.id,
+            queuedMessage: duplicate.queued_item_id
+              ? this.mustFindSurfaceQueuedMessageRecord(duplicate.queued_item_id)
+              : null,
+            duplicate: true,
+          };
+        }
+        throw new StateContractError({
+          operation: "structured-session.answerRequestUserInput",
+          reason: "stale-state",
+          message: `Request user input ${request.requestId} question ${question.questionId} is no longer open.`,
+        });
+      }
       this.db
         .query(
           `INSERT INTO request_user_input_answer (
@@ -8329,8 +10101,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
              answered_by,
              delivery,
              queued_item_id,
+             idempotency_key,
              created_at
-           ) VALUES (?, ?, ?, ?, 'user', ?, NULL, ?)`,
+           ) VALUES (?, ?, ?, ?, 'user', ?, NULL, ?, ?)`,
         )
         .run(
           answerId,
@@ -8338,16 +10111,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           question.questionId,
           toJson(userAnswer),
           input.delivery,
+          idempotencyKey,
           timestamp,
         );
-      this.db
-        .query(
-          `UPDATE request_user_input_question
-           SET status = 'answered'
-           WHERE id = ?`,
-        )
-        .run(question.questionId);
-
       const remainingOpen = this.db
         .query(
           `SELECT COUNT(*) AS count
@@ -8356,18 +10122,31 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         )
         .get(request.requestId) as { count: number };
       if (remainingOpen.count === 0) {
-        this.db
+        const completedRequest = this.db
           .query(
             `UPDATE request_user_input_request
              SET status = 'completed',
                  completed_at = ?
-             WHERE id = ?`,
+             WHERE id = ?
+               AND surface_pi_session_id = ?
+               AND command_id = ?
+               AND status = 'open'`,
           )
-          .run(timestamp, request.requestId);
+          .run(timestamp, request.requestId, request.surfacePiSessionId, request.commandId);
+        if (completedRequest.changes !== 1) {
+          throw new StateContractError({
+            operation: "structured-session.answerRequestUserInput",
+            reason: "stale-state",
+            message: `Request user input ${request.requestId} terminal state changed while answering.`,
+          });
+        }
       }
 
       if (request.variant === "blocking") {
-        return null;
+        if (remainingOpen.count === 0) {
+          this.finalizeBlockingRequestUserInputFacts(request.requestId, undefined, timestamp);
+        }
+        return { answerId, queuedMessage: null, duplicate: false };
       }
 
       const queuedMessage = this.enqueueSurfaceMessage({
@@ -8375,7 +10154,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         surfacePiSessionId: request.surfacePiSessionId,
         threadId: request.threadId,
         kind: "request_user_input_answer",
-        idempotencyKey: `request_user_input_answer:${answerId}`,
+        idempotencyKey: idempotencyKey
+          ? `request_user_input_answer:${request.requestId}:${question.questionId}:${idempotencyKey}`
+          : `request_user_input_answer:${answerId}`,
         messageJson: JSON.stringify(payload),
         payloadJson: JSON.stringify(queuePayload),
         position: "back",
@@ -8387,35 +10168,88 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            WHERE id = ?`,
         )
         .run(queuedMessage.id, answerId);
-      return queuedMessage;
+      return {
+        answerId,
+        queuedMessage:
+          input.delivery === "enqueue-and-run"
+            ? this.markSurfaceMessageSteering({ id: queuedMessage.id })
+            : queuedMessage,
+        duplicate: false,
+      };
     })();
-    const deliveredQueuedMessage =
-      result && input.delivery === "enqueue-and-run"
-        ? this.markSurfaceMessageSteering({ id: result.id })
-        : result;
 
     return {
       request: this.mustFindRequestUserInputRequestRecord(request.requestId),
-      answer: this.mustFindRequestUserInputAnswerRecord(answerId),
-      queuedMessage: deliveredQueuedMessage,
+      answer: this.mustFindRequestUserInputAnswerRecord(result.answerId),
+      queuedMessage: result.queuedMessage,
+      duplicate: result.duplicate,
     };
   }
 
   defaultOpenRequestUserInputQuestions(input: {
     requestId: string;
     answeredBy: "timeout_default";
-  }): StructuredRequestUserInputRequestRecord {
+    expectedTimerVersion: number;
+    expectedExpiresAt: string;
+  }): StructuredRequestUserInputMutationResult {
     const request = this.mustFindRequestUserInputRequestRecord(input.requestId);
     if (request.status !== "open") {
-      return request;
+      throw new StateContractError({
+        operation: "structured-session.defaultOpenRequestUserInputQuestions",
+        reason: "stale-state",
+        message: `Request user input ${input.requestId} is no longer open.`,
+      });
+    }
+    if (
+      request.timeout?.enabled !== true ||
+      request.timeout.pausedAt !== null ||
+      request.timeout.timerVersion !== input.expectedTimerVersion ||
+      request.timeout.expiresAt !== input.expectedExpiresAt
+    ) {
+      throw new StateContractError({
+        operation: "structured-session.defaultOpenRequestUserInputQuestions",
+        reason: "stale-state",
+        message: `Request user input ${input.requestId} timeout generation is stale.`,
+      });
     }
     const openQuestions = request.questions.filter((question) => question.status === "open");
     if (openQuestions.length === 0) {
-      return request;
+      throw new StateContractError({
+        operation: "structured-session.defaultOpenRequestUserInputQuestions",
+        reason: "stale-state",
+        message: `Request user input ${input.requestId} has no open questions.`,
+      });
     }
     const timestamp = this.now();
     const defaultOpenQuestions = this.db.transaction(() => {
-      for (const question of openQuestions) {
+      const expiredRequest = this.db
+        .query(
+          `UPDATE request_user_input_request
+           SET status = 'expired',
+               completed_at = ?
+           WHERE id = ?
+             AND command_id = ?
+             AND status = 'open'
+             AND timeout_json = ?
+             AND EXISTS (
+               SELECT 1 FROM request_user_input_question AS question
+               WHERE question.request_id = request_user_input_request.id
+                 AND question.status = 'open'
+             )`,
+        )
+        .run(timestamp, request.requestId, request.commandId, toJson(request.timeout));
+      if (expiredRequest.changes !== 1) {
+        throw new StateContractError({
+          operation: "structured-session.defaultOpenRequestUserInputQuestions",
+          reason: "stale-state",
+          message: `Request user input ${input.requestId} timeout generation changed before expiry.`,
+        });
+      }
+      const claimedRequest = this.mustFindRequestUserInputRequestRecord(request.requestId);
+      const claimedQuestions = claimedRequest.questions.filter(
+        (question) => question.status === "open",
+      );
+      for (const question of claimedQuestions) {
         this.db
           .query(
             `INSERT INTO request_user_input_answer (
@@ -8437,37 +10271,57 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
             input.answeredBy,
             timestamp,
           );
-        this.db
+        const defaultedQuestion = this.db
           .query(
             `UPDATE request_user_input_question
              SET status = 'defaulted'
-             WHERE id = ?`,
+             WHERE id = ? AND request_id = ? AND status = 'open'`,
           )
-          .run(question.questionId);
+          .run(question.questionId, request.requestId);
+        if (defaultedQuestion.changes !== 1) {
+          throw new StateContractError({
+            operation: "structured-session.defaultOpenRequestUserInputQuestions",
+            reason: "stale-state",
+            message: `Request user input ${request.requestId} question ${question.questionId} changed during expiry.`,
+          });
+        }
       }
-
-      this.db
-        .query(
-          `UPDATE request_user_input_request
-           SET status = 'expired',
-               completed_at = ?
-           WHERE id = ?`,
-        )
-        .run(timestamp, request.requestId);
+      this.finalizeBlockingRequestUserInputFacts(request.requestId, undefined, timestamp);
     });
     defaultOpenQuestions();
-    return this.mustFindRequestUserInputRequestRecord(request.requestId);
+    return {
+      record: this.mustFindRequestUserInputRequestRecord(request.requestId),
+      changed: true,
+    };
   }
 
   cancelRequestUserInputRequest(input: {
     requestId: string;
-  }): StructuredRequestUserInputRequestRecord {
+    terminalCommandStatus?: "failed" | "cancelled";
+    reason?: string;
+  }): StructuredRequestUserInputMutationResult {
     const request = this.mustFindRequestUserInputRequestRecord(input.requestId);
     if (request.status !== "open") {
-      return request;
+      return { record: request, changed: false };
     }
     const timestamp = this.now();
     const cancelRequest = this.db.transaction(() => {
+      const cancelledRequest = this.db
+        .query(
+          `UPDATE request_user_input_request
+           SET status = 'cancelled',
+               completed_at = ?
+           WHERE id = ?
+             AND command_id = ?
+             AND status = 'open'`,
+        )
+        .run(timestamp, request.requestId, request.commandId);
+      if (cancelledRequest.changes !== 1) {
+        return {
+          record: this.mustFindRequestUserInputRequestRecord(request.requestId),
+          changed: false,
+        };
+      }
       this.db
         .query(
           `UPDATE request_user_input_question
@@ -8475,14 +10329,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            WHERE request_id = ? AND status = 'open'`,
         )
         .run(request.requestId);
-      this.db
-        .query(
-          `UPDATE request_user_input_request
-           SET status = 'cancelled',
-               completed_at = ?
-           WHERE id = ?`,
-        )
-        .run(timestamp, request.requestId);
       this.recordEvent({
         sessionId: request.sessionId,
         kind: "requestUserInput.cancelled",
@@ -8494,16 +10340,89 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           surfacePiSessionId: request.surfacePiSessionId,
         },
       });
+      this.finalizeBlockingRequestUserInputFacts(
+        request.requestId,
+        input.reason ?? "Request user input cancelled.",
+        timestamp,
+        input.terminalCommandStatus,
+      );
+      return {
+        record: this.mustFindRequestUserInputRequestRecord(request.requestId),
+        changed: true,
+      };
     });
-    cancelRequest();
-    return this.mustFindRequestUserInputRequestRecord(request.requestId);
+    return cancelRequest();
+  }
+
+  private finalizeBlockingRequestUserInputFacts(
+    requestId: string,
+    reason?: string,
+    at?: string,
+    cancelledCommandStatus: "failed" | "cancelled" = "cancelled",
+  ): void {
+    const request = this.mustFindRequestUserInputRequestRecord(requestId);
+    if (request.variant !== "blocking" || request.status === "open") {
+      return;
+    }
+    if (request.status === "cancelled") {
+      this.finishCommandMutation({
+        commandId: request.commandId,
+        status: cancelledCommandStatus,
+        summary: "Request user input cancelled.",
+        error: reason ?? "Request user input cancelled.",
+        ...(at ? { at } : {}),
+      });
+    } else {
+      const answerSources = request.questions.map(
+        (question) =>
+          request.answers
+            .filter((answer) => answer.questionId === question.questionId)
+            .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
+            .at(-1)?.answeredBy ?? "default",
+      );
+      const answeredBy = new Set(answerSources);
+      this.finishCommandMutation({
+        commandId: request.commandId,
+        status: "succeeded",
+        summary:
+          request.questions.length === 1
+            ? `Answered ${request.questions[0]!.title}.`
+            : `Answered ${request.questions.length} clarification questions.`,
+        facts: {
+          questionCount: request.questions.length,
+          answeredBy: answeredBy.size === 1 ? (answerSources[0] ?? "default") : "mixed",
+          requestInputId: request.requestId,
+        },
+        ...(at ? { at } : {}),
+      });
+    }
+
+    const wait = this.mapSessionWait(this.mustFindSessionRow(request.sessionId));
+    const waitOwnedByRequest =
+      wait?.kind === "user" &&
+      (request.threadId
+        ? wait.owner.kind === "thread" && wait.owner.threadId === request.threadId
+        : wait.owner.kind === "orchestrator");
+    const otherOpenBlockingRequest = this.db
+      .query(
+        `SELECT id FROM request_user_input_request
+         WHERE session_id = ?
+           AND variant = 'blocking'
+           AND status = 'open'
+           AND thread_id IS ?
+         LIMIT 1`,
+      )
+      .get(request.sessionId, request.threadId) as { id: string } | null;
+    if (waitOwnedByRequest && !otherOpenBlockingRequest) {
+      this.clearSessionWait({ sessionId: request.sessionId, ...(at ? { at } : {}) });
+    }
   }
 
   setRequestUserInputTimerPaused(input: {
     surfacePiSessionId: string;
     requestId: string;
     paused: boolean;
-  }): StructuredRequestUserInputRequestRecord {
+  }): StructuredRequestUserInputMutationResult {
     const request = this.mustFindRequestUserInputRequestRecord(input.requestId);
     if (request.surfacePiSessionId !== input.surfacePiSessionId) {
       throw new StateContractError({
@@ -8519,16 +10438,17 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       throw new Error("Request user input timer is not enabled.");
     }
     if (input.paused && request.timeout.pausedAt) {
-      return request;
+      return { record: request, changed: false };
     }
     if (!input.paused && !request.timeout.pausedAt) {
-      return request;
+      return { record: request, changed: false };
     }
 
     const timestamp = this.now();
     const timeout = input.paused
       ? {
           ...request.timeout,
+          timerVersion: request.timeout.timerVersion + 1,
           pausedAt: timestamp,
           remainingMsWhenPaused: Math.max(
             0,
@@ -8538,6 +10458,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         }
       : {
           ...request.timeout,
+          timerVersion: request.timeout.timerVersion + 1,
           pausedAt: null,
           remainingMsWhenPaused: null,
           expiresAt: new Date(
@@ -8546,14 +10467,35 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         };
 
     const updateTimer = this.db.transaction(() => {
-      this.db
+      const updated = this.db
         .query(
           `UPDATE request_user_input_request
            SET timeout_json = ?
-           WHERE id = ?`,
+           WHERE id = ?
+             AND surface_pi_session_id = ?
+             AND status = 'open'
+             AND timeout_json = ?`,
         )
-        .run(toJson(timeout), request.requestId);
-      return this.mustFindRequestUserInputRequestRecord(request.requestId);
+        .run(toJson(timeout), request.requestId, input.surfacePiSessionId, toJson(request.timeout));
+      if (updated.changes !== 1) {
+        const latest = this.mustFindRequestUserInputRequestRecord(request.requestId);
+        if (
+          latest.status === "open" &&
+          latest.timeout?.enabled === true &&
+          Boolean(latest.timeout.pausedAt) === input.paused
+        ) {
+          return { record: latest, changed: false };
+        }
+        throw new StateContractError({
+          operation: "runtime-request-state.setRequestInputTimerPaused",
+          reason: "stale-state",
+          message: `Request user input ${request.requestId} timer generation changed before update.`,
+        });
+      }
+      return {
+        record: this.mustFindRequestUserInputRequestRecord(request.requestId),
+        changed: true,
+      };
     });
     return updateTimer();
   }
@@ -8688,6 +10630,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       threadId?: string;
     };
     idempotencyKey?: string | null;
+    promptHistoryText: string | null;
     sourceCommandId?: string | null;
     maxAttempts?: number;
     nextAttemptAt?: string | null;
@@ -8698,30 +10641,38 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     queuedMessage: StructuredSurfaceQueuedMessageRecord;
     accepted: "created" | "existing";
     draftCleared: boolean;
+    promptHistoryRecorded: boolean;
   } {
-    const idempotencyKey = input.idempotencyKey?.trim() || null;
-    if (idempotencyKey) {
-      const existing = this.db
-        .query(
-          `SELECT * FROM surface_message_queue
-           WHERE surface_pi_session_id = ?
-             AND idempotency_key = ?
-             AND status NOT IN ('delivered', 'cancelled')
-           LIMIT 1`,
-        )
-        .get(input.target.surfacePiSessionId, idempotencyKey) as
-        | SurfaceQueuedMessageRow
-        | undefined;
-      if (existing) {
-        return {
-          queuedMessage: this.mapSurfaceQueuedMessage(existing),
-          accepted: "existing",
-          draftCleared: false,
-        };
-      }
+    if (input.promptHistoryText !== null && !input.promptHistoryText.trim()) {
+      throw new StateContractError({
+        operation: "structured-session.acceptSubmittedSurfaceMessage",
+        reason: "invalid-input",
+        message: "Prompt-history text must be non-empty when present.",
+      });
     }
-
+    const idempotencyKey = input.idempotencyKey?.trim() || null;
     const accept = this.db.transaction(() => {
+      if (idempotencyKey) {
+        const existing = this.db
+          .query(
+            `SELECT * FROM surface_message_queue
+             WHERE surface_pi_session_id = ?
+               AND idempotency_key = ?
+             ORDER BY created_at ASC, id ASC
+             LIMIT 1`,
+          )
+          .get(input.target.surfacePiSessionId, idempotencyKey) as
+          | SurfaceQueuedMessageRow
+          | undefined;
+        if (existing) {
+          return {
+            queuedMessage: this.mapSurfaceQueuedMessage(existing),
+            accepted: "existing" as const,
+            draftCleared: false,
+            promptHistoryRecorded: false,
+          };
+        }
+      }
       const threadId = input.target.surface === "handler" ? (input.target.threadId ?? null) : null;
       const queuedMessage = this.enqueueSurfaceMessage({
         sessionId: input.target.workspaceSessionId,
@@ -8738,6 +10689,27 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         ...(input.payloadJson !== undefined ? { payloadJson: input.payloadJson } : {}),
         ...(input.position !== undefined ? { position: input.position } : {}),
       });
+      if (input.promptHistoryText !== null) {
+        this.db
+          .query(
+            `INSERT INTO prompt_history (
+               workspace_id,
+               workspace_session_id,
+               surface_pi_session_id,
+               queue_item_id,
+               text,
+               sent_at
+             ) VALUES (?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            this.workspace.id,
+            input.target.workspaceSessionId,
+            input.target.surfacePiSessionId,
+            queuedMessage.id,
+            input.promptHistoryText,
+            queuedMessage.createdAt,
+          );
+      }
       const existingDraft = this.getComposerDraft(input.target.surfacePiSessionId);
       if (existingDraft) {
         this.setComposerDraft({
@@ -8754,6 +10726,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         queuedMessage,
         accepted: "created" as const,
         draftCleared: existingDraft !== null,
+        promptHistoryRecorded: input.promptHistoryText !== null,
       };
     });
 
@@ -9824,15 +11797,87 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const claim = this.db.transaction(() => {
       const scope = input.scope ? recoveryWorkScopeSql(input.scope) : null;
       const kinds = input.kinds ?? [];
-      const kindFilter =
-        kinds.length > 0 ? ` AND kind IN (${kinds.map(() => "?").join(", ")})` : "";
+      const kindPlaceholders = kinds.map(() => "?").join(", ");
       const scopeFilter = scope ? "scope_kind = ? AND workspace_id IS ? AND " : "";
+      this.db
+        .query(
+          `UPDATE recovery_work
+           SET status = 'failed',
+               claimed_by = NULL,
+               claimed_at = NULL,
+               claim_expires_at = NULL,
+               last_error = COALESCE(last_error, 'Recovery claim expired after its final attempt.'),
+               updated_at = ?,
+               completed_at = ?
+           WHERE ${scopeFilter}status = 'claimed'
+             AND attempts >= max_attempts
+             AND (claim_expires_at IS NULL OR claim_expires_at <= ?)`,
+        )
+        .run(
+          timestamp,
+          timestamp,
+          ...(scope ? [scope.scopeKind, scope.workspaceId] : []),
+          timestamp,
+        );
+      this.db
+        .query(
+          `UPDATE recovery_work
+           SET status = 'failed',
+               claimed_by = NULL,
+               claimed_at = NULL,
+               claim_expires_at = NULL,
+               last_error = COALESCE(last_error, 'Recovery work exhausted its final attempt.'),
+               updated_at = ?,
+               completed_at = ?
+           WHERE ${scopeFilter}status = 'pending'
+             AND attempts >= max_attempts`,
+        )
+        .run(timestamp, timestamp, ...(scope ? [scope.scopeKind, scope.workspaceId] : []));
+      this.db
+        .query(
+          `UPDATE recovery_work
+           SET status = 'pending',
+               claimed_by = NULL,
+               claimed_at = NULL,
+               claim_expires_at = NULL,
+               updated_at = ?
+           WHERE ${scopeFilter}status = 'claimed'
+             AND attempts < max_attempts
+             AND (claim_expires_at IS NULL OR claim_expires_at <= ?)`,
+        )
+        .run(timestamp, ...(scope ? [scope.scopeKind, scope.workspaceId] : []), timestamp);
+      const candidateScopeFilter = scope
+        ? "candidate.scope_kind = ? AND candidate.workspace_id IS ? AND "
+        : "";
+      const candidateKindFilter =
+        kinds.length > 0 ? ` AND candidate.kind IN (${kindPlaceholders})` : "";
       const candidates = this.db
         .query(
-          `SELECT * FROM recovery_work
-           WHERE ${scopeFilter}status = 'pending'
-             AND available_at <= ?${kindFilter}
-           ORDER BY priority ASC, available_at ASC, ordering_key ASC, ordering_seq ASC, created_at ASC
+          `SELECT candidate.* FROM recovery_work AS candidate
+           WHERE ${candidateScopeFilter}candidate.status = 'pending'
+             AND candidate.available_at <= ?${candidateKindFilter}
+             AND NOT EXISTS (
+               SELECT 1 FROM recovery_work AS earlier
+               WHERE earlier.scope_kind = candidate.scope_kind
+                 AND earlier.workspace_id IS candidate.workspace_id
+                 AND earlier.ordering_key = candidate.ordering_key
+                 AND earlier.status NOT IN ('completed', 'failed', 'cancelled')
+                 AND (
+                   earlier.ordering_seq < candidate.ordering_seq
+                   OR (
+                     earlier.ordering_seq = candidate.ordering_seq
+                     AND (
+                       earlier.created_at < candidate.created_at
+                       OR (earlier.created_at = candidate.created_at AND earlier.id < candidate.id)
+                     )
+                   )
+                 )
+             )
+           ORDER BY candidate.priority ASC,
+                    candidate.available_at ASC,
+                    candidate.ordering_key ASC,
+                    candidate.ordering_seq ASC,
+                    candidate.created_at ASC
            LIMIT 50`,
         )
         .all(
@@ -9918,6 +11963,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     error: string;
     claimedBy?: string | null;
     leaseVersion?: number | null;
+    retryAvailableAt?: string;
   }): StructuredRecoveryWorkRecord {
     const row = this.mustFindRecoveryWorkRow(input.id);
     const timestamp = this.now();
@@ -9925,7 +11971,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       row.attempts >= row.max_attempts ? "failed" : "pending";
     const availableAt =
       status === "pending"
-        ? new Date(Date.parse(timestamp) + Math.min(row.attempts + 1, 5) * 1000).toISOString()
+        ? (input.retryAvailableAt ??
+          new Date(Date.parse(timestamp) + Math.min(row.attempts + 1, 5) * 1000).toISOString())
         : timestamp;
     const result = this.db
       .query(
@@ -10074,6 +12121,37 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
 
   private now(): string {
     return this.nowFn();
+  }
+
+  private writeRequestInputSettings(input: RequestInputSettings): RequestInputSettings {
+    const settings = decodeRequestInputSettings(input);
+    const updatedAt = this.now();
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO request_user_input_settings (
+             id,
+             mode,
+             blocking_timeout_enabled,
+             blocking_timeout_duration_ms,
+             updated_at
+           )
+           VALUES (1, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             mode = excluded.mode,
+             blocking_timeout_enabled = excluded.blocking_timeout_enabled,
+             blocking_timeout_duration_ms = excluded.blocking_timeout_duration_ms,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          settings.mode,
+          settings.blockingTimeout.enabled ? 1 : 0,
+          settings.blockingTimeout.durationMs,
+          updatedAt,
+        );
+      this.bumpStateRevision();
+    })();
+    return settings;
   }
 
   private readAppPreferencesRow(): StructuredAppPreferencesRecord {
@@ -10691,6 +12769,24 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       throw new Error(`Request user input answer not found: ${answerId}`);
     }
     return row;
+  }
+
+  private findRequestUserInputAnswerByIdempotencyKey(input: {
+    requestId: string;
+    questionId: string;
+    idempotencyKey: string;
+  }): RequestUserInputAnswerRow | null {
+    return (
+      (this.db
+        .query(
+          `SELECT * FROM request_user_input_answer
+           WHERE request_id = ? AND question_id = ? AND idempotency_key = ?
+           LIMIT 1`,
+        )
+        .get(input.requestId, input.questionId, input.idempotencyKey) as
+        | RequestUserInputAnswerRow
+        | undefined) ?? null
+    );
   }
 
   private mustFindRecoveryWorkRow(id: string): RecoveryWorkRow {
@@ -11654,6 +13750,516 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     };
   }
 
+  private finalizeRuntimeTranscriptAssistantMessage(
+    input: FinalizeRuntimeTranscriptAssistantInput,
+  ): RuntimeTranscriptAssistantMutation {
+    return this.db.transaction(() => {
+      const row = this.mustFindTranscriptMessageRow(input.messageId);
+      if (row.role !== "assistant" || row.surface_pi_session_id !== input.surfacePiSessionId) {
+        throw this.transcriptStateError(
+          "finalizeAssistantMessage",
+          "conflict",
+          `Transcript message ${input.messageId} is not an assistant on surface ${input.surfacePiSessionId}.`,
+        );
+      }
+      const history = input.piHistoryEntry
+        ? decodePiHistoryEntryRefContract(input.piHistoryEntry)
+        : null;
+      if (history) {
+        this.assertRuntimeTranscriptPiHistoryEntry(row, history, "finalizeAssistantMessage");
+      }
+      const usage = input.usage ? decodeRuntimeTranscriptUsageContract(input.usage) : null;
+      if (row.status !== "streaming") {
+        const current = this.mapRuntimeTranscriptAssistantMessage(row);
+        const terminalMatches =
+          current.status === input.status &&
+          current.api === input.api &&
+          current.providerId === input.providerId &&
+          current.modelId === input.modelId &&
+          current.responseId === input.responseId &&
+          toJson(current.usage) === toJson(usage) &&
+          current.stopReason === input.stopReason &&
+          current.errorMessage === input.errorMessage &&
+          toJson(current.piHistoryEntry) === toJson(history) &&
+          current.messageTimestamp === input.messageTimestamp &&
+          current.finishedAt === input.finishedAt &&
+          (input.content === null || toJson(current.content) === toJson(input.content));
+        if (!terminalMatches) {
+          throw this.transcriptStateError(
+            "finalizeAssistantMessage",
+            "conflict",
+            `Terminal transcript assistant ${input.messageId} is immutable.`,
+          );
+        }
+        return {
+          message: current,
+          cursor: this.mustReadRuntimeTranscriptStreamCursor(input.surfacePiSessionId),
+        };
+      }
+
+      const cursorRow = this.readRuntimeTranscriptStreamCursorRow(input.surfacePiSessionId);
+      if (cursorRow?.active_assistant_message_id !== input.messageId) {
+        throw this.transcriptStateError(
+          "finalizeAssistantMessage",
+          "conflict",
+          `Transcript assistant ${input.messageId} is not the active assistant for its surface.`,
+        );
+      }
+      const cursor = this.advanceRuntimeTranscriptCursorRow({
+        surfacePiSessionId: input.surfacePiSessionId,
+        streamGenerationId: input.streamGenerationId,
+        expectedCursor: input.expectedCursor,
+        activeAssistantMessageId: null,
+        clearingActiveAssistantMessageId: input.messageId,
+      });
+
+      if (input.content) {
+        const currentToolCommands = new Map<string, CommandId | null>(
+          this.readRuntimeTranscriptContentBlockRows(input.messageId)
+            .filter((block) => block.kind === "tool-call" && block.tool_call_id)
+            .map((block) => [block.tool_call_id!, block.command_id as CommandId | null]),
+        );
+        this.db
+          .query(`DELETE FROM transcript_content_block WHERE message_id = ?`)
+          .run(input.messageId);
+        for (const block of input.content) {
+          if (block.kind !== "tool-call") {
+            this.insertRuntimeTranscriptContentBlock(input.messageId, block, input.finishedAt);
+            continue;
+          }
+          const linkedCommandId = currentToolCommands.get(block.toolCallId) ?? null;
+          if (linkedCommandId && block.commandId && linkedCommandId !== block.commandId) {
+            throw this.transcriptStateError(
+              "finalizeAssistantMessage",
+              "conflict",
+              `Tool call ${block.toolCallId} cannot be retargeted from command ${linkedCommandId}.`,
+            );
+          }
+          this.insertRuntimeTranscriptContentBlock(
+            input.messageId,
+            { ...block, commandId: block.commandId ?? linkedCommandId },
+            input.finishedAt,
+          );
+        }
+      }
+
+      this.db
+        .query(
+          `UPDATE transcript_message
+           SET status = ?, api = ?, provider_id = ?, model_id = ?, response_id = ?,
+               usage_json = ?, stop_reason = ?, error_message = ?,
+               pi_history_entry_id = ?, pi_history_entry_json = ?,
+               message_timestamp = ?, updated_at = ?, finished_at = ?
+           WHERE message_id = ?`,
+        )
+        .run(
+          input.status,
+          input.api,
+          input.providerId,
+          input.modelId,
+          input.responseId,
+          usage ? toJson(usage) : null,
+          input.stopReason,
+          input.errorMessage,
+          history?.entryId ?? null,
+          history ? toJson(history) : null,
+          input.messageTimestamp,
+          input.finishedAt,
+          input.finishedAt,
+          input.messageId,
+        );
+      this.bumpStateRevision();
+      return { message: this.mustReadRuntimeTranscriptAssistantMessage(input.messageId), cursor };
+    })();
+  }
+
+  private insertRuntimeTranscriptContentBlock(
+    messageId: string,
+    block: RuntimeTranscriptAssistantContent[number],
+    timestamp: string,
+  ): void {
+    this.db
+      .query(
+        `INSERT INTO transcript_content_block (
+           message_id, content_index, kind, text_content, thinking_content,
+           thinking_redacted, thinking_signature, tool_call_id, tool_name,
+           arguments_json, arguments_status, command_id, thought_signature,
+           created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        messageId,
+        block.contentIndex,
+        block.kind,
+        block.kind === "text" ? block.text : null,
+        block.kind === "thinking" ? block.thinking : null,
+        block.kind === "thinking" && block.redacted !== undefined ? (block.redacted ? 1 : 0) : null,
+        block.kind === "thinking" ? (block.thinkingSignature ?? null) : null,
+        block.kind === "tool-call" ? block.toolCallId : null,
+        block.kind === "tool-call" ? block.toolName : null,
+        block.kind === "tool-call" ? block.argumentsJson : null,
+        block.kind === "tool-call" ? block.argumentsStatus : null,
+        block.kind === "tool-call" ? block.commandId : null,
+        block.kind === "tool-call" ? (block.thoughtSignature ?? null) : null,
+        timestamp,
+        timestamp,
+      );
+  }
+
+  private transcriptStateError(
+    operation: string,
+    reason: "not-found" | "conflict" | "stale-state",
+    message: string,
+  ): StateContractError {
+    return new StateContractError({
+      operation: `structured-session.transcript.${operation}`,
+      reason,
+      message,
+    });
+  }
+
+  private nextRuntimeTranscriptMessageOrdinal(surfacePiSessionId: string): number {
+    const row = this.db
+      .query(
+        `SELECT MAX(ordinal) AS max_ordinal
+         FROM transcript_message
+         WHERE surface_pi_session_id = ?`,
+      )
+      .get(surfacePiSessionId) as { max_ordinal: number | null } | undefined;
+    return (row?.max_ordinal ?? -1) + 1;
+  }
+
+  private findTranscriptMessageRow(messageId: string): TranscriptMessageRow | null {
+    return (
+      (this.db
+        .query(`SELECT * FROM transcript_message WHERE message_id = ? LIMIT 1`)
+        .get(messageId) as TranscriptMessageRow | undefined) ?? null
+    );
+  }
+
+  private mustFindTranscriptMessageRow(messageId: string): TranscriptMessageRow {
+    const row = this.findTranscriptMessageRow(messageId);
+    if (!row) {
+      throw this.transcriptStateError(
+        "readMessage",
+        "not-found",
+        `Transcript message ${messageId} was not found.`,
+      );
+    }
+    return row;
+  }
+
+  private mustFindStreamingTranscriptAssistantRow(
+    messageId: string,
+    surfacePiSessionId: string,
+    operation: string,
+  ): TranscriptMessageRow {
+    const row = this.mustFindTranscriptMessageRow(messageId);
+    if (
+      row.role !== "assistant" ||
+      row.status !== "streaming" ||
+      row.surface_pi_session_id !== surfacePiSessionId
+    ) {
+      throw this.transcriptStateError(
+        operation,
+        "conflict",
+        `Transcript message ${messageId} is not the active streaming assistant for ${surfacePiSessionId}.`,
+      );
+    }
+    return row;
+  }
+
+  private findRuntimeTranscriptContentBlockRow(
+    messageId: string,
+    contentIndex: number,
+  ): TranscriptContentBlockRow | null {
+    return (
+      (this.db
+        .query(
+          `SELECT * FROM transcript_content_block
+           WHERE message_id = ? AND content_index = ? LIMIT 1`,
+        )
+        .get(messageId, contentIndex) as TranscriptContentBlockRow | undefined) ?? null
+    );
+  }
+
+  private readRuntimeTranscriptContentBlockRows(messageId: string): TranscriptContentBlockRow[] {
+    return this.db
+      .query(
+        `SELECT * FROM transcript_content_block
+         WHERE message_id = ?
+         ORDER BY content_index ASC`,
+      )
+      .all(messageId) as TranscriptContentBlockRow[];
+  }
+
+  private readRuntimeTranscriptStreamCursorRow(
+    surfacePiSessionId: string,
+  ): TranscriptStreamCursorRow | null {
+    return (
+      (this.db
+        .query(
+          `SELECT * FROM surface_transcript_stream
+           WHERE surface_pi_session_id = ? LIMIT 1`,
+        )
+        .get(surfacePiSessionId) as TranscriptStreamCursorRow | undefined) ?? null
+    );
+  }
+
+  private readRuntimeTranscriptStreamCursor(
+    surfacePiSessionId: string,
+  ): RuntimeTranscriptStreamCursor | null {
+    const row = this.readRuntimeTranscriptStreamCursorRow(surfacePiSessionId);
+    return row
+      ? {
+          surfacePiSessionId:
+            row.surface_pi_session_id as RuntimeTranscriptStreamCursor["surfacePiSessionId"],
+          streamGenerationId:
+            row.stream_generation_id as RuntimeTranscriptStreamCursor["streamGenerationId"],
+          streamSequence: row.stream_sequence as RuntimeTranscriptStreamCursor["streamSequence"],
+        }
+      : null;
+  }
+
+  private mustReadRuntimeTranscriptStreamCursor(
+    surfacePiSessionId: string,
+  ): RuntimeTranscriptStreamCursor {
+    const cursor = this.readRuntimeTranscriptStreamCursor(surfacePiSessionId);
+    if (!cursor) {
+      throw this.transcriptStateError(
+        "readStreamCursor",
+        "not-found",
+        `Transcript stream cursor for ${surfacePiSessionId} was not found.`,
+      );
+    }
+    return cursor;
+  }
+
+  private advanceRuntimeTranscriptCursorRow(input: {
+    readonly surfacePiSessionId: SurfacePiSessionId;
+    readonly streamGenerationId: RuntimeTranscriptStreamCursor["streamGenerationId"];
+    readonly expectedCursor: RuntimeTranscriptStreamCursor | null;
+    readonly activeAssistantMessageId: string | null;
+    readonly clearingActiveAssistantMessageId?: string;
+  }): RuntimeTranscriptStreamCursor {
+    const current = this.readRuntimeTranscriptStreamCursorRow(input.surfacePiSessionId);
+    const expected = input.expectedCursor;
+    const matchesExpected =
+      current === null
+        ? expected === null
+        : expected !== null &&
+          expected.surfacePiSessionId === input.surfacePiSessionId &&
+          expected.streamGenerationId === current.stream_generation_id &&
+          expected.streamSequence === current.stream_sequence;
+    if (!matchesExpected) {
+      throw this.transcriptStateError(
+        "advanceStreamCursor",
+        "stale-state",
+        `Transcript stream cursor for ${input.surfacePiSessionId} changed before this mutation committed.`,
+      );
+    }
+    if (
+      current?.active_assistant_message_id &&
+      current.active_assistant_message_id !== input.activeAssistantMessageId &&
+      current.active_assistant_message_id !== input.clearingActiveAssistantMessageId
+    ) {
+      throw this.transcriptStateError(
+        "advanceStreamCursor",
+        "conflict",
+        `Transcript surface ${input.surfacePiSessionId} has a different active assistant message.`,
+      );
+    }
+    if (
+      current &&
+      current.stream_generation_id !== input.streamGenerationId &&
+      current.active_assistant_message_id
+    ) {
+      throw this.transcriptStateError(
+        "advanceStreamCursor",
+        "conflict",
+        `Cannot replace an active transcript stream generation for ${input.surfacePiSessionId}.`,
+      );
+    }
+    const sequence =
+      current?.stream_generation_id === input.streamGenerationId ? current.stream_sequence + 1 : 1;
+    const timestamp = this.now();
+    this.db
+      .query(
+        `INSERT INTO surface_transcript_stream (
+           surface_pi_session_id, stream_generation_id, stream_sequence,
+           active_assistant_message_id, updated_at
+         ) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(surface_pi_session_id) DO UPDATE SET
+           stream_generation_id = excluded.stream_generation_id,
+           stream_sequence = excluded.stream_sequence,
+           active_assistant_message_id = excluded.active_assistant_message_id,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        input.surfacePiSessionId,
+        input.streamGenerationId,
+        sequence,
+        input.activeAssistantMessageId,
+        timestamp,
+      );
+    return {
+      surfacePiSessionId: input.surfacePiSessionId,
+      streamGenerationId: input.streamGenerationId,
+      streamSequence: sequence as RuntimeTranscriptStreamCursor["streamSequence"],
+    };
+  }
+
+  private assertRuntimeTranscriptPiHistoryEntry(
+    row: TranscriptMessageRow,
+    history: NonNullable<RuntimeTranscriptMessage["piHistoryEntry"]>,
+    operation: string,
+  ): void {
+    if (
+      history.session.surfacePiSessionId !== row.surface_pi_session_id ||
+      (history.messageId !== undefined && history.messageId !== row.message_id)
+    ) {
+      throw this.transcriptStateError(
+        operation,
+        "conflict",
+        `Pi history entry ${history.entryId} does not identify transcript message ${row.message_id}.`,
+      );
+    }
+    const existing = this.db
+      .query(
+        `SELECT message_id FROM transcript_message
+         WHERE surface_pi_session_id = ? AND pi_history_entry_id = ? AND message_id <> ?
+         LIMIT 1`,
+      )
+      .get(row.surface_pi_session_id, history.entryId, row.message_id) as
+      | { message_id: string }
+      | undefined;
+    if (existing) {
+      throw this.transcriptStateError(
+        operation,
+        "conflict",
+        `Pi history entry ${history.entryId} is already bound to transcript message ${existing.message_id}.`,
+      );
+    }
+  }
+
+  private mapRuntimeTranscriptMessage(row: TranscriptMessageRow): RuntimeTranscriptMessage {
+    return row.role === "user"
+      ? this.mapRuntimeTranscriptUserMessage(row)
+      : this.mapRuntimeTranscriptAssistantMessage(row);
+  }
+
+  private mapRuntimeTranscriptUserMessage(row: TranscriptMessageRow): RuntimeTranscriptUserMessage {
+    if (
+      row.role !== "user" ||
+      !row.queue_item_id ||
+      !row.user_message_json ||
+      !row.submitted_at ||
+      !row.committed_at
+    ) {
+      throw this.transcriptStateError(
+        "decodeUserMessage",
+        "conflict",
+        `Stored transcript message ${row.message_id} is not a complete user message.`,
+      );
+    }
+    return {
+      role: "user",
+      messageId: row.message_id as RuntimeTranscriptUserMessage["messageId"],
+      workspaceSessionId: row.session_id as RuntimeTranscriptUserMessage["workspaceSessionId"],
+      surfacePiSessionId:
+        row.surface_pi_session_id as RuntimeTranscriptUserMessage["surfacePiSessionId"],
+      turnId: row.turn_id as RuntimeTranscriptUserMessage["turnId"],
+      ordinal: row.ordinal,
+      queueItemId: row.queue_item_id as RuntimeTranscriptUserMessage["queueItemId"],
+      message: decodeRuntimeSubmittedMessageContract(fromJson(row.user_message_json)),
+      piHistoryEntry: row.pi_history_entry_json
+        ? decodePiHistoryEntryRefContract(fromJson(row.pi_history_entry_json))
+        : null,
+      submittedAt: row.submitted_at as RuntimeTranscriptUserMessage["submittedAt"],
+      committedAt: row.committed_at as RuntimeTranscriptUserMessage["committedAt"],
+    };
+  }
+
+  private mapRuntimeTranscriptAssistantMessage(
+    row: TranscriptMessageRow,
+  ): RuntimeTranscriptAssistantMessage {
+    if (
+      row.role !== "assistant" ||
+      !row.status ||
+      !row.provider_id ||
+      !row.model_id ||
+      !row.started_at
+    ) {
+      throw this.transcriptStateError(
+        "decodeAssistantMessage",
+        "conflict",
+        `Stored transcript message ${row.message_id} is not a complete assistant message.`,
+      );
+    }
+    const content = this.readRuntimeTranscriptContentBlockRows(row.message_id).map((block) => {
+      if (block.kind === "text") {
+        return {
+          kind: "text" as const,
+          contentIndex: block.content_index,
+          text: block.text_content ?? "",
+        };
+      }
+      if (block.kind === "thinking") {
+        return {
+          kind: "thinking" as const,
+          contentIndex: block.content_index,
+          thinking: block.thinking_content ?? "",
+          ...(block.thinking_redacted === null
+            ? {}
+            : { redacted: Boolean(block.thinking_redacted) }),
+          ...(block.thinking_signature ? { thinkingSignature: block.thinking_signature } : {}),
+        };
+      }
+      return {
+        kind: "tool-call" as const,
+        contentIndex: block.content_index,
+        toolCallId: block.tool_call_id as RuntimeTranscriptToolCallBlock["toolCallId"],
+        toolName: block.tool_name ?? "",
+        argumentsJson: block.arguments_json ?? "",
+        argumentsStatus: block.arguments_status ?? "streaming",
+        commandId: block.command_id as RuntimeTranscriptToolCallBlock["commandId"],
+        ...(block.thought_signature ? { thoughtSignature: block.thought_signature } : {}),
+      };
+    });
+    return {
+      role: "assistant",
+      messageId: row.message_id as RuntimeTranscriptAssistantMessage["messageId"],
+      workspaceSessionId: row.session_id as RuntimeTranscriptAssistantMessage["workspaceSessionId"],
+      surfacePiSessionId:
+        row.surface_pi_session_id as RuntimeTranscriptAssistantMessage["surfacePiSessionId"],
+      turnId: row.turn_id as RuntimeTranscriptAssistantMessage["turnId"],
+      ordinal: row.ordinal,
+      status: row.status,
+      content: decodeRuntimeTranscriptAssistantContentContract(content),
+      api: row.api,
+      providerId: row.provider_id as RuntimeTranscriptAssistantMessage["providerId"],
+      modelId: row.model_id as RuntimeTranscriptAssistantMessage["modelId"],
+      responseId: row.response_id,
+      usage: row.usage_json ? decodeRuntimeTranscriptUsageContract(fromJson(row.usage_json)) : null,
+      stopReason: row.stop_reason,
+      errorMessage: row.error_message,
+      piHistoryEntry: row.pi_history_entry_json
+        ? decodePiHistoryEntryRefContract(fromJson(row.pi_history_entry_json))
+        : null,
+      startedAt: row.started_at as RuntimeTranscriptAssistantMessage["startedAt"],
+      messageTimestamp:
+        row.message_timestamp as RuntimeTranscriptAssistantMessage["messageTimestamp"],
+      updatedAt: row.updated_at as RuntimeTranscriptAssistantMessage["updatedAt"],
+      finishedAt: row.finished_at as RuntimeTranscriptAssistantMessage["finishedAt"],
+    };
+  }
+
+  private mustReadRuntimeTranscriptAssistantMessage(
+    messageId: string,
+  ): RuntimeTranscriptAssistantMessage {
+    return this.mapRuntimeTranscriptAssistantMessage(this.mustFindTranscriptMessageRow(messageId));
+  }
+
   private mapTurn(row: TurnRow): StructuredTurnRecord {
     return {
       id: row.id,
@@ -12088,6 +14694,14 @@ function initializeSchema(db: Database): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS request_user_input_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      mode TEXT NOT NULL CHECK (mode IN ('nonblocking', 'blocking')),
+      blocking_timeout_enabled INTEGER NOT NULL CHECK (blocking_timeout_enabled IN (0, 1)),
+      blocking_timeout_duration_ms INTEGER NOT NULL CHECK (blocking_timeout_duration_ms > 0),
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS provider_auth_status (
       provider_id TEXT NOT NULL,
       workspace_key TEXT NOT NULL,
@@ -12298,6 +14912,89 @@ function initializeSchema(db: Database): void {
       finished_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS transcript_message (
+      message_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      surface_pi_session_id TEXT NOT NULL,
+      turn_id TEXT NOT NULL,
+      queue_item_id TEXT UNIQUE,
+      ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      status TEXT CHECK (status IN ('streaming', 'completed', 'failed', 'cancelled')),
+      user_message_json TEXT,
+      api TEXT,
+      provider_id TEXT,
+      model_id TEXT,
+      response_id TEXT,
+      usage_json TEXT,
+      stop_reason TEXT CHECK (stop_reason IN ('stop', 'length', 'toolUse', 'error', 'aborted')),
+      error_message TEXT,
+      pi_history_entry_id TEXT,
+      pi_history_entry_json TEXT,
+      submitted_at TEXT,
+      committed_at TEXT,
+      started_at TEXT,
+      message_timestamp TEXT,
+      updated_at TEXT NOT NULL,
+      finished_at TEXT,
+      UNIQUE(surface_pi_session_id, ordinal),
+      UNIQUE(surface_pi_session_id, pi_history_entry_id),
+      CHECK (
+        (role = 'user' AND queue_item_id IS NOT NULL AND user_message_json IS NOT NULL AND
+          status IS NULL AND submitted_at IS NOT NULL AND committed_at IS NOT NULL) OR
+        (role = 'assistant' AND queue_item_id IS NULL AND user_message_json IS NULL AND
+          status IS NOT NULL AND provider_id IS NOT NULL AND model_id IS NOT NULL AND
+          started_at IS NOT NULL)
+      )
+    );
+
+    CREATE TABLE IF NOT EXISTS transcript_content_block (
+      message_id TEXT NOT NULL,
+      content_index INTEGER NOT NULL CHECK (content_index >= 0),
+      kind TEXT NOT NULL CHECK (kind IN ('text', 'thinking', 'tool-call')),
+      text_content TEXT,
+      thinking_content TEXT,
+      thinking_redacted INTEGER CHECK (thinking_redacted IN (0, 1)),
+      thinking_signature TEXT,
+      tool_call_id TEXT,
+      tool_name TEXT,
+      arguments_json TEXT,
+      arguments_status TEXT CHECK (arguments_status IN ('streaming', 'accepted')),
+      command_id TEXT,
+      thought_signature TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (message_id, content_index),
+      UNIQUE(message_id, tool_call_id),
+      CHECK (
+        (kind = 'text' AND text_content IS NOT NULL AND thinking_content IS NULL AND
+          tool_call_id IS NULL) OR
+        (kind = 'thinking' AND text_content IS NULL AND thinking_content IS NOT NULL AND
+          tool_call_id IS NULL) OR
+        (kind = 'tool-call' AND text_content IS NULL AND thinking_content IS NULL AND
+          tool_call_id IS NOT NULL AND tool_name IS NOT NULL AND arguments_json IS NOT NULL AND
+          arguments_status IS NOT NULL)
+      )
+    );
+
+    CREATE TABLE IF NOT EXISTS surface_transcript_stream (
+      surface_pi_session_id TEXT PRIMARY KEY,
+      stream_generation_id TEXT NOT NULL,
+      stream_sequence INTEGER NOT NULL CHECK (stream_sequence >= 0),
+      active_assistant_message_id TEXT,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_transcript_one_streaming_assistant_per_surface
+      ON transcript_message(surface_pi_session_id)
+      WHERE role = 'assistant' AND status = 'streaming';
+
+    CREATE INDEX IF NOT EXISTS idx_transcript_message_surface_order
+      ON transcript_message(surface_pi_session_id, ordinal);
+
+    CREATE INDEX IF NOT EXISTS idx_transcript_content_message_order
+      ON transcript_content_block(message_id, content_index);
+
     CREATE TABLE IF NOT EXISTS thread (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
@@ -12412,6 +15109,21 @@ function initializeSchema(db: Database): void {
       updated_at TEXT NOT NULL,
       deleted_at TEXT,
       PRIMARY KEY(scope_key, source_kind, source_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_agent_source_index (
+      source_id TEXT PRIMARY KEY,
+      path TEXT NOT NULL,
+      source_version TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      validation_status TEXT,
+      diagnostics_json TEXT NOT NULL,
+      parameters_json TEXT,
+      extension_order_json TEXT NOT NULL,
+      observed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS runtime_source_scan_fact (
@@ -12604,8 +15316,13 @@ function initializeSchema(db: Database): void {
       answered_by TEXT NOT NULL,
       delivery TEXT,
       queued_item_id TEXT,
+      idempotency_key TEXT,
       created_at TEXT NOT NULL
     );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_request_user_input_answer_idempotency
+      ON request_user_input_answer (request_id, question_id, idempotency_key)
+      WHERE idempotency_key IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS runtime_approval_request (
       id TEXT PRIMARY KEY,
@@ -12681,6 +15398,15 @@ function initializeSchema(db: Database): void {
       failed_at TEXT,
       failure_error TEXT,
       cancelled_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS prompt_history (
+      workspace_id TEXT NOT NULL,
+      workspace_session_id TEXT NOT NULL,
+      surface_pi_session_id TEXT NOT NULL,
+      queue_item_id TEXT PRIMARY KEY,
+      text TEXT NOT NULL,
+      sent_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS surface_composer_draft (
@@ -12864,6 +15590,7 @@ function initializeSchema(db: Database): void {
   ensureColumn(db, "snippet", "updated_at", "TEXT");
   ensureColumn(db, "snippet", "deleted_at", "TEXT");
   db.exec(`INSERT INTO state_revision (id, revision) VALUES (1, 0) ON CONFLICT(id) DO NOTHING`);
+  ensureCanonicalAgentProfileAuthority(db);
   db.exec(
     `UPDATE surface_message_queue
      SET idempotency_key = 'surface_queue:' || id
@@ -12908,6 +15635,10 @@ function initializeSchema(db: Database): void {
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_surface_message_queue_active_idempotency
      ON surface_message_queue (surface_pi_session_id, idempotency_key)
      WHERE status NOT IN ('delivered', 'cancelled')`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_prompt_history_workspace_sent
+     ON prompt_history (workspace_id, sent_at)`,
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_generated_package_fact_status
@@ -12963,6 +15694,10 @@ function initializeSchema(db: Database): void {
      ON runtime_source_fact (scope_key, source_kind, updated_at)`,
   );
   db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_workflow_agent_source_index_current
+     ON workflow_agent_source_index (deleted_at, source_id)`,
+  );
+  db.exec(
     `CREATE INDEX IF NOT EXISTS idx_runtime_source_scan_fact_updated
      ON runtime_source_scan_fact (scope_key, updated_at)`,
   );
@@ -12996,6 +15731,47 @@ function initializeSchema(db: Database): void {
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_task_attempt_smithers_identity
      ON workflow_task_attempt (smithers_run_id, node_id, iteration, attempt)`,
   );
+}
+
+function ensureCanonicalAgentProfileAuthority(db: Database): void {
+  db.transaction(() => {
+    const insertProfile = db.query(
+      `INSERT INTO agent_profile (
+         profile_id, actor, name, provider_id, model_id, reasoning_json,
+         follow_composer, extension_usage_json, extension_order_json, position, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, '{}', '[]', 0, ?)
+       ON CONFLICT(profile_id, actor) DO NOTHING`,
+    );
+    insertProfile.run(
+      "default-orchestrator",
+      "orchestrator",
+      "Default orchestrator",
+      "zai",
+      "glm-5-turbo",
+      JSON.stringify({ effort: "medium" }),
+      0,
+      DEFAULT_AGENT_PROFILE_UPDATED_AT,
+    );
+    insertProfile.run(
+      "thread-handler",
+      "handler",
+      "Thread handler",
+      "zai",
+      "glm-5-turbo",
+      JSON.stringify({ effort: "medium" }),
+      0,
+      DEFAULT_AGENT_PROFILE_UPDATED_AT,
+    );
+
+    const insertActorExtensionDefaults = db.query(
+      `INSERT INTO agent_actor_extension_defaults (
+         actor, extension_usage_json, extension_order_json, updated_at
+       ) VALUES (?, '{}', '[]', ?)
+       ON CONFLICT(actor) DO NOTHING`,
+    );
+    insertActorExtensionDefaults.run("orchestrator", DEFAULT_AGENT_PROFILE_UPDATED_AT);
+    insertActorExtensionDefaults.run("workflow-task", DEFAULT_AGENT_PROFILE_UPDATED_AT);
+  })();
 }
 
 function applyBusyTimeout(db: Database, busyTimeoutMs: number | undefined): void {
@@ -13054,7 +15830,16 @@ function recoveryOwnerConflicts(
   }
   const leftWorkflow = recoveryWorkflowOwner(left.ownerScope);
   const rightWorkflow = recoveryWorkflowOwner(right.ownerScope);
-  return Boolean(leftWorkflow && rightWorkflow && leftWorkflow === rightWorkflow);
+  if (leftWorkflow && rightWorkflow && leftWorkflow === rightWorkflow) {
+    return true;
+  }
+  const leftSource = recoverySourceOwner(left.ownerScope);
+  const rightSource = recoverySourceOwner(right.ownerScope);
+  return Boolean(leftSource && rightSource && leftSource === rightSource);
+}
+
+function recoverySourceOwner(scope: StructuredRecoveryWorkOwnerScope): string | null {
+  return scope.kind === "source" ? `${scope.sourceKind}:${scope.sourceId}` : null;
 }
 
 function recoverySurfaceOwner(scope: StructuredRecoveryWorkOwnerScope): string | null {
@@ -13308,6 +16093,14 @@ function decodeExternalInstructionsSettings(value: unknown): ExternalInstruction
   return normalizeExternalInstructionsSettings(decoded.value);
 }
 
+function decodeRequestInputSettings(value: unknown): RequestInputSettings {
+  const decoded = decodeUnknownRequestInputSettingsExit(value);
+  if (Exit.isFailure(decoded)) {
+    throw new Error("INVALID_STATE: persisted request user input settings are invalid.");
+  }
+  return decoded.value;
+}
+
 function normalizeStringList(values: readonly string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))].toSorted();
 }
@@ -13377,6 +16170,10 @@ function isRunnableThreadStatus(status: StructuredThreadStatus): boolean {
   return (
     status === "running-handler" || status === "running-workflow" || status === "troubleshooting"
   );
+}
+
+function isTerminalCommandStatus(status: StructuredCommandStatus): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
 function isTerminalWorkflowStatus(status: StructuredWorkflowStatus): boolean {

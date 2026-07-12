@@ -25,6 +25,8 @@ import {
   layerRuntimeSourceInvalidationService,
 } from "./runtime-source-invalidation-service";
 import type { SourceInvalidationEvent } from "./source-invalidation-coordinator";
+import { layerRuntimeShutdownAdmission } from "./runtime-shutdown-admission";
+import { RuntimeShutdownAdmission } from "./runtime-shutdown-admission";
 
 const workspaceOne = "workspace_runtime_source_service_01" as WorkspaceId;
 const workspaceTwo = "workspace_runtime_source_service_02" as WorkspaceId;
@@ -85,6 +87,28 @@ describe("runtime source invalidation service", () => {
       }
     }).pipe(Effect.provide(testLayer({ classification: "fail" }))),
   );
+
+  it.effect("rejects source work after the shared runtime shutdown marker", () => {
+    const scheduledScans: SourceReconcileRequest[] = [];
+    return Effect.gen(function* () {
+      const service = yield* RuntimeSourceInvalidationService;
+      const shutdown = yield* RuntimeShutdownAdmission;
+      yield* shutdown.runShutdown(
+        Effect.succeed({
+          status: "drained",
+          interruptedTurns: 0,
+          interruptedCommands: 0,
+          releasedQueueClaims: 0,
+          recoveryRowsScheduled: 0,
+        }),
+      );
+
+      const error = yield* service.hint(extensionHint).pipe(Effect.flip);
+
+      assert.strictEqual(error.reason, "runtime-shutdown");
+      assert.deepStrictEqual(scheduledScans, []);
+    }).pipe(Effect.provide(testLayer({ scheduledScans })));
+  });
 
   it.effect("runs app-global source reactions through runtime refresh services", () => {
     const contextRefreshes: RefreshGeneratedContextRequest[] = [];
@@ -358,6 +382,7 @@ function testLayer(input: {
         }),
       ),
     ),
+    Layer.provideMerge(layerRuntimeShutdownAdmission),
   );
 }
 

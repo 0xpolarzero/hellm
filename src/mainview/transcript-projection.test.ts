@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { ToolResultMessage } from "@mariozechner/pi-ai";
+import type { RendererCommandResultEntry } from "../shared/renderer-transcript";
 import type {
   WorkspaceCommandRollup,
   WorkspaceHandlerThreadSummary,
@@ -196,7 +196,7 @@ describe("transcript projection", () => {
 
   it("summarizes execute_typescript result diagnostics and logs", () => {
     const message = {
-      role: "toolResult",
+      role: "command-result",
       toolCallId: "tool-call-1",
       toolName: "execute_typescript",
       timestamp: 1,
@@ -223,7 +223,7 @@ describe("transcript projection", () => {
           }),
         },
       ],
-    } satisfies ToolResultMessage;
+    } satisfies RendererCommandResultEntry;
 
     expect(summarizeExecuteTypescriptResult(message)).toEqual({
       success: false,
@@ -250,13 +250,13 @@ describe("transcript projection", () => {
 
   it("falls back to raw output for non-json execute_typescript results", () => {
     const message = {
-      role: "toolResult",
+      role: "command-result",
       toolCallId: "tool-call-1",
       toolName: "execute_typescript",
       timestamp: 1,
       isError: true,
       content: [{ type: "text", text: "runtime crashed" }],
-    } satisfies ToolResultMessage;
+    } satisfies RendererCommandResultEntry;
 
     expect(summarizeExecuteTypescriptResult(message)).toMatchObject({
       success: false,

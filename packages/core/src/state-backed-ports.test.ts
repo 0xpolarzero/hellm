@@ -59,6 +59,9 @@ import {
   RecordRuntimeSourceDeleteInputSchema,
   RecordRuntimeSourceSaveInputSchema,
   RecordRuntimeSourceScanInputSchema,
+  RecordRuntimeWorkflowAgentSourceDeleteInputSchema,
+  RecordRuntimeWorkflowAgentSourceSaveInputSchema,
+  ReconcileRuntimeWorkflowAgentSourcesInputSchema,
   ReconcileDiscoveredHostSnippetsInputSchema,
   RuntimeSourceRootFingerprintFactRecordSchema,
   RuntimeApprovalRecordSchema,
@@ -80,6 +83,8 @@ import {
   ReadRuntimePromptBindingInputSchema,
   RuntimeAnswerRequestInputCommitResultSchema,
   RuntimeRecoveryStartupSnapshotSchema,
+  RuntimeInterruptedTurnRecoveryResultSchema,
+  RuntimePromptTurnSettlementResultSchema,
   RuntimeRecoveryWorkKindSchema,
   RuntimeRecoveryWorkRecordSchema,
   RuntimeRequestInputDetailsRecordSchema,
@@ -87,6 +92,7 @@ import {
   RuntimeRequestInputTimeoutRecordSchema,
   RuntimeSourceFactRecordSchema,
   RuntimeSourceScanFactRecordSchema,
+  SourceReconcileRecoveryPayloadSchema,
   RuntimeThreadCurrentReadModelSchema,
   RuntimeThreadEpisodesReadModelSchema,
   RuntimeThreadGroupReadModelSchema,
@@ -109,6 +115,8 @@ import {
   StartRuntimeTurnInputSchema,
   SetRuntimeTurnDecisionInputSchema,
   FinishRuntimeTurnInputSchema,
+  RecoverInterruptedRuntimeTurnInputSchema,
+  SettleRuntimePromptTurnInputSchema,
   UpdateRuntimeCommandArgumentsInputSchema,
   decodeUnknownStateCommandPostCommitNotificationInputExit,
   decodeUnknownStateCommandPostCommitNotificationErrorExit,
@@ -325,7 +333,9 @@ describe("@svvy/core state-backed port contracts", () => {
       scope: { kind: "app-global" },
       sourceKind: "workflow-agent",
       sourceId: "agent_reviewer",
-      expectedSourceVersion: "source_version_02",
+      path: "/Users/polarzero/.config/svvy/workflows/agents/reviewer.agent.json",
+      previousSourceVersion: "source_version_02",
+      previousFingerprint: "source_fingerprint_02",
       sourceCommandId: "cmd_02",
       deletedAt: "2026-06-21T12:35:56.789Z",
     });
@@ -417,7 +427,8 @@ describe("@svvy/core state-backed port contracts", () => {
     expect(record.deletedAt).toBeNull();
     expect(readInput.sourceId).toBe("agent_reviewer");
     expect(saveInput.previousSourceVersion).toBe("source_version_01");
-    expect(deleteInput.expectedSourceVersion).toBe("source_version_02");
+    expect(deleteInput.previousSourceVersion).toBe("source_version_02");
+    expect(deleteInput.previousFingerprint).toBe("source_fingerprint_02");
     expect(scanRecord.scope).toMatchObject({ kind: "workspace", workspaceId: "wksp_01" });
     expect(rootFingerprintRecord.sourceRoot as string).toContain("extensions/sources/user/web");
     expect(scanInput.scope).toEqual({ kind: "app-global" });
@@ -425,6 +436,81 @@ describe("@svvy/core state-backed port contracts", () => {
     expect(hostSnippetReconcile.observedSnippets[0]?.source).toBe("claude");
     expect(deletionInput.path as string).toContain("AGENTS.md");
     expect(diagnosticInput.diagnostic.code).toBe("external_instruction.unreadable");
+  });
+
+  it("decodes atomic workflow-agent source state mutations", () => {
+    const observedAt = "2026-07-11T08:00:00.000Z";
+    const observation = {
+      sourceId: "reviewerAgent",
+      path: "/tmp/svvy/workflows/agents/reviewerAgent.agent.json",
+      sourceVersion: "sha256:reviewer",
+      fingerprint: "sha256:reviewer",
+      validationStatus: "valid" as const,
+      diagnostics: [],
+      parameters: {
+        id: "reviewerAgent",
+        label: "Reviewer",
+        provider: "openai",
+        model: "gpt-5.4",
+        reasoning: { effort: "high" as const },
+        instructions: "Review the implementation.",
+      },
+      extensionOrder: ["git"],
+      observedAt,
+    };
+    const source = {
+      scope: { kind: "app-global" as const },
+      sourceKind: "workflow-agent" as const,
+      sourceId: observation.sourceId,
+      path: observation.path,
+      previousSourceVersion: "sha256:previous",
+      sourceVersion: observation.sourceVersion,
+      fingerprint: observation.fingerprint,
+      diagnostics: observation.diagnostics,
+      savedAt: observedAt,
+    };
+
+    expect(
+      Schema.decodeUnknownSync(RecordRuntimeWorkflowAgentSourceSaveInputSchema)({
+        source,
+        observation,
+      }),
+    ).toMatchObject({ observation: { sourceId: "reviewerAgent" } });
+    expect(
+      Schema.decodeUnknownSync(RecordRuntimeWorkflowAgentSourceDeleteInputSchema)({
+        source: {
+          scope: { kind: "app-global" },
+          sourceKind: "workflow-agent",
+          sourceId: observation.sourceId,
+          path: observation.path,
+          previousSourceVersion: observation.sourceVersion,
+          previousFingerprint: observation.fingerprint,
+          deletedAt: "2026-07-11T08:01:00.000Z",
+        },
+      }),
+    ).toMatchObject({ source: { sourceId: "reviewerAgent" } });
+    expect(
+      Schema.decodeUnknownSync(ReconcileRuntimeWorkflowAgentSourcesInputSchema)({
+        sourceFingerprint: "sha256:workflows",
+        observations: [observation],
+        diagnostics: [],
+        scannedAt: observedAt,
+      }),
+    ).toMatchObject({ observations: [{ sourceId: "reviewerAgent" }] });
+    expect(() =>
+      Schema.decodeUnknownSync(RecordRuntimeWorkflowAgentSourceSaveInputSchema)({
+        source: { ...source, fingerprint: "sha256:diverged" },
+        observation,
+      }),
+    ).toThrow("must exactly match");
+    expect(() =>
+      Schema.decodeUnknownSync(ReconcileRuntimeWorkflowAgentSourcesInputSchema)({
+        sourceFingerprint: "sha256:workflows",
+        observations: [observation, observation],
+        diagnostics: [],
+        scannedAt: observedAt,
+      }),
+    ).toThrow("unique source ids");
   });
 
   it("rejects invalid runtime source scan scope/domain pairs", () => {
@@ -1067,6 +1153,67 @@ describe("@svvy/core state-backed port contracts", () => {
       assistantMessageId: "message_assistant_01",
       assistantText: "The runtime facade is implemented.",
     });
+    const recoveryInput = Schema.decodeUnknownSync(RecoverInterruptedRuntimeTurnInputSchema)({
+      turnId: "turn_01",
+      terminalStatus: "failed",
+      reason: "Runtime exited before terminal facts committed.",
+    });
+    const recoveryResult = Schema.decodeUnknownSync(RuntimeInterruptedTurnRecoveryResultSchema)({
+      changed: true,
+      turn: { ...pendingRecord, status: "failed" },
+      terminalizedAssistantMessageId: "message_assistant_01",
+      terminalizedCommandIds: ["command_01"],
+      settledQueueItemId: "queue_01",
+      cancelledRequestInputIds: ["request_input_01"],
+      cancelledApprovalIds: ["approval_01"],
+      sessionWaitCleared: true,
+    });
+    const settlementInput = Schema.decodeUnknownSync(SettleRuntimePromptTurnInputSchema)({
+      turnId: "turn_01",
+      queueItemId: "queue_01",
+      status: "cancelled",
+      assistantText: "Partial answer",
+      terminalCommandIds: ["command_01"],
+      terminalCommandSummary: "Prompt execution was cancelled.",
+      terminalCommandError: "Prompt execution was cancelled.",
+      claimOwnerId: "runtime_owner_01",
+      leaseVersion: 2,
+    });
+    const settlementResult = Schema.decodeUnknownSync(RuntimePromptTurnSettlementResultSchema)({
+      changed: true,
+      turn: { ...pendingRecord, status: "cancelled" },
+      queuedMessage: {
+        id: "queue_01",
+        sessionId: "session_01",
+        surfacePiSessionId: "pi_session_01",
+        threadId: null,
+        workflowTaskAttemptId: null,
+        kind: "user_message",
+        idempotencyKey: "prompt_settlement_01",
+        messageJson: '{"text":"Cancel"}',
+        payloadJson: null,
+        status: "cancelled",
+        priority: "interactive",
+        orderingKey: "pi_session_01",
+        sequence: 1,
+        position: 1,
+        sourceCommandId: null,
+        claimOwnerId: null,
+        claimLeaseExpiresAt: null,
+        leaseVersion: 2,
+        attemptCount: 1,
+        maxAttempts: 3,
+        nextAttemptAt: null,
+        lastErrorJson: null,
+        createdAt: "2026-06-21T12:34:56.789Z",
+        updatedAt: "2026-06-21T12:35:56.789Z",
+        deliveredAt: null,
+        failedAt: null,
+        failureError: null,
+        cancelledAt: "2026-06-21T12:35:56.789Z",
+      },
+      terminalizedCommandIds: ["command_01"],
+    });
 
     expect(pendingRecord.turnDecision).toBe("pending");
     expect(decidedRecord.turnDecision).toBe("exec_command");
@@ -1074,6 +1221,10 @@ describe("@svvy/core state-backed port contracts", () => {
     expect(decisionInput.onlyIfPending).toBe(true);
     expect(finishInput.status).toBe("completed");
     expect(finishInput.assistantText).toBe("The runtime facade is implemented.");
+    expect(recoveryInput.terminalStatus).toBe("failed");
+    expect(recoveryResult.terminalizedCommandIds.map(String)).toEqual(["command_01"]);
+    expect(settlementInput.status).toBe("cancelled");
+    expect(settlementResult.queuedMessage.status).toBe("cancelled");
   });
 
   it("rejects running as a runtime turn finish status", () => {
@@ -1258,6 +1409,7 @@ describe("@svvy/core state-backed port contracts", () => {
       createdAt: "2026-06-21T12:34:56.789Z",
       completedAt: null,
       timeout: {
+        timerVersion: 1,
         enabled: true,
         durationMs: 60000,
         startedAt: "2026-06-21T12:34:56.789Z",
@@ -1310,6 +1462,8 @@ describe("@svvy/core state-backed port contracts", () => {
     )({
       requestId: "request_input_01",
       answeredBy: "timeout_default",
+      expectedTimerVersion: 1,
+      expectedExpiresAt: "2026-06-21T12:35:56.789Z",
     });
     const cancelInput = Schema.decodeUnknownSync(CancelRuntimeRequestInputInputSchema)({
       requestId: "request_input_01",
@@ -1405,6 +1559,7 @@ describe("@svvy/core state-backed port contracts", () => {
 
       expect(() =>
         Schema.decodeUnknownSync(RuntimeRequestInputTimeoutRecordSchema)({
+          timerVersion: 1,
           enabled: true,
           durationMs,
           startedAt: "2026-06-21T12:34:56.789Z",
@@ -1417,6 +1572,7 @@ describe("@svvy/core state-backed port contracts", () => {
 
     expect(() =>
       Schema.decodeUnknownSync(RuntimeRequestInputTimeoutRecordSchema)({
+        timerVersion: 1,
         enabled: true,
         durationMs: 60000,
         startedAt: "2026-06-21T12:34:56.789Z",
@@ -1649,6 +1805,42 @@ describe("@svvy/core state-backed port contracts", () => {
         extensionsGeneratedPackagePath: null,
       },
     });
+    const sourceReconcilePayload = Schema.decodeUnknownSync(SourceReconcileRecoveryPayloadSchema)({
+      request: {
+        scope: { kind: "app-global" },
+        domains: ["workflows"],
+        reason: "recovery",
+      },
+      retry: {
+        operation: "record-delete",
+        record: {
+          scope: { kind: "app-global" },
+          sourceKind: "workflow-agent",
+          sourceId: "reviewerAgent",
+          path: "/Users/polarzero/.config/svvy/workflows/agents/reviewerAgent.agent.json",
+          previousSourceVersion: "sha256:previous",
+          previousFingerprint: "sha256:previous",
+          sourceCommandId: "cmd_source_delete_01",
+          deletedAt: "2026-06-21T12:34:56.789Z",
+        },
+      },
+    });
+    const sourceReconcileWork = Schema.decodeUnknownSync(EnsureRuntimeRecoveryWorkInputSchema)({
+      scope: { kind: "app" },
+      kind: "source_reconcile",
+      ownerScope: {
+        kind: "source",
+        sourceKind: "workflow-agent",
+        sourceId: "reviewerAgent",
+      },
+      idempotencyKey: "source_reconcile:workflow-agent:reviewerAgent:deleted",
+      orderingKey: "source:workflow-agent:reviewerAgent",
+      orderingSeq: 0,
+      priority: 10,
+      availableAt: "2026-06-21T12:34:56.789Z",
+      maxAttempts: 5,
+      payloadJson: sourceReconcilePayload,
+    });
     const claimInput = Schema.decodeUnknownSync(ClaimNextRuntimeRecoveryWorkInputSchema)({
       claimedBy: "runtime_owner_01",
       scope: { kind: "app" },
@@ -1664,6 +1856,7 @@ describe("@svvy/core state-backed port contracts", () => {
       id: "recovery_01",
       error: "Queue delivery failed.",
       claimedBy: null,
+      retryAvailableAt: "2026-06-21T12:35:56.789Z",
     });
     const normalizeInput = Schema.decodeUnknownSync(NormalizeRuntimeRecoveryStateInputSchema)({
       claimedBy: "runtime_owner_01",
@@ -1676,11 +1869,80 @@ describe("@svvy/core state-backed port contracts", () => {
     });
     expect(snapshot.turns[0]?.status).toBe("running");
     expect(ensureInput.kind).toBe("workspace_generated_package_link_repair");
+    expect(sourceReconcilePayload.retry.operation).toBe("record-delete");
+    expect(sourceReconcileWork.ownerScope).toEqual({
+      kind: "source",
+      sourceKind: "workflow-agent",
+      sourceId: "reviewerAgent",
+    });
     expect(claimInput.claimedBy as string).toBe("runtime_owner_01");
     expect(claimInput.scope).toEqual({ kind: "app" });
     expect(completeInput.leaseVersion).toBe(1);
     expect(retryInput.error).toBe("Queue delivery failed.");
+    expect(retryInput.retryAvailableAt as string).toBe("2026-06-21T12:35:56.789Z");
     expect(normalizeInput.claimedBy as string).toBe("runtime_owner_01");
+  });
+
+  it("rejects source reconcile recovery payloads that diverge from their source record", () => {
+    const record = {
+      scope: { kind: "app-global" as const },
+      sourceKind: "workflow-agent" as const,
+      sourceId: "reviewerAgent",
+      path: "/Users/polarzero/.config/svvy/workflows/agents/reviewerAgent.agent.json",
+      previousSourceVersion: "sha256:previous",
+      previousFingerprint: "sha256:previous",
+      deletedAt: "2026-06-21T12:34:56.789Z",
+    };
+    const payload = {
+      request: {
+        scope: { kind: "app-global" as const },
+        domains: ["workflows" as const],
+        reason: "recovery" as const,
+      },
+      retry: { operation: "record-delete" as const, record },
+    };
+
+    expect(() =>
+      Schema.decodeUnknownSync(SourceReconcileRecoveryPayloadSchema)({
+        ...payload,
+        retry: {
+          ...payload.retry,
+          record: {
+            ...record,
+            scope: { kind: "workspace", workspaceId: "workspace_01" },
+          },
+        },
+      }),
+    ).toThrow("must be app-global");
+    expect(() =>
+      Schema.decodeUnknownSync(SourceReconcileRecoveryPayloadSchema)({
+        ...payload,
+        request: {
+          ...payload.request,
+          scope: { kind: "workspace", workspaceId: "workspace_01" },
+          domains: ["host_snippets"],
+        },
+        retry: {
+          ...payload.retry,
+          record: {
+            ...record,
+            scope: { kind: "workspace", workspaceId: "workspace_01" },
+          },
+        },
+      }),
+    ).toThrow("must be app-global");
+    expect(() =>
+      Schema.decodeUnknownSync(SourceReconcileRecoveryPayloadSchema)({
+        ...payload,
+        request: { ...payload.request, domains: ["extensions"] },
+      }),
+    ).toThrow("must target only workflows");
+    expect(() =>
+      Schema.decodeUnknownSync(SourceReconcileRecoveryPayloadSchema)({
+        ...payload,
+        request: { ...payload.request, reason: "manual" },
+      }),
+    ).toThrow("must use the recovery reason");
   });
 
   it("rejects invalid runtime recovery work kind and scope pairs", () => {
@@ -1710,6 +1972,36 @@ describe("@svvy/core state-backed port contracts", () => {
         maxAttempts: 5,
       }),
     ).toThrow("workspace_generated_package_link_repair recovery work must be workspace-scoped");
+    expect(() =>
+      Schema.decodeUnknownSync(EnsureRuntimeRecoveryWorkInputSchema)({
+        scope: { kind: "app" },
+        kind: "source_reconcile",
+        ownerScope: { kind: "workspace" },
+        idempotencyKey: "source_reconcile:invalid-owner",
+        orderingKey: "source:invalid-owner",
+        orderingSeq: 0,
+        priority: 10,
+        availableAt: "2026-06-21T12:34:56.789Z",
+        maxAttempts: 5,
+      }),
+    ).toThrow("source_reconcile recovery work must be owned by a source");
+    expect(() =>
+      Schema.decodeUnknownSync(EnsureRuntimeRecoveryWorkInputSchema)({
+        scope: { kind: "workspace", workspaceId: "workspace_01" },
+        kind: "source_reconcile",
+        ownerScope: {
+          kind: "source",
+          sourceKind: "workflow-agent",
+          sourceId: "reviewerAgent",
+        },
+        idempotencyKey: "source_reconcile:workspace",
+        orderingKey: "source:workflow-agent:reviewerAgent",
+        orderingSeq: 0,
+        priority: 10,
+        availableAt: "2026-06-21T12:34:56.789Z",
+        maxAttempts: 5,
+      }),
+    ).toThrow("source_reconcile recovery work must be app-scoped");
   });
 
   it("rejects removed runtime recovery kind names", () => {

@@ -17,6 +17,7 @@ import type {
   RuntimeSourceStatePortService,
   RuntimeSurfaceLifecycleStatePortService,
   RuntimeThreadStatePortService,
+  RuntimeTranscriptStatePortService,
   RuntimeTurnStatePortService,
   RuntimeWorkspaceStatePortService,
   SurfacePiSessionId,
@@ -56,6 +57,11 @@ type RoutingIdentity<Field extends string> =
 type PortRoutingAudit<S> = { readonly [K in keyof S]: RoutingIdentity<InputField<S, K>> };
 
 const workspaceAudit: PortRoutingAudit<RuntimeWorkspaceStatePortService> = {
+  resolvePromptTargetWorkspaceId: {
+    via: "prompt-target",
+    inputField: "target",
+    committedRecords: ["pi_session_reference", "session"],
+  },
   acquireWorkspace: { via: "committed-workspace-cwd", inputField: "cwd" },
   acquireDefaultWorkspace: { via: "default-workspace" },
   releaseWorkspace: { via: "explicit-workspace-id", inputField: "workspaceId" },
@@ -79,6 +85,9 @@ const sourceAudit: PortRoutingAudit<RuntimeSourceStatePortService> = {
   readSourceVersion: { via: "explicit-source-scope", inputField: "scope" },
   recordSourceSave: { via: "explicit-source-scope", inputField: "scope" },
   recordSourceDelete: { via: "explicit-source-scope", inputField: "scope" },
+  recordWorkflowAgentSourceSave: { via: "app-global" },
+  recordWorkflowAgentSourceDelete: { via: "app-global" },
+  reconcileWorkflowAgentSources: { via: "app-global" },
   recordSourceScan: { via: "explicit-source-scope", inputField: "scope" },
   reconcileDiscoveredHostSnippets: { via: "explicit-source-scope", inputField: "scope" },
   recordObservedSourceDeletion: { via: "explicit-source-scope", inputField: "scope" },
@@ -168,6 +177,9 @@ const queueAudit: PortRoutingAudit<RuntimeQueueStatePortService> = {
 };
 
 const requestAudit: PortRoutingAudit<RuntimeRequestStatePortService> = {
+  readRequestInputSettings: { via: "app-global" },
+  setRequestInputVariant: { via: "app-global" },
+  setRequestInputBlockingTimeout: { via: "app-global" },
   createRequestInput: {
     via: "prompt-target",
     inputField: "target",
@@ -313,6 +325,59 @@ const threadAudit: PortRoutingAudit<RuntimeThreadStatePortService> = {
   },
 };
 
+const transcriptAudit: PortRoutingAudit<RuntimeTranscriptStatePortService> = {
+  commitUserMessage: {
+    via: "committed-owner-row",
+    inputFields: ["surfacePiSessionId", "workspaceSessionId"],
+    committedRecords: ["pi_session_reference", "session"],
+  },
+  beginAssistantMessage: {
+    via: "committed-owner-row",
+    inputFields: ["surfacePiSessionId", "workspaceSessionId"],
+    committedRecords: ["pi_session_reference", "session"],
+  },
+  appendAssistantContentDelta: {
+    via: "committed-owner-row",
+    inputFields: ["surfacePiSessionId"],
+    committedRecords: ["pi_session_reference"],
+  },
+  upsertAssistantToolCall: {
+    via: "committed-owner-row",
+    inputFields: ["surfacePiSessionId"],
+    committedRecords: ["pi_session_reference"],
+  },
+  linkAssistantToolCallCommand: {
+    via: "committed-owner-row",
+    inputFields: ["surfacePiSessionId"],
+    committedRecords: ["pi_session_reference"],
+  },
+  commitAssistantMessage: {
+    via: "committed-owner-row",
+    inputFields: ["surfacePiSessionId"],
+    committedRecords: ["pi_session_reference"],
+  },
+  failAssistantMessage: {
+    via: "committed-owner-row",
+    inputFields: ["surfacePiSessionId"],
+    committedRecords: ["pi_session_reference"],
+  },
+  bindPiHistoryEntry: {
+    via: "committed-owner-row",
+    inputFields: ["piHistoryEntry"],
+    committedRecords: ["pi_session_reference"],
+  },
+  advanceStreamCursor: {
+    via: "committed-owner-row",
+    inputFields: ["surfacePiSessionId"],
+    committedRecords: ["pi_session_reference"],
+  },
+  readSurfaceTranscript: {
+    via: "committed-owner-row",
+    inputFields: ["surfacePiSessionId"],
+    committedRecords: ["pi_session_reference"],
+  },
+};
+
 const turnAudit: PortRoutingAudit<RuntimeTurnStatePortService> = {
   startTurn: {
     via: "committed-owner-row",
@@ -325,6 +390,16 @@ const turnAudit: PortRoutingAudit<RuntimeTurnStatePortService> = {
     committedRecords: ["turn"],
   },
   finishTurn: {
+    via: "committed-owner-row",
+    inputFields: ["turnId"],
+    committedRecords: ["turn"],
+  },
+  recoverInterruptedTurn: {
+    via: "committed-owner-row",
+    inputFields: ["turnId"],
+    committedRecords: ["turn"],
+  },
+  settlePromptTurn: {
     via: "committed-owner-row",
     inputFields: ["turnId"],
     committedRecords: ["turn"],
@@ -357,6 +432,7 @@ const auditedPorts = [
   ["command", commandAudit],
   ["sessionWait", sessionWaitAudit],
   ["thread", threadAudit],
+  ["transcript", transcriptAudit],
   ["turn", turnAudit],
   ["episode", episodeAudit],
 ] as const satisfies ReadonlyArray<readonly [string, Record<string, RoutingIdentity<string>>]>;
@@ -414,7 +490,7 @@ function createRegistry() {
 }
 
 describe("workspace state router routing-identity audit", () => {
-  it("classifies exactly the fourteen routed state ports and 66 dispatched methods", () => {
+  it("classifies exactly the fifteen routed state ports and 85 dispatched methods", () => {
     const { registry, cleanup } = createRegistry();
     const router = createWorkspaceStateRouter({
       appGlobalStore: makeStore(registry, "workspace_app_global", "appglobal"),
@@ -437,6 +513,7 @@ describe("workspace state router routing-identity audit", () => {
         command: router.command,
         sessionWait: router.sessionWait,
         thread: router.thread,
+        transcript: router.transcript,
         turn: router.turn,
         episode: router.episode,
       };
@@ -450,12 +527,12 @@ describe("workspace state router routing-identity audit", () => {
         totalMethods += auditedMethods.length;
       }
 
-      expect(auditedPorts.length).toBe(14);
+      expect(auditedPorts.length).toBe(15);
       expect(Object.keys(routerPorts).toSorted()).toEqual(
         auditedPorts.map(([key]) => key).toSorted(),
       );
-      expect(totalMethods).toBe(66);
-      expect(auditRows.length).toBe(66);
+      expect(totalMethods).toBe(85);
+      expect(auditRows.length).toBe(85);
     } finally {
       cleanup();
     }

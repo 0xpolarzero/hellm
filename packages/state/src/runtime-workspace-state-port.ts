@@ -1,6 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { RuntimeWorkspaceStatePort, type RuntimeWorkspaceStatePortService } from "@svvy/core";
+import {
+  RuntimeWorkspaceStatePort,
+  type RuntimeWorkspaceStatePortService,
+  type WorkspaceId,
+} from "@svvy/core";
 import {
   dedupeInvalidations,
   mutationResult,
@@ -17,6 +21,10 @@ export function runtimeWorkspaceStatePortFromStructuredSessionState(
   state: StructuredSessionState["Service"],
 ): RuntimeWorkspaceStatePortService {
   return {
+    resolvePromptTargetWorkspaceId: ({ target }) =>
+      state
+        .getSessionState(target.workspaceSessionId)
+        .pipe(Effect.as(state.workspaceId as WorkspaceId)),
     acquireWorkspace: (input) =>
       state
         .acquireWorkspace(input)

@@ -257,10 +257,10 @@
     session: ChatRuntime["sessions"][number] | null,
     controller: ReturnType<ChatRuntime["getPaneController"]>,
   ): PaneTabState {
-    if (controller?.agent.state.error || session?.status === "error") {
+    if (controller?.view.error || session?.status === "error") {
       return "error";
     }
-    if (controller?.agent.state.isStreaming || controller?.promptStatus === "streaming") {
+    if (controller?.view.isStreaming || controller?.promptStatus === "streaming") {
       return "streaming";
     }
     if (panel?.binding?.surface === "handler") {

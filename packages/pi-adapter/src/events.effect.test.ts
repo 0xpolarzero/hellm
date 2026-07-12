@@ -1,12 +1,23 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { normalizePiAgentEventToRuntimeEvents } from "./events";
-import type { PiSessionRef, SurfacePiSessionId, ToolCallId, TurnId } from "@svvy/core";
+import {
+  IsoDateTimeStringSchema,
+  type ModelId,
+  type PiSessionRef,
+  type ProviderId,
+  type SurfacePiSessionId,
+  type ToolCallId,
+  type TurnId,
+} from "@svvy/core";
+
+type IsoDateTime = typeof IsoDateTimeStringSchema.Type;
 
 const base = {
   session: { surfacePiSessionId: "pi_surface_01" as SurfacePiSessionId } satisfies PiSessionRef,
   turnId: "turn_01" as TurnId,
   surfacePiSessionId: "pi_surface_01" as SurfacePiSessionId,
+  occurredAt: "2026-07-11T12:00:00.000Z",
 };
 
 describe("pi event adapter", () => {
@@ -15,6 +26,7 @@ describe("pi event adapter", () => {
       assert.deepStrictEqual(
         yield* normalizePiAgentEventToRuntimeEvents({
           ...base,
+          occurredAt: "2026-07-11T12:00:00.000Z",
           event: {
             type: "message_end",
             message: {
@@ -31,6 +43,8 @@ describe("pi event adapter", () => {
             surfacePiSessionId: base.surfacePiSessionId,
             type: "pi.user_message.committed",
             piMessageRef: "pi_surface_01:turn_01:user:1710000000000",
+            piHistoryEntry: null,
+            committedAt: "2026-07-11T12:00:00.000Z" as IsoDateTime,
           },
         ],
       );
@@ -125,7 +139,7 @@ describe("pi event adapter", () => {
             turnId: base.turnId,
             surfacePiSessionId: base.surfacePiSessionId,
             type: "pi.assistant.text.delta",
-            piMessageRef: "pi_surface_01:turn_01:assistant:2",
+            piMessageRef: "pi_surface_01:turn_01:assistant",
             contentIndex: 2,
             delta: "fallback",
           },
@@ -154,6 +168,146 @@ describe("pi event adapter", () => {
             piMessageRef: "msg_empty",
             contentIndex: 0,
             delta: "",
+          },
+        ],
+      );
+    }),
+  );
+
+  it.effect("maps assistant message lifecycle with rich terminal metadata", () =>
+    Effect.gen(function* () {
+      const piHistoryEntry = {
+        session: base.session,
+        entryId: "pi_entry_assistant_01",
+      };
+      assert.deepStrictEqual(
+        yield* normalizePiAgentEventToRuntimeEvents({
+          ...base,
+          assistantMessageRef: "assistant_01",
+          occurredAt: "2026-07-11T12:00:01.000Z",
+          event: {
+            type: "message_start",
+            message: {
+              role: "assistant",
+              content: [],
+              api: "openai-responses",
+              provider: "openai",
+              model: "gpt-5",
+              usage: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 0,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "stop",
+              timestamp: 1710000000000,
+            },
+          },
+        }),
+        [
+          {
+            session: base.session,
+            turnId: base.turnId,
+            surfacePiSessionId: base.surfacePiSessionId,
+            type: "pi.assistant_message.started",
+            piMessageRef: "assistant_01",
+            api: "openai-responses",
+            providerId: "openai" as ProviderId,
+            modelId: "gpt-5" as ModelId,
+            startedAt: "2024-03-09T16:00:00.000Z" as IsoDateTime,
+          },
+        ],
+      );
+
+      assert.deepStrictEqual(
+        yield* normalizePiAgentEventToRuntimeEvents({
+          ...base,
+          assistantMessageRef: "assistant_01",
+          piHistoryEntry,
+          occurredAt: "2026-07-11T12:00:02.000Z",
+          event: {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "thinking",
+                  thinking: "Inspect.",
+                  thinkingSignature: "thinking_01",
+                  redacted: false,
+                },
+                {
+                  type: "toolCall",
+                  id: "tool_01",
+                  name: "read_file",
+                  arguments: { path: "src/main.ts" },
+                  thoughtSignature: "thought_01",
+                },
+                { type: "text", text: "Done." },
+              ],
+              api: "openai-responses",
+              provider: "openai",
+              model: "gpt-5",
+              responseId: "response_01",
+              usage: {
+                input: 10,
+                output: 5,
+                cacheRead: 2,
+                cacheWrite: 0,
+                totalTokens: 15,
+                cost: { input: 0.1, output: 0.2, cacheRead: 0.01, cacheWrite: 0, total: 0.31 },
+              },
+              stopReason: "toolUse",
+              timestamp: 1710000000000,
+            },
+          },
+        }),
+        [
+          {
+            session: base.session,
+            turnId: base.turnId,
+            surfacePiSessionId: base.surfacePiSessionId,
+            type: "pi.assistant_message.committed",
+            piMessageRef: "assistant_01",
+            content: [
+              {
+                kind: "thinking",
+                contentIndex: 0,
+                thinking: "Inspect.",
+                redacted: false,
+                thinkingSignature: "thinking_01",
+              },
+              {
+                kind: "tool-call",
+                contentIndex: 1,
+                toolCallId: "tool_01" as ToolCallId,
+                toolName: "read_file",
+                argumentsJson: '{"path":"src/main.ts"}',
+                argumentsStatus: "accepted",
+                commandId: null,
+                thoughtSignature: "thought_01",
+              },
+              { kind: "text", contentIndex: 2, text: "Done." },
+            ],
+            api: "openai-responses",
+            providerId: "openai" as ProviderId,
+            modelId: "gpt-5" as ModelId,
+            responseId: "response_01",
+            usage: {
+              input: 10,
+              output: 5,
+              cacheRead: 2,
+              cacheWrite: 0,
+              totalTokens: 15,
+              cost: { input: 0.1, output: 0.2, cacheRead: 0.01, cacheWrite: 0, total: 0.31 },
+            },
+            stopReason: "toolUse",
+            errorMessage: null,
+            piHistoryEntry,
+            messageTimestamp: "2024-03-09T16:00:00.000Z" as IsoDateTime,
+            finishedAt: "2026-07-11T12:00:02.000Z" as IsoDateTime,
           },
         ],
       );
@@ -438,6 +592,33 @@ describe("pi event adapter", () => {
             stopReason: "error",
           },
         ],
+      );
+
+      assert.deepStrictEqual(
+        yield* normalizePiAgentEventToRuntimeEvents({
+          ...base,
+          event: { type: "agent_end", messages: [{ role: "assistant", stopReason: "stop" }] },
+        }),
+        [
+          {
+            session: base.session,
+            turnId: base.turnId,
+            surfacePiSessionId: base.surfacePiSessionId,
+            type: "pi.agent.finished",
+            status: "completed",
+          },
+        ],
+      );
+
+      assert.deepStrictEqual(
+        yield* normalizePiAgentEventToRuntimeEvents({
+          ...base,
+          event: {
+            type: "message_update",
+            assistantMessageEvent: { type: "error", reason: "stream failed" },
+          },
+        }),
+        [],
       );
     }),
   );

@@ -22,6 +22,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import { PiAdapter, layer } from "./index";
 import {
   setPiManagedAgentSessionFactoryForTests,
@@ -526,7 +527,7 @@ describe("PiAdapter", () => {
               session: { surfacePiSessionId },
               turnId: "turn_hung_prompt" as never,
               surfacePiSessionId,
-              type: "pi.turn.finished",
+              type: "pi.agent.finished",
               status: "cancelled",
               stopReason: "interrupted",
             },
@@ -609,13 +610,13 @@ describe("PiAdapter", () => {
               },
             });
           }
-          listener!({ type: "turn_end", stopReason: "stop" });
+          listener!({ type: "agent_end", messages: [] });
           resolvePrompt?.();
 
           const events = Array.from(
             yield* turn.stream.pipe(Stream.take(257), Stream.runCollect),
           ) as PiRuntimeEvent[];
-          const terminalEvents = events.filter((event) => event.type === "pi.turn.finished");
+          const terminalEvents = events.filter((event) => event.type === "pi.agent.finished");
 
           assert.strictEqual(events.length, 257);
           assert.deepStrictEqual(terminalEvents, [
@@ -623,9 +624,8 @@ describe("PiAdapter", () => {
               session: { surfacePiSessionId },
               turnId: "turn_offer_drain" as never,
               surfacePiSessionId,
-              type: "pi.turn.finished",
+              type: "pi.agent.finished",
               status: "completed",
-              stopReason: "stop",
             },
           ]);
         } finally {
@@ -639,6 +639,112 @@ describe("PiAdapter", () => {
       ),
     );
   });
+
+  it.effect(
+    "uses the Effect clock for lifecycle events and preserves pi history enrichment",
+    () => {
+      const services = testPiAdapterServices();
+      let listener: ((event: unknown) => void) | undefined;
+      let leafEntry: unknown;
+      const restoreFactory = setPiManagedAgentSessionFactoryForTests(async () =>
+        testManagedAgentSession({
+          onSubscribe: (nextListener) => {
+            listener = nextListener;
+          },
+          promptSettles: false,
+          readLeafEntry: () => leafEntry,
+        }),
+      );
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          try {
+            yield* TestClock.setTime(Date.parse("2026-07-11T12:00:01.000Z"));
+            const adapter = yield* PiAdapter;
+            yield* adapter.sessions.create({
+              workspaceId,
+              workspaceSessionId,
+              surfacePiSessionId,
+              actorKind: "orchestrator",
+              generatedContextFingerprint: "gctx_test" as never,
+              model: { providerId: openaiProviderId, modelId },
+              reasoning: { effort: "high" },
+            });
+
+            const turnId = "turn_lifecycle_clock" as never;
+            const turn = yield* adapter.turns.run(testRunTurnInput({ turnId }));
+            const eventFiber = yield* turn.stream.pipe(
+              Stream.take(2),
+              Stream.runCollect,
+              Effect.forkScoped,
+            );
+            assert.ok(listener);
+
+            listener!({
+              type: "message_start",
+              message: {
+                role: "assistant",
+                content: [],
+                api: "openai-responses",
+                provider: "openai",
+                model: "gpt-5.5",
+              },
+            });
+
+            yield* TestClock.setTime(Date.parse("2026-07-11T12:00:02.000Z"));
+            const assistantMessage = {
+              role: "assistant",
+              content: [{ type: "text", text: "Done." }],
+              api: "openai-responses",
+              provider: "openai",
+              model: "gpt-5.5",
+              usage: {
+                input: 2,
+                output: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 3,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "stop",
+              timestamp: 1710000000000,
+            };
+            listener!({ type: "message_end", message: assistantMessage });
+            leafEntry = {
+              type: "message",
+              id: "pi_entry_assistant_clock",
+              message: assistantMessage,
+            };
+
+            const events = Array.from(yield* Fiber.join(eventFiber));
+            const started = events.find((event) => event.type === "pi.assistant_message.started");
+            const committed = events.find(
+              (event) => event.type === "pi.assistant_message.committed",
+            );
+            assert.ok(started && started.type === "pi.assistant_message.started");
+            assert.ok(committed && committed.type === "pi.assistant_message.committed");
+            assert.strictEqual(started.startedAt, "2026-07-11T12:00:01.000Z");
+            assert.strictEqual(committed.finishedAt, "2026-07-11T12:00:02.000Z");
+            assert.strictEqual(committed.messageTimestamp, "2024-03-09T16:00:00.000Z");
+            assert.deepStrictEqual(committed.piHistoryEntry, {
+              session: { surfacePiSessionId },
+              entryId: "pi_entry_assistant_clock",
+            });
+            assert.strictEqual(committed.piMessageRef, started.piMessageRef);
+
+            yield* turn.close();
+          } finally {
+            restoreFactory();
+          }
+        }).pipe(
+          Effect.provide(layer),
+          Effect.provideService(ProviderAuthPort, services.providerAuthPort),
+          Effect.provideService(PiRuntimePathsPort, services.runtimePathsPort),
+          Effect.provideService(PiSessionReferencePort, services.sessionReferencePort),
+        ),
+      );
+    },
+  );
 
   it.effect("interrupt settles when the turn queue is saturated without a consumer", () => {
     const services = testPiAdapterServices();
@@ -1327,6 +1433,7 @@ function testManagedAgentSession(
     readonly promptSettles?: boolean;
     readonly onPrompt?: (text: string, promptOptions: unknown) => Promise<void>;
     readonly onSubscribe?: (listener: (event: unknown) => void) => void;
+    readonly readLeafEntry?: () => unknown;
     readonly onAbort?: () => Promise<void>;
     readonly onDispose?: () => void;
   } = {},
@@ -1346,6 +1453,9 @@ function testManagedAgentSession(
       },
       abort: () => options.onAbort?.() ?? Promise.resolve(),
       dispose: () => options.onDispose?.(),
+      sessionManager: {
+        getLeafEntry: () => options.readLeafEntry?.(),
+      },
     } as never,
     authStorage: {} as never,
     modelRegistry: {} as never,

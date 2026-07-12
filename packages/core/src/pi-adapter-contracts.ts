@@ -9,7 +9,6 @@ import {
   GeneratedContextRevision,
   type IsoDateTimeString,
   IsoDateTimeStringSchema,
-  MessageId,
   ModelId,
   NonNegativeSafeIntegerSchema,
   PositiveSafeIntegerSchema,
@@ -27,6 +26,11 @@ import {
   NativeToolResultSchema,
 } from "./native-tool-contracts";
 import {
+  PiHistoryEntryRefSchema,
+  type PiSessionRef,
+  PiSessionRefSchema,
+} from "./pi-history-contracts";
+import {
   ActorKindSchema,
   ReasoningEffortSchema,
   ReasoningSelectionSchema,
@@ -34,6 +38,11 @@ import {
   type RuntimeSubmittedMessage,
 } from "./runtime-contracts";
 import { ProviderAuthStatusSchema } from "./provider-auth-ports";
+import {
+  RuntimeTranscriptAssistantContentSchema,
+  RuntimeTranscriptAssistantStopReasonSchema,
+  RuntimeTranscriptUsageSchema,
+} from "./transcript-contracts";
 import type { RuntimeToolExecutionError } from "./errors";
 
 export const ModelSelectionSchema = Schema.Struct({
@@ -42,10 +51,12 @@ export const ModelSelectionSchema = Schema.Struct({
 });
 export type ModelSelection = typeof ModelSelectionSchema.Type;
 
-export const PiSessionRefSchema = Schema.Struct({
-  surfacePiSessionId: SurfacePiSessionId,
-});
-export type PiSessionRef = typeof PiSessionRefSchema.Type;
+export {
+  PiHistoryEntryRefSchema,
+  PiSessionRefSchema,
+  type PiHistoryEntryRef,
+  type PiSessionRef,
+} from "./pi-history-contracts";
 
 export const PiSessionReferencePublicSchema = Schema.Struct({
   surfacePiSessionId: SurfacePiSessionId,
@@ -195,13 +206,6 @@ export const InterruptPiTurnInputSchema = Schema.Struct({
 });
 export type InterruptPiTurnInput = typeof InterruptPiTurnInputSchema.Type;
 
-export const PiHistoryEntryRefSchema = Schema.Struct({
-  session: PiSessionRefSchema,
-  entryId: Schema.String,
-  messageId: Schema.optionalKey(MessageId),
-});
-export type PiHistoryEntryRef = typeof PiHistoryEntryRefSchema.Type;
-
 export const RestorePiHistoryEntryInputSchema = Schema.Struct({
   session: PiSessionRefSchema,
   entryId: PiHistoryEntryRefSchema,
@@ -275,7 +279,33 @@ export const PiRuntimeEventSchema = Schema.Union([
     ...PiRuntimeEventBaseSchema,
     type: Schema.Literal("pi.user_message.committed"),
     piMessageRef: Schema.String,
-    messageId: Schema.optionalKey(MessageId),
+    piHistoryEntry: Schema.NullOr(PiHistoryEntryRefSchema),
+    committedAt: IsoDateTimeStringSchema,
+  }),
+  Schema.Struct({
+    ...PiRuntimeEventBaseSchema,
+    type: Schema.Literal("pi.assistant_message.started"),
+    piMessageRef: Schema.String,
+    api: Schema.NullOr(Schema.String),
+    providerId: ProviderId,
+    modelId: ModelId,
+    startedAt: IsoDateTimeStringSchema,
+  }),
+  Schema.Struct({
+    ...PiRuntimeEventBaseSchema,
+    type: Schema.Literal("pi.assistant_message.committed"),
+    piMessageRef: Schema.String,
+    content: RuntimeTranscriptAssistantContentSchema,
+    api: Schema.NullOr(Schema.String),
+    providerId: ProviderId,
+    modelId: ModelId,
+    responseId: Schema.NullOr(Schema.String),
+    usage: Schema.NullOr(RuntimeTranscriptUsageSchema),
+    stopReason: Schema.NullOr(RuntimeTranscriptAssistantStopReasonSchema),
+    errorMessage: Schema.NullOr(Schema.String),
+    piHistoryEntry: Schema.NullOr(PiHistoryEntryRefSchema),
+    messageTimestamp: Schema.NullOr(IsoDateTimeStringSchema),
+    finishedAt: IsoDateTimeStringSchema,
   }),
   Schema.Struct({
     ...PiRuntimeEventBaseSchema,
@@ -349,6 +379,12 @@ export const PiRuntimeEventSchema = Schema.Union([
   Schema.Struct({
     ...PiRuntimeEventBaseSchema,
     type: Schema.Literal("pi.turn.finished"),
+    status: Schema.Literals(["completed", "failed", "cancelled"]),
+    stopReason: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    ...PiRuntimeEventBaseSchema,
+    type: Schema.Literal("pi.agent.finished"),
     status: Schema.Literals(["completed", "failed", "cancelled"]),
     stopReason: Schema.optionalKey(Schema.String),
   }),

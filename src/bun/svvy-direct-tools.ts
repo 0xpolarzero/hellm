@@ -46,6 +46,11 @@ import type { AppLoggerEvent } from "./app-logger";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import type { AgentSettingsStore } from "./agent-settings-store";
 import {
+  readAgentProfileMutation,
+  type AgentProfileAuthoritySnapshot,
+  type AgentProfileMutation,
+} from "./agent-profile-mutation-store";
+import {
   isSandboxDenialOutput,
   isSandboxHelperBootstrapFailure,
   sandboxDenialFacts,
@@ -163,6 +168,8 @@ type DirectToolOptions = {
   extensionsEnvValues?: SvvyxRuntimeEnvValues;
   extensionsRoot?: string;
   agentSettingsStore?: AgentSettingsStore;
+  agentProfileSnapshot?: AgentProfileAuthoritySnapshot;
+  applyAgentProfileMutations?: (mutations: readonly AgentProfileMutation[]) => Promise<void>;
   approvalBoundary?: DirectToolApprovalBoundary;
   approvalMode?: ApprovalMode | (() => ApprovalMode);
   managedSandbox?: boolean | (() => boolean);
@@ -663,6 +670,7 @@ type SvvyxSubprocessAppAction = {
 };
 
 type SvvyxSubprocessTransport = {
+  agentProfileMutations: readonly AgentProfileMutation[];
   agentSettingsState?: AgentSettingsState;
   appActions: SvvyxSubprocessAppAction[];
   appLogEvents: AppLoggerEvent[];
@@ -729,6 +737,7 @@ function prepareSvvyxSubprocess(input: {
       }
     : null;
   const context = {
+    agentProfileSnapshot: input.options.agentProfileSnapshot ?? null,
     agentSettingsState: input.options.agentSettingsStore?.getState() ?? null,
     canRequestArtifactOpen: input.options.openArtifact !== undefined,
     cwd: input.commandCwd,
@@ -919,6 +928,12 @@ async function finalizeSvvyxSubprocessResult(input: {
       input.svvyxSubprocess.resultPath,
       input.svvyxSubprocess.resultKey,
     );
+    if (transport.ok && transport.agentProfileMutations.length > 0) {
+      if (!input.options.applyAgentProfileMutations) {
+        throw new Error("Agent profile mutations require the DB-backed runtime authority.");
+      }
+      await input.options.applyAgentProfileMutations(transport.agentProfileMutations);
+    }
     const intentResult = transport.ok
       ? await applySvvyxSubprocessIntents(
           input.options,
@@ -1190,11 +1205,25 @@ function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubpro
   try {
     const signed = JSON.parse(readFileSync(path, "utf8")) as SignedSvvyxSubprocessTransport;
     if (!isValidSvvyxSubprocessSignature(signed, resultKey)) {
-      return { appActions: [], appLogEvents: [], intents: [], ok: false, progressEvents: [] };
+      return {
+        agentProfileMutations: [],
+        appActions: [],
+        appLogEvents: [],
+        intents: [],
+        ok: false,
+        progressEvents: [],
+      };
     }
     const parsed = signed.payload;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { appActions: [], appLogEvents: [], intents: [], ok: false, progressEvents: [] };
+      return {
+        agentProfileMutations: [],
+        appActions: [],
+        appLogEvents: [],
+        intents: [],
+        ok: false,
+        progressEvents: [],
+      };
     }
     const appActions = Array.isArray((parsed as { appActions?: unknown }).appActions)
       ? (parsed as { appActions: SvvyxSubprocessAppAction[] }).appActions
@@ -1203,6 +1232,14 @@ function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubpro
       ? (parsed as { appLogEvents: AppLoggerEvent[] }).appLogEvents
       : [];
     const commandFacts = (parsed as { commandFacts?: unknown }).commandFacts;
+    const agentProfileMutations = Array.isArray(
+      (parsed as { agentProfileMutations?: unknown }).agentProfileMutations,
+    )
+      ? (parsed as { agentProfileMutations: unknown[] }).agentProfileMutations.flatMap((value) => {
+          const mutation = readAgentProfileMutation(value);
+          return mutation ? [mutation] : [];
+        })
+      : [];
     const agentSettingsState = (parsed as { agentSettingsState?: unknown }).agentSettingsState;
     const intents = Array.isArray((parsed as { intents?: unknown }).intents)
       ? (parsed as { intents: unknown[] }).intents.flatMap(readSvvyxSubprocessIntent)
@@ -1214,6 +1251,7 @@ function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubpro
       : [];
     const output = (parsed as { output?: unknown }).output;
     return {
+      agentProfileMutations,
       appActions,
       appLogEvents,
       ...(agentSettingsState && typeof agentSettingsState === "object"
@@ -1230,7 +1268,14 @@ function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubpro
       progressEvents,
     };
   } catch {
-    return { appActions: [], appLogEvents: [], intents: [], ok: false, progressEvents: [] };
+    return {
+      agentProfileMutations: [],
+      appActions: [],
+      appLogEvents: [],
+      intents: [],
+      ok: false,
+      progressEvents: [],
+    };
   }
 }
 
@@ -1423,28 +1468,8 @@ function replaySvvyxSubprocessAgentSettings(
   if (!store || !nextState) {
     return;
   }
-  const current = store.getState();
   store.setExtensionEnv(nextState.extensionEnv);
-  store.setRequestUserInput(nextState.requestUserInput);
   store.hydrateStateOwnedAppPreferences(nextState.appPreferences);
-  store.setAgentProfile(nextState.agents.special.threadHandler);
-  for (const profile of nextState.agents.orchestrators) {
-    store.setAgentProfile(profile);
-  }
-  for (const profile of current.agents.orchestrators) {
-    if (!profile.locked && !nextState.agents.orchestrators.some((next) => next.id === profile.id)) {
-      store.deleteAgentProfile(profile.id);
-    }
-  }
-  store.reorderOrchestratorProfiles(nextState.agents.orchestrators.map((profile) => profile.id));
-  for (const [key, settings] of Object.entries(nextState.workflowAgents)) {
-    store.setWorkflowAgent(key, settings);
-  }
-  for (const key of Object.keys(current.workflowAgents)) {
-    if (!Object.prototype.hasOwnProperty.call(nextState.workflowAgents, key)) {
-      store.deleteWorkflowAgent(key);
-    }
-  }
 }
 
 function readTextContent(result: { content: { type: "text"; text: string }[] }): string {

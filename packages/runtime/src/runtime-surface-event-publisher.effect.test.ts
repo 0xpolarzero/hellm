@@ -102,6 +102,33 @@ describe("runtime surface event publisher", () => {
     ),
   );
 
+  it.effect("continues from a durable stream sequence supplied by state", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const publisher = yield* RuntimeSurfaceEventPublisher;
+        const committed = yield* publisher.publishStreamPatch({
+          ...textDelta(target, streamGenerationId, "durable"),
+          streamSequence: 7 as SurfaceStreamSequence,
+        });
+        const next = yield* publisher.publishStreamPatch(
+          textDelta(target, streamGenerationId, "next"),
+        );
+        const stale = yield* publisher
+          .publishStreamPatch({
+            ...textDelta(target, streamGenerationId, "stale"),
+            streamSequence: 10 as SurfaceStreamSequence,
+          })
+          .pipe(Effect.flip);
+
+        assertSurfaceStream(committed);
+        assertSurfaceStream(next);
+        assert.strictEqual(committed.streamSequence, 7 as SurfaceStreamSequence);
+        assert.strictEqual(next.streamSequence, 8 as SurfaceStreamSequence);
+        assert.strictEqual(stale._tag, "RuntimeEventStreamError");
+      }).pipe(Effect.provide(realPublisherLayer)),
+    ),
+  );
+
   it.effect("publishes stream_reset with the last prior sequence for that target generation", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -485,15 +485,18 @@ describe("WorkspaceRuntimeRegistry", () => {
       { title: "State profile", agentProfileId: "state-orchestrator" },
       { provider: "zai", model: "glm-5-turbo", thinkingLevel: "off" },
     );
-    expect(created).toMatchObject({
-      agentProfileId: "state-orchestrator",
+    expect(created).toEqual({ target: created.target });
+
+    const store = workspaceStateStore(runtime);
+    const createdState = store.getSessionState(created.target.workspaceSessionId);
+    expect(createdState.pi).toMatchObject({
+      orchestratorAgentProfileId: "state-orchestrator",
       provider: "openai",
       model: "gpt-4o",
       reasoningEffort: "high",
+      loadedExtensionIds: expect.arrayContaining(["github"]),
     });
-    expect(created.loadedExtensionIds).toContain("github");
 
-    const store = workspaceStateStore(runtime);
     const turn = store.startTurn({
       sessionId: created.target.workspaceSessionId,
       surfacePiSessionId: created.target.surfacePiSessionId,
@@ -922,7 +925,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(readGeneratedPackageWorkspaceLinks(second.cwd, agentDir)).toContainEqual({
       workspace_id: second.workspaceId,
       package_name: "@svvyx/extensions",
-      status: "unchanged",
+      status: "linked",
       source_command_id: null,
     });
     expect(
@@ -1038,6 +1041,88 @@ describe("WorkspaceRuntimeRegistry", () => {
     } finally {
       await runtimeEvents.close();
     }
+  });
+
+  it("restores late-workspace blocking waits before activating startup queue replay", async () => {
+    const initialCwd = tempWorkspace("late-wait-recovery-initial");
+    const lateCwd = realpathSync.native(tempWorkspace("late-wait-recovery-workspace"));
+    const agentDir = tempWorkspace("late-wait-recovery-agent");
+    const sessionDir = getSvvySessionDir(lateCwd, agentDir);
+    mkdirSync(sessionDir, { recursive: true });
+    const store = createStructuredSessionStateStore({
+      databasePath: join(sessionDir, STRUCTURED_SESSION_DB_FILENAME),
+      digest: testDigest,
+      workspace: {
+        id: normalizeWorkspaceRuntimeId(lateCwd),
+        label: "Late wait recovery",
+        cwd: lateCwd,
+        artifactDir: join(sessionDir, "artifacts"),
+      },
+    });
+    store.upsertPiSession({
+      sessionId: "session-late-wait-recovery",
+      title: "Late wait recovery",
+      messageCount: 1,
+      status: "idle",
+      createdAt: "2026-07-11T09:00:00.000Z",
+      updatedAt: "2026-07-11T09:01:00.000Z",
+    });
+    store.enqueueSurfaceMessage({
+      sessionId: "session-late-wait-recovery",
+      surfacePiSessionId: "session-late-wait-recovery",
+      messageJson: JSON.stringify({
+        text: "Replay only after request-input wait restoration.",
+        attachments: [],
+      }),
+    });
+    store.close();
+
+    const registry = createRegistry(initialCwd, agentDir);
+    await registry.acquireDesktopAppFacades();
+    const bootstrapPromise = registry["appRuntimeBootstrap"];
+    if (!bootstrapPromise) throw new Error("Expected ready app runtime bootstrap.");
+    const bootstrap = await bootstrapPromise;
+    const order: string[] = [];
+    const acquire = bootstrap.facade.workspaces.acquire.bind(bootstrap.facade.workspaces);
+    const wakeSurfaceQueue = bootstrap.internal.workspaceRecovery.wakeSurfaceQueue.bind(
+      bootstrap.internal.workspaceRecovery,
+    );
+    let signalWaitRestore!: () => void;
+    const waitRestoreCompleted = new Promise<void>((resolve) => {
+      signalWaitRestore = resolve;
+    });
+    let allowAcquireReturn!: () => void;
+    const acquireReturnGate = new Promise<void>((resolve) => {
+      allowAcquireReturn = resolve;
+    });
+    Reflect.set(
+      bootstrap.facade.workspaces,
+      "acquire",
+      async (input: Parameters<typeof acquire>[0]) => {
+        const result = await acquire(input);
+        order.push("blocking-waits:restored");
+        signalWaitRestore();
+        await acquireReturnGate;
+        return result;
+      },
+    );
+    Reflect.set(
+      bootstrap.internal.workspaceRecovery,
+      "wakeSurfaceQueue",
+      async (target: Parameters<typeof wakeSurfaceQueue>[0]) => {
+        order.push("queue-replay:wake");
+        await wakeSurfaceQueue(target);
+      },
+    );
+
+    const opening = registry.acquireWorkspace(lateCwd);
+    await waitRestoreCompleted;
+    const orderBeforeAcquireReturned = [...order];
+    allowAcquireReturn();
+    await opening;
+    await waitFor(() => order.includes("queue-replay:wake"));
+    expect(orderBeforeAcquireReturned).toEqual(["blocking-waits:restored"]);
+    expect(order).toEqual(["blocking-waits:restored", "queue-replay:wake"]);
   });
 
   it("registers late workspace state before flushing retained recovery invalidations", async () => {
@@ -1724,45 +1809,6 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(registry["sharedAppLogFacades"].size).toBe(baselineAppLogFacades);
   });
 
-  it("rolls back workspace state when runtime event forwarding cannot start", async () => {
-    const cwd = tempWorkspace("workspace-event-forwarder-failure");
-    const registry = createRegistry(cwd);
-    await registry.acquireDesktopAppFacades();
-    const bootstrapPromise = registry["appRuntimeBootstrap"];
-    if (!bootstrapPromise) throw new Error("Expected the app runtime bootstrap to exist.");
-    const bootstrap = await bootstrapPromise;
-    const baselineAppLogFacades = registry["sharedAppLogFacades"].size;
-    const failure = new Error("runtime event subscription failed");
-    const cleanupCalls: string[] = [];
-    registry["startRuntimeEventForwarder"] = async () => {
-      throw failure;
-    };
-    const releaseWorkspace = bootstrap.facade.workspaces.release.bind(bootstrap.facade.workspaces);
-    Reflect.set(
-      bootstrap.facade.workspaces,
-      "release",
-      async (input: Parameters<typeof releaseWorkspace>[0]) => {
-        cleanupCalls.push(`release:${input.releaseReason}`);
-        return releaseWorkspace(input);
-      },
-    );
-    const unregisterWorkspace = bootstrap.internal.workspaceStates.unregister.bind(
-      bootstrap.internal.workspaceStates,
-    );
-    Reflect.set(bootstrap.internal.workspaceStates, "unregister", (workspaceId: WorkspaceId) => {
-      cleanupCalls.push(`unregister:${workspaceId}`);
-      return unregisterWorkspace(workspaceId);
-    });
-
-    await expect(registry.acquireWorkspace(cwd)).rejects.toBe(failure);
-
-    expect(cleanupCalls[0]).toBe("release:shutdown");
-    expect(cleanupCalls[1]).toStartWith("unregister:");
-    expect(registry.listOpenWorkspaces()).toEqual([]);
-    expect(registry["pendingRuntimes"].size).toBe(0);
-    expect(registry["sharedAppLogFacades"].size).toBe(baselineAppLogFacades);
-  });
-
   it("routes queue submit, steer, approval answer, and command stdin through the single facade", async () => {
     const firstCwd = tempWorkspace("runtime-facade-routing-a");
     const secondCwd = tempWorkspace("runtime-facade-routing-b");
@@ -1990,11 +2036,14 @@ describe("WorkspaceRuntimeRegistry", () => {
     const nextText = `${opened.text.trimEnd()}\n\nRuntime source edit test.\n`;
 
     const saved = await runtimeOperations.sourceEdits.save({
-      sourceKind: "builtin-extension",
-      sourceId: "base-common",
-      expectedSourceVersion: opened.sourceVersion,
-      text: nextText,
-      saveMode: "compare-and-swap",
+      workspaceId: runtime.workspaceId as WorkspaceId,
+      source: {
+        sourceKind: "builtin-extension",
+        sourceId: "base-common",
+        expectedSourceVersion: opened.sourceVersion,
+        text: nextText,
+        saveMode: "compare-and-swap",
+      },
     });
     const reopened = await runtimeOperations.sourceEdits.open({
       sourceKind: "builtin-extension",
@@ -2010,6 +2059,94 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(reopened.text).toBe(nextText);
     expect(reopened.sourceVersion).toBe(saved.status === "saved" ? saved.sourceVersion : "");
     expect(readFileSync(reopened.path, "utf8")).toBe(nextText);
+  }, 10000);
+
+  it("applies workflow-agent CLI upserts through runtime source create and CAS authority", async () => {
+    const cwd = tempWorkspace("workflow-agent-cli-source-authority");
+    const workflowsSourceRoot = tempWorkspace("workflow-agent-cli-source-root");
+    const registry = createRegistry(cwd, tempWorkspace("agent-dir"), { workflowsSourceRoot });
+    const workspace = await registry.acquireWorkspace(cwd);
+    const initialText = `${JSON.stringify(
+      {
+        id: "cliReviewerAgent",
+        label: "Reviewer",
+        provider: "openai",
+        model: "gpt-5.4",
+        reasoning: { effort: "medium" },
+        instructions: "Review strictly.",
+        overrides: { shell: "loaded" },
+        extensionOrder: ["shell"],
+      },
+      null,
+      2,
+    )}\n`;
+    const initial = await workspace.catalog.getAgentProfileMutationStore();
+    initial.upsertWorkflowAgentSource({
+      sourceId: "cliReviewerAgent",
+      overwrite: false,
+      draft: {
+        label: "Reviewer",
+        provider: "openai",
+        model: "gpt-5.4",
+        reasoningEffort: "medium",
+        instructions: "Review strictly.",
+        overrides: { shell: "loaded" },
+        extensionOrder: ["shell"],
+      },
+      text: initialText,
+    });
+
+    await workspace.catalog.applyAgentProfileMutations(initial.takeMutations());
+
+    const sourcePath = join(workflowsSourceRoot, "agents", "cliReviewerAgent.agent.json");
+    expect(readFileSync(sourcePath, "utf8")).toBe(initialText);
+    expect(
+      (await workspace.catalog.getAgentProfileMutationStore()).getState().workflowAgents
+        .cliReviewerAgent,
+    ).toMatchObject({
+      label: "Reviewer",
+      sourceVersion: expect.any(String),
+      extensionOrder: ["shell"],
+    });
+
+    const duplicate = await workspace.catalog.getAgentProfileMutationStore();
+    duplicate.upsertWorkflowAgentSource({
+      sourceId: "cliReviewerAgent",
+      overwrite: false,
+      draft: {
+        label: "Ignored duplicate",
+        provider: "openai",
+        model: "gpt-5.4",
+        reasoningEffort: "medium",
+        instructions: "Do not commit.",
+        overrides: {},
+        extensionOrder: [],
+      },
+      text: initialText.replace("Reviewer", "Ignored duplicate"),
+    });
+    await expect(
+      workspace.catalog.applyAgentProfileMutations(duplicate.takeMutations()),
+    ).rejects.toMatchObject({ reason: "invalid-input" });
+    expect(readFileSync(sourcePath, "utf8")).toBe(initialText);
+
+    const overwrittenText = initialText.replace("Review strictly.", "Review and report.");
+    const overwrite = await workspace.catalog.getAgentProfileMutationStore();
+    overwrite.upsertWorkflowAgentSource({
+      sourceId: "cliReviewerAgent",
+      overwrite: true,
+      draft: {
+        label: "Reviewer",
+        provider: "openai",
+        model: "gpt-5.4",
+        reasoningEffort: "medium",
+        instructions: "Review and report.",
+        overrides: { shell: "loaded" },
+        extensionOrder: ["shell"],
+      },
+      text: overwrittenText,
+    });
+    await workspace.catalog.applyAgentProfileMutations(overwrite.takeMutations());
+    expect(readFileSync(sourcePath, "utf8")).toBe(overwrittenText);
   }, 10000);
 
   it("records lifecycle logs when workspace scopes open and close", async () => {
@@ -2413,6 +2550,7 @@ describe("WorkspaceRuntimeRegistry", () => {
 
   it("hydrates state-owned appPreferences into the store used by tool approval and network decisions", async () => {
     const cwd = tempWorkspace("state-owned-preferences");
+    const stateOwnedArtifactDirectory = join(cwd, "state-owned-artifacts");
     const registry = createRegistry(cwd);
     const runtime = await registry.acquireWorkspace(cwd);
 
@@ -2424,6 +2562,7 @@ describe("WorkspaceRuntimeRegistry", () => {
       patch: {
         approvalMode: "user",
         networkAccess: false,
+        artifactDirectory: stateOwnedArtifactDirectory as AbsolutePath,
         externalInstructions: {
           globalRoots: [
             {
@@ -2461,6 +2600,18 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(registry.getRuntime(runtime.workspaceId)).toBe(runtime);
     expect(runtime.agentSettingsStore.getState().appPreferences.approvalMode).toBe("user");
     expect(runtime.agentSettingsStore.getState().appPreferences.networkAccess).toBe(false);
+    expect(runtime.agentSettingsStore.getState().appPreferences.artifactDirectory).toBe(
+      stateOwnedArtifactDirectory,
+    );
+    expect(workspaceStateStore(runtime).getWorkspaceRecord().artifactDir).toBe(
+      stateOwnedArtifactDirectory,
+    );
+    const laterWorkspace = await registry.acquireWorkspace(
+      tempWorkspace("state-owned-preferences-later-workspace"),
+    );
+    expect(workspaceStateStore(laterWorkspace).getWorkspaceRecord().artifactDir).toBe(
+      stateOwnedArtifactDirectory,
+    );
     expect(runtime.agentSettingsStore.getState().appPreferences.externalInstructions).toMatchObject(
       {
         globalRoots: expect.arrayContaining([

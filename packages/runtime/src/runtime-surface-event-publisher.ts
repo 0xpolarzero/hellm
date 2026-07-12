@@ -5,6 +5,7 @@ import * as Semaphore from "effect/Semaphore";
 import {
   type RuntimeEvent,
   type RuntimeEventError,
+  RuntimeEventStreamError,
   type RuntimeSurfaceTarget,
   type SurfaceStreamGenerationId,
   type SurfaceStreamPatchInput,
@@ -28,6 +29,7 @@ export type RuntimeSurfaceStreamPatchInput = {
   readonly workspaceId: WorkspaceId;
   readonly target: RuntimeSurfaceTarget;
   readonly streamGenerationId: SurfaceStreamGenerationId;
+  readonly streamSequence?: SurfaceStreamSequence;
   readonly patch: SurfaceStreamPatchInput;
 };
 
@@ -41,6 +43,7 @@ export interface RuntimeSurfaceEventPublisherService {
   resetSurfaceStream(
     input: Omit<RuntimeSurfaceStreamPatchInput, "patch"> & {
       readonly reason: Extract<SurfaceStreamPatchInput, { type: "stream_reset" }>["reason"];
+      readonly latestStreamSequence?: SurfaceStreamSequence;
     },
   ): Effect.Effect<RuntimeEvent, RuntimeEventError>;
 }
@@ -73,7 +76,26 @@ export const layerRuntimeSurfaceEventPublisher = Layer.effect(
       publishStreamPatch: (input) =>
         streamLane.withPermit(
           Effect.gen(function* () {
-            const streamSequence = nextSurfaceStreamSequence(streamSequences, input);
+            if (
+              input.streamSequence !== undefined &&
+              !isNextCommittedSurfaceStreamSequence(streamSequences, input)
+            ) {
+              return yield* Effect.fail(
+                new RuntimeEventStreamError({
+                  operation: "runtime.surface-events.publishStreamPatch",
+                  reason: "stream-failed",
+                  message: `Committed surface stream sequence ${input.streamSequence} is not contiguous for ${input.target.surfacePiSessionId}.`,
+                }),
+              );
+            }
+            const streamSequence =
+              input.streamSequence ?? nextSurfaceStreamSequence(streamSequences, input);
+            if (input.streamSequence !== undefined) {
+              streamSequences.set(input.target.surfacePiSessionId, {
+                streamGenerationId: input.streamGenerationId,
+                latestSequence: input.streamSequence,
+              });
+            }
             return yield* eventBus.publishLive({
               event: {
                 type: "surface.stream",
@@ -89,11 +111,32 @@ export const layerRuntimeSurfaceEventPublisher = Layer.effect(
       resetSurfaceStream: (input) =>
         streamLane.withPermit(
           Effect.gen(function* () {
-            const latestStreamSequence = latestSurfaceStreamSequence(streamSequences, input);
-            const streamSequence = nextSurfaceStreamSequence(streamSequences, {
-              ...input,
-              patch: { type: "stream_reset", reason: input.reason, latestStreamSequence },
-            });
+            if (
+              input.streamSequence !== undefined &&
+              !isNextCommittedSurfaceStreamSequence(streamSequences, input)
+            ) {
+              return yield* Effect.fail(
+                new RuntimeEventStreamError({
+                  operation: "runtime.surface-events.resetSurfaceStream",
+                  reason: "stream-failed",
+                  message: `Committed surface reset sequence ${input.streamSequence} is not contiguous for ${input.target.surfacePiSessionId}.`,
+                }),
+              );
+            }
+            const latestStreamSequence =
+              input.latestStreamSequence ?? latestSurfaceStreamSequence(streamSequences, input);
+            const streamSequence =
+              input.streamSequence ??
+              nextSurfaceStreamSequence(streamSequences, {
+                ...input,
+                patch: { type: "stream_reset", reason: input.reason, latestStreamSequence },
+              });
+            if (input.streamSequence !== undefined) {
+              streamSequences.set(input.target.surfacePiSessionId, {
+                streamGenerationId: input.streamGenerationId,
+                latestSequence: input.streamSequence,
+              });
+            }
             return yield* eventBus.publishLive({
               event: {
                 type: "surface.stream",
@@ -109,6 +152,21 @@ export const layerRuntimeSurfaceEventPublisher = Layer.effect(
     });
   }),
 );
+
+function isNextCommittedSurfaceStreamSequence(
+  streamSequences: Map<
+    string,
+    { streamGenerationId: SurfaceStreamGenerationId; latestSequence: number }
+  >,
+  input: Omit<RuntimeSurfaceStreamPatchInput, "patch">,
+): boolean {
+  if (input.streamSequence === undefined) return true;
+  const existing = streamSequences.get(input.target.surfacePiSessionId);
+  if (!existing) return input.streamSequence >= 1;
+  const expected =
+    existing.streamGenerationId === input.streamGenerationId ? existing.latestSequence + 1 : 1;
+  return input.streamSequence === expected;
+}
 
 function nextSurfaceStreamSequence(
   streamSequences: Map<

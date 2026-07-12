@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -45,12 +46,13 @@ export interface RuntimeSurfaceRuntimeServiceService {
   interruptActivePrompt(input: {
     readonly turnId?: string | null;
     readonly reason: RuntimeSurfacePromptInterruptReason;
+    readonly force?: boolean;
   }): Effect.Effect<void, RuntimeContractError>;
   isPromptActive(): boolean;
   activePromptDone(): Effect.Effect<void, RuntimeContractError> | null;
   installActivePrompt(input: {
     readonly turnId: string;
-    readonly done: Effect.Effect<void, RuntimeContractError>;
+    readonly fiber: Fiber.Fiber<void, RuntimeContractError>;
   }): Effect.Effect<void>;
   clearActivePrompt(input: { readonly turnId: string }): Effect.Effect<void>;
 }
@@ -76,6 +78,7 @@ export interface RuntimeSurfaceScopeServiceService {
     readonly surfacePiSessionId: SurfacePiSessionId;
     readonly turnId?: string | null;
     readonly reason: RuntimeSurfacePromptInterruptReason;
+    readonly force?: boolean;
   }): Effect.Effect<void, RuntimeContractError>;
   snapshot(): Effect.Effect<readonly SurfaceScopeSnapshotEntry[]>;
 }
@@ -98,7 +101,7 @@ type SurfaceEntry = {
   readonly workspaceId: WorkspaceId;
   readonly retainCount: number;
   readonly activeTurnId: string | null;
-  readonly activePromptDone: Effect.Effect<void, RuntimeContractError> | null;
+  readonly activePromptFiber: Fiber.Fiber<void, RuntimeContractError> | null;
 };
 
 export const layerRuntimeSurfaceScopeService = Layer.effect(
@@ -110,6 +113,9 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
     const references = yield* PiSessionReferencePort;
     const entries = yield* Ref.make(new Map<SurfacePiSessionId, SurfaceEntry>());
     const closing = new Map<SurfacePiSessionId, Deferred.Deferred<void>>();
+    let closeUnusedSurface: (input: {
+      readonly surfacePiSessionId: SurfacePiSessionId;
+    }) => Effect.Effect<void> = () => Effect.void;
 
     const makeRuntimeSurface = (input: {
       readonly session: PiSessionRef;
@@ -118,7 +124,7 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
       Effect.gen(function* () {
         const promptLock = yield* Semaphore.make(1);
         let activeTurnId: string | null = null;
-        let activePromptDone: Effect.Effect<void, RuntimeContractError> | null = null;
+        let activePromptFiber: Fiber.Fiber<void, RuntimeContractError> | null = null;
 
         const service: RuntimeSurfaceRuntimeServiceService = RuntimeSurfaceRuntimeService.of({
           surfacePiSessionId: input.session.surfacePiSessionId,
@@ -131,7 +137,7 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
               Effect.provideService(PiSessionReferencePort, references),
               Effect.mapError((cause) => runtimePiAdapterError("runtime.surface.runPiTurn", cause)),
             ),
-          interruptActivePrompt: ({ turnId }) =>
+          interruptActivePrompt: ({ turnId, force }) =>
             Effect.gen(function* () {
               const entry = yield* Ref.get(entries).pipe(
                 Effect.map((current) => current.get(input.session.surfacePiSessionId)),
@@ -140,7 +146,7 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
               if (!resolvedTurnId) {
                 return;
               }
-              yield* adapter.turns
+              const interruptAdapter = adapter.turns
                 .interrupt({
                   surfacePiSessionId: input.session.surfacePiSessionId,
                   turnId: resolvedTurnId as never,
@@ -152,13 +158,21 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
                     runtimePiAdapterError("runtime.surface.interruptActivePrompt", cause),
                   ),
                 );
+              if (!force) {
+                yield* interruptAdapter;
+                return;
+              }
+              yield* interruptAdapter;
+              if (activePromptFiber) {
+                yield* Fiber.interrupt(activePromptFiber).pipe(Effect.asVoid);
+              }
             }),
           isPromptActive: () => activeTurnId !== null,
-          activePromptDone: () => activePromptDone,
-          installActivePrompt: ({ turnId, done }) =>
+          activePromptDone: () => (activePromptFiber ? Fiber.join(activePromptFiber) : null),
+          installActivePrompt: ({ turnId, fiber }) =>
             Effect.sync(() => {
               activeTurnId = turnId;
-              activePromptDone = done;
+              activePromptFiber = fiber;
             }).pipe(
               Effect.andThen(
                 Ref.update(entries, (current) => {
@@ -168,7 +182,7 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
                   next.set(input.session.surfacePiSessionId, {
                     ...existing,
                     activeTurnId: turnId,
-                    activePromptDone: done,
+                    activePromptFiber: fiber,
                   });
                   return next;
                 }),
@@ -178,7 +192,7 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
             Effect.sync(() => {
               if (activeTurnId === turnId) {
                 activeTurnId = null;
-                activePromptDone = null;
+                activePromptFiber = null;
               }
             }).pipe(
               Effect.andThen(
@@ -189,9 +203,14 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
                   next.set(input.session.surfacePiSessionId, {
                     ...existing,
                     activeTurnId: null,
-                    activePromptDone: null,
+                    activePromptFiber: null,
                   });
                   return next;
+                }),
+              ),
+              Effect.andThen(
+                closeUnusedSurface({
+                  surfacePiSessionId: input.session.surfacePiSessionId,
                 }),
               ),
             ),
@@ -228,7 +247,7 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
             workspaceId: input.workspaceId,
             retainCount: 1,
             activeTurnId: null,
-            activePromptDone: null,
+            activePromptFiber: null,
           });
           return next;
         });
@@ -267,6 +286,60 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
           scope,
         });
       });
+
+    const closeReleasedEntry = (released: SurfaceEntry): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const surfacePiSessionId = released.service.surfacePiSessionId;
+        const closingDeferred = yield* Deferred.make<void>();
+        closing.set(surfacePiSessionId, closingDeferred);
+        yield* adapter.sessions.close({ session: released.service.session }).pipe(
+          Effect.ignore,
+          Effect.andThen(Scope.close(released.scope, Exit.void).pipe(Effect.ignore)),
+          Effect.ensuring(
+            Effect.sync(() => {
+              closing.delete(surfacePiSessionId);
+            }).pipe(Effect.andThen(Deferred.succeed(closingDeferred, undefined))),
+          ),
+        );
+      });
+
+    closeUnusedSurface = ({ surfacePiSessionId }) =>
+      Effect.gen(function* () {
+        const released = yield* Ref.modify(entries, (current) => {
+          const existing = current.get(surfacePiSessionId);
+          if (!existing || existing.retainCount > 0 || existing.activeTurnId) {
+            return [null, current] as const;
+          }
+          const next = new Map(current);
+          next.delete(surfacePiSessionId);
+          return [existing, next] as const;
+        });
+        if (released) {
+          yield* closeReleasedEntry(released);
+        }
+      });
+
+    const closeRemainingEntry = (entry: SurfaceEntry): Effect.Effect<void> =>
+      entry.service
+        .interruptActivePrompt({
+          turnId: entry.activeTurnId,
+          reason: "runtime-shutdown",
+          force: true,
+        })
+        .pipe(
+          Effect.catch(() => Effect.void),
+          Effect.andThen(
+            adapter.sessions
+              .close({ session: entry.service.session })
+              .pipe(Effect.catch(() => Effect.void)),
+          ),
+          Effect.andThen(Scope.close(entry.scope, Exit.void).pipe(Effect.catch(() => Effect.void))),
+        );
+    const closeRemainingSurfaces: Effect.Effect<void> = Effect.gen(function* () {
+      const remaining = yield* Ref.getAndSet(entries, new Map());
+      yield* Effect.forEach(Array.from(remaining.values()), closeRemainingEntry, { discard: true });
+    }).pipe(Effect.catchCause(() => Effect.void));
+    yield* Effect.addFinalizer(() => closeRemainingSurfaces);
 
     return RuntimeSurfaceScopeService.of({
       create: (input) =>
@@ -327,7 +400,7 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
               const next = new Map(current);
               next.set(surfacePiSessionId, {
                 ...existing,
-                retainCount: Math.max(1, existing.retainCount - 1),
+                retainCount: Math.max(0, existing.retainCount - 1),
               });
               return [null, next] as const;
             }
@@ -336,19 +409,9 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
             return [existing, next] as const;
           });
           if (!released) return;
-          const closingDeferred = yield* Deferred.make<void>();
-          closing.set(surfacePiSessionId, closingDeferred);
-          yield* adapter.sessions.close({ session: released.service.session }).pipe(
-            Effect.ignore,
-            Effect.andThen(Scope.close(released.scope, Exit.void).pipe(Effect.ignore)),
-            Effect.ensuring(
-              Effect.sync(() => {
-                closing.delete(surfacePiSessionId);
-              }).pipe(Effect.andThen(Deferred.succeed(closingDeferred, undefined))),
-            ),
-          );
+          yield* closeReleasedEntry(released);
         }),
-      interrupt: ({ surfacePiSessionId, turnId, reason }) =>
+      interrupt: ({ surfacePiSessionId, turnId, reason, force }) =>
         Effect.gen(function* () {
           const entry = yield* Ref.get(entries).pipe(
             Effect.map((current) => current.get(surfacePiSessionId)),
@@ -357,6 +420,7 @@ export const layerRuntimeSurfaceScopeService = Layer.effect(
           yield* entry.service.interruptActivePrompt({
             ...(turnId === undefined ? {} : { turnId }),
             reason,
+            ...(force === undefined ? {} : { force }),
           });
         }),
       snapshot: () =>

@@ -60,10 +60,12 @@ describe("RuntimeQueueStatePort", () => {
               surfacePiSessionId,
             },
             idempotencyKey: "runtime-submit-accept",
+            promptHistoryText: "  draft accepted by runtime  ",
             messageJson: JSON.stringify({ text: "draft accepted by runtime" }),
             payloadJson: JSON.stringify({ source: "runtime-submit" }),
           });
           const draft = yield* state.getComposerDraft(surfacePiSessionId);
+          const promptHistory = yield* state.listPromptHistory({ workspaceId: workspace.id });
 
           expect(result.value).toMatchObject({
             sessionId: workspaceSessionId,
@@ -74,6 +76,16 @@ describe("RuntimeQueueStatePort", () => {
             idempotencyKey: "runtime-submit-accept",
           });
           expect(draft).toBeNull();
+          expect(promptHistory).toEqual([
+            {
+              workspaceId: workspace.id,
+              workspaceSessionId,
+              surfacePiSessionId,
+              queueItemId: result.value.id,
+              text: "  draft accepted by runtime  ",
+              sentAt: result.value.createdAt,
+            },
+          ]);
           expect(result.afterCommit as unknown).toEqual([
             {
               scope: "workspace",
@@ -87,6 +99,11 @@ describe("RuntimeQueueStatePort", () => {
               scope: "workspace",
               workspaceId: workspace.id,
               invalidation: { model: "sessionNavigation" },
+            },
+            {
+              scope: "workspace",
+              workspaceId: workspace.id,
+              invalidation: { model: "promptHistory" },
             },
           ]);
         }).pipe(
@@ -104,7 +121,7 @@ describe("RuntimeQueueStatePort", () => {
     );
   });
 
-  it("returns duplicate submitted messages without clearing the current draft", async () => {
+  it("returns terminal duplicate submissions without clearing the current draft or history", async () => {
     await runTestEffect(
       Effect.scoped(
         Effect.gen(function* () {
@@ -133,8 +150,10 @@ describe("RuntimeQueueStatePort", () => {
               surfacePiSessionId,
             },
             idempotencyKey: "runtime-submit-duplicate",
+            promptHistoryText: "original accepted message",
             messageJson: JSON.stringify({ text: "original accepted message" }),
           });
+          yield* port.cancelSurfaceMessage({ id: first.value.id });
           yield* state.setComposerDraft({
             sessionId: workspaceSessionId,
             surfacePiSessionId,
@@ -149,6 +168,7 @@ describe("RuntimeQueueStatePort", () => {
               surfacePiSessionId,
             },
             idempotencyKey: "runtime-submit-duplicate",
+            promptHistoryText: "replayed accepted message",
             messageJson: JSON.stringify({ text: "replayed accepted message" }),
           });
           const draft = yield* state.getComposerDraft(surfacePiSessionId);
@@ -156,6 +176,12 @@ describe("RuntimeQueueStatePort", () => {
           expect(duplicate.value.id).toBe(first.value.id);
           expect(duplicate.afterCommit).toEqual([]);
           expect(draft?.text).toBe("new local draft after accepted send");
+          expect(yield* state.listPromptHistory({ workspaceId: workspace.id })).toEqual([
+            expect.objectContaining({
+              queueItemId: first.value.id,
+              text: "original accepted message",
+            }),
+          ]);
         }).pipe(
           Effect.provide(
             layerRuntimeQueueStatePort.pipe(

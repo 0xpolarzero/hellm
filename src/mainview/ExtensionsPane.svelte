@@ -14,11 +14,9 @@
   import { onDestroy, onMount, tick } from "svelte";
   import { flip } from "svelte/animate";
   import type {
-    AgentSettingsState,
     AppPreferences,
     ExternalInstructionActor,
     ExternalInstructionControl,
-    RequestUserInputSettings,
   } from "../shared/agent-settings";
   import { DEFAULT_EXTERNAL_INSTRUCTION_ACTORS } from "../shared/agent-settings";
   import type {
@@ -28,6 +26,7 @@
     ExtensionInventoryItemReadModel,
     ExtensionSnapshotReadModel,
     ExtensionsInventoryReadModel,
+    SettingsReadModel,
   } from "../shared/workspace-contract";
   import type { ExtensionInterfaceKind } from "@svvy/core";
   import type { ChatRuntime } from "./chat-runtime";
@@ -51,7 +50,7 @@
   };
 
   let { runtime, targetExtensionId = null, targetView = "inventory" }: Props = $props();
-  let agentSettings = $state<AgentSettingsState | null>(null);
+  let settings = $state<SettingsReadModel | null>(null);
   let appPreferences = $state<AppPreferences | null>(null);
   let contextPreview = $state<AgentContextPreviewResponse | null>(null);
   let extensionsInventory = $state<ExtensionsInventoryReadModel | null>(null);
@@ -795,7 +794,7 @@
   async function loadSettings(): Promise<void> {
     try {
       settingsError = null;
-      agentSettings = await runtime.getAgentSettings();
+      settings = await runtime.getSettings();
     } catch (error) {
       settingsError = error instanceof Error ? error.message : "Settings are unavailable.";
     }
@@ -826,11 +825,11 @@
   }
 
   function syncRuntimeSnapshots(): void {
-    const nextSettings = runtime.agentSettingsSnapshot;
+    const nextSettings = runtime.settingsSnapshot;
     const nextPreferences = runtime.appPreferencesSnapshot;
     const nextInventory = runtime.extensionsInventorySnapshot;
     if (nextSettings) {
-      agentSettings = nextSettings;
+      settings = nextSettings;
     }
     if (nextPreferences) {
       appPreferences = nextPreferences;
@@ -856,26 +855,35 @@
     }
   }
 
-  async function updateRequestUserInputSettings(
-    patch: Partial<RequestUserInputSettings> & {
-      blockingTimeout?: Partial<RequestUserInputSettings["blockingTimeout"]>;
-    },
-    pendingKey: "mode" | "timeout-enabled" | "timeout-duration",
+  async function setRequestInputVariant(mode: "nonblocking" | "blocking"): Promise<void> {
+    if (!settings || pendingSettings) return;
+    pendingSettings = true;
+    pendingRequestUserInputSetting = "mode";
+    settingsError = null;
+    try {
+      settings = await runtime.setRequestInputVariant({ mode });
+    } catch (error) {
+      settingsError = error instanceof Error ? error.message : "Unable to save settings.";
+    } finally {
+      pendingSettings = false;
+      pendingRequestUserInputSetting = null;
+    }
+  }
+
+  async function setRequestInputBlockingTimeout(
+    patch: Partial<SettingsReadModel["requestInput"]["blockingTimeout"]>,
+    pendingKey: "timeout-enabled" | "timeout-duration",
   ): Promise<void> {
-    if (!agentSettings || pendingSettings) return;
-    const current = agentSettings.requestUserInput;
-    const next: RequestUserInputSettings = {
-      mode: patch.mode ?? current.mode,
-      blockingTimeout: {
-        enabled: patch.blockingTimeout?.enabled ?? current.blockingTimeout.enabled,
-        durationMs: patch.blockingTimeout?.durationMs ?? current.blockingTimeout.durationMs,
-      },
-    };
+    if (!settings || pendingSettings) return;
+    const current = settings.requestInput.blockingTimeout;
     pendingSettings = true;
     pendingRequestUserInputSetting = pendingKey;
     settingsError = null;
     try {
-      agentSettings = await runtime.updateRequestUserInputSettings(next);
+      settings = await runtime.setRequestInputBlockingTimeout({
+        enabled: patch.enabled ?? current.enabled,
+        durationMs: patch.durationMs ?? current.durationMs,
+      });
     } catch (error) {
       settingsError = error instanceof Error ? error.message : "Unable to save settings.";
     } finally {
@@ -887,9 +895,10 @@
   function updateBlockingTimeoutSeconds(value: string): void {
     const seconds = Number(value);
     if (!Number.isFinite(seconds)) return;
-    void updateRequestUserInputSettings(
+    void setRequestInputBlockingTimeout(
       {
-        blockingTimeout: { durationMs: Math.max(1, Math.floor(seconds)) * 1000 },
+        durationMs: (Math.max(1, Math.floor(seconds)) *
+          1000) as SettingsReadModel["requestInput"]["blockingTimeout"]["durationMs"],
       },
       "timeout-duration",
     );
@@ -1618,18 +1627,17 @@
               {#if settingsError}
                 <p class="extension-settings-error" role="alert">{settingsError}</p>
               {/if}
-              {#if agentSettings}
+              {#if settings}
                 <div class="request-input-settings">
                   <span class="request-input-settings-label">request_user_input behavior</span>
                   <div class="request-input-mode" role="group" aria-label="Request User Input behavior">
                     <Tooltip label="Creates a user prompt and immediately returns default answers so the agent can continue. Later user answers arrive as queued follow-up.">
                       <button
                         type="button"
-                        class={`request-input-mode-button ${agentSettings.requestUserInput.mode === "nonblocking" ? "active" : ""}`.trim()}
-                        aria-pressed={agentSettings.requestUserInput.mode === "nonblocking"}
+                        class={`request-input-mode-button ${settings.requestInput.mode === "nonblocking" ? "active" : ""}`.trim()}
+                        aria-pressed={settings.requestInput.mode === "nonblocking"}
                         disabled={pendingRequestUserInputSetting === "mode"}
-                        onclick={() =>
-                          updateRequestUserInputSettings({ mode: "nonblocking" }, "mode")}
+                        onclick={() => setRequestInputVariant("nonblocking")}
                       >
                         Nonblocking
                       </button>
@@ -1637,31 +1645,27 @@
                     <Tooltip label="Creates a user prompt and waits for the user answer or configured timeout before returning.">
                       <button
                         type="button"
-                        class={`request-input-mode-button ${agentSettings.requestUserInput.mode === "blocking" ? "active" : ""}`.trim()}
-                        aria-pressed={agentSettings.requestUserInput.mode === "blocking"}
+                        class={`request-input-mode-button ${settings.requestInput.mode === "blocking" ? "active" : ""}`.trim()}
+                        aria-pressed={settings.requestInput.mode === "blocking"}
                         disabled={pendingRequestUserInputSetting === "mode"}
-                        onclick={() => updateRequestUserInputSettings({ mode: "blocking" }, "mode")}
+                        onclick={() => setRequestInputVariant("blocking")}
                       >
                         Blocking
                       </button>
                     </Tooltip>
                   </div>
                   <div
-                    class={`request-input-timeout-controls ${agentSettings.requestUserInput.mode === "blocking" ? "active" : ""}`.trim()}
-                    aria-hidden={agentSettings.requestUserInput.mode !== "blocking"}
+                    class={`request-input-timeout-controls ${settings.requestInput.mode === "blocking" ? "active" : ""}`.trim()}
+                    aria-hidden={settings.requestInput.mode !== "blocking"}
                   >
                     <label class="request-input-timeout-toggle">
                       <Checkbox
                         size="sm"
-                        checked={agentSettings.requestUserInput.blockingTimeout.enabled}
-                        disabled={agentSettings.requestUserInput.mode !== "blocking" || pendingRequestUserInputSetting === "timeout-enabled"}
+                        checked={settings.requestInput.blockingTimeout.enabled}
+                        disabled={settings.requestInput.mode !== "blocking" || pendingRequestUserInputSetting === "timeout-enabled"}
                         onchange={(event) =>
-                          updateRequestUserInputSettings(
-                            {
-                              blockingTimeout: {
-                                enabled: (event.currentTarget as HTMLInputElement).checked,
-                              },
-                            },
+                          setRequestInputBlockingTimeout(
+                            { enabled: (event.currentTarget as HTMLInputElement).checked },
                             "timeout-enabled",
                           )}
                       />
@@ -1673,8 +1677,8 @@
                         type="number"
                         min="1"
                         step="1"
-                        disabled={agentSettings.requestUserInput.mode !== "blocking" || pendingRequestUserInputSetting === "timeout-duration" || !agentSettings.requestUserInput.blockingTimeout.enabled}
-                        value={Math.round(agentSettings.requestUserInput.blockingTimeout.durationMs / 1000)}
+                        disabled={settings.requestInput.mode !== "blocking" || pendingRequestUserInputSetting === "timeout-duration" || !settings.requestInput.blockingTimeout.enabled}
+                        value={Math.round(settings.requestInput.blockingTimeout.durationMs / 1000)}
                         onchange={(event) =>
                           updateBlockingTimeoutSeconds((event.currentTarget as HTMLInputElement).value)}
                       />

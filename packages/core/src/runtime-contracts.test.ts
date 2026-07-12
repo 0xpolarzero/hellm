@@ -853,6 +853,65 @@ describe("@svvy/core runtime contracts", () => {
         streamGenerationId: "surface-stream-generation-01",
         streamSequence: 10,
         patch: {
+          type: "user_message_committed",
+          messageId: "msg_user_01",
+          queueItemId: "queue_user_01",
+          message: {
+            text: "Inspect the attached file.",
+            attachments: [
+              {
+                kind: "file",
+                path: "/tmp/notes.md",
+                name: "notes.md",
+              },
+            ],
+          },
+          submittedAt: "2026-07-11T08:00:00.000Z",
+        },
+      }) as unknown,
+    ).toMatchObject({
+      patch: {
+        type: "user_message_committed",
+        queueItemId: "queue_user_01",
+        message: {
+          text: "Inspect the attached file.",
+          attachments: [{ kind: "file", name: "notes.md" }],
+        },
+      },
+    });
+
+    expect(
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
+        type: "surface.stream",
+        workspaceId: "workspace_01",
+        target: orchestratorTarget,
+        eventGenerationId: "runtime-events-generation-01",
+        sequence: 44,
+        streamGenerationId: "surface-stream-generation-01",
+        streamSequence: 11,
+        patch: {
+          type: "active_command",
+          messageId: "msg_assistant_01",
+          toolCallId: "tool_call_01",
+          commandId: "cmd_01",
+          contentIndex: 2,
+          status: "accepted",
+        },
+      }) as unknown,
+    ).toMatchObject({
+      patch: { type: "active_command", contentIndex: 2 },
+    });
+
+    expect(
+      unsafeDecodeRuntimeEventSyncForTestsAndBootstrap({
+        type: "surface.stream",
+        workspaceId: "workspace_01",
+        target: orchestratorTarget,
+        eventGenerationId: "runtime-events-generation-01",
+        sequence: 45,
+        streamGenerationId: "surface-stream-generation-01",
+        streamSequence: 12,
+        patch: {
           type: "stream_reset",
           reason: "rebaseline_required",
           latestStreamSequence: 9,
@@ -911,7 +970,7 @@ describe("@svvy/core runtime contracts", () => {
         patch: {
           type: "user_message_committed",
           messageId: "msg_02",
-          text: "Invalid date.",
+          message: { text: "Invalid date." },
           submittedAt: "not-a-date",
         },
       }),
@@ -941,6 +1000,22 @@ describe("@svvy/core runtime contracts", () => {
   });
 
   it("decodes reusable state invalidation descriptors without duplicating read models", () => {
+    expect(
+      unsafeDecodeStateInvalidationDescriptorSyncForTestsAndBootstrap({
+        scope: "workspace",
+        workspaceId: "workspace_01",
+        invalidation: {
+          model: "promptHistory",
+        },
+      }) as unknown,
+    ).toEqual({
+      scope: "workspace",
+      workspaceId: "workspace_01",
+      invalidation: {
+        model: "promptHistory",
+      },
+    });
+
     expect(
       unsafeDecodeStateInvalidationDescriptorSyncForTestsAndBootstrap({
         scope: "workspace",
@@ -2034,11 +2109,6 @@ describe("@svvy/core runtime contracts", () => {
         input: {
           target: handlerTarget,
           sourceCommandId: "cmd_request_01",
-          mode: "blocking",
-          timeout: {
-            enabled: true,
-            durationMs: 120000,
-          },
           questions: [
             {
               title: "Verification scope",
@@ -2715,7 +2785,6 @@ describe("@svvy/core runtime contracts", () => {
         input: {
           target: handlerTarget,
           sourceCommandId: "cmd_request_01",
-          mode: "nonblocking",
           questions: [
             {
               title: "Verification scope",
@@ -2747,11 +2816,6 @@ describe("@svvy/core runtime contracts", () => {
       unsafeDecodeCreateRequestInputRequestSyncForTestsAndBootstrap({
         target: handlerTarget,
         sourceCommandId: "cmd_request_01",
-        mode: "blocking",
-        timeout: {
-          enabled: true,
-          durationMs: 300000,
-        },
         questions: [
           {
             title: "Verification scope",
@@ -2778,11 +2842,6 @@ describe("@svvy/core runtime contracts", () => {
     ).toEqual({
       target: handlerTarget,
       sourceCommandId: "cmd_request_01",
-      mode: "blocking",
-      timeout: {
-        enabled: true,
-        durationMs: 300000,
-      },
       questions: [
         {
           title: "Verification scope",
@@ -2808,13 +2867,33 @@ describe("@svvy/core runtime contracts", () => {
     });
   });
 
-  it("rejects request-input creation requests with explicit undefined timeout", () => {
+  it("rejects runtime-owned settings on extension-produced request-input intents", () => {
     expect(() =>
       unsafeDecodeCreateRequestInputRequestSyncForTestsAndBootstrap({
         target: handlerTarget,
         sourceCommandId: "cmd_request_01",
         mode: "blocking",
-        timeout: undefined,
+        questions: [
+          {
+            title: "Verification scope",
+            question: "Which verification should run before handoff?",
+            options: [
+              {
+                label: "Focused tests",
+                description: "Run the package contract tests only.",
+                recommended: true,
+              },
+            ],
+          },
+        ],
+      }),
+    ).toThrow();
+
+    expect(() =>
+      unsafeDecodeCreateRequestInputRequestSyncForTestsAndBootstrap({
+        target: handlerTarget,
+        sourceCommandId: "cmd_request_01",
+        timeout: { enabled: true, durationMs: 300000 },
         questions: [
           {
             title: "Verification scope",
@@ -2832,39 +2911,6 @@ describe("@svvy/core runtime contracts", () => {
     ).toThrow();
   });
 
-  it("rejects request-input creation timeout durations that are not positive finite milliseconds", () => {
-    const baseInput = {
-      target: handlerTarget,
-      sourceCommandId: "cmd_request_01",
-      mode: "blocking",
-      questions: [
-        {
-          title: "Verification scope",
-          question: "Which verification should run before handoff?",
-          options: [
-            {
-              label: "Focused tests",
-              description: "Run the package contract tests only.",
-              recommended: true,
-            },
-          ],
-        },
-      ],
-    } as const;
-
-    for (const durationMs of [0, -1, 1.5, Number.POSITIVE_INFINITY, Number.NaN]) {
-      expect(() =>
-        unsafeDecodeCreateRequestInputRequestSyncForTestsAndBootstrap({
-          ...baseInput,
-          timeout: {
-            enabled: true,
-            durationMs,
-          },
-        }),
-      ).toThrow();
-    }
-  });
-
   it("rejects request-input creation questions with caller-provided generated ids", () => {
     expect(() =>
       unsafeDecodeRuntimeEffectRequestSyncForTestsAndBootstrap({
@@ -2872,7 +2918,6 @@ describe("@svvy/core runtime contracts", () => {
         input: {
           target: handlerTarget,
           sourceCommandId: "cmd_request_01",
-          mode: "nonblocking",
           questions: [
             {
               questionId: "ruiq_01",
@@ -2904,7 +2949,6 @@ describe("@svvy/core runtime contracts", () => {
         input: {
           target: handlerTarget,
           sourceCommandId: "cmd_request_01",
-          mode: "nonblocking",
           questions: [
             {
               header: "Confirmation",
@@ -2923,7 +2967,6 @@ describe("@svvy/core runtime contracts", () => {
       input: {
         target: handlerTarget,
         sourceCommandId: "cmd_request_01",
-        mode: "nonblocking",
         questions: [
           {
             title: "Verification scope",
@@ -2968,7 +3011,6 @@ describe("@svvy/core runtime contracts", () => {
       unsafeDecodeCreateRequestInputRequestSyncForTestsAndBootstrap({
         target: handlerTarget,
         sourceCommandId: "cmd_request_01",
-        mode: "nonblocking",
         questions: [
           {
             title: "Verification scope",
@@ -2998,7 +3040,6 @@ describe("@svvy/core runtime contracts", () => {
         input: {
           target: handlerTarget,
           sourceCommandId: "cmd_request_01",
-          mode: "nonblocking",
           questions: [
             {
               title: "Verification scope",
@@ -3027,7 +3068,6 @@ describe("@svvy/core runtime contracts", () => {
         input: {
           target: handlerTarget,
           sourceCommandId: "cmd_request_01",
-          mode: "nonblocking",
           questions: [
             {
               title: "Verification scope",

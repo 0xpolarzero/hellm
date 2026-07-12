@@ -32,11 +32,12 @@ import {
   RuntimeQueueInsertPostCommitLane,
 } from "./runtime-effect-requests";
 import { RuntimeEventBus } from "./runtime-event-bus";
-import { RuntimeQueueWakeService } from "./runtime-queue-wake-service";
+import { RuntimeQueueWakeService } from "./runtime-queue-wake-port";
 import { RuntimeRequestInputWaitService } from "./runtime-request-input-wait-service";
 import { RuntimeApprovalWaitService } from "./runtime-approval-wait-service";
 import { RuntimeLaunchPolicyService } from "./runtime-launch-policy-service";
 import { RuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
+import { RuntimeShutdownAdmission } from "./runtime-shutdown-admission";
 import {
   requestRuntimeDirectToolApproval,
   type RuntimeDirectToolApprovalAdmissionInput,
@@ -96,7 +97,8 @@ export const layerRuntimeAcceptedNativeToolExecution = Layer.effect(
     const actorExtensionBindingState = yield* RuntimeActorExtensionBindingStatePort;
     const threadState = yield* RuntimeThreadStatePort;
     const eventBus = yield* RuntimeEventBus;
-    const queueWake = yield* RuntimeQueueWakeService;
+    const queueWakeOption = yield* Effect.serviceOption(RuntimeQueueWakeService);
+    const queueWake = Option.getOrElse(queueWakeOption, () => missingRuntimeQueueWakeService);
     const approvalWaitService = yield* RuntimeApprovalWaitService;
     const requestInputWaitService = yield* RuntimeRequestInputWaitService;
     const launchPolicy = yield* RuntimeLaunchPolicyService;
@@ -109,6 +111,7 @@ export const layerRuntimeAcceptedNativeToolExecution = Layer.effect(
       () => missingHandlerThreadStartPreparationHost,
     );
     const extensions = yield* Extensions;
+    const shutdownAdmission = yield* RuntimeShutdownAdmission;
     const publishingCommandState = commandStateWithPostCommitPublication({
       commandState,
       eventBus,
@@ -116,63 +119,87 @@ export const layerRuntimeAcceptedNativeToolExecution = Layer.effect(
 
     return RuntimeAcceptedNativeToolExecution.of({
       acquireDirectToolLaunch: (input) =>
-        acquireDirectToolLaunch(input).pipe(
-          Effect.provideService(RuntimeLaunchPolicyService, launchPolicy),
+        shutdownAdmission.withAdmission(
+          "runtime.acceptedNativeTool.acquireDirectToolLaunch",
+          acquireDirectToolLaunch(input).pipe(
+            Effect.provideService(RuntimeLaunchPolicyService, launchPolicy),
+          ),
         ),
       requestDirectToolApproval: (input) =>
-        requestRuntimeDirectToolApproval(input).pipe(
-          Effect.provideService(RuntimeApprovalStatePort, approvalState),
-          Effect.provideService(RuntimeCommandStatePort, publishingCommandState),
-          Effect.provideService(RuntimeSessionWaitStatePort, sessionWaitState),
-          Effect.provideService(RuntimeEventBus, eventBus),
-          Effect.provideService(RuntimeApprovalWaitService, approvalWaitService),
-        ),
+        shutdownAdmission
+          .assertAccepting("runtime.acceptedNativeTool.requestDirectToolApproval")
+          .pipe(
+            Effect.andThen(
+              requestRuntimeDirectToolApproval(input).pipe(
+                Effect.provideService(RuntimeApprovalStatePort, approvalState),
+                Effect.provideService(RuntimeCommandStatePort, publishingCommandState),
+                Effect.provideService(RuntimeSessionWaitStatePort, sessionWaitState),
+                Effect.provideService(RuntimeEventBus, eventBus),
+                Effect.provideService(RuntimeApprovalWaitService, approvalWaitService),
+              ),
+            ),
+          ),
       runLoadExtension: (input) =>
-        runAcceptedLoadExtensionToolCall({
-          ...input,
-          sourceInvalidation,
-        }).pipe(
-          Effect.provideService(RuntimeCommandStatePort, publishingCommandState),
-          Effect.provideService(RuntimeActorExtensionBindingStatePort, actorExtensionBindingState),
-          Effect.provideService(RuntimeEventBus, eventBus),
-          Effect.provideService(Extensions, extensions),
+        shutdownAdmission.withAdmission(
+          "runtime.acceptedNativeTool.runLoadExtension",
+          runAcceptedLoadExtensionToolCall({
+            ...input,
+            sourceInvalidation,
+          }).pipe(
+            Effect.provideService(RuntimeCommandStatePort, publishingCommandState),
+            Effect.provideService(
+              RuntimeActorExtensionBindingStatePort,
+              actorExtensionBindingState,
+            ),
+            Effect.provideService(RuntimeEventBus, eventBus),
+            Effect.provideService(Extensions, extensions),
+          ),
         ),
       runRequestUserInput: (input) =>
-        runAcceptedRequestUserInputToolCall(input).pipe(
-          Effect.provideService(RuntimeCommandStatePort, publishingCommandState),
-          Effect.provideService(RuntimeRequestStatePort, requestState),
-          Effect.provideService(RuntimeEventBus, eventBus),
-          Effect.provideService(RuntimeRequestInputWaitService, requestInputWaitService),
-        ),
-      runThreadStart: (input) =>
-        runAcceptedThreadStartToolCall(input).pipe(
-          Effect.provideService(RuntimeCommandStatePort, publishingCommandState),
-          Effect.provideService(RuntimeThreadStatePort, threadState),
-          Effect.provideService(RuntimeEventBus, eventBus),
-          Effect.provideService(Extensions, extensions),
-          Effect.provideService(
-            RuntimeHandlerThreadStartPreparationHost,
-            handlerThreadStartPreparationHost,
+        shutdownAdmission
+          .assertAccepting("runtime.acceptedNativeTool.runRequestUserInput")
+          .pipe(
+            Effect.andThen(
+              runAcceptedRequestUserInputToolCall(input).pipe(
+                Effect.provideService(RuntimeCommandStatePort, publishingCommandState),
+                Effect.provideService(RuntimeRequestStatePort, requestState),
+                Effect.provideService(RuntimeEventBus, eventBus),
+                Effect.provideService(RuntimeRequestInputWaitService, requestInputWaitService),
+              ),
+            ),
           ),
-          Effect.provideService(
-            RuntimeQueueInsertPostCommitLane,
-            RuntimeQueueInsertPostCommitLane.of({
-              afterQueueInsertCommitted: ({ target }) => {
-                if (target.surface === "workflow-task") {
-                  return Effect.fail(
-                    new RuntimeContractError({
-                      operation: "runtime.acceptedNativeTool.threadStart.afterQueueInsert",
-                      reason: "invalid-input",
-                      message: "Handler thread queue wake cannot target a workflow task surface.",
-                    }),
-                  );
-                }
-                return queueWake.wakeSurface({
-                  target,
-                  reason: "message-submitted",
-                });
-              },
-            }),
+      runThreadStart: (input) =>
+        shutdownAdmission.withAdmission(
+          "runtime.acceptedNativeTool.runThreadStart",
+          runAcceptedThreadStartToolCall(input).pipe(
+            Effect.provideService(RuntimeCommandStatePort, publishingCommandState),
+            Effect.provideService(RuntimeThreadStatePort, threadState),
+            Effect.provideService(RuntimeEventBus, eventBus),
+            Effect.provideService(Extensions, extensions),
+            Effect.provideService(
+              RuntimeHandlerThreadStartPreparationHost,
+              handlerThreadStartPreparationHost,
+            ),
+            Effect.provideService(
+              RuntimeQueueInsertPostCommitLane,
+              RuntimeQueueInsertPostCommitLane.of({
+                afterQueueInsertCommitted: ({ target }) => {
+                  if (target.surface === "workflow-task") {
+                    return Effect.fail(
+                      new RuntimeContractError({
+                        operation: "runtime.acceptedNativeTool.threadStart.afterQueueInsert",
+                        reason: "invalid-input",
+                        message: "Handler thread queue wake cannot target a workflow task surface.",
+                      }),
+                    );
+                  }
+                  return queueWake.wakeSurface({
+                    target,
+                    reason: "message-submitted",
+                  });
+                },
+              }),
+            ),
           ),
         ),
     });
@@ -184,6 +211,15 @@ const missingHandlerThreadStartPreparationHost = RuntimeHandlerThreadStartPrepar
     Effect.die(
       new Error(
         "RuntimeAcceptedNativeToolExecution requires RuntimeHandlerThreadStartPreparationHost composition.",
+      ),
+    ),
+});
+
+const missingRuntimeQueueWakeService = RuntimeQueueWakeService.of({
+  wakeSurface: () =>
+    Effect.die(
+      new Error(
+        "RuntimeAcceptedNativeToolExecution requires RuntimeQueueWakeService for thread_start.",
       ),
     ),
 });

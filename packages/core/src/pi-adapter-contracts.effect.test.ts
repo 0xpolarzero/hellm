@@ -224,6 +224,88 @@ describe("@svvy/core pi adapter contracts", () => {
             contentIndex: 0,
           },
         );
+        assert.deepStrictEqual(
+          unsafeDecodePiRuntimeEventSyncForTestsAndBootstrap({
+            type: "pi.assistant_message.committed",
+            session: { surfacePiSessionId: "pi_surface_01" },
+            turnId: "turn_01",
+            surfacePiSessionId: "pi_surface_01",
+            piMessageRef: "pi_msg_9",
+            content: [
+              { kind: "thinking", contentIndex: 0, thinking: "Inspect." },
+              {
+                kind: "tool-call",
+                contentIndex: 1,
+                toolCallId: "tool_21",
+                toolName: "exec_command",
+                argumentsJson: '{"cmd":"bun test"}',
+                argumentsStatus: "accepted",
+                commandId: null,
+              },
+              { kind: "text", contentIndex: 2, text: "Done." },
+            ],
+            api: "openai-responses",
+            providerId: "openai",
+            modelId: "gpt-5.5",
+            responseId: "response_9",
+            usage: {
+              input: 10,
+              output: 5,
+              cacheRead: 2,
+              cacheWrite: 0,
+              totalTokens: 15,
+              cost: { input: 0.1, output: 0.2, cacheRead: 0.01, cacheWrite: 0, total: 0.31 },
+            },
+            stopReason: "toolUse",
+            errorMessage: null,
+            piHistoryEntry: {
+              session: { surfacePiSessionId: "pi_surface_01" },
+              entryId: "history_9",
+            },
+            messageTimestamp: "2026-07-11T12:00:00.000Z",
+            finishedAt: "2026-07-11T12:00:01.000Z",
+          }),
+          {
+            type: "pi.assistant_message.committed",
+            session: { surfacePiSessionId: "pi_surface_01" as SurfacePiSessionId },
+            turnId: "turn_01" as TurnId,
+            surfacePiSessionId: "pi_surface_01" as SurfacePiSessionId,
+            piMessageRef: "pi_msg_9",
+            content: [
+              { kind: "thinking", contentIndex: 0, thinking: "Inspect." },
+              {
+                kind: "tool-call",
+                contentIndex: 1,
+                toolCallId: "tool_21" as ToolCallId,
+                toolName: "exec_command",
+                argumentsJson: '{"cmd":"bun test"}',
+                argumentsStatus: "accepted",
+                commandId: null,
+              },
+              { kind: "text", contentIndex: 2, text: "Done." },
+            ],
+            api: "openai-responses",
+            providerId: "openai" as ProviderId,
+            modelId: "gpt-5.5" as ModelId,
+            responseId: "response_9",
+            usage: {
+              input: 10,
+              output: 5,
+              cacheRead: 2,
+              cacheWrite: 0,
+              totalTokens: 15,
+              cost: { input: 0.1, output: 0.2, cacheRead: 0.01, cacheWrite: 0, total: 0.31 },
+            },
+            stopReason: "toolUse",
+            errorMessage: null,
+            piHistoryEntry: {
+              session: { surfacePiSessionId: "pi_surface_01" as SurfacePiSessionId },
+              entryId: "history_9",
+            },
+            messageTimestamp: "2026-07-11T12:00:00.000Z" as never,
+            finishedAt: "2026-07-11T12:00:01.000Z" as never,
+          },
+        );
 
         assert.deepStrictEqual(
           unsafeDecodePiRuntimeEventSyncForTestsAndBootstrap({
@@ -297,6 +379,25 @@ describe("@svvy/core pi adapter contracts", () => {
             toolName: "exec_command",
             status: "completed",
             result: { details: { status: "succeeded", summary: "details only" } },
+          },
+        );
+
+        assert.deepStrictEqual(
+          unsafeDecodePiRuntimeEventSyncForTestsAndBootstrap({
+            type: "pi.agent.finished",
+            session: { surfacePiSessionId: "pi_surface_01" },
+            turnId: "turn_01",
+            surfacePiSessionId: "pi_surface_01",
+            status: "completed",
+            stopReason: "stop",
+          }),
+          {
+            type: "pi.agent.finished",
+            session: { surfacePiSessionId: "pi_surface_01" as SurfacePiSessionId },
+            turnId: "turn_01" as TurnId,
+            surfacePiSessionId: "pi_surface_01" as SurfacePiSessionId,
+            status: "completed",
+            stopReason: "stop",
           },
         );
 

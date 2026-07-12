@@ -451,35 +451,6 @@ function nextGeneratedPackageBackupPath(generatedPackagePath: string): string {
   );
 }
 
-export function writeWorkflowSourceItem(input: {
-  exportName: string;
-  kind: WorkspaceWorkflowsGeneratedKind;
-  overwrite?: boolean;
-  sourceCode: string;
-  sourceRoot?: string;
-  sourceExtension?: string;
-}): { sourcePath: string } {
-  assertValidExportName(input.exportName);
-  const sourceRoot = input.sourceRoot ?? getWorkflowsSourceRoot();
-  const sourcePath = workflowSourcePath({
-    exportName: input.exportName,
-    kind: input.kind,
-    sourceExtension: input.sourceExtension,
-    sourceRoot,
-  });
-  if (existsSync(sourcePath) && !input.overwrite) {
-    throw workflowLibraryError(
-      "target_exists",
-      `Workflows source target already exists: ${sourcePath}`,
-      sourcePath,
-      input.exportName,
-    );
-  }
-  mkdirSync(dirname(sourcePath), { recursive: true });
-  writeFileSync(sourcePath, input.sourceCode);
-  return { sourcePath };
-}
-
 export function getWorkflowSourcePath(input: {
   exportName: string;
   kind: WorkspaceWorkflowsGeneratedKind;

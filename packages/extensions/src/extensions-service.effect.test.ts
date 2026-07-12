@@ -4,10 +4,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { ExtensionStatePort } from "@svvy/core";
+import { DEFAULT_WORKFLOW_AGENT_SOURCE_IDS, ExtensionStatePort } from "@svvy/core";
 import type {
   AbsolutePath,
   CommandId,
+  DefaultWorkflowAgentSourceId,
   ExtensionError,
   ExtensionId,
   NativeToolHandlerLookupInput,
@@ -16,6 +17,7 @@ import type {
   ThreadId,
   ToolCallId,
   TurnId,
+  WorkflowAgentSourceExportName,
   WorkflowTaskAttemptId,
   WorkspaceId,
   WorkspaceSessionId,
@@ -91,14 +93,21 @@ function makeTestExtensions(): Effect.Effect<ExtensionsService, ExtensionError> 
   return provideGeneratedPackagePlatform(makeExtensions());
 }
 
-function makeSourceEditHarness(): {
+function makeSourceEditHarness(
+  harnessOptions: {
+    readonly publishRaceContents?: string;
+    readonly unreadablePaths?: readonly string[];
+  } = {},
+): {
   readonly extensionsRoot: AbsolutePath;
+  readonly packagedExtensionsRoot: AbsolutePath;
   readonly workflowsSourceRoot: AbsolutePath;
   readonly layer: Layer.Layer<Extensions>;
   readonly readFile: (path: string) => string | null;
   readonly writeFile: (path: string, contents: string) => void;
 } {
   const files = new Map<string, string>();
+  const unreadablePaths = new Set(harnessOptions.unreadablePaths ?? []);
   const directories = new Set<string>(["/", "/extensions-test", "/workflows-test"]);
   const fileSystem = {
     exists: (path: string) => Effect.succeed(files.has(path) || directories.has(path)),
@@ -109,15 +118,41 @@ function makeSourceEditHarness(): {
           ? Effect.succeed({ type: "Directory" } as FileSystem.File.Info)
           : Effect.die(new Error(`Missing path: ${path}`)),
     readFileString: (path: string) =>
-      files.has(path)
-        ? Effect.succeed(files.get(path) ?? "")
-        : Effect.die(new Error(`Missing file: ${path}`)),
+      unreadablePaths.has(path)
+        ? Effect.fail(new Error(`Unreadable file: ${path}`))
+        : files.has(path)
+          ? Effect.succeed(files.get(path) ?? "")
+          : Effect.die(new Error(`Missing file: ${path}`)),
+    readDirectory: (path: string) =>
+      Effect.succeed(sourceEditReadDirectoryNames(path, files, directories)),
     makeDirectory: (path: string) =>
       Effect.sync(() => {
         addSourceEditDirectoryChain(directories, path);
       }),
-    writeFileString: (path: string, contents: string) =>
+    link: (fromPath: string, toPath: string) =>
+      Effect.try({
+        try: () => {
+          const contents = files.get(fromPath);
+          if (contents === undefined) throw new Error(`Missing file: ${fromPath}`);
+          if (harnessOptions.publishRaceContents !== undefined && !files.has(toPath)) {
+            files.set(toPath, harnessOptions.publishRaceContents);
+          }
+          if (files.has(toPath)) throw new Error(`File exists: ${toPath}`);
+          files.set(toPath, contents);
+        },
+        catch: (cause) => cause,
+      }),
+    remove: (path: string) =>
       Effect.sync(() => {
+        if (!files.delete(path)) {
+          throw new Error(`Missing file: ${path}`);
+        }
+      }),
+    writeFileString: (path: string, contents: string, options?: { readonly flag?: string }) =>
+      Effect.sync(() => {
+        if (options?.flag?.includes("x") && files.has(path)) {
+          throw new Error(`File exists: ${path}`);
+        }
         addSourceEditDirectoryChain(directories, sourceEditDirnamePath(path));
         files.set(path, contents);
       }),
@@ -145,6 +180,7 @@ function makeSourceEditHarness(): {
     randomBytes: (size) => new Uint8Array(size).fill(1),
   });
   const extensionsRoot = "/extensions-test" as AbsolutePath;
+  const packagedExtensionsRoot = "/packaged-extensions-test" as AbsolutePath;
   const workflowsSourceRoot = "/workflows-test" as AbsolutePath;
   const extensionState = {
     records: {
@@ -160,7 +196,7 @@ function makeSourceEditHarness(): {
     workflowsSourceRoot,
   });
   const packagedTemplatesLayer = layerPackagedExtensionTemplatesPort({
-    builtinExtensionsRoot: "/packaged-extensions-test" as AbsolutePath,
+    builtinExtensionsRoot: packagedExtensionsRoot,
   });
   const generatedPackageRootLayer = layerGeneratedPackageRootPort({
     extensionsPackageRoot: "/generated/extensions-package-test" as AbsolutePath,
@@ -174,6 +210,7 @@ function makeSourceEditHarness(): {
 
   return {
     extensionsRoot,
+    packagedExtensionsRoot,
     workflowsSourceRoot,
     layer: Layer.effect(
       Extensions,
@@ -237,8 +274,58 @@ function addSourceEditDirectoryChain(directories: Set<string>, path: string): vo
   }
 }
 
+function sourceEditReadDirectoryNames(
+  path: string,
+  files: ReadonlyMap<string, string>,
+  directories: ReadonlySet<string>,
+): string[] {
+  const prefix = `${normalizeSourceEditPath(path).replace(/\/$/, "")}/`;
+  const names = new Set<string>();
+  for (const candidate of [...files.keys(), ...directories]) {
+    if (!candidate.startsWith(prefix)) continue;
+    const child = candidate.slice(prefix.length).split("/")[0];
+    if (child) names.add(child);
+  }
+  return [...names].toSorted();
+}
+
 function extensionIds(ids: readonly string[]): readonly ExtensionId[] {
   return ids as unknown as readonly ExtensionId[];
+}
+
+function workflowAgentSourceText(
+  sourceId: string,
+  input: {
+    readonly label?: string;
+    readonly instructions?: string;
+    readonly overrides?: Readonly<Record<string, "loaded" | "available" | "unavailable">>;
+    readonly extensionOrder?: readonly string[];
+  } = {},
+): string {
+  return `${JSON.stringify(
+    {
+      id: sourceId,
+      label: input.label ?? sourceId,
+      provider: "zai",
+      model: "glm-5-turbo",
+      reasoning: { effort: "medium" },
+      instructions: input.instructions ?? `Instructions for ${sourceId}.`,
+      overrides: input.overrides ?? {},
+      extensionOrder: input.extensionOrder ?? [],
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+function packagedWorkflowAgentSourceText(sourceId: DefaultWorkflowAgentSourceId): string {
+  const labels: Record<DefaultWorkflowAgentSourceId, string> = {
+    defaultAgent: "Default",
+    explorerAgent: "Explorer",
+    implementerAgent: "Implementer",
+    reviewerAgent: "Reviewer",
+  };
+  return workflowAgentSourceText(sourceId, { label: labels[sourceId] });
 }
 
 describe("@svvy/extensions Effect service", () => {
@@ -334,6 +421,213 @@ describe("@svvy/extensions Effect service", () => {
     }),
   );
 
+  it.effect(
+    "scans readable workflow-agent sources independently without failing on invalid rows",
+    () =>
+      Effect.gen(function* () {
+        const sourceEditHarness = makeSourceEditHarness();
+        const agentsRoot = joinSourceEditPathSegments(
+          sourceEditHarness.workflowsSourceRoot,
+          "agents",
+        );
+        sourceEditHarness.writeFile(
+          joinSourceEditPathSegments(agentsRoot, "validAgent.agent.json"),
+          workflowAgentSourceText("validAgent", {
+            label: "Valid agent",
+            extensionOrder: ["shell", "git"],
+          }),
+        );
+        sourceEditHarness.writeFile(
+          joinSourceEditPathSegments(agentsRoot, "malformedAgent.agent.json"),
+          "{ not json\n",
+        );
+        sourceEditHarness.writeFile(
+          joinSourceEditPathSegments(agentsRoot, "wrongIdAgent.agent.json"),
+          workflowAgentSourceText("differentAgent"),
+        );
+        sourceEditHarness.writeFile(
+          joinSourceEditPathSegments(agentsRoot, "invalid-name.agent.json"),
+          workflowAgentSourceText("invalid-name"),
+        );
+        sourceEditHarness.writeFile(
+          joinSourceEditPathSegments(agentsRoot, "unknownReferenceAgent.agent.json"),
+          workflowAgentSourceText("unknownReferenceAgent", {
+            overrides: { "missing-extension": "loaded" },
+          }),
+        );
+        sourceEditHarness.writeFile(joinSourceEditPathSegments(agentsRoot, "ignored.json"), "{}\n");
+
+        const observations = yield* Effect.gen(function* () {
+          const extensions = yield* Extensions;
+          return yield* extensions.sources.scanWorkflowAgents();
+        }).pipe(Effect.provide(sourceEditHarness.layer));
+
+        assert.deepStrictEqual(
+          observations.map((observation) => observation.sourceId),
+          ["invalid-name", "malformedAgent", "unknownReferenceAgent", "validAgent", "wrongIdAgent"],
+        );
+        const valid = observations.find((observation) => observation.sourceId === "validAgent");
+        assert.strictEqual(valid?.validationStatus, "valid");
+        assert.strictEqual(valid?.parameters?.label, "Valid agent");
+        assert.deepStrictEqual(valid?.extensionOrder.map(String), ["shell", "git"]);
+        assert.strictEqual(valid?.diagnostics.length, 0);
+        assert.match(valid?.sourceVersion ?? "", /^sha256:/);
+        assert.strictEqual(valid?.fingerprint, valid?.sourceVersion);
+        assert.strictEqual(
+          valid?.path,
+          joinSourceEditPathSegments(agentsRoot, "validAgent.agent.json"),
+        );
+        assert.match(valid?.observedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+
+        for (const sourceId of [
+          "invalid-name",
+          "malformedAgent",
+          "unknownReferenceAgent",
+          "wrongIdAgent",
+        ]) {
+          const invalid = observations.find((observation) => observation.sourceId === sourceId);
+          assert.strictEqual(invalid?.validationStatus, "invalid");
+          assert.strictEqual(invalid?.parameters, null);
+          assert.deepStrictEqual(invalid?.extensionOrder, []);
+          assert.strictEqual(invalid?.diagnostics[0]?.code, "workflow_agent_source_invalid");
+          assert.strictEqual(invalid?.diagnostics[0]?.path, invalid?.path);
+        }
+      }),
+  );
+
+  it.effect("projects unreadable workflow-agent sources as invalid observations", () =>
+    Effect.gen(function* () {
+      const unreadablePath = "/workflows-test/agents/unreadableAgent.agent.json" as AbsolutePath;
+      const sourceEditHarness = makeSourceEditHarness({ unreadablePaths: [unreadablePath] });
+      sourceEditHarness.writeFile(unreadablePath, workflowAgentSourceText("unreadableAgent"));
+
+      const observations = yield* Effect.gen(function* () {
+        const extensions = yield* Extensions;
+        return yield* extensions.sources.scanWorkflowAgents();
+      }).pipe(Effect.provide(sourceEditHarness.layer));
+
+      assert.strictEqual(observations.length, 1);
+      const observation = observations[0]!;
+      assert.strictEqual(observation.sourceId, "unreadableAgent");
+      assert.strictEqual(observation.path, unreadablePath);
+      assert.strictEqual(observation.validationStatus, "invalid");
+      assert.strictEqual(observation.parameters, null);
+      assert.deepStrictEqual(observation.extensionOrder, []);
+      assert.deepStrictEqual(observation.diagnostics, [
+        {
+          severity: "error",
+          code: "workflow_agent_source_unreadable",
+          message: "Workflow-agent source contents could not be read: unreadableAgent",
+          path: unreadablePath,
+        },
+      ]);
+      assert.match(observation.sourceVersion, /^unreadable:[0-9a-f]+$/);
+      assert.strictEqual(observation.fingerprint, observation.sourceVersion);
+    }),
+  );
+
+  it.effect("scaffolds canonical workflow-agent sources once and preserves existing edits", () =>
+    Effect.gen(function* () {
+      const sourceEditHarness = makeSourceEditHarness();
+      for (const sourceId of DEFAULT_WORKFLOW_AGENT_SOURCE_IDS) {
+        sourceEditHarness.writeFile(
+          joinSourceEditPathSegments(
+            sourceEditHarness.packagedExtensionsRoot,
+            "workflows",
+            "agents",
+            `${sourceId}.agent.json`,
+          ),
+          packagedWorkflowAgentSourceText(sourceId),
+        );
+      }
+      const editedExplorer = workflowAgentSourceText("explorerAgent", {
+        label: "My Explorer",
+        instructions: "Keep this local edit.",
+      });
+      const explorerPath = joinSourceEditPathSegments(
+        sourceEditHarness.workflowsSourceRoot,
+        "agents",
+        "explorerAgent.agent.json",
+      );
+      sourceEditHarness.writeFile(explorerPath, editedExplorer);
+
+      const result = yield* Effect.gen(function* () {
+        const extensions = yield* Extensions;
+        const first = yield* extensions.sources.scaffoldMissingWorkflowAgents();
+        const second = yield* extensions.sources.scaffoldMissingWorkflowAgents();
+        return { first, second };
+      }).pipe(Effect.provide(sourceEditHarness.layer));
+
+      assert.deepStrictEqual(
+        result.first.created.map((record) => record.sourceId),
+        ["defaultAgent", "implementerAgent", "reviewerAgent"],
+      );
+      assert.deepStrictEqual(
+        result.first.preserved.map((record) => record.sourceId),
+        ["explorerAgent"],
+      );
+      assert.deepStrictEqual(result.second.created, []);
+      assert.deepStrictEqual(
+        result.second.preserved.map((record) => record.sourceId),
+        [...DEFAULT_WORKFLOW_AGENT_SOURCE_IDS],
+      );
+      assert.strictEqual(sourceEditHarness.readFile(explorerPath), editedExplorer);
+      assert.strictEqual(
+        sourceEditHarness.readFile(
+          joinSourceEditPathSegments(
+            sourceEditHarness.workflowsSourceRoot,
+            "agents",
+            "reviewerAgent.agent.json",
+          ),
+        ),
+        packagedWorkflowAgentSourceText("reviewerAgent"),
+      );
+    }),
+  );
+
+  it.effect("validates every packaged workflow-agent source before scaffolding any live file", () =>
+    Effect.gen(function* () {
+      const sourceEditHarness = makeSourceEditHarness();
+      for (const sourceId of DEFAULT_WORKFLOW_AGENT_SOURCE_IDS.filter(
+        (candidate) => candidate !== "reviewerAgent",
+      )) {
+        sourceEditHarness.writeFile(
+          joinSourceEditPathSegments(
+            sourceEditHarness.packagedExtensionsRoot,
+            "workflows",
+            "agents",
+            `${sourceId}.agent.json`,
+          ),
+          packagedWorkflowAgentSourceText(sourceId),
+        );
+      }
+
+      const error = yield* Effect.gen(function* () {
+        const extensions = yield* Extensions;
+        return yield* extensions.sources.scaffoldMissingWorkflowAgents();
+      }).pipe(Effect.provide(sourceEditHarness.layer), Effect.flip);
+
+      assertExtensionError(error, {
+        _tag: "ExtensionError",
+        extensionId: "reviewerAgent",
+        operation: "extensions.sources.scaffold-missing-workflow-agents",
+        reason: "not-found",
+      });
+      for (const sourceId of DEFAULT_WORKFLOW_AGENT_SOURCE_IDS) {
+        assert.strictEqual(
+          sourceEditHarness.readFile(
+            joinSourceEditPathSegments(
+              sourceEditHarness.workflowsSourceRoot,
+              "agents",
+              `${sourceId}.agent.json`,
+            ),
+          ),
+          null,
+        );
+      }
+    }),
+  );
+
   it.effect("opens and saves editable extension source sessions with file-backed CAS", () =>
     Effect.gen(function* () {
       const sourceEditHarness = makeSourceEditHarness();
@@ -403,7 +697,18 @@ describe("@svvy/extensions Effect service", () => {
           "agents",
           "reviewerAgent.agent.json",
         ),
-        JSON.stringify({ exportName: "reviewerAgent", displayName: "Reviewer draft" }, null, 2),
+        JSON.stringify(
+          {
+            id: "reviewerAgent",
+            label: "Reviewer draft",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoning: { effort: "medium" },
+            instructions: "Review the draft.",
+          },
+          null,
+          2,
+        ),
       );
       sourceEditHarness.writeFile(
         joinSourceEditPathSegments(
@@ -469,7 +774,18 @@ describe("@svvy/extensions Effect service", () => {
           sourceKind: "workflow-agent",
           sourceId: "reviewerAgent",
           expectedSourceVersion: agent.sourceVersion,
-          text: JSON.stringify({ exportName: "reviewerAgent", displayName: "Reviewer" }, null, 2),
+          text: JSON.stringify(
+            {
+              id: "reviewerAgent",
+              label: "Reviewer",
+              provider: "openai",
+              model: "gpt-5.4",
+              reasoning: { effort: "high" },
+              instructions: "Review the implementation.",
+            },
+            null,
+            2,
+          ),
           saveMode: "compare-and-swap",
         });
         const savedPrompt = yield* extensions.sources.saveEditSession({
@@ -517,7 +833,18 @@ describe("@svvy/extensions Effect service", () => {
 
       assert.strictEqual(
         result.agent.text,
-        JSON.stringify({ exportName: "reviewerAgent", displayName: "Reviewer draft" }, null, 2),
+        JSON.stringify(
+          {
+            id: "reviewerAgent",
+            label: "Reviewer draft",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoning: { effort: "medium" },
+            instructions: "Review the draft.",
+          },
+          null,
+          2,
+        ),
       );
       assert.strictEqual(
         result.agent.path,
@@ -571,6 +898,328 @@ describe("@svvy/extensions Effect service", () => {
         sourceEditHarness.readFile(result.workflow.path),
         "export const reviewFlow = <Task />;\n",
       );
+    }),
+  );
+
+  it.effect("creates, duplicates, and deletes canonical workflow-agent sources", () =>
+    Effect.gen(function* () {
+      const sourceEditHarness = makeSourceEditHarness();
+      sourceEditHarness.writeFile(
+        joinSourceEditPathSegments(
+          sourceEditHarness.extensionsRoot,
+          "sources",
+          "user",
+          "custom-tools",
+          "manifest.json",
+        ),
+        JSON.stringify({
+          schemaVersion: 1,
+          id: "custom-tools",
+          interface: "svvyx",
+          typescriptApiEnabled: true,
+          workflowTaskAgentReferenceExportEnabled: true,
+        }),
+      );
+      sourceEditHarness.writeFile(
+        joinSourceEditPathSegments(
+          sourceEditHarness.extensionsRoot,
+          "sources",
+          "user",
+          "Malformed_Unreferenced",
+          "manifest.json",
+        ),
+        "not json",
+      );
+      const reviewerPath = joinSourceEditPathSegments(
+        sourceEditHarness.workflowsSourceRoot,
+        "agents",
+        "reviewerAgent.agent.json",
+      );
+      sourceEditHarness.writeFile(
+        reviewerPath,
+        `${JSON.stringify(
+          {
+            id: "reviewerAgent",
+            label: "Reviewer",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoning: { effort: "high" },
+            instructions: "Review the implementation.",
+            overrides: { git: "loaded", "custom-tools": "available" },
+            extensionOrder: ["custom-tools", "git"],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const extensions = yield* Extensions;
+        const created = yield* extensions.sources.createWorkflowAgent({
+          draft: {
+            exportName: "strictReviewer" as WorkflowAgentSourceExportName,
+            displayName: "  Strict reviewer  ",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoning: { effort: "high" },
+            instructionText: "Review strictly.",
+            extensionUsageOverrides: [
+              { extensionId: "git" as ExtensionId, usage: "loaded" },
+              { extensionId: "custom-tools" as ExtensionId, usage: "available" },
+            ],
+            extensionOrder: ["custom-tools" as ExtensionId, "git" as ExtensionId],
+          },
+          sourceOwner: "agents-pane",
+        });
+        const duplicated = yield* extensions.sources.duplicateWorkflowAgent({
+          sourceId: "reviewerAgent" as WorkflowAgentSourceExportName,
+          draftPatch: {
+            exportName: "reviewerCopy" as WorkflowAgentSourceExportName,
+            displayName: "  Reviewer copy  ",
+            instructionText: "Review the copied task.",
+          },
+          sourceOwner: "headless",
+        });
+        const deleted = yield* extensions.sources.deleteWorkflowAgent({
+          sourceId: "reviewerCopy" as WorkflowAgentSourceExportName,
+          expectedSourceVersion: duplicated.session.sourceVersion,
+          sourceOwner: "agents-pane",
+        });
+        return { created, duplicated, deleted };
+      }).pipe(Effect.provide(sourceEditHarness.layer));
+
+      assert.strictEqual(result.created.status, "created");
+      assert.strictEqual(result.created.fileWriteReceipt.previousExists, false);
+      assert.deepStrictEqual(JSON.parse(result.created.session.text), {
+        id: "strictReviewer",
+        label: "Strict reviewer",
+        provider: "openai",
+        model: "gpt-5.4",
+        reasoning: { effort: "high" },
+        instructions: "Review strictly.",
+        overrides: { git: "loaded", "custom-tools": "available" },
+        extensionOrder: ["custom-tools", "git"],
+      });
+      assert.deepStrictEqual(JSON.parse(result.duplicated.session.text), {
+        id: "reviewerCopy",
+        label: "Reviewer copy",
+        provider: "openai",
+        model: "gpt-5.4",
+        reasoning: { effort: "high" },
+        instructions: "Review the copied task.",
+        overrides: { git: "loaded", "custom-tools": "available" },
+        extensionOrder: ["custom-tools", "git"],
+      });
+      assert.strictEqual(result.deleted.status, "deleted");
+      assert.strictEqual(sourceEditHarness.readFile(result.deleted.deletedPath), null);
+      assert.strictEqual(sourceEditHarness.readFile(reviewerPath) !== null, true);
+    }),
+  );
+
+  it.effect("rejects unsafe workflow-agent source lifecycle operations", () =>
+    Effect.gen(function* () {
+      const sourceEditHarness = makeSourceEditHarness();
+      const userManifestPath = joinSourceEditPathSegments(
+        sourceEditHarness.extensionsRoot,
+        "sources",
+        "user",
+        "custom-tools",
+        "manifest.json",
+      );
+      sourceEditHarness.writeFile(
+        userManifestPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          id: "custom-tools",
+          interface: "svvyx",
+          typescriptApiEnabled: true,
+          workflowTaskAgentReferenceExportEnabled: true,
+        }),
+      );
+      const existingPath = joinSourceEditPathSegments(
+        sourceEditHarness.workflowsSourceRoot,
+        "agents",
+        "existingAgent.agent.json",
+      );
+      sourceEditHarness.writeFile(
+        existingPath,
+        `${JSON.stringify({
+          id: "existingAgent",
+          label: "Existing",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoning: { effort: "medium" },
+          instructions: "Existing source.",
+        })}\n`,
+      );
+      const staleReferencePath = joinSourceEditPathSegments(
+        sourceEditHarness.workflowsSourceRoot,
+        "agents",
+        "staleReferenceAgent.agent.json",
+      );
+      sourceEditHarness.writeFile(
+        staleReferencePath,
+        `${JSON.stringify({
+          id: "staleReferenceAgent",
+          label: "Stale reference",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoning: { effort: "medium" },
+          instructions: "Uses a removed extension.",
+          overrides: { "removed-extension": "loaded" },
+        })}\n`,
+      );
+
+      const errors = yield* Effect.gen(function* () {
+        const extensions = yield* Extensions;
+        const opened = yield* extensions.sources.openEditSession({
+          sourceKind: "workflow-agent",
+          sourceId: "existingAgent",
+        });
+        return yield* Effect.all([
+          extensions.sources
+            .createWorkflowAgent({
+              draft: {
+                exportName: "unknownExtensionAgent" as WorkflowAgentSourceExportName,
+                displayName: "Unknown extension",
+                provider: "openai",
+                model: "gpt-5.4",
+                reasoning: { effort: "medium" },
+                extensionUsageOverrides: [
+                  { extensionId: "missing-extension" as ExtensionId, usage: "loaded" },
+                ],
+              },
+              sourceOwner: "agents-pane",
+            })
+            .pipe(Effect.flip),
+          extensions.sources
+            .createWorkflowAgent({
+              draft: {
+                exportName: "blankLabelAgent" as WorkflowAgentSourceExportName,
+                displayName: "   ",
+                provider: "openai",
+                model: "gpt-5.4",
+                reasoning: { effort: "medium" },
+              },
+              sourceOwner: "agents-pane",
+            })
+            .pipe(Effect.flip),
+          extensions.sources
+            .createWorkflowAgent({
+              draft: {
+                exportName: "reviewerAgent" as WorkflowAgentSourceExportName,
+                displayName: "Reserved reviewer",
+                provider: "openai",
+                model: "gpt-5.4",
+                reasoning: { effort: "medium" },
+              },
+              sourceOwner: "agents-pane",
+            })
+            .pipe(Effect.flip),
+          extensions.sources
+            .duplicateWorkflowAgent({
+              sourceId: "existingAgent" as WorkflowAgentSourceExportName,
+              draftPatch: {
+                exportName: "existingAgent" as WorkflowAgentSourceExportName,
+              },
+              sourceOwner: "headless",
+            })
+            .pipe(Effect.flip),
+          extensions.sources
+            .duplicateWorkflowAgent({
+              sourceId: "existingAgent" as WorkflowAgentSourceExportName,
+              draftPatch: {
+                exportName: "blankDuplicateLabel" as WorkflowAgentSourceExportName,
+                displayName: "   ",
+              },
+              sourceOwner: "headless",
+            })
+            .pipe(Effect.flip),
+          extensions.sources
+            .duplicateWorkflowAgent({
+              sourceId: "staleReferenceAgent" as WorkflowAgentSourceExportName,
+              draftPatch: {
+                exportName: "staleReferenceCopy" as WorkflowAgentSourceExportName,
+              },
+              sourceOwner: "headless",
+            })
+            .pipe(Effect.flip),
+          extensions.sources
+            .saveEditSession({
+              sourceKind: "workflow-agent",
+              sourceId: "existingAgent",
+              expectedSourceVersion: opened.sourceVersion,
+              text: `${JSON.stringify({
+                id: "existingAgent",
+                label: "Existing",
+                provider: "openai",
+                model: "gpt-5.4",
+                reasoning: { effort: "medium" },
+                instructions: "Existing source.",
+                overrides: { "missing-extension": "loaded" },
+              })}\n`,
+              saveMode: "compare-and-swap",
+            })
+            .pipe(Effect.flip),
+          extensions.sources
+            .deleteWorkflowAgent({
+              sourceId: "existingAgent" as WorkflowAgentSourceExportName,
+              expectedSourceVersion: `${opened.sourceVersion}:stale`,
+              sourceOwner: "agents-pane",
+            })
+            .pipe(Effect.flip),
+          extensions.sources
+            .deleteWorkflowAgent({
+              sourceId: "reviewerAgent" as WorkflowAgentSourceExportName,
+              expectedSourceVersion: "sha256:any",
+              sourceOwner: "agents-pane",
+            })
+            .pipe(Effect.flip),
+        ]);
+      }).pipe(Effect.provide(sourceEditHarness.layer));
+
+      for (const error of errors) {
+        assertExtensionError(error, {
+          _tag: "ExtensionError",
+          reason: "invalid-input",
+        });
+      }
+      assert.strictEqual(sourceEditHarness.readFile(existingPath) !== null, true);
+    }),
+  );
+
+  it.effect("does not clobber a workflow-agent source created during publication", () =>
+    Effect.gen(function* () {
+      const sourceEditHarness = makeSourceEditHarness({
+        publishRaceContents: "externally-created\n",
+      });
+      const targetPath = joinSourceEditPathSegments(
+        sourceEditHarness.workflowsSourceRoot,
+        "agents",
+        "racingAgent.agent.json",
+      );
+
+      const error = yield* Effect.gen(function* () {
+        const extensions = yield* Extensions;
+        return yield* extensions.sources
+          .createWorkflowAgent({
+            draft: {
+              exportName: "racingAgent" as WorkflowAgentSourceExportName,
+              displayName: "Racing agent",
+              provider: "openai",
+              model: "gpt-5.4",
+              reasoning: { effort: "medium" },
+            },
+            sourceOwner: "headless",
+          })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(sourceEditHarness.layer));
+
+      assertExtensionError(error, {
+        _tag: "ExtensionError",
+        reason: "invalid-input",
+      });
+      assert.strictEqual(sourceEditHarness.readFile(targetPath), "externally-created\n");
     }),
   );
 
@@ -646,6 +1295,7 @@ describe("@svvy/extensions Effect service", () => {
       const declarations = yield* service.nativeTools.declarations({
         actorKind: orchestratorLookup.actorKind,
         actorBinding: orchestratorLookup.actorBinding,
+        requestInputVariant: "nonblocking",
       });
       const metadata = yield* service.nativeTools.metadata({
         actorKind: orchestratorLookup.actorKind,
@@ -655,6 +1305,20 @@ describe("@svvy/extensions Effect service", () => {
         actorKind: orchestratorLookup.actorKind,
         actorBinding: orchestratorLookup.actorBinding,
         toolName: "exec_command",
+      });
+      const requestInputLookup = nativeToolLookup({
+        toolName: "request_user_input",
+        loadedExtensionIds: ["request-user-input"],
+      });
+      const nonblockingRequestInput = yield* service.nativeTools.declarations({
+        actorKind: requestInputLookup.actorKind,
+        actorBinding: requestInputLookup.actorBinding,
+        requestInputVariant: "nonblocking",
+      });
+      const blockingRequestInput = yield* service.nativeTools.declarations({
+        actorKind: requestInputLookup.actorKind,
+        actorBinding: requestInputLookup.actorBinding,
+        requestInputVariant: "blocking",
       });
 
       assert.deepStrictEqual(
@@ -674,6 +1338,12 @@ describe("@svvy/extensions Effect service", () => {
           toolName: "exec_command",
           extensionIds: ["shell"],
         },
+      );
+      assert.match(nonblockingRequestInput[0]?.description ?? "", /defaults immediately/);
+      assert.match(blockingRequestInput[0]?.description ?? "", /Wait for the user answers/);
+      assert.notStrictEqual(
+        nonblockingRequestInput[0]?.description,
+        blockingRequestInput[0]?.description,
       );
     }),
   );

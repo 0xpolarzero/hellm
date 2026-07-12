@@ -84,6 +84,10 @@ export {
   runtimeThreadStatePortFromStructuredSessionState,
 } from "./runtime-thread-state-port";
 export {
+  runtimeTranscriptStatePortFromStore,
+  runtimeTranscriptStatePortFromStructuredSessionState,
+} from "./runtime-transcript-state-port";
+export {
   runtimeTurnStatePortFromStore,
   runtimeTurnStatePortFromStructuredSessionState,
 } from "./runtime-turn-state-port";

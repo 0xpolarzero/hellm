@@ -1039,7 +1039,7 @@ describe("structured session state write API", () => {
         commandId: command.id,
         status,
         summary: `Final ${status}.`,
-        facts: { outcome: status },
+        facts: { outcome: status, toolCallId: `tool-call-terminal-${status}` },
         error: status === "succeeded" ? null : `Initial ${status} error.`,
       });
       const first = store
@@ -1048,7 +1048,7 @@ describe("structured session state write API", () => {
       expect(first).toMatchObject({
         status,
         summary: `Final ${status}.`,
-        facts: { outcome: status },
+        facts: { outcome: status, toolCallId: `tool-call-terminal-${status}` },
         error: status === "succeeded" ? null : `Initial ${status} error.`,
       });
       expect(first?.finishedAt).toBeTruthy();
@@ -1059,6 +1059,19 @@ describe("structured session state write API", () => {
         summary: "Prompt execution ended before the tool run finished.",
         facts: { overwritten: true },
         error: "Cleanup tried to cancel a finished command.",
+      });
+      store.updateCommandArguments(command.id, { overwritten: true });
+      store.startCommand(command.id);
+      store.createOrReuseStreamingCommand({
+        toolCallId: `tool-call-terminal-${status}`,
+        turnId: turn.id,
+        toolName: "exec_command",
+        executor: "orchestrator",
+        visibility: "surface",
+        title: "Late streamed title",
+        summary: "Late streamed summary",
+        arguments: { late: true },
+        facts: { late: true },
       });
 
       const snapshot = store.getSessionState("session-terminal-commands");
@@ -1073,6 +1086,423 @@ describe("structured session state write API", () => {
         ),
       ).toHaveLength(1);
     }
+  });
+
+  it("atomically terminalizes every durable fact owned by an interrupted turn", () => {
+    const store = createStore();
+    const sessionId = "session-interrupted-turn";
+    const surfacePiSessionId = "surface-interrupted-turn";
+    const streamGenerationId = "stream-interrupted-turn" as never;
+    seedSession(store, sessionId);
+    const queued = store.enqueueSurfaceMessage({
+      sessionId,
+      surfacePiSessionId,
+      messageJson: JSON.stringify({ text: "Run interrupted work" }),
+    });
+    const claimed = store.claimNextQueuedSurfaceMessage({
+      surfacePiSessionId,
+      claimOwnerId: "owner-interrupted-turn",
+      leaseDurationMs: 60_000,
+    });
+    expect(claimed?.id).toBe(queued.id);
+    const turn = store.startTurn({
+      sessionId,
+      surfacePiSessionId,
+      requestSummary: "Run interrupted work",
+    });
+    const user = store.commitRuntimeTranscriptUserMessage({
+      workspaceSessionId: sessionId as never,
+      surfacePiSessionId: surfacePiSessionId as never,
+      turnId: turn.id as never,
+      queueItemId: queued.id as never,
+      message: { text: "Run interrupted work" },
+      submittedAt: queued.createdAt as never,
+      committedAt: "2026-04-18T09:00:20.000Z" as never,
+      streamGenerationId,
+      expectedCursor: null,
+    });
+    const assistant = store.beginRuntimeTranscriptAssistantMessage({
+      workspaceSessionId: sessionId as never,
+      surfacePiSessionId: surfacePiSessionId as never,
+      turnId: turn.id as never,
+      api: null,
+      providerId: "openai" as never,
+      modelId: "gpt-5.4" as never,
+      startedAt: "2026-04-18T09:00:21.000Z" as never,
+      streamGenerationId,
+      expectedCursor: user.cursor,
+    });
+    const requestCommand = store.createCommand({
+      turnId: turn.id,
+      surfacePiSessionId,
+      toolName: "request_user_input",
+      executor: "orchestrator",
+      visibility: "surface",
+      title: "Ask user",
+      summary: "Waiting for input.",
+      status: "running",
+    });
+    const runningCommand = store.createCommand({
+      turnId: turn.id,
+      surfacePiSessionId,
+      toolName: "exec_command",
+      executor: "orchestrator",
+      visibility: "surface",
+      title: "Run command",
+      summary: "Command is still running.",
+      status: "running",
+    });
+    const request = store.createRequestUserInputRequest({
+      sessionId,
+      surfacePiSessionId,
+      turnId: turn.id,
+      commandId: requestCommand.id,
+      toolItemId: "tool-interrupted-request",
+      variant: "blocking",
+      questions: [
+        {
+          title: "Continue",
+          question: "Should the interrupted work continue?",
+          defaultAnswer: { kind: "custom", text: "No." },
+        },
+      ],
+    });
+    const approval = store.createRuntimeApprovalRequest({
+      sessionId,
+      surfacePiSessionId,
+      turnId: turn.id,
+      commandId: runningCommand.id,
+      toolCallId: "tool-interrupted-approval",
+      toolName: "exec_command",
+      approvalMode: "user",
+      cwd: "/tmp/interrupted-turn",
+      command: "sleep 60",
+      commandFamily: "shell",
+    });
+    const recovered = store.recoverInterruptedTurn({
+      turnId: turn.id,
+      terminalStatus: "failed",
+      reason: "Runtime process exited before terminal facts committed.",
+    });
+
+    expect(recovered).toEqual({
+      changed: true,
+      turn: expect.objectContaining({ id: turn.id, status: "failed" }),
+      terminalizedAssistantMessageId: assistant.message.messageId,
+      terminalizedCommandIds: [requestCommand.id, runningCommand.id],
+      settledQueueItemId: queued.id,
+      cancelledRequestInputIds: [request.requestId],
+      cancelledApprovalIds: [approval.requestId],
+      sessionWaitCleared: true,
+    });
+    const snapshot = store.getSessionState(sessionId);
+    expect(snapshot.session.wait).toBeNull();
+    expect(snapshot.commands.map((command) => [command.id, command.status])).toEqual([
+      [requestCommand.id, "failed"],
+      [runningCommand.id, "failed"],
+    ]);
+    expect(snapshot.queuedMessages).toContainEqual(
+      expect.objectContaining({ id: queued.id, status: "failed" }),
+    );
+    expect(store.getRequestUserInputRequest(request.requestId).status).toBe("cancelled");
+    expect(store.listOpenRuntimeApprovalRequests()).toEqual([]);
+    expect(store.readRuntimeSurfaceTranscript(surfacePiSessionId)).toMatchObject({
+      activeAssistantMessage: null,
+      messages: [
+        expect.objectContaining({ role: "user", queueItemId: queued.id }),
+        expect.objectContaining({
+          role: "assistant",
+          messageId: assistant.message.messageId,
+          status: "failed",
+          stopReason: "error",
+          errorMessage: "Runtime process exited before terminal facts committed.",
+        }),
+      ],
+      streamCursor: expect.objectContaining({ streamSequence: 3 }),
+    });
+
+    const eventCount = snapshot.events.length;
+    expect(
+      store.recoverInterruptedTurn({
+        turnId: turn.id,
+        terminalStatus: "failed",
+        reason: "Runtime process exited before terminal facts committed.",
+      }),
+    ).toEqual({
+      changed: false,
+      turn: expect.objectContaining({ id: turn.id, status: "failed" }),
+      terminalizedAssistantMessageId: null,
+      terminalizedCommandIds: [],
+      settledQueueItemId: null,
+      cancelledRequestInputIds: [],
+      cancelledApprovalIds: [],
+      sessionWaitCleared: false,
+    });
+    expect(
+      store
+        .getSessionState(sessionId)
+        .events.slice(eventCount)
+        .map((event) => event.kind),
+    ).toEqual([]);
+  });
+
+  it("keeps later turn queue claims and waits intact when old recovery is retried", () => {
+    const store = createStore();
+    const sessionId = "session-interrupted-turn-retry";
+    const surfacePiSessionId = "surface-interrupted-turn-retry";
+    seedSession(store, sessionId);
+
+    const oldQueued = store.enqueueSurfaceMessage({
+      sessionId,
+      surfacePiSessionId,
+      messageJson: JSON.stringify({ text: "Old work" }),
+    });
+    expect(
+      store.claimNextQueuedSurfaceMessage({
+        surfacePiSessionId,
+        claimOwnerId: "owner-old-interrupted-turn",
+      })?.id,
+    ).toBe(oldQueued.id);
+    const oldTurn = store.startTurn({
+      sessionId,
+      surfacePiSessionId,
+      requestSummary: "Old work",
+    });
+    expect(
+      store.recoverInterruptedTurn({
+        turnId: oldTurn.id,
+        terminalStatus: "failed",
+        reason: "Old runtime owner exited.",
+      }).settledQueueItemId,
+    ).toBe(oldQueued.id);
+
+    const newQueued = store.enqueueSurfaceMessage({
+      sessionId,
+      surfacePiSessionId,
+      messageJson: JSON.stringify({ text: "New work" }),
+    });
+    expect(
+      store.claimNextQueuedSurfaceMessage({
+        surfacePiSessionId,
+        claimOwnerId: "owner-new-interrupted-turn",
+      })?.id,
+    ).toBe(newQueued.id);
+    const newTurn = store.startTurn({
+      sessionId,
+      surfacePiSessionId,
+      requestSummary: "New work",
+    });
+    store.setSessionWait({
+      sessionId,
+      owner: { kind: "orchestrator" },
+      kind: "user",
+      reason: "Waiting for new work input",
+      resumeWhen: "Resume the new turn after input arrives.",
+    });
+
+    expect(
+      store.recoverInterruptedTurn({
+        turnId: oldTurn.id,
+        terminalStatus: "failed",
+        reason: "Delayed retry for the old runtime owner.",
+      }),
+    ).toEqual({
+      changed: false,
+      turn: expect.objectContaining({ id: oldTurn.id, status: "failed" }),
+      terminalizedAssistantMessageId: null,
+      terminalizedCommandIds: [],
+      settledQueueItemId: null,
+      cancelledRequestInputIds: [],
+      cancelledApprovalIds: [],
+      sessionWaitCleared: false,
+    });
+    expect(store.getSurfaceQueuedMessage({ id: newQueued.id }).status).toBe("dispatching");
+    expect(store.getSessionState(sessionId).session.wait).toEqual(
+      expect.objectContaining({
+        owner: { kind: "orchestrator" },
+        reason: "Waiting for new work input",
+      }),
+    );
+    expect(store.getSessionState(sessionId).turns).toContainEqual(
+      expect.objectContaining({ id: newTurn.id, status: "running" }),
+    );
+  });
+
+  it("atomically settles a prompt turn, its queue claim, and dangling commands", () => {
+    const store = createStore();
+    const sessionId = "session-prompt-settlement";
+    const surfacePiSessionId = "surface-prompt-settlement";
+    seedSession(store, sessionId);
+    const queued = store.enqueueSurfaceMessage({
+      sessionId,
+      surfacePiSessionId,
+      messageJson: JSON.stringify({ text: "Finish atomically" }),
+    });
+    const claimed = store.claimNextQueuedSurfaceMessage({
+      surfacePiSessionId,
+      claimOwnerId: "owner-prompt-settlement",
+      leaseDurationMs: 60_000,
+    });
+    expect(claimed?.id).toBe(queued.id);
+    const turn = store.startTurn({
+      sessionId,
+      surfacePiSessionId,
+      requestSummary: "Finish atomically",
+    });
+    const command = store.createCommand({
+      turnId: turn.id,
+      surfacePiSessionId,
+      toolName: "exec_command",
+      executor: "orchestrator",
+      visibility: "surface",
+      title: "Run command",
+      summary: "Still running.",
+      status: "running",
+    });
+
+    const settled = store.settlePromptTurn({
+      turnId: turn.id,
+      queueItemId: queued.id,
+      status: "cancelled",
+      assistantText: "Partial answer",
+      terminalCommandIds: [command.id],
+      terminalCommandSummary: "Prompt execution was cancelled.",
+      terminalCommandError: "Prompt execution was cancelled.",
+      claimOwnerId: claimed!.claimOwnerId,
+      leaseVersion: claimed!.leaseVersion,
+    });
+
+    expect(settled).toEqual({
+      changed: true,
+      turn: expect.objectContaining({
+        id: turn.id,
+        status: "cancelled",
+        assistantText: "Partial answer",
+      }),
+      queuedMessage: expect.objectContaining({ id: queued.id, status: "cancelled" }),
+      terminalizedCommandIds: [command.id],
+    });
+    expect(store.getSessionState(sessionId)).toMatchObject({
+      turns: [expect.objectContaining({ id: turn.id, status: "cancelled" })],
+      queuedMessages: [expect.objectContaining({ id: queued.id, status: "cancelled" })],
+      commands: [expect.objectContaining({ id: command.id, status: "cancelled" })],
+    });
+
+    expect(
+      store.settlePromptTurn({
+        turnId: turn.id,
+        queueItemId: queued.id,
+        status: "cancelled",
+        assistantText: "Partial answer",
+        terminalCommandIds: [command.id],
+        terminalCommandSummary: "Prompt execution was cancelled.",
+        terminalCommandError: "Prompt execution was cancelled.",
+        claimOwnerId: claimed!.claimOwnerId,
+        leaseVersion: claimed!.leaseVersion,
+      }),
+    ).toEqual({
+      changed: false,
+      turn: expect.objectContaining({ id: turn.id, status: "cancelled" }),
+      queuedMessage: expect.objectContaining({ id: queued.id, status: "cancelled" }),
+      terminalizedCommandIds: [],
+    });
+  });
+
+  it("rolls prompt settlement back when any requested command belongs to another turn", () => {
+    const store = createStore();
+    const sessionId = "session-prompt-settlement-rollback";
+    const surfacePiSessionId = "surface-prompt-settlement-rollback";
+    seedSession(store, sessionId);
+    const queued = store.enqueueSurfaceMessage({
+      sessionId,
+      surfacePiSessionId,
+      messageJson: JSON.stringify({ text: "Do not partially settle" }),
+    });
+    const claimed = store.claimNextQueuedSurfaceMessage({
+      surfacePiSessionId,
+      claimOwnerId: "owner-prompt-settlement-rollback",
+    });
+    const turn = store.startTurn({
+      sessionId,
+      surfacePiSessionId,
+      requestSummary: "Do not partially settle",
+    });
+    const otherTurn = store.startTurn({
+      sessionId,
+      surfacePiSessionId: "surface-other-prompt-settlement",
+      requestSummary: "Other work",
+    });
+    const otherCommand = store.createCommand({
+      turnId: otherTurn.id,
+      surfacePiSessionId: "surface-other-prompt-settlement",
+      toolName: "exec_command",
+      executor: "orchestrator",
+      visibility: "surface",
+      title: "Other command",
+      summary: "Still running.",
+      status: "running",
+    });
+
+    expect(() =>
+      store.settlePromptTurn({
+        turnId: turn.id,
+        queueItemId: queued.id,
+        status: "failed",
+        terminalCommandIds: [otherCommand.id],
+        terminalCommandSummary: "Prompt failed.",
+        terminalCommandError: "Prompt failed.",
+        claimOwnerId: claimed!.claimOwnerId,
+        leaseVersion: claimed!.leaseVersion,
+      }),
+    ).toThrow(`Command ${otherCommand.id} does not belong to turn ${turn.id}.`);
+    expect(store.getSurfaceQueuedMessage({ id: queued.id }).status).toBe("dispatching");
+    expect(store.getSessionState(sessionId).turns).toContainEqual(
+      expect.objectContaining({ id: turn.id, status: "running" }),
+    );
+    expect(store.getSessionState(sessionId).commands).toContainEqual(
+      expect.objectContaining({ id: otherCommand.id, status: "running" }),
+    );
+  });
+
+  it("finishes a dispatching queue claim when the matching turn is already terminal", () => {
+    const store = createStore();
+    const sessionId = "session-prompt-settlement-crash-gap";
+    const surfacePiSessionId = "surface-prompt-settlement-crash-gap";
+    seedSession(store, sessionId);
+    const queued = store.enqueueSurfaceMessage({
+      sessionId,
+      surfacePiSessionId,
+      messageJson: JSON.stringify({ text: "Close the crash gap" }),
+    });
+    const claimed = store.claimNextQueuedSurfaceMessage({
+      surfacePiSessionId,
+      claimOwnerId: "owner-prompt-settlement-crash-gap",
+    });
+    const turn = store.startTurn({
+      sessionId,
+      surfacePiSessionId,
+      requestSummary: "Close the crash gap",
+    });
+    store.finishTurn({ turnId: turn.id, status: "completed", assistantText: "Done." });
+
+    expect(
+      store.settlePromptTurn({
+        turnId: turn.id,
+        queueItemId: queued.id,
+        status: "completed",
+        assistantText: "Done.",
+        terminalCommandIds: [],
+        terminalCommandSummary: "Prompt finished.",
+        terminalCommandError: "Prompt finished.",
+        claimOwnerId: claimed!.claimOwnerId,
+        leaseVersion: claimed!.leaseVersion,
+      }),
+    ).toEqual({
+      changed: true,
+      turn: expect.objectContaining({ id: turn.id, status: "completed" }),
+      queuedMessage: expect.objectContaining({ id: queued.id, status: "delivered" }),
+      terminalizedCommandIds: [],
+    });
   });
 
   it("records ordered update and conclusion episodes per thread", () => {
@@ -1794,8 +2224,14 @@ describe("structured session state write API", () => {
       title: "Clarify locally",
       objective: "Use handler-local clarification.",
     });
+    const handlerTurn = store.startTurn({
+      sessionId: "session-rui-answer",
+      surfacePiSessionId: thread.surfacePiSessionId,
+      threadId: thread.id,
+      requestSummary: "Ask for handler-local clarification",
+    });
     const command = store.createCommand({
-      turnId: turn.id,
+      turnId: handlerTurn.id,
       surfacePiSessionId: thread.surfacePiSessionId,
       threadId: thread.id,
       toolName: "request_user_input",
@@ -1808,7 +2244,7 @@ describe("structured session state write API", () => {
       sessionId: "session-rui-answer",
       surfacePiSessionId: thread.surfacePiSessionId,
       threadId: thread.id,
-      turnId: turn.id,
+      turnId: handlerTurn.id,
       commandId: command.id,
       toolItemId: "tool-call-rui-answer",
       variant: "nonblocking",
@@ -1856,7 +2292,7 @@ describe("structured session state write API", () => {
     expect(answered.request).toMatchObject({
       requestId: request.requestId,
       status: "completed",
-      completedAt: "2026-04-18T09:00:05.000Z",
+      completedAt: "2026-04-18T09:00:06.000Z",
     });
     expect(answered.answer).toMatchObject({
       answeredBy: "user",
@@ -2146,7 +2582,8 @@ describe("structured session state write API", () => {
       requestId: request.requestId,
       paused: true,
     });
-    expect(paused.timeout).toMatchObject({
+    expect(paused.record.timeout).toMatchObject({
+      timerVersion: 2,
       pausedAt: "2026-04-18T09:00:03.000Z",
       remainingMsWhenPaused: 299_000,
       expiresAt: null,
@@ -2157,7 +2594,8 @@ describe("structured session state write API", () => {
       requestId: request.requestId,
       paused: false,
     });
-    expect(resumed.timeout).toMatchObject({
+    expect(resumed.record.timeout).toMatchObject({
+      timerVersion: 3,
       pausedAt: null,
       remainingMsWhenPaused: null,
       expiresAt: "2026-04-18T09:05:03.000Z",
@@ -2207,7 +2645,7 @@ describe("structured session state write API", () => {
       idempotencyKey: "active_turn_recovery:surface-recovery:turn-1",
       orderingKey: "surface:surface-recovery",
       orderingSeq: -1,
-      priority: 10,
+      priority: 5,
       availableAt: "2026-04-18T09:00:00.000Z",
       maxAttempts: 3,
     });
@@ -2361,43 +2799,250 @@ describe("structured session state write API", () => {
     });
   });
 
-  it("keeps app and workspace recovery idempotency buckets distinct", () => {
+  it("rejects workspace-scoped source reconciliation recovery", () => {
     const store = createStore();
-    const appWork = store.ensureRecoveryWork({
+    expect(() =>
+      store.ensureRecoveryWork({
+        scope: { kind: "workspace", workspaceId: store.workspaceId },
+        kind: "source_reconcile",
+        ownerScope: {
+          kind: "source",
+          sourceKind: "workflow-agent",
+          sourceId: "sharedAgent",
+        },
+        idempotencyKey: "source_reconcile:shared",
+        orderingKey: `workspace:${store.workspaceId}`,
+        orderingSeq: 0,
+        priority: 5,
+        availableAt: "2026-04-18T09:00:00.000Z",
+        maxAttempts: 3,
+      }),
+    ).toThrow("source_reconcile recovery work must be app-scoped");
+  });
+
+  it("reclaims expired app recovery claims with lease fencing", () => {
+    const store = createStore();
+    const work = store.ensureRecoveryWork({
       scope: { kind: "app" },
       kind: "source_reconcile",
-      ownerScope: { kind: "workspace" },
-      idempotencyKey: "source_reconcile:shared",
-      orderingKey: "app:source-reconcile",
-      orderingSeq: 0,
+      ownerScope: {
+        kind: "source",
+        sourceKind: "workflow-agent",
+        sourceId: "expiredAgent",
+      },
+      idempotencyKey: "source_reconcile:expiredAgent",
+      orderingKey: "source:workflow-agent:expiredAgent",
+      orderingSeq: 1,
       priority: 5,
       availableAt: "2026-04-18T09:00:00.000Z",
-      maxAttempts: 3,
+      maxAttempts: 5,
     });
-    const workspaceWork = store.ensureRecoveryWork({
-      scope: { kind: "workspace", workspaceId: store.workspaceId },
-      kind: "source_reconcile",
-      ownerScope: { kind: "workspace" },
-      idempotencyKey: "source_reconcile:shared",
-      orderingKey: `workspace:${store.workspaceId}`,
-      orderingSeq: 0,
-      priority: 5,
-      availableAt: "2026-04-18T09:00:00.000Z",
-      maxAttempts: 3,
+    const staleClaim = store.claimNextRecoveryWork({
+      claimedBy: "expired-source-worker",
+      scope: { kind: "app" },
+      kinds: ["source_reconcile"],
+      leaseMs: -1,
+    });
+    const reclaimed = store.claimNextRecoveryWork({
+      claimedBy: "replacement-source-worker",
+      scope: { kind: "app" },
+      kinds: ["source_reconcile"],
     });
 
-    expect(workspaceWork.id).not.toBe(appWork.id);
-    expect(store.listRecoveryWork({ scope: { kind: "app" } })).toEqual([appWork]);
-    expect(
-      store.listRecoveryWork({ scope: { kind: "workspace", workspaceId: store.workspaceId } }),
-    ).toEqual([workspaceWork]);
+    expect(staleClaim).toMatchObject({ id: work.id, leaseVersion: 1, attempts: 1 });
+    expect(reclaimed).toMatchObject({
+      id: work.id,
+      status: "claimed",
+      claimedBy: "replacement-source-worker",
+      leaseVersion: 2,
+      attempts: 2,
+    });
+    expect(() =>
+      store.completeRecoveryWork({
+        id: work.id,
+        claimedBy: staleClaim!.claimedBy,
+        leaseVersion: staleClaim!.leaseVersion,
+      }),
+    ).toThrow("Recovery work claim is stale");
+  });
+
+  it("terminalizes an expired final attempt and unblocks the next ordered row", () => {
+    const store = createStore();
+    const earlier = store.ensureRecoveryWork({
+      scope: { kind: "app" },
+      kind: "source_reconcile",
+      ownerScope: {
+        kind: "source",
+        sourceKind: "workflow-agent",
+        sourceId: "crashedAgent",
+      },
+      idempotencyKey: "source_reconcile:crashedAgent:1",
+      orderingKey: "source:workflow-agent:crashedAgent",
+      orderingSeq: 1,
+      priority: 5,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 1,
+    });
+    const later = store.ensureRecoveryWork({
+      scope: { kind: "app" },
+      kind: "source_reconcile",
+      ownerScope: {
+        kind: "source",
+        sourceKind: "workflow-agent",
+        sourceId: "crashedAgent",
+      },
+      idempotencyKey: "source_reconcile:crashedAgent:2",
+      orderingKey: "source:workflow-agent:crashedAgent",
+      orderingSeq: 2,
+      priority: 5,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 2,
+    });
     expect(
       store.claimNextRecoveryWork({
-        claimedBy: "coordinator-app",
+        claimedBy: "crashed-source-worker",
         scope: { kind: "app" },
         kinds: ["source_reconcile"],
-      }),
-    ).toMatchObject({ id: appWork.id, scope: { kind: "app" } });
+        leaseMs: -1,
+      })?.id,
+    ).toBe(earlier.id);
+
+    expect(
+      store.claimNextRecoveryWork({
+        claimedBy: "replacement-source-worker",
+        scope: { kind: "app" },
+        kinds: ["source_reconcile"],
+      })?.id,
+    ).toBe(later.id);
+    expect(store.listRecoveryWork().find((work) => work.id === earlier.id)).toMatchObject({
+      status: "failed",
+      attempts: 1,
+      lastError: "Recovery claim expired after its final attempt.",
+    });
+  });
+
+  it("clears expired claims outside the requested kind before owner conflict checks", () => {
+    const store = createStore();
+    const expired = store.ensureRecoveryWork({
+      scope: { kind: "app" },
+      kind: "queue_delivery",
+      ownerScope: { kind: "workspace" },
+      idempotencyKey: "queue_delivery:mixed-expiry",
+      orderingKey: "mixed-expiry-order",
+      orderingSeq: 2,
+      priority: 5,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 2,
+    });
+    expect(
+      store.claimNextRecoveryWork({
+        claimedBy: "expired-queue-worker",
+        scope: { kind: "app" },
+        kinds: ["queue_delivery"],
+        leaseMs: -1,
+      })?.id,
+    ).toBe(expired.id);
+    const source = store.ensureRecoveryWork({
+      scope: { kind: "app" },
+      kind: "source_reconcile",
+      ownerScope: {
+        kind: "source",
+        sourceKind: "workflow-agent",
+        sourceId: "mixedExpiryAgent",
+      },
+      idempotencyKey: "source_reconcile:mixed-expiry",
+      orderingKey: "mixed-expiry-order",
+      orderingSeq: 1,
+      priority: 5,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 2,
+    });
+
+    expect(
+      store.claimNextRecoveryWork({
+        claimedBy: "source-worker",
+        scope: { kind: "app" },
+        kinds: ["source_reconcile"],
+      })?.id,
+    ).toBe(source.id);
+    expect(store.listRecoveryWork().find((work) => work.id === expired.id)).toMatchObject({
+      status: "pending",
+      attempts: 1,
+    });
+  });
+
+  it("keeps later recovery work behind an unavailable earlier row for the same ordering key", () => {
+    const store = createStore();
+    const earlier = store.ensureRecoveryWork({
+      scope: { kind: "app" },
+      kind: "source_reconcile",
+      ownerScope: {
+        kind: "source",
+        sourceKind: "workflow-agent",
+        sourceId: "orderedAgent",
+      },
+      idempotencyKey: "source_reconcile:orderedAgent:1",
+      orderingKey: "source:workflow-agent:orderedAgent",
+      orderingSeq: 1,
+      priority: 5,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 5,
+    });
+    const later = store.ensureRecoveryWork({
+      scope: { kind: "app" },
+      kind: "source_reconcile",
+      ownerScope: {
+        kind: "source",
+        sourceKind: "workflow-agent",
+        sourceId: "orderedAgent",
+      },
+      idempotencyKey: "source_reconcile:orderedAgent:2",
+      orderingKey: "source:workflow-agent:orderedAgent",
+      orderingSeq: 2,
+      priority: 5,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 5,
+    });
+    const independent = store.ensureRecoveryWork({
+      scope: { kind: "app" },
+      kind: "source_reconcile",
+      ownerScope: {
+        kind: "source",
+        sourceKind: "workflow-agent",
+        sourceId: "independentAgent",
+      },
+      idempotencyKey: "source_reconcile:independentAgent",
+      orderingKey: "source:workflow-agent:independentAgent",
+      orderingSeq: 1,
+      priority: 10,
+      availableAt: "2026-04-18T09:00:00.000Z",
+      maxAttempts: 5,
+    });
+    const claimedEarlier = store.claimNextRecoveryWork({
+      claimedBy: "source-worker",
+      scope: { kind: "app" },
+      kinds: ["source_reconcile"],
+    });
+    const retryAvailableAt = "2099-01-01T00:00:00.000Z";
+    const retried = store.failOrRetryRecoveryWork({
+      id: claimedEarlier!.id,
+      error: "Retry later.",
+      claimedBy: claimedEarlier!.claimedBy,
+      leaseVersion: claimedEarlier!.leaseVersion,
+      retryAvailableAt,
+    });
+    const next = store.claimNextRecoveryWork({
+      claimedBy: "source-worker",
+      scope: { kind: "app" },
+      kinds: ["source_reconcile"],
+    });
+
+    expect(claimedEarlier?.id).toBe(earlier.id);
+    expect(retried).toMatchObject({ status: "pending", availableAt: retryAvailableAt });
+    expect(next?.id).toBe(independent.id);
+    expect(store.listRecoveryWork().find((entry) => entry.id === later.id)).toMatchObject({
+      status: "pending",
+    });
   });
 
   it("rejects generated-package recovery work in the wrong scope", () => {

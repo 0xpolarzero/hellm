@@ -2,6 +2,7 @@ import type {
   NativeToolDeclaration,
   NativeToolSchema,
   NativeToolSchemaExtension,
+  RequestInputVariant,
 } from "@svvy/core";
 
 type NativeToolParameters = NativeToolSchema["parameters"];
@@ -100,49 +101,6 @@ const nativeToolDefinitionsByExtensionId: Record<string, NativeToolSchema[]> = {
       ),
     },
   ],
-  "request-user-input": [
-    {
-      name: "request_user_input",
-      label: "Request User Input",
-      description:
-        "Ask one to three bounded user clarification questions. The active extension setting controls whether the call returns defaults immediately or blocks until user answer/timeout.",
-      parameters: objectParameters(
-        {
-          questions: {
-            type: "array",
-            minItems: 1,
-            maxItems: 3,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                title: { type: "string", minLength: 1 },
-                question: { type: "string", minLength: 1 },
-                options: {
-                  type: "array",
-                  minItems: 2,
-                  maxItems: 3,
-                  items: {
-                    type: "object",
-                    additionalProperties: false,
-                    properties: {
-                      label: { type: "string", minLength: 1 },
-                      description: { type: "string", minLength: 1 },
-                      recommended: { const: true },
-                    },
-                    required: ["label", "description"],
-                  },
-                },
-                defaultAnswer: { type: "string", minLength: 1 },
-              },
-              required: ["title", "question"],
-            },
-          },
-        },
-        ["questions"],
-      ),
-    },
-  ],
   "thread-orchestration": [
     {
       name: "thread_start",
@@ -219,12 +177,15 @@ const nativeToolDefinitionsByExtensionId: Record<string, NativeToolSchema[]> = {
   ],
 };
 
-export function buildNativeToolSchemasJson(records: readonly NativeToolSchemaExtension[]): string {
+export function buildNativeToolSchemasJson(
+  records: readonly NativeToolSchemaExtension[],
+  requestInputVariant: RequestInputVariant,
+): string {
   return `${JSON.stringify(
     {
       nativeTools: records
         .filter((record) => record.interface === "native_tool")
-        .map(nativeToolSchemaForExtension)
+        .map((record) => nativeToolSchemaForExtension(record, requestInputVariant))
         .toSorted((left, right) => left.id.localeCompare(right.id)),
     },
     null,
@@ -234,21 +195,33 @@ export function buildNativeToolSchemasJson(records: readonly NativeToolSchemaExt
 
 export function buildNativeToolSchemaJsonForExtension(
   extension: NativeToolSchemaExtension,
+  requestInputVariant: RequestInputVariant,
 ): string {
-  return `${JSON.stringify(nativeToolSchemaForExtension(extension), null, 2)}\n`;
+  return `${JSON.stringify(
+    nativeToolSchemaForExtension(extension, requestInputVariant),
+    null,
+    2,
+  )}\n`;
 }
 
 export function nativeToolDeclarationsForExtensions(
   records: readonly NativeToolSchemaExtension[],
+  requestInputVariant: RequestInputVariant,
 ): readonly NativeToolDeclaration[] {
   return records
     .filter((record) => record.interface === "native_tool")
-    .flatMap((record) => nativeToolSchemaForExtension(record).tools)
+    .flatMap((record) => nativeToolSchemaForExtension(record, requestInputVariant).tools)
     .toSorted((left, right) => left.name.localeCompare(right.name));
 }
 
-function nativeToolSchemaForExtension(extension: NativeToolSchemaExtension) {
-  const tools = nativeToolDefinitionsByExtensionId[extension.id];
+function nativeToolSchemaForExtension(
+  extension: NativeToolSchemaExtension,
+  requestInputVariant: RequestInputVariant,
+) {
+  const tools =
+    extension.id === "request-user-input"
+      ? [requestUserInputToolSchema(requestInputVariant)]
+      : nativeToolDefinitionsByExtensionId[extension.id];
   if (!tools) {
     throw new Error(`Missing native tool schema definitions for extension: ${extension.id}`);
   }
@@ -258,6 +231,55 @@ function nativeToolSchemaForExtension(extension: NativeToolSchemaExtension) {
     description: extension.description,
     category: extension.category,
     tools,
+  };
+}
+
+function requestUserInputToolSchema(variant: RequestInputVariant): NativeToolSchema {
+  const blocking = variant === "blocking";
+  return {
+    name: "request_user_input",
+    label: "Request User Input",
+    description: blocking
+      ? "Ask one to three bounded user clarification questions. Wait for the user answers or the configured timeout defaults before returning."
+      : "Ask one to three bounded user clarification questions. Return conservative defaults immediately; later user answers arrive as follow-up messages.",
+    parameters: objectParameters(
+      {
+        questions: {
+          type: "array",
+          minItems: 1,
+          maxItems: 3,
+          description: blocking
+            ? "Questions that must be answered before continuing; unanswered questions resolve to their defaults on timeout."
+            : "Questions with conservative defaults returned immediately; later user answers are delivered as follow-up messages.",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              title: { type: "string", minLength: 1 },
+              question: { type: "string", minLength: 1 },
+              options: {
+                type: "array",
+                minItems: 2,
+                maxItems: 3,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    label: { type: "string", minLength: 1 },
+                    description: { type: "string", minLength: 1 },
+                    recommended: { const: true },
+                  },
+                  required: ["label", "description"],
+                },
+              },
+              defaultAnswer: { type: "string", minLength: 1 },
+            },
+            required: ["title", "question"],
+          },
+        },
+      },
+      ["questions"],
+    ),
   };
 }
 

@@ -5,6 +5,7 @@ import {
   ExtensionStatePort,
   RuntimePromptDefaultsStatePort,
   RuntimeSurfaceLifecycleStatePort,
+  RuntimeTranscriptStatePort,
   RuntimeWorkspaceStatePort,
   type AbsolutePath,
   type RuntimeOwnerId,
@@ -33,6 +34,7 @@ describe("structured session state ports layer", () => {
         const workspaces = yield* RuntimeWorkspaceStatePort;
         const surfaces = yield* RuntimeSurfaceLifecycleStatePort;
         const promptDefaults = yield* RuntimePromptDefaultsStatePort;
+        const transcripts = yield* RuntimeTranscriptStatePort;
         const extensions = yield* ExtensionStatePort;
 
         const acquired = yield* workspaces.acquireWorkspace({
@@ -66,7 +68,18 @@ describe("structured session state ports layer", () => {
           sourceRoot: "/tmp/svvy-state-ports-layer-missing-extension" as AbsolutePath,
         });
 
-        return { acquired, created, opened, defaultsExit, missingSourceFingerprint };
+        const transcript = yield* transcripts.readSurfaceTranscript({
+          surfacePiSessionId: created.value.surfacePiSessionId,
+        });
+
+        return {
+          acquired,
+          created,
+          opened,
+          defaultsExit,
+          missingSourceFingerprint,
+          transcript,
+        };
       }).pipe(
         Effect.provide(
           structuredSessionStatePortsLayer.pipe(
@@ -90,6 +103,12 @@ describe("structured session state ports layer", () => {
     );
     expect(result.defaultsExit._tag).toBe("Failure");
     expect(result.missingSourceFingerprint).toBe(null);
+    expect(result.transcript).toEqual({
+      surfacePiSessionId: result.created.value.surfacePiSessionId,
+      messages: [],
+      activeAssistantMessage: null,
+      streamCursor: null,
+    });
     expect(result.created.afterCommit).toContainEqual({
       scope: "workspace",
       workspaceId: workspace.id,

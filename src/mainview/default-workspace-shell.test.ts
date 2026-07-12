@@ -401,18 +401,14 @@ describe("default workspace renderer shell", () => {
     );
   });
 
-  it("tracks prompt freshness banner state through Svelte state", async () => {
+  it("does not reconstruct prompt freshness outside the surface read models", async () => {
     const panelHostSource = await readFile(
       new URL("./DockviewPanelHost.svelte", import.meta.url),
       "utf8",
     );
 
-    expect(panelHostSource).toContain(
-      'let promptBinding = $state<ChatSurfaceController["promptBinding"]>(undefined);',
-    );
-    expect(panelHostSource).toContain("promptBinding = controller.promptBinding;");
-    expect(panelHostSource).toContain("{#if promptBinding?.stale}");
-    expect(panelHostSource).not.toContain("{#if controller.promptBinding?.stale}");
+    expect(panelHostSource).not.toContain("promptBinding");
+    expect(panelHostSource).not.toContain("resolvedSystemPrompt");
   });
 
   it("renders workflow-agent source records in the Agents pane", async () => {
@@ -439,7 +435,12 @@ describe("default workspace renderer shell", () => {
 
     expect(agentsPaneSource).toContain("Workflow Agents");
     expect(agentsPaneSource).toContain("workflowAgents");
-    expect(agentsPaneSource).toContain("runtime.updateWorkflowAgent");
+    expect(agentsPaneSource).toContain("runtime.saveSourceEdit");
+    expect(agentsPaneSource).toContain("runtime.createWorkflowAgentSource");
+    expect(agentsPaneSource).toContain("runtime.duplicateWorkflowAgentSource");
+    expect(agentsPaneSource).toContain("runtime.deleteWorkflowAgentSource");
+    expect(agentsPaneSource).toContain("runtime.openSourceInEditor");
+    expect(agentsPaneSource).not.toContain("legacySettings?.workflowAgents");
     expect(agentsPaneSource).toContain("targetAgentProfileId");
     expect(agentsPaneSource).toContain("focusTargetAgentProfile");
     expect(agentsPaneSource).toContain("actorForProfileId(targetProfileId)");
@@ -457,6 +458,10 @@ describe("default workspace renderer shell", () => {
     expect(agentsPaneSource).toContain("{preview.actor}");
     expect(agentsPaneSource).toContain("extensionUsageItems({");
     expect(agentsPaneSource).toContain("WorkflowAgentRowForm");
+    expect(agentsPaneSource).toContain("invalidWorkflowAgentRowContent");
+    expect(agentsPaneSource).toContain('record.validationStatus !== "valid"');
+    expect(agentsPaneSource).toContain("record.diagnostics");
+    expect(agentsPaneSource).toContain("disabled={!record.deletable");
     expect(workflowAgentFormSource).toContain("createForm");
     expect(workflowAgentFormSource).toContain("formApi.reset(valuesFor(saved))");
     expect(workflowAgentFormSource).toContain("Workflow agent instructions are required.");
@@ -525,7 +530,8 @@ describe("default workspace renderer shell", () => {
     );
 
     expect(agentsPaneSource).toContain("runtime.getExtensionsInventory()");
-    expect(agentsPaneSource).toContain("runtime.setAgentProfileExtensionUsage");
+    expect(agentsPaneSource).not.toContain("runtime.setAgentProfileExtensionUsage");
+    expect(agentsPaneSource).toContain("saveWorkflowAgent(record");
     expect(profileExtensionUsageSaveSource).not.toContain("savingProfileId =");
     expect(workflowExtensionUsageSaveSource).not.toContain("savingWorkflowAgentKey =");
     expect(agentsPaneSource).toContain("function openExtension(extensionId: string)");
@@ -736,7 +742,7 @@ describe("default workspace renderer shell", () => {
     expect(modelPickerSource).not.toContain("getModels(");
     expect(chatWorkspaceSource).toContain("runtime.listModelMetadata()");
     expect(chatWorkspaceSource).toContain("clampThinkingLevelForModel");
-    expect(chatWorkspaceSource).toContain("agent.setThinkingLevel(nextThinkingLevel)");
+    expect(chatWorkspaceSource).toContain("setThinkingLevel(nextThinkingLevel)");
     expect(chatWorkspaceSource).not.toContain("listConfiguredProviders");
     expect(chatWorkspaceSource).not.toContain("allowedProviders");
     expect(runtimeSource).toContain("listModelMetadata: () =>");
@@ -795,16 +801,17 @@ describe("default workspace renderer shell", () => {
     expect(runtimeSource).not.toContain("Generated Workflows package rebuilt.");
     expect(runtimeSource).toContain('case "workflowsGenerated":');
     expect(runtimeSource).toContain('fetchStateReadModel({ kind: "workflowsGenerated" })');
-    expect(backendSource).toContain("buildWorkflowsGeneratedPackage");
+    expect(backendSource).not.toContain("buildWorkflowsGeneratedPackage");
     expect(backendSource).not.toContain("readWorkflowsGeneratedReadModel");
     expect(backendSource).toContain("openWorkflowsGeneratedExportInEditor");
     expect(backendSource).toContain("facades.state.readModels.fetch");
-    expect(backendSource).toContain("workflow-agent-settings");
-    expect(backendSource).toContain(
+    expect(backendSource).not.toContain("workflow-agent-settings");
+    expect(backendSource).not.toContain(
       "Workflow agent settings rejected because Workflows build failed.",
     );
-    expect(backendSource).toContain("throw workflowsBuildFailedError(build.diagnostics)");
-    expect(backendSource).toContain("runtime.agentSettingsStore.deleteWorkflowAgent(key)");
+    expect(backendSource).not.toContain("workflowsBuildFailedError");
+    expect(backendSource).toContain("facades.runtime.sourceEdits.save(input)");
+    expect(backendSource).toContain("facades.runtime.sourceEdits.deleteWorkflowAgent(input)");
     expect(backendSource).not.toContain(
       "Workflow agent settings saved but Workflows build failed.",
     );
@@ -1037,6 +1044,12 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain('pendingRequestUserInputSetting === "mode"');
     expect(extensionsPaneSource).toContain('pendingRequestUserInputSetting === "timeout-enabled"');
     expect(extensionsPaneSource).not.toContain("disabled={pendingSettings}");
+    expect(extensionsPaneSource).toContain("runtime.getSettings()");
+    expect(extensionsPaneSource).toContain("runtime.settingsSnapshot");
+    expect(extensionsPaneSource).toContain("runtime.setRequestInputVariant");
+    expect(extensionsPaneSource).toContain("runtime.setRequestInputBlockingTimeout");
+    expect(extensionsPaneSource).toContain("settings.requestInput");
+    expect(extensionsPaneSource).not.toContain("runtime.updateRequestUserInputSettings");
     expect(extensionsPaneSource).toContain("ExtensionEnvValueForm");
     expect(extensionEnvFormSource).toContain("createForm");
     expect(extensionEnvFormSource).toContain("Unable to save extension env value.");
@@ -1202,23 +1215,17 @@ describe("default workspace renderer shell", () => {
     );
   });
 
-  it("keeps submitted prompt history workspace-scoped after backend acceptance", async () => {
+  it("consumes workspace prompt history from the state read-model cache", async () => {
     const runtimeSource = await readFile(new URL("./chat-runtime.ts", import.meta.url), "utf8");
     const promptHistorySource = await readFile(
       new URL("./prompt-history.ts", import.meta.url),
       "utf8",
     );
 
-    const backendSendIndex = runtimeSource.indexOf(
-      "const response = await this.rpcClient.request.sendPrompt",
-    );
-    const historyIndex = runtimeSource.indexOf(
-      "await this.persistPromptHistoryEntry(submission.text)",
-    );
-
-    expect(runtimeSource).toContain("private async persistPromptHistoryEntry");
-    expect(backendSendIndex).toBeGreaterThanOrEqual(0);
-    expect(historyIndex).toBeGreaterThan(backendSendIndex);
+    expect(runtimeSource).toContain('case "promptHistory"');
+    expect(runtimeSource).toContain("get promptHistorySnapshot()");
+    expect(runtimeSource).not.toContain("persistPromptHistoryEntry");
+    expect(runtimeSource).not.toContain("storage.promptHistory");
     expect(runtimeSource).not.toContain(
       'await this.updateComposerDraft({ text: "", attachments: [], snippetMentions: [] });',
     );
@@ -1233,7 +1240,7 @@ describe("default workspace renderer shell", () => {
     );
     const virtualListStart = transcriptSource.indexOf("{#each virtualRows as virtualRow");
     const virtualListEnd = transcriptSource.indexOf(
-      '{:else if row?.kind === "message" && row.message.role === "toolResult"}',
+      '{:else if row?.kind === "message" && row.message.role === "command-result"}',
       virtualListStart,
     );
     const streamingRowStart = transcriptSource.indexOf(
@@ -1252,7 +1259,7 @@ describe("default workspace renderer shell", () => {
     expect(transcriptSource).not.toContain("scrollTranscriptToBottom");
   });
 
-  it("projects the active system prompt as surface metadata instead of an inline transcript row", async () => {
+  it("does not reconstruct system-prompt rows outside the surface read models", async () => {
     const panelHostSource = await readFile(
       new URL("./DockviewPanelHost.svelte", import.meta.url),
       "utf8",
@@ -1262,10 +1269,9 @@ describe("default workspace renderer shell", () => {
       "utf8",
     );
 
-    expect(panelHostSource).toContain('class="surface-metadata-stack"');
-    expect(panelHostSource).toContain('class="surface-prompt-metadata"');
-    expect(panelHostSource).toContain("{activeSystemPrompt}");
-    expect(panelHostSource).toContain('aria-label="Surface metadata"');
+    expect(panelHostSource).not.toContain('class="surface-metadata-stack"');
+    expect(panelHostSource).not.toContain('class="surface-prompt-metadata"');
+    expect(panelHostSource).not.toContain("{activeSystemPrompt}");
     expect(panelHostSource).not.toContain("systemPrompt={resolvedSystemPrompt}");
     expect(transcriptSource).not.toContain('kind: "system"');
     expect(transcriptSource).not.toContain("system-prompt");
@@ -1511,7 +1517,8 @@ describe("default workspace renderer shell", () => {
     expect(runtimeSource).toContain("getWorkflowsGenerated: refreshWorkflowsGenerated");
     expect(runtimeSource).toContain("listProviderAuths: refreshProviderAuths");
 
-    expect(agentsPaneSource).toContain("runtime.agentSettingsSnapshot");
+    expect(agentsPaneSource).toContain("runtime.getAgents()");
+    expect(agentsPaneSource).not.toContain("runtime.agentSettingsSnapshot");
     expect(agentsPaneSource).toContain("runtime.agentsSnapshot");
     expect(agentsPaneSource).toContain("runtime.modelMetadataSnapshot");
     expect(agentsPaneSource).toContain("runtime.extensionsInventorySnapshot");
@@ -1520,6 +1527,7 @@ describe("default workspace renderer shell", () => {
 
     expect(extensionsPaneSource).toContain("runtime.extensionsInventorySnapshot");
     expect(extensionsPaneSource).toContain("runtime.appPreferencesSnapshot");
+    expect(extensionsPaneSource).toContain("runtime.settingsSnapshot");
     expect(extensionsPaneSource).toContain("runtime.subscribe(syncRuntimeSnapshots)");
     expect(settingsSource).toContain("runtime.providerAuthsSnapshot");
     expect(settingsSource).toContain("runtime.externalInstructionSourcesSnapshot");
@@ -1600,7 +1608,8 @@ describe("default workspace renderer shell", () => {
       "utf8",
     );
 
-    expect(workspaceSource).toContain("runtime.storage.promptHistory.list(runtime.workspaceId)");
+    expect(workspaceSource).toContain("runtime.promptHistorySnapshot");
+    expect(workspaceSource).not.toContain("runtime.storage.promptHistory");
     expect(workspaceSource).toContain(".listWorkspacePaths()");
     expect(workspaceSource).toContain('onOpenSearch={() => openPalette("search")}');
     expect(workspaceSource).toContain('onOpenCommandPalette={() => openPalette("commands")}');
@@ -1660,17 +1669,17 @@ describe("default workspace renderer shell", () => {
     expect(commandPaletteSource).not.toContain("onOpenSettings?:");
   });
 
-  it("renders stale extension context as a checkbox-controlled banner", async () => {
+  it("does not render snapshot-owned extension-context banners", async () => {
     const dockviewHostSource = await readFile(
       new URL("./DockviewPanelHost.svelte", import.meta.url),
       "utf8",
     );
 
-    expect(dockviewHostSource).toContain(
+    expect(dockviewHostSource).not.toContain(
       "Extensions changed and will require system prompt to refresh.",
     );
-    expect(dockviewHostSource).toContain("Update before next turn");
-    expect(dockviewHostSource).toContain("controller.setExtensionContextAutoUpdate");
+    expect(dockviewHostSource).not.toContain("Update before next turn");
+    expect(dockviewHostSource).not.toContain("controller.setExtensionContextAutoUpdate");
     expect(dockviewHostSource).not.toContain("queuedPromptRefresh");
     expect(dockviewHostSource).not.toContain("Agent context update failed.");
     expect(dockviewHostSource).not.toContain("Retry update");

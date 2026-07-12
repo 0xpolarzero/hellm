@@ -3,7 +3,6 @@
 	import { HotkeysProvider } from "@tanstack/svelte-hotkeys";
 	import ChatWorkspace from "./ChatWorkspace.svelte";
 	import { createChatRuntime, type ChatRuntime } from "./chat-runtime";
-	import { createChatStorage, type ChatStorage } from "./chat-storage";
 	import { rpc } from "./rpc";
 	import { applyAppAppearance } from "./theme";
 	import StatusCard from "./ui/StatusCard.svelte";
@@ -47,7 +46,6 @@
 		restoreErrorsByWorkspaceTabId: Record<string, string>;
 	};
 
-	const storage: ChatStorage = createChatStorage();
 	let tabs = $state<OpenWorkspaceTab[]>([]);
 	const detachedRuntimes = new Map<string, DetachedWorkspaceRuntime>();
 	let bootstrapError = $state<string | null>(null);
@@ -323,8 +321,6 @@
 						selectWorkspaceLayoutSlot(workspaceTab.workspaceTabId, layoutId),
 					),
 			},
-			undefined,
-			storage,
 		);
 		tab = {
 			workspace: workspaceTab,

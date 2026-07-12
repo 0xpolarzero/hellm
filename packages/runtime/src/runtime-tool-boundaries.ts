@@ -3,11 +3,9 @@ import {
   RuntimeActorExtensionBindingStatePort,
   RuntimeCommandStatePort,
   RuntimeContractError,
-  RuntimeRequestStatePort,
   RuntimeThreadStatePort,
   type RuntimeActorExtensionBindingStatePortService,
   type RuntimeCommandStatePortService,
-  type RuntimeRequestStatePortService,
   type RuntimeThreadStatePortService,
   type StateInvalidationDescriptor,
   type StateMutationResult,
@@ -19,40 +17,17 @@ import {
   type RunAcceptedLoadExtensionToolCallResult,
 } from "./load-extension-operation";
 import {
-  runAcceptedRequestUserInputToolCall,
-  type RunAcceptedRequestUserInputToolCallInput,
-  type RunAcceptedRequestUserInputToolCallResult,
-} from "./request-user-input-operation";
-import {
   RuntimeHandlerThreadStartPreparationHost,
   RuntimeQueueInsertPostCommitLane,
   type RuntimeHandlerThreadStartPreparationHostService,
   type RuntimeQueueInsertPostCommitLaneService,
 } from "./runtime-effect-requests";
 import { RuntimeEventBus } from "./runtime-event-bus";
-import { RuntimeRequestInputWaitService } from "./runtime-request-input-wait-service";
 import {
   runAcceptedThreadStartToolCall,
   type RunAcceptedThreadStartToolCallInput,
   type RunAcceptedThreadStartToolCallResult,
 } from "./thread-start-operation";
-
-export function runAcceptedRequestUserInputToolCallAtRuntimeBoundary(input: {
-  request: RunAcceptedRequestUserInputToolCallInput;
-  commandStatePort: RuntimeCommandStatePortService;
-  requestStatePort: RuntimeRequestStatePortService;
-}): Effect.Effect<RunAcceptedRequestUserInputToolCallResult, RuntimeContractError> {
-  const afterCommit: StateInvalidationDescriptor[] = [];
-  return runAcceptedRequestUserInputToolCall(input.request).pipe(
-    Effect.provideService(
-      RuntimeCommandStatePort,
-      commandStatePortWithInvalidationCollector(input.commandStatePort, afterCommit),
-    ),
-    Effect.provideService(RuntimeRequestStatePort, input.requestStatePort),
-    Effect.provideService(RuntimeEventBus, noPublishedRuntimeEventsBus),
-    Effect.provideService(RuntimeRequestInputWaitService, noBlockingRequestInputWaitService),
-  );
-}
 
 export function runAcceptedLoadExtensionToolCallAtRuntimeBoundary(input: {
   request: RunAcceptedLoadExtensionToolCallInput;
@@ -106,26 +81,6 @@ const noPublishedRuntimeEventsBus = RuntimeEventBus.of({
   publishLive: () => Effect.succeed(undefined as never),
   publishStateInvalidations: () => Effect.succeed([]),
   subscribe: () => Effect.die("Runtime events are not available in this tool boundary."),
-});
-
-const noBlockingRequestInputWaitService = RuntimeRequestInputWaitService.of({
-  waitForBlockingRequest: () =>
-    Effect.fail(
-      new RuntimeContractError({
-        operation: "runtime.request-user-input.run",
-        reason: "unsupported-operation",
-        message:
-          "Blocking request_user_input execution must run inside the shared runtime request-input wait service.",
-      }),
-    ),
-  afterAnswerCommitted: () =>
-    Effect.die("Request-input answer post-commit hooks are not available in this tool boundary."),
-  afterTimerPausedCommitted: () =>
-    Effect.die("Request-input timer post-commit hooks are not available in this tool boundary."),
-  restoreOpenBlockingRequests: () =>
-    Effect.die("Request-input startup restore is not available in this tool boundary."),
-  cancelBlockingRequestsForSurface: () =>
-    Effect.die("Request-input surface cancellation is not available in this tool boundary."),
 });
 
 function commandStatePortWithInvalidationCollector(

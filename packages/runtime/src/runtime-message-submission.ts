@@ -118,6 +118,7 @@ export const submitRuntimeMessage = Effect.fn("@svvy/runtime/messages.submit")(f
     .acceptSubmittedSurfaceMessage({
       target,
       ...(idempotencyKey ? { idempotencyKey } : {}),
+      promptHistoryText: input.message.text.trim() ? input.message.text : null,
       messageJson: materialized.messageJson,
       payloadJson,
     })

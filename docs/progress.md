@@ -58,10 +58,9 @@ How to use this file:
           state read-model contracts.
     - [ ] Desktop renderer bridge DTOs live in core/state/runtime public contracts or
           `@svvy/desktop` renderer-safe adapter types: renderer transcript, stream patch, context
-          usage, model display, tool-call projection, `ChatRPCSchema`, `SurfaceSyncMessage`, and
-          `ConversationSurfaceSnapshot` shapes live in renderer-safe desktop adapter types or
-          core/state/runtime public contracts, and `src/mainview/**` uses those desktop-facing
-          contracts as its boundary.
+          usage, model display, tool-call projection, and `ChatRPCSchema` lifecycle/read-model
+          receipts use those desktop-facing contracts, while full surface snapshots and pi-native
+          messages are absent from the renderer bridge boundary.
     - [ ] The package architecture contract uses the exact Effect v4 beta.84 surface for schema
           decoders/assertions, schema representation imports, explicit non-adoption of Effect SQL,
           core-owned data-only port tags, extension source-edit method ledgers, builtin source
@@ -561,11 +560,10 @@ true })`, and broad sleep/polling helpers in unit tests.
           post-commit lane only after publication so queue wakeup and surface refresh behavior stay
           inside runtime services.
     - [ ] `Runtime.approvals.answer` resolves durable approval requests through
-          `RuntimeApprovalStatePort`, starts or cancels the bound command through
-          `RuntimeCommandStatePort`, clears approval waits through `RuntimeSessionWaitStatePort`,
-          publishes committed `afterCommit` descriptors through the runtime-owned notification publication path, and invokes a
-          runtime-owned approval/request wait resolution lane only to resolve the existing live
-          waiter.
+          one `RuntimeApprovalStatePort` transaction that settles the request, starts or cancels the
+          bound command, and clears the matching approval wait; publishes the transaction's
+          committed `afterCommit` descriptors through the runtime-owned notification path; and
+          invokes the runtime-owned approval wait lane only to resolve the existing live waiter.
     - [ ] `Runtime.sourceInvalidation` exposes fully wired `hint`, `reconcile`,
           `refreshGeneratedContext`, and `refreshGeneratedPackages` methods; missing wiring is a
           composition error and unsupported source-domain/scope combinations return explicit
@@ -677,8 +675,9 @@ true })`, and broad sleep/polling helpers in unit tests.
     - [ ] Runtime-owned accepted native-tool approval execution keeps approval request
           creation, live `Deferred` waiting through the `Runtime.layer`-owned
           `RuntimeApprovalWaitService`, approval answer resolution, cancellation, command
-          settlement, and notification publication stay inside runtime-owned services without
-          app/bootstrap approval callback ports.
+          settlement, and notification publication inside runtime-owned services without
+          app/bootstrap approval callback ports; user-review admission atomically creates the
+          request, moves the linked command to `waiting`, and records its approval wait.
     - [ ] Package-private runtime-owned queue dispatch services use runtime-owned
           workspace/surface scope services, queue state ports, and runtime-local wake hints so queue
           claim/drain work is owned entirely by `@svvy/runtime`.
@@ -873,11 +872,11 @@ true })`, and broad sleep/polling helpers in unit tests.
             generation changes, or non-lossless filters fail setup with
             `RuntimeEventRebaselineRequired` carrying affected read-model descriptors for the
             caller to refetch.
-      - [ ] Runtime live surface streaming owns target-local `streamGenerationId` and
-            `streamSequence`, detects missed patches or generation changes, emits `stream_reset`
-            patches for `rebaseline_required`, `runtime_recovered`, and `surface_reopened`, and
-            requires consumers to discard stale live patches and refetch durable
-            surface/transcript/command read models.
+      - [ ] Durable transcript state owns target-local `streamGenerationId` and `streamSequence`;
+            runtime advances that cursor before each transcript patch, rejects publication gaps,
+            emits `stream_reset` patches for `rebaseline_required`, `runtime_recovered`, and
+            `surface_reopened`, and requires consumers to discard stale live patches and refetch
+            durable surface/transcript/command read models.
       - [ ] Runtime pi-event consumers and surface lifecycle services publish core
             `surface.stream` and `surface.changed` runtime events, including `surface.updated`,
             `prompt.started`, `prompt.settled`, `background.started`, and `surface.closed` reasons,
@@ -1001,12 +1000,12 @@ true })`, and broad sleep/polling helpers in unit tests.
       - [ ] Compose request-input answer, timer, and queued-delivery writes through runtime-owned
             lifecycle services that publish committed after-commit descriptors before resolving live
             waits or waking owning surface queues.
-      - [ ] Make blocking request-input resolution one durable compare-and-set transition keyed by
-            `requestId`, owning command id, current wait status, and timer version/deadline; user
-            answers, timeouts, cancellation, interruption, close recovery, and startup recovery all
-            use that transition, the first terminal commit wins, and losing contenders observe
-            `stale-state` without publishing invalidations, resolving `Deferred`s, inserting answer
-            or queue rows, or settling commands.
+      - [ ] Make blocking request-input terminal request/answer resolution one durable
+            compare-and-set transition keyed by `requestId`, owning command id, request status, and
+            timer version/deadline that atomically terminalizes the request and linked command and
+            clears only its matching durable session wait. The first terminal commit wins, and
+            losing contenders observe `stale-state` without publishing invalidations, resolving
+            `Deferred`s, inserting answer or queue rows, or settling commands.
     - [ ] Compute extension usage impacts and affected-surface binding updates through runtime-owned
           generated-context binding and fingerprint reconciliation, preserving command output/fact
           behavior through named core-owned state ports.

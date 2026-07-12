@@ -15,7 +15,8 @@ import { SessionManager } from "@mariozechner/pi-coding-agent";
 import * as Effect from "effect/Effect";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Message, StopReason, ToolCall } from "@mariozechner/pi-ai";
-import type { PromptTarget, SurfaceSyncMessage } from "../shared/workspace-contract";
+import type { PromptTarget } from "../shared/workspace-contract";
+import type { GeneratedAgentContextExternalSource } from "../shared/generated-agent-context";
 import {
   DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
@@ -130,8 +131,12 @@ type ManagedSurfaceRecord = {
   provider: string;
   model: string;
   thinkingLevel: ThinkingLevel;
+  agentProfileId: string;
   systemPrompt: string;
   generatedAgentContextFingerprint: string;
+  generatedAgentContextRevision: number;
+  externalContextSources: GeneratedAgentContextExternalSource[];
+  externalSourceHashes: string[];
   smithersToolSurfaceVersion?: string | null;
   loadedExtensionIds: string[];
   availableExtensionIds: string[];
@@ -196,6 +201,7 @@ function createWorkspaceSessionCatalog(
   approvalBoundary?: RuntimeApprovalBoundary,
   managedSandbox: boolean | (() => boolean) = false,
   recoveryOptions: {
+    artifactDirectory?: string;
     workflowsExtensionsGeneratedPackagePath?: string;
     workflowsGeneratedPackagePath?: string;
     workflowsSourceRoot?: string;
@@ -205,9 +211,11 @@ function createWorkspaceSessionCatalog(
       facts: SandboxLaunchFacts;
       close(): Promise<void>;
     }>;
+    wakeSurfaceQueue?: (target: PromptTarget) => Promise<void>;
   } = {
     workflowsSourceRoot: join(agentDir, "..", "workflows"),
   },
+  startRecovery = true,
 ): WorkspaceSessionCatalog {
   const approvalWaitService = createRuntimeApprovalWaitService();
   let catalog!: WorkspaceSessionCatalog;
@@ -231,57 +239,57 @@ function createWorkspaceSessionCatalog(
     agentDir,
     sessionDir,
     undefined,
-    recoveryOptions,
+    {
+      wakeSurfaceQueue: async () => undefined,
+      ...recoveryOptions,
+    },
     runtimeApprovalBoundary,
     managedSandbox,
     undefined,
     runCatalogEffect,
   );
-  catalog.setAgentProfileAuthority(
-    createInMemoryCatalogAgentProfileAuthority(
-      createAgentSettingsStore({
-        cwd,
-        agentDir,
-        workflowsSourceRoot: recoveryOptions.workflowsSourceRoot,
-      }),
-    ),
-  );
+  catalog.setAgentProfileAuthority(createInMemoryCatalogAgentProfileAuthority());
+  catalog.setRequestInputSettingsAuthority({
+    read: () => catalog.workspaceStateRouterRegistration().store.readRequestInputSettings(),
+  });
+  if (startRecovery) {
+    void catalog
+      .prepareWorkspaceRecoveryAfterRegistration()
+      .then(() => catalog.startWorkspaceRecovery());
+  }
   catalogApprovalWaitServices.set(catalog, approvalWaitService);
   return catalog;
 }
 
-function createInMemoryCatalogAgentProfileAuthority(
-  settingsStore: ReturnType<typeof createAgentSettingsStore>,
-): CatalogAgentProfileAuthority {
-  const settings = settingsStore.getState();
+function createInMemoryCatalogAgentProfileAuthority(): CatalogAgentProfileAuthority {
   let snapshot: CatalogAgentProfileAuthoritySnapshot = {
     configuredProfiles: [
-      ...settings.agents.orchestrators.map((profile, position) => ({
-        profileId: profile.id as never,
-        actor: "orchestrator" as const,
-        name: profile.name,
-        providerId: profile.provider as never,
-        modelId: profile.model as never,
-        reasoning: { effort: profile.reasoningEffort },
-        followComposer: profile.updateFromComposer,
-        extensionUsage: { ...profile.extensionUsage },
-        extensionOrder: (profile.extensionOrder ?? []) as never,
-        position,
-        updatedAt: "2026-07-11T00:00:00.000Z" as never,
-        builtin: profile.builtin,
-        locked: profile.locked,
-        deletable: !profile.locked,
-      })),
       {
-        profileId: settings.agents.special.threadHandler.id as never,
-        actor: "handler" as const,
-        name: settings.agents.special.threadHandler.name,
-        providerId: settings.agents.special.threadHandler.provider as never,
-        modelId: settings.agents.special.threadHandler.model as never,
-        reasoning: { effort: settings.agents.special.threadHandler.reasoningEffort },
+        profileId: DEFAULT_ORCHESTRATOR_PROFILE_ID as never,
+        actor: "orchestrator" as const,
+        name: "Default orchestrator",
+        providerId: "zai" as never,
+        modelId: "glm-5-turbo" as never,
+        reasoning: { effort: "medium" },
         followComposer: false,
-        extensionUsage: { ...settings.agents.special.threadHandler.extensionUsage },
-        extensionOrder: (settings.agents.special.threadHandler.extensionOrder ?? []) as never,
+        extensionUsage: {},
+        extensionOrder: [],
+        position: 0,
+        updatedAt: "2026-07-11T00:00:00.000Z" as never,
+        builtin: true,
+        locked: true,
+        deletable: false,
+      },
+      {
+        profileId: DEFAULT_THREAD_HANDLER_PROFILE_ID as never,
+        actor: "handler" as const,
+        name: "Thread handler",
+        providerId: "zai" as never,
+        modelId: "glm-5-turbo" as never,
+        reasoning: { effort: "medium" },
+        followComposer: false,
+        extensionUsage: {},
+        extensionOrder: [],
         position: 0,
         updatedAt: "2026-07-11T00:00:00.000Z" as never,
         builtin: true,
@@ -289,10 +297,51 @@ function createInMemoryCatalogAgentProfileAuthority(
         deletable: false,
       },
     ],
+    workflowAgents: [
+      {
+        id: "explorer",
+        label: "Explorer",
+        instructions:
+          "Inspect the repository and return concise findings, evidence, and unresolved questions. Do not edit files.",
+      },
+      {
+        id: "implementer",
+        label: "Implementer",
+        instructions:
+          "Implement the assigned scoped change, keep edits focused, and return changed files plus verification.",
+      },
+      {
+        id: "reviewer",
+        label: "Reviewer",
+        instructions:
+          "Review the assigned result for correctness, regressions, edge cases, and missing tests. Lead with findings.",
+      },
+    ].map((agent) => ({
+      sourceId: agent.id,
+      path: `/test/workflows/agents/${agent.id}.agent.json` as never,
+      sourceVersion: `sha256:${agent.id}`,
+      fingerprint: `sha256:${agent.id}`,
+      validationStatus: "valid" as const,
+      diagnostics: [],
+      parameters: {
+        id: agent.id,
+        label: agent.label,
+        provider: "zai",
+        model: "glm-5-turbo",
+        reasoning: { effort: "medium" as const },
+        instructions: agent.instructions,
+        overrides: {},
+      },
+      extensionOrder: [],
+      observedAt: "2026-07-11T00:00:00.000Z" as never,
+      updatedAt: "2026-07-11T00:00:00.000Z" as never,
+      builtin: true,
+      deletable: false,
+    })),
     actorExtensionDefaults: (["orchestrator", "workflow-task"] as const).map((actor) => ({
       actor,
-      extensionUsage: { ...settings.extensionDefaults.usage[actor] },
-      extensionOrder: [...settings.extensionDefaults.order] as never,
+      extensionUsage: {},
+      extensionOrder: [],
       updatedAt: "2026-07-11T00:00:00.000Z" as never,
     })),
   };
@@ -340,6 +389,48 @@ function createInMemoryCatalogAgentProfileAuthority(
       ].toSorted((left, right) => left.position - right.position),
     };
   };
+  const commitWorkflowAgentSource = (sourceId: string, text: string) => {
+    const current = snapshot.workflowAgents.find((source) => source.sourceId === sourceId);
+    const source = JSON.parse(text) as {
+      id: string;
+      label: string;
+      provider: string;
+      model: string;
+      reasoning: { effort: string };
+      instructions: string;
+      overrides?: Record<string, ExtensionUsageState>;
+      extensionOrder?: string[];
+    };
+    const sourceVersion = `test:${text}`;
+    snapshot = {
+      ...snapshot,
+      workflowAgents: [
+        ...snapshot.workflowAgents.filter((record) => record.sourceId !== sourceId),
+        {
+          sourceId,
+          path: `/test/workflows/agents/${sourceId}.agent.json` as never,
+          sourceVersion,
+          fingerprint: sourceVersion,
+          validationStatus: "valid",
+          diagnostics: [],
+          parameters: {
+            id: source.id,
+            label: source.label,
+            provider: source.provider,
+            model: source.model,
+            reasoning: source.reasoning as never,
+            instructions: source.instructions,
+            overrides: { ...source.overrides },
+          },
+          extensionOrder: [...(source.extensionOrder ?? [])] as never,
+          observedAt: "2026-07-11T00:00:00.000Z" as never,
+          updatedAt: "2026-07-11T00:00:00.000Z" as never,
+          builtin: current?.builtin ?? false,
+          deletable: current?.deletable ?? true,
+        },
+      ],
+    };
+  };
   return {
     read: async () => structuredClone(snapshot),
     updateOrchestrator: async (profile) => {
@@ -368,6 +459,34 @@ function createInMemoryCatalogAgentProfileAuthority(
           candidate === profile ? { ...candidate, extensionUsage } : candidate,
         ),
       };
+    },
+    setActorExtensionDefaults: async (input) => {
+      snapshot = {
+        ...snapshot,
+        actorExtensionDefaults: snapshot.actorExtensionDefaults.map((defaults) =>
+          defaults.actor === input.actor
+            ? {
+                ...defaults,
+                extensionUsage: { ...input.extensionUsage },
+                extensionOrder: [...input.extensionOrder] as never,
+              }
+            : defaults,
+        ),
+      };
+    },
+    saveWorkflowAgentSource: async (input) => {
+      const current = snapshot.workflowAgents.find((source) => source.sourceId === input.sourceId);
+      if (current && current.sourceVersion !== input.expectedSourceVersion) {
+        throw new Error(`Stale workflow-agent source: ${input.sourceId}`);
+      }
+      commitWorkflowAgentSource(input.sourceId, input.text);
+    },
+    upsertWorkflowAgentSource: async (input) => {
+      const current = snapshot.workflowAgents.find((source) => source.sourceId === input.sourceId);
+      if (current && !input.overwrite) {
+        throw new Error(`Workflow source already exists: ${input.sourceId}`);
+      }
+      commitWorkflowAgentSource(input.sourceId, input.text);
     },
   };
 }
@@ -499,6 +618,11 @@ function getManagedSurface(
     throw new Error(`Managed surface not found: ${surfacePiSessionId}`);
   }
   return surface;
+}
+
+function getManagedResolvedSystemPrompt(surface: ManagedSurfaceRecord): string {
+  const resolved = surface.session.agent.state.systemPrompt?.trim();
+  return resolved && resolved.length > 0 ? resolved : surface.systemPrompt;
 }
 
 function getActiveToolNames(surface: ManagedSurfaceRecord): string[] {
@@ -744,20 +868,21 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("passes the runtime approval boundary into session-created direct and TypeScript tools", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const settingsStore = createAgentSettingsStore({
+    const approvalRequests: unknown[] = [];
+    const catalog = createWorkspaceSessionCatalog(
       cwd,
       agentDir,
-      workflowsSourceRoot: join(agentDir, "..", "workflows"),
-    });
-    settingsStore.setAppPreferences({
-      ...settingsStore.getState().appPreferences,
-      artifactDirectory: join(agentDir, "artifacts"),
-    });
-    const approvalRequests: unknown[] = [];
-    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir, (input) => {
-      approvalRequests.push(input);
-      return { approved: false, reason: `Denied ${input.toolName}` };
-    });
+      sessionDir,
+      (input) => {
+        approvalRequests.push(input);
+        return { approved: false, reason: `Denied ${input.toolName}` };
+      },
+      false,
+      {
+        artifactDirectory: join(agentDir, "artifacts"),
+        workflowsSourceRoot: join(agentDir, "..", "workflows"),
+      },
+    );
 
     try {
       const created = await catalog.createSession({ title: "Approval Wiring" }, DEFAULTS);
@@ -829,15 +954,6 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("passes runtime-owned launch facts into session-created execute_typescript", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const settingsStore = createAgentSettingsStore({
-      cwd,
-      agentDir,
-      workflowsSourceRoot: join(agentDir, "..", "workflows"),
-    });
-    settingsStore.setAppPreferences({
-      ...settingsStore.getState().appPreferences,
-      artifactDirectory: join(agentDir, "artifacts"),
-    });
     const launchRequests: Array<Omit<BuildLaunchPolicyInput, "launchKind">> = [];
     const catalog = createWorkspaceSessionCatalog(
       cwd,
@@ -846,6 +962,7 @@ describe("WorkspaceSessionCatalog", () => {
       () => ({ approved: true }),
       false,
       {
+        artifactDirectory: join(agentDir, "artifacts"),
         workflowsSourceRoot: join(agentDir, "..", "workflows"),
         acquireExecuteTypescriptLaunch: async (input) => {
           launchRequests.push(input);
@@ -957,15 +1074,6 @@ describe("WorkspaceSessionCatalog", () => {
 
   it("rejects generated package imports from session-created execute_typescript", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const settingsStore = createAgentSettingsStore({
-      cwd,
-      agentDir,
-      workflowsSourceRoot: join(agentDir, "..", "workflows"),
-    });
-    settingsStore.setAppPreferences({
-      ...settingsStore.getState().appPreferences,
-      artifactDirectory: join(agentDir, "artifacts"),
-    });
     const workflowsPackagePath = join(agentDir, "generated-workflows-package");
     mkdirSync(workflowsPackagePath, { recursive: true });
     writeFileSync(
@@ -989,6 +1097,7 @@ describe("WorkspaceSessionCatalog", () => {
       () => ({ approved: true }),
       false,
       {
+        artifactDirectory: join(agentDir, "artifacts"),
         workflowsGeneratedPackagePath: workflowsPackagePath,
         workflowsSourceRoot: join(agentDir, "..", "workflows"),
       },
@@ -1144,11 +1253,7 @@ describe("WorkspaceSessionCatalog", () => {
 
     try {
       const created = await catalog.createSession({ title: "User Approval" }, DEFAULTS);
-      const settingsStore = createAgentSettingsStore({
-        cwd,
-        agentDir,
-        workflowsSourceRoot: join(agentDir, "..", "workflows"),
-      });
+      const settingsStore = createAgentSettingsStore({ agentDir });
       catalog.updateAppPreferences({
         ...settingsStore.getState().appPreferences,
         approvalMode: "user",
@@ -1227,11 +1332,7 @@ describe("WorkspaceSessionCatalog", () => {
 
     try {
       const created = await catalog.createSession({ title: "Denied Approval" }, DEFAULTS);
-      const settingsStore = createAgentSettingsStore({
-        cwd,
-        agentDir,
-        workflowsSourceRoot: join(agentDir, "..", "workflows"),
-      });
+      const settingsStore = createAgentSettingsStore({ agentDir });
       catalog.updateAppPreferences({
         ...settingsStore.getState().appPreferences,
         approvalMode: "user",
@@ -1372,6 +1473,155 @@ describe("WorkspaceSessionCatalog", () => {
           "You are a task-scoped coding agent running inside one Smithers workflow task attempt.",
         ),
       );
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("refreshes workflow-task previews from committed workflow-agent and actor-default authority", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const authority = (
+      catalog as unknown as { agentProfileAuthority: CatalogAgentProfileAuthority }
+    ).agentProfileAuthority;
+    const initial = await authority.read();
+    let committed: CatalogAgentProfileAuthoritySnapshot = {
+      ...initial,
+      workflowAgents: initial.workflowAgents.map((source) =>
+        source.sourceId === "explorer" && source.parameters
+          ? {
+              ...source,
+              parameters: {
+                ...source.parameters,
+                label: "Committed Explorer",
+                instructions: "Use the freshly committed workflow-agent source.",
+              },
+            }
+          : source,
+      ),
+      actorExtensionDefaults: initial.actorExtensionDefaults.map((defaults) =>
+        defaults.actor === "workflow-task"
+          ? {
+              ...defaults,
+              extensionUsage: { ...defaults.extensionUsage, shell: "unavailable" },
+            }
+          : defaults,
+      ),
+    };
+    catalog.setAgentProfileAuthority({
+      ...authority,
+      read: async () => structuredClone(committed),
+    });
+
+    try {
+      const first = await catalog.getAgentContextPreview({
+        actor: "workflow-task",
+        profileId: "explorer",
+      });
+      expect(first.profileName).toBe("Committed Explorer");
+      expect(first.systemPrompt).toContain("Use the freshly committed workflow-agent source.");
+      expect(first.loadedExtensionIds).not.toContain("shell");
+
+      committed = {
+        ...committed,
+        workflowAgents: committed.workflowAgents.map((source) =>
+          source.sourceId === "explorer" && source.parameters
+            ? {
+                ...source,
+                parameters: {
+                  ...source.parameters,
+                  label: "Second Committed Explorer",
+                  instructions: "Use the second committed workflow-agent source.",
+                },
+              }
+            : source,
+        ),
+        actorExtensionDefaults: committed.actorExtensionDefaults.map((defaults) =>
+          defaults.actor === "workflow-task"
+            ? {
+                ...defaults,
+                extensionUsage: { ...defaults.extensionUsage, shell: "loaded" },
+              }
+            : defaults,
+        ),
+      };
+
+      const second = await catalog.getAgentContextPreview({
+        actor: "workflow-task",
+        profileId: "explorer",
+      });
+      expect(second.profileName).toBe("Second Committed Explorer");
+      expect(second.systemPrompt).toContain("Use the second committed workflow-agent source.");
+      expect(second.loadedExtensionIds).toContain("shell");
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("applies Extension Managing profile, defaults, and workflow-source intents through authority", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const mutations = await catalog.getAgentProfileMutationStore();
+      mutations.setProfileExtensionUsage({
+        actor: "orchestrator",
+        profileId: DEFAULT_ORCHESTRATOR_PROFILE_ID,
+        extensionId: "shell",
+        usage: "available",
+        explicit: true,
+      });
+      mutations.setActorExtensionDefaults({
+        actor: "workflow-task",
+        extensionUsage: { shell: "available" },
+        extensionOrder: ["shell"],
+      });
+      mutations.setWorkflowAgent({
+        ...mutations.getState().workflowAgents.explorer!,
+        overrides: { shell: "unavailable" },
+      });
+      mutations.upsertWorkflowAgentSource({
+        sourceId: "reviewerAgent",
+        overwrite: false,
+        draft: {
+          label: "Reviewer",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoningEffort: "medium",
+          instructions: "Review strictly.",
+          overrides: { shell: "loaded" },
+          extensionOrder: ["shell"],
+        },
+        text: `${JSON.stringify({
+          id: "reviewerAgent",
+          label: "Reviewer",
+          provider: "openai",
+          model: "gpt-5.4",
+          reasoning: { effort: "medium" },
+          instructions: "Review strictly.",
+          overrides: { shell: "loaded" },
+          extensionOrder: ["shell"],
+        })}\n`,
+      });
+
+      await catalog.applyAgentProfileMutations(mutations.takeMutations());
+
+      const refreshed = (await catalog.getAgentProfileMutationStore()).getState();
+      expect(
+        refreshed.agents.orchestrators.find(
+          (profile) => profile.id === DEFAULT_ORCHESTRATOR_PROFILE_ID,
+        )?.extensionUsage,
+      ).toEqual({ shell: "available" });
+      expect(refreshed.actorExtensionDefaults["workflow-task"]).toEqual({
+        extensionUsage: { shell: "available" },
+        extensionOrder: ["shell"],
+      });
+      expect(refreshed.workflowAgents.explorer?.overrides).toEqual({ shell: "unavailable" });
+      expect(refreshed.workflowAgents.reviewerAgent).toMatchObject({
+        label: "Reviewer",
+        overrides: { shell: "loaded" },
+        extensionOrder: ["shell"],
+      });
     } finally {
       await catalog.dispose();
     }
@@ -1687,6 +1937,57 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("defers startup queue replay until runtime wiring is ready and wakes the runtime queue seam", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const firstCatalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const created = await firstCatalog.createSession(
+      { title: "Queued restart recovery" },
+      DEFAULTS,
+    );
+    getStructuredSessionStore(firstCatalog).enqueueSurfaceMessage({
+      sessionId: created.target.workspaceSessionId,
+      surfacePiSessionId: created.target.surfacePiSessionId,
+      messageJson: JSON.stringify(userMessage("Replay this durable row through runtime.")),
+    });
+    await firstCatalog.dispose();
+
+    const wakeTargets: PromptTarget[] = [];
+    const recoveredCatalog = createWorkspaceSessionCatalog(
+      cwd,
+      agentDir,
+      sessionDir,
+      undefined,
+      false,
+      {
+        workflowsSourceRoot: join(agentDir, "..", "workflows"),
+        wakeSurfaceQueue: async (target) => {
+          wakeTargets.push(target);
+        },
+      },
+      false,
+    );
+
+    try {
+      await Promise.resolve();
+      expect(wakeTargets).toEqual([]);
+
+      await recoveredCatalog.prepareWorkspaceRecoveryAfterRegistration();
+      recoveredCatalog.startWorkspaceRecovery();
+      await waitFor(() => wakeTargets.length === 1);
+      recoveredCatalog.startWorkspaceRecovery();
+      await Promise.resolve();
+
+      expect(wakeTargets).toEqual([created.target]);
+      expect(
+        getStructuredSessionStore(recoveredCatalog).listQueuedSurfaceMessages({
+          surfacePiSessionId: created.target.surfacePiSessionId,
+        }),
+      ).toHaveLength(1);
+    } finally {
+      await recoveredCatalog.dispose();
+    }
+  });
+
   it("deletes the pi files and structured state so hard-deleted sessions do not reappear", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const fakeBin = join(mkdtempSync(join(tmpdir(), "svvy-trash-bin-")));
@@ -1874,11 +2175,14 @@ describe("WorkspaceSessionCatalog", () => {
       });
 
       await catalog.closeSurface(created.target);
-      const reopened = await catalog.openSurface(created.target);
-      expect(reopened.composerDraft.text).toBe(
+      await catalog.openSurface(created.target);
+      const reopenedDraft = getStructuredSessionStore(catalog).getComposerDraft(
+        created.target.surfacePiSessionId,
+      );
+      expect(reopenedDraft?.text).toBe(
         "A text written in the composer should survive closing surfaces",
       );
-      expect(reopened.composerDraft.attachments).toEqual([
+      expect(reopenedDraft?.attachments).toEqual([
         {
           id: "attachment:docs/progress.md",
           kind: "file",
@@ -2021,26 +2325,27 @@ describe("WorkspaceSessionCatalog", () => {
     try {
       const created = await catalog.createSession({ title: "Prompt Channel" }, DEFAULTS);
       const orchestratorManaged = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const orchestratorResolvedPrompt = getManagedResolvedSystemPrompt(orchestratorManaged);
 
-      expect(created.systemPrompt).toContain(
+      expect(orchestratorManaged.systemPrompt).toContain(
         "You are svvy, a pragmatic software engineering assistant",
       );
-      expect(created.systemPrompt).toContain("Loaded native extension: Shell.");
-      expect(created.systemPrompt).toContain("Loaded external_instruction records:");
-      expect(created.systemPrompt).toContain(`# Project Standards\n\nUse repo rules.`);
-      expect(created.systemPrompt).not.toContain(
+      expect(orchestratorManaged.systemPrompt).toContain("Loaded native extension: Shell.");
+      expect(orchestratorManaged.systemPrompt).toContain("Loaded external_instruction records:");
+      expect(orchestratorManaged.systemPrompt).toContain(`# Project Standards\n\nUse repo rules.`);
+      expect(orchestratorManaged.systemPrompt).not.toContain(
         `# Claude Standards\n\nKeep visible instructions.`,
       );
-      expect(created.resolvedSystemPrompt).toContain(
+      expect(orchestratorResolvedPrompt).toContain(
         "You are svvy, a pragmatic software engineering assistant",
       );
-      expect(created.resolvedSystemPrompt).not.toContain("# Project Context");
-      expect(created.resolvedSystemPrompt).toContain("# Project Standards");
-      expect(created.resolvedSystemPrompt).not.toContain("# Claude Standards");
-      expect(created.resolvedSystemPrompt).not.toContain("Hidden append text.");
-      expect(created.resolvedSystemPrompt).not.toContain("Hidden root append text.");
-      expect(created.resolvedSystemPrompt).not.toContain("Hidden replacement text.");
-      expect(created.externalContextSources).toEqual([
+      expect(orchestratorResolvedPrompt).not.toContain("# Project Context");
+      expect(orchestratorResolvedPrompt).toContain("# Project Standards");
+      expect(orchestratorResolvedPrompt).not.toContain("# Claude Standards");
+      expect(orchestratorResolvedPrompt).not.toContain("Hidden append text.");
+      expect(orchestratorResolvedPrompt).not.toContain("Hidden root append text.");
+      expect(orchestratorResolvedPrompt).not.toContain("Hidden replacement text.");
+      expect(orchestratorManaged.externalContextSources).toEqual([
         expect.objectContaining({
           kind: "AGENTS.md",
           path: join(cwd, "AGENTS.md"),
@@ -2056,42 +2361,39 @@ describe("WorkspaceSessionCatalog", () => {
           enabled: false,
         }),
       ]);
-      expect(created.resolvedSystemPrompt).not.toContain("Current date:");
-      expect(created.resolvedSystemPrompt).not.toContain(`Current working directory: ${cwd}`);
-      expect(orchestratorManaged.session.agent.state.systemPrompt).toBe(
-        created.resolvedSystemPrompt,
-      );
+      expect(orchestratorResolvedPrompt).not.toContain("Current date:");
+      expect(orchestratorResolvedPrompt).not.toContain(`Current working directory: ${cwd}`);
+      expect(orchestratorManaged.session.agent.state.systemPrompt).toBe(orchestratorResolvedPrompt);
 
       const handler = await createHandlerThreadHarness(catalog, created.target.workspaceSessionId, {
         title: "Prompt Channel Handler",
         objective: "Inspect handler prompt wiring.",
       });
-      const openedHandler = await catalog.openSurface(handler.target);
+      await catalog.openSurface(handler.target);
       const handlerManaged = getManagedSurface(catalog, handler.target.surfacePiSessionId);
+      const handlerResolvedPrompt = getManagedResolvedSystemPrompt(handlerManaged);
 
-      expect(openedHandler.systemPrompt).toContain("This surface is a delegated handler thread.");
-      expect(openedHandler.systemPrompt).toContain("Loaded native extension: Shell.");
-      expect(openedHandler.systemPrompt).toContain("Loaded external_instruction records:");
-      expect(openedHandler.systemPrompt).toContain(`# Project Standards\n\nUse repo rules.`);
-      expect(openedHandler.systemPrompt).not.toContain(
+      expect(handlerManaged.systemPrompt).toContain("This surface is a delegated handler thread.");
+      expect(handlerManaged.systemPrompt).toContain("Loaded native extension: Shell.");
+      expect(handlerManaged.systemPrompt).toContain("Loaded external_instruction records:");
+      expect(handlerManaged.systemPrompt).toContain(`# Project Standards\n\nUse repo rules.`);
+      expect(handlerManaged.systemPrompt).not.toContain(
         `# Claude Standards\n\nKeep visible instructions.`,
       );
-      expect(openedHandler.systemPrompt).not.toContain("## Handler Profile Override");
-      expect(openedHandler.resolvedSystemPrompt).toContain(
-        "This surface is a delegated handler thread.",
+      expect(handlerManaged.systemPrompt).not.toContain("## Handler Profile Override");
+      expect(handlerResolvedPrompt).toContain("This surface is a delegated handler thread.");
+      expect(handlerResolvedPrompt).not.toContain("# Project Context");
+      expect(handlerResolvedPrompt).toContain("# Project Standards");
+      expect(handlerResolvedPrompt).not.toContain("# Claude Standards");
+      expect(handlerResolvedPrompt).not.toContain("Hidden append text.");
+      expect(handlerResolvedPrompt).not.toContain("Hidden root append text.");
+      expect(handlerResolvedPrompt).not.toContain("Hidden replacement text.");
+      expect(handlerResolvedPrompt).not.toContain("Current date:");
+      expect(handlerResolvedPrompt).not.toContain(`Current working directory: ${cwd}`);
+      expect(handlerManaged.externalContextSources).toEqual(
+        orchestratorManaged.externalContextSources,
       );
-      expect(openedHandler.resolvedSystemPrompt).not.toContain("# Project Context");
-      expect(openedHandler.resolvedSystemPrompt).toContain("# Project Standards");
-      expect(openedHandler.resolvedSystemPrompt).not.toContain("# Claude Standards");
-      expect(openedHandler.resolvedSystemPrompt).not.toContain("Hidden append text.");
-      expect(openedHandler.resolvedSystemPrompt).not.toContain("Hidden root append text.");
-      expect(openedHandler.resolvedSystemPrompt).not.toContain("Hidden replacement text.");
-      expect(openedHandler.resolvedSystemPrompt).not.toContain("Current date:");
-      expect(openedHandler.resolvedSystemPrompt).not.toContain(`Current working directory: ${cwd}`);
-      expect(openedHandler.externalContextSources).toEqual(created.externalContextSources);
-      expect(handlerManaged.session.agent.state.systemPrompt).toBe(
-        openedHandler.resolvedSystemPrompt,
-      );
+      expect(handlerManaged.session.agent.state.systemPrompt).toBe(handlerResolvedPrompt);
     } finally {
       await catalog.dispose();
     }
@@ -2161,27 +2463,23 @@ describe("WorkspaceSessionCatalog", () => {
       expect(storedThread.loadedExtensionIds).not.toContain("thread-handling");
       expect(storedThread.availableExtensionIds).toEqual(["smithers"]);
 
-      const openedHandler = await catalog.openSurface(
-        createThreadTarget(
-          created.target.workspaceSessionId,
-          handlerThread.surfacePiSessionId,
-          handlerThread.id,
-        ),
+      const handlerTarget = createThreadTarget(
+        created.target.workspaceSessionId,
+        handlerThread.surfacePiSessionId,
+        handlerThread.id,
       );
-      expect(openedHandler.resolvedSystemPrompt).not.toContain(
+      await catalog.openSurface(handlerTarget);
+      const handlerManaged = getManagedSurface(catalog, handlerThread.surfacePiSessionId);
+      const handlerResolvedPrompt = getManagedResolvedSystemPrompt(handlerManaged);
+      expect(handlerResolvedPrompt).not.toContain(
         "Loaded prompt-only extension: Smithers CLI workflow authoring.",
       );
-      expect(openedHandler.resolvedSystemPrompt).toContain(
+      expect(handlerResolvedPrompt).toContain(
         "- smithers: Use official Smithers CLI commands through Shell for workspace .smithers work.",
       );
-      expect(openedHandler.resolvedSystemPrompt).not.toContain("svvyx workflows");
-      expect(openedHandler.resolvedSystemPrompt).toContain(
-        "Loaded native extension: Thread Orchestration.",
-      );
-      expect(openedHandler.resolvedSystemPrompt).not.toContain(
-        "Loaded native extension: Request User Input.",
-      );
-      const handlerManaged = getManagedSurface(catalog, handlerThread.surfacePiSessionId);
+      expect(handlerResolvedPrompt).not.toContain("svvyx workflows");
+      expect(handlerResolvedPrompt).toContain("Loaded native extension: Thread Orchestration.");
+      expect(handlerResolvedPrompt).not.toContain("Loaded native extension: Request User Input.");
       const handlerTools = getActiveToolNames(handlerManaged);
       expect(handlerTools).not.toContain("request_user_input");
       expect(handlerTools).not.toContain("thread_current");
@@ -2229,7 +2527,7 @@ describe("WorkspaceSessionCatalog", () => {
     expect(catalogSource).not.toContain("expandPromptTemplates: false");
   });
 
-  it("marks prompt binding stale when runtime standards change", async () => {
+  it("keeps the bound context immutable when source standards change", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const standardsPath = join(cwd, "AGENTS.md");
     writeFileSync(standardsPath, "# Project Standards\n\nInitial.");
@@ -2237,16 +2535,17 @@ describe("WorkspaceSessionCatalog", () => {
 
     try {
       const created = await catalog.createSession({ title: "Standards Drift" }, DEFAULTS);
-      expect(created.promptBinding?.stale).toBe(false);
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const boundFingerprint = managed.generatedAgentContextFingerprint;
+      const boundSourceHashes = [...managed.externalSourceHashes];
 
       writeFileSync(standardsPath, "# Project Standards\n\nChanged.");
       const reopened = await catalog.openSurface(created.target);
 
-      expect(reopened.promptBinding?.stale).toBe(true);
-      expect(reopened.promptBinding?.boundExternalSourceHashes).not.toEqual(
-        reopened.promptBinding?.currentExternalSourceHashes,
-      );
-      expect(reopened.externalContextSources[0]?.content).toContain("Initial.");
+      expect(reopened).toEqual({ target: created.target });
+      expect(managed.generatedAgentContextFingerprint).toBe(boundFingerprint);
+      expect(managed.externalSourceHashes).toEqual(boundSourceHashes);
+      expect(managed.externalContextSources[0]?.content).toContain("Initial.");
     } finally {
       await catalog.dispose();
     }
@@ -2268,15 +2567,17 @@ describe("WorkspaceSessionCatalog", () => {
       if (!storedFingerprint) {
         throw new Error("Expected generated context fingerprint to be stored.");
       }
-      expect(created.promptBinding?.boundFingerprint).toBe(storedFingerprint);
-      expect(created.promptBinding?.currentFingerprint).toBe(storedFingerprint);
-      expect(created.promptBinding?.stale).toBe(false);
+      expect(
+        getManagedSurface(catalog, created.target.surfacePiSessionId)
+          .generatedAgentContextFingerprint,
+      ).toBe(storedFingerprint);
 
       writeFileSync(standardsPath, "# Project Standards\n\nChanged.");
-      const reopened = await catalog.openSurface(created.target);
-      expect(reopened.promptBinding?.boundFingerprint).toBe(storedFingerprint);
-      expect(reopened.promptBinding?.currentFingerprint).not.toBe(storedFingerprint);
-      expect(reopened.promptBinding?.stale).toBe(true);
+      await catalog.openSurface(created.target);
+      expect(
+        getManagedSurface(catalog, created.target.surfacePiSessionId)
+          .generatedAgentContextFingerprint,
+      ).toBe(storedFingerprint);
     } finally {
       await catalog.dispose();
     }
@@ -2290,7 +2591,9 @@ describe("WorkspaceSessionCatalog", () => {
 
     try {
       const created = await catalog.createSession({ title: "Reopen Context Binding" }, DEFAULTS);
-      const storedFingerprint = created.promptBinding?.boundFingerprint;
+      const storedFingerprint = getStructuredSessionStore(catalog).getSessionState(
+        created.target.workspaceSessionId,
+      ).pi.generatedAgentContextFingerprint;
       expect(storedFingerprint).toBeTruthy();
       if (!storedFingerprint) {
         throw new Error("Expected generated context fingerprint to be stored.");
@@ -2300,9 +2603,11 @@ describe("WorkspaceSessionCatalog", () => {
       writeFileSync(standardsPath, "# Project Standards\n\nChanged after close.");
 
       const reopened = await catalog.openSurface(created.target);
-      expect(reopened.promptBinding?.boundFingerprint).toBe(storedFingerprint);
-      expect(reopened.promptBinding?.currentFingerprint).not.toBe(storedFingerprint);
-      expect(reopened.promptBinding?.stale).toBe(true);
+      expect(reopened).toEqual({ target: created.target });
+      expect(
+        getManagedSurface(catalog, created.target.surfacePiSessionId)
+          .generatedAgentContextFingerprint,
+      ).toBe(storedFingerprint);
     } finally {
       await catalog.dispose();
     }
@@ -2323,8 +2628,9 @@ describe("WorkspaceSessionCatalog", () => {
         DEFAULTS,
       );
       target = created.target;
-      storedFingerprint = created.promptBinding?.boundFingerprint ?? "";
-      expect(created.promptBinding?.boundSystemPrompt).toContain("Initial restart payload.");
+      const managed = getManagedSurface(firstCatalog, created.target.surfacePiSessionId);
+      storedFingerprint = managed.generatedAgentContextFingerprint;
+      expect(managed.systemPrompt).toContain("Initial restart payload.");
       expect(storedFingerprint).toBeTruthy();
       const binding = getStructuredSessionStore(firstCatalog).getGeneratedAgentContextBinding({
         surfacePiSessionId: created.target.surfacePiSessionId,
@@ -2348,15 +2654,11 @@ describe("WorkspaceSessionCatalog", () => {
 
     try {
       const reopened = await secondCatalog.openSurface(target!);
-      expect(reopened.promptBinding?.boundFingerprint).toBe(storedFingerprint!);
-      expect(reopened.promptBinding?.boundSystemPrompt).toContain("Initial restart payload.");
-      expect(reopened.promptBinding?.boundSystemPrompt).not.toContain(
-        "Changed after catalog restart.",
-      );
-      expect(reopened.promptBinding?.currentSystemPrompt).toContain(
-        "Changed after catalog restart.",
-      );
-      expect(reopened.promptBinding?.stale).toBe(true);
+      const managed = getManagedSurface(secondCatalog, target!.surfacePiSessionId);
+      expect(reopened).toEqual({ target: target! });
+      expect(managed.generatedAgentContextFingerprint).toBe(storedFingerprint!);
+      expect(managed.systemPrompt).toContain("Initial restart payload.");
+      expect(managed.systemPrompt).not.toContain("Changed after catalog restart.");
       const binding = getStructuredSessionStore(secondCatalog).getGeneratedAgentContextBinding({
         surfacePiSessionId: target!.surfacePiSessionId,
         generatedAgentContextFingerprint: storedFingerprint!,
@@ -2390,9 +2692,11 @@ describe("WorkspaceSessionCatalog", () => {
       }
 
       const openedHandler = await catalog.openSurface(handler.target);
-      expect(openedHandler.promptBinding?.boundFingerprint).toBe(storedFingerprint);
-      expect(openedHandler.promptBinding?.currentFingerprint).toBe(storedFingerprint);
-      expect(openedHandler.promptBinding?.stale).toBe(false);
+      expect(openedHandler).toEqual({ target: handler.target });
+      expect(
+        getManagedSurface(catalog, handler.target.surfacePiSessionId)
+          .generatedAgentContextFingerprint,
+      ).toBe(storedFingerprint);
     } finally {
       await catalog.dispose();
     }
@@ -2410,8 +2714,11 @@ describe("WorkspaceSessionCatalog", () => {
         title: "handler-reopen-binding",
         objective: "Inspect handler reopen generated context binding.",
       });
-      const openedHandler = await catalog.openSurface(handler.target);
-      const storedFingerprint = openedHandler.promptBinding?.boundFingerprint;
+      await catalog.openSurface(handler.target);
+      const storedFingerprint = getManagedSurface(
+        catalog,
+        handler.target.surfacePiSessionId,
+      ).generatedAgentContextFingerprint;
       expect(storedFingerprint).toBeTruthy();
       if (!storedFingerprint) {
         throw new Error("Expected handler generated context fingerprint to be stored.");
@@ -2421,9 +2728,11 @@ describe("WorkspaceSessionCatalog", () => {
       writeFileSync(standardsPath, "# Project Standards\n\nChanged after handler close.");
 
       const reopened = await catalog.openSurface(handler.target);
-      expect(reopened.promptBinding?.boundFingerprint).toBe(storedFingerprint);
-      expect(reopened.promptBinding?.currentFingerprint).not.toBe(storedFingerprint);
-      expect(reopened.promptBinding?.stale).toBe(true);
+      expect(reopened).toEqual({ target: handler.target });
+      expect(
+        getManagedSurface(catalog, handler.target.surfacePiSessionId)
+          .generatedAgentContextFingerprint,
+      ).toBe(storedFingerprint);
     } finally {
       await catalog.dispose();
     }
@@ -2450,12 +2759,11 @@ describe("WorkspaceSessionCatalog", () => {
           objective: "Inspect handler generated context binding after restart.",
         },
       );
-      const openedHandler = await firstCatalog.openSurface(handler.target);
+      await firstCatalog.openSurface(handler.target);
+      const managed = getManagedSurface(firstCatalog, handler.target.surfacePiSessionId);
       handlerTarget = handler.target;
-      storedFingerprint = openedHandler.promptBinding?.boundFingerprint ?? "";
-      expect(openedHandler.promptBinding?.boundSystemPrompt).toContain(
-        "Initial handler restart payload.",
-      );
+      storedFingerprint = managed.generatedAgentContextFingerprint;
+      expect(managed.systemPrompt).toContain("Initial handler restart payload.");
       expect(storedFingerprint).toBeTruthy();
     } finally {
       await firstCatalog.dispose();
@@ -2466,17 +2774,11 @@ describe("WorkspaceSessionCatalog", () => {
 
     try {
       const reopened = await secondCatalog.openSurface(handlerTarget!);
-      expect(reopened.promptBinding?.boundFingerprint).toBe(storedFingerprint!);
-      expect(reopened.promptBinding?.boundSystemPrompt).toContain(
-        "Initial handler restart payload.",
-      );
-      expect(reopened.promptBinding?.boundSystemPrompt).not.toContain(
-        "Changed handler restart payload.",
-      );
-      expect(reopened.promptBinding?.currentSystemPrompt).toContain(
-        "Changed handler restart payload.",
-      );
-      expect(reopened.promptBinding?.stale).toBe(true);
+      const managed = getManagedSurface(secondCatalog, handlerTarget!.surfacePiSessionId);
+      expect(reopened).toEqual({ target: handlerTarget! });
+      expect(managed.generatedAgentContextFingerprint).toBe(storedFingerprint!);
+      expect(managed.systemPrompt).toContain("Initial handler restart payload.");
+      expect(managed.systemPrompt).not.toContain("Changed handler restart payload.");
     } finally {
       await secondCatalog.dispose();
     }
@@ -2494,11 +2796,17 @@ describe("WorkspaceSessionCatalog", () => {
           agentProfileId: DEFAULT_ORCHESTRATOR_PROFILE_ID,
         },
       );
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const stored = getStructuredSessionStore(catalog).getSessionState(
+        created.target.workspaceSessionId,
+      );
 
-      expect(created.promptBinding?.stale).toBe(false);
-      expect(created.promptBinding?.updateExtensionContextBeforeNextTurn).toBe(true);
-      expect(created.systemPrompt).not.toContain("## Orchestrator Profile");
-      expect(created.systemPrompt).toBe(buildSystemPrompt("orchestrator"));
+      expect(managed.generatedAgentContextFingerprint).toBe(
+        stored.pi.generatedAgentContextFingerprint ?? "",
+      );
+      expect(stored.pi.updateExtensionContextBeforeNextTurn).toBe(true);
+      expect(managed.systemPrompt).not.toContain("## Orchestrator Profile");
+      expect(managed.systemPrompt).toBe(buildSystemPrompt("orchestrator"));
     } finally {
       await catalog.dispose();
     }
@@ -2616,10 +2924,11 @@ describe("WorkspaceSessionCatalog", () => {
           agentProfileId: "custom-orchestrator",
         },
       );
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
 
-      expect(created.systemPrompt).toBe(buildSystemPrompt("orchestrator"));
-      expect(created.systemPrompt).not.toContain("## Orchestrator Profile");
-      expect(created.systemPrompt).not.toContain(suffix);
+      expect(managed.systemPrompt).toBe(buildSystemPrompt("orchestrator"));
+      expect(managed.systemPrompt).not.toContain("## Orchestrator Profile");
+      expect(managed.systemPrompt).not.toContain(suffix);
     } finally {
       await catalog.dispose();
     }
@@ -2641,105 +2950,6 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("emits a stale prompt binding update when Request User Input mode changes", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    const surfaceSyncs: SurfaceSyncMessage[] = [];
-    catalog.setSurfaceSyncListener((payload) => {
-      surfaceSyncs.push(payload);
-    });
-
-    try {
-      const created = await catalog.createSession({ title: "Request Input Mode" }, DEFAULTS);
-      expect(created.promptBinding?.stale).toBe(false);
-      expect(created.promptBinding?.boundSystemPrompt).toContain(
-        "where you can choose a conservative default now",
-      );
-
-      catalog.updateRequestUserInputSettings({
-        mode: "blocking",
-        blockingTimeout: {
-          enabled: true,
-          durationMs: 300_000,
-        },
-      });
-
-      await waitFor(() =>
-        surfaceSyncs.some(
-          (payload) =>
-            payload.target.surfacePiSessionId === created.target.surfacePiSessionId &&
-            payload.snapshot?.promptBinding?.stale === true &&
-            payload.snapshot.promptBinding.currentSystemPrompt.includes(
-              "only when the answer is required before proceeding",
-            ),
-        ),
-      );
-
-      const update = surfaceSyncs.findLast(
-        (payload) => payload.target.surfacePiSessionId === created.target.surfacePiSessionId,
-      );
-      expect(update?.snapshot?.promptBinding?.stale).toBe(true);
-      expect(update?.snapshot?.promptBinding?.boundSystemPrompt).toContain(
-        "where you can choose a conservative default now",
-      );
-      expect(update?.snapshot?.promptBinding?.currentSystemPrompt).toContain(
-        "only when the answer is required before proceeding",
-      );
-    } finally {
-      await catalog.dispose();
-    }
-  });
-
-  it("clears the live stale prompt binding when request-input settings return to the bound prompt", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    const surfaceSyncs: SurfaceSyncMessage[] = [];
-    catalog.setSurfaceSyncListener((payload) => {
-      surfaceSyncs.push(payload);
-    });
-
-    try {
-      const created = await catalog.createSession({ title: "Request Input Revert" }, DEFAULTS);
-      catalog.updateRequestUserInputSettings({
-        mode: "blocking",
-        blockingTimeout: {
-          enabled: true,
-          durationMs: 300_000,
-        },
-      });
-
-      await waitFor(() =>
-        surfaceSyncs.some(
-          (payload) =>
-            payload.target.surfacePiSessionId === created.target.surfacePiSessionId &&
-            payload.snapshot?.promptBinding?.stale === true,
-        ),
-      );
-
-      catalog.updateRequestUserInputSettings(DEFAULT_AGENT_SETTINGS_STATE.requestUserInput);
-
-      await waitFor(() => {
-        const latest = surfaceSyncs.findLast(
-          (payload) => payload.target.surfacePiSessionId === created.target.surfacePiSessionId,
-        );
-        return latest?.snapshot?.promptBinding?.stale === false;
-      });
-
-      const update = surfaceSyncs.findLast(
-        (payload) => payload.target.surfacePiSessionId === created.target.surfacePiSessionId,
-      );
-      expect(update?.snapshot?.promptBinding?.stale).toBe(false);
-      expect(update?.snapshot?.promptBinding?.boundFingerprint).toBe(
-        update?.snapshot?.promptBinding?.currentFingerprint,
-      );
-      expect(update?.snapshot?.promptBinding?.boundSystemPrompt).toBe(
-        update?.snapshot?.promptBinding?.currentSystemPrompt,
-      );
-    } finally {
-      await catalog.dispose();
-    }
-  });
-
   it("persists extension context auto-update per surface", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
@@ -2750,20 +2960,28 @@ describe("WorkspaceSessionCatalog", () => {
         title: "auto-update-handler",
         objective: "Check independent auto-update preference.",
       });
-      expect(created.promptBinding?.updateExtensionContextBeforeNextTurn).toBe(true);
+      const store = getStructuredSessionStore(catalog);
       expect(
-        (await catalog.openSurface(handler.target)).promptBinding
+        store.getSessionState(created.target.workspaceSessionId).pi
+          .updateExtensionContextBeforeNextTurn,
+      ).toBe(true);
+      expect(
+        store
+          .getSessionState(created.target.workspaceSessionId)
+          .threads.find((thread) => thread.id === handler.threadId)
           ?.updateExtensionContextBeforeNextTurn,
       ).toBe(true);
 
       await catalog.setExtensionContextAutoUpdate({ target: created.target, enabled: false });
 
       expect(
-        (await catalog.openSurface(created.target)).promptBinding
-          ?.updateExtensionContextBeforeNextTurn,
+        store.getSessionState(created.target.workspaceSessionId).pi
+          .updateExtensionContextBeforeNextTurn,
       ).toBe(false);
       expect(
-        (await catalog.openSurface(handler.target)).promptBinding
+        store
+          .getSessionState(created.target.workspaceSessionId)
+          .threads.find((thread) => thread.id === handler.threadId)
           ?.updateExtensionContextBeforeNextTurn,
       ).toBe(true);
     } finally {
@@ -2781,7 +2999,6 @@ describe("WorkspaceSessionCatalog", () => {
       const orchestratorTools = getActiveToolNames(orchestratorManaged);
       expect(orchestratorTools).toEqual(
         expect.arrayContaining([
-          "request_user_input",
           "thread_list",
           "thread_episodes",
           "thread_start",
@@ -2789,6 +3006,7 @@ describe("WorkspaceSessionCatalog", () => {
           "thread_request_report",
         ]),
       );
+      expect(orchestratorTools).not.toContain("request_user_input");
       expect(orchestratorTools).not.toContain("thread_current");
       expect(orchestratorTools).not.toContain("thread_group");
       expect(orchestratorTools).not.toContain("thread_report");
@@ -2808,13 +3026,13 @@ describe("WorkspaceSessionCatalog", () => {
       const handlerTools = getActiveToolNames(handlerManaged);
       expect(handlerTools).toEqual(
         expect.arrayContaining([
-          "request_user_input",
           "thread_current",
           "thread_group",
           "thread_report",
           "thread_episodes",
         ]),
       );
+      expect(handlerTools).not.toContain("request_user_input");
       expect(handlerTools).not.toContain("thread_list");
       expect(handlerTools).not.toContain("thread_start");
       expect(handlerTools).not.toContain("thread_resume");
@@ -2831,10 +3049,6 @@ describe("WorkspaceSessionCatalog", () => {
   it("opens multiple surfaces simultaneously and only disposes them after explicit closes", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    const surfaceSyncs: SurfaceSyncMessage[] = [];
-    catalog.setSurfaceSyncListener((payload) => {
-      surfaceSyncs.push(payload);
-    });
 
     try {
       const created = await catalog.createSession({ title: "Multi Surface" }, DEFAULTS);
@@ -2852,9 +3066,7 @@ describe("WorkspaceSessionCatalog", () => {
       expect(getManagedSurface(catalog, created.target.surfacePiSessionId).retainCount).toBe(1);
       expect(getManagedSurface(catalog, handler.target.surfacePiSessionId).retainCount).toBe(2);
 
-      const openSurfaceIds = (await catalog.listOpenSurfaceSnapshots()).map(
-        (snapshot) => snapshot.target.surfacePiSessionId,
-      );
+      const openSurfaceIds = [...getManagedSurfaces(catalog).keys()];
       expect(openSurfaceIds).toEqual(
         expect.arrayContaining([
           created.target.surfacePiSessionId,
@@ -2864,35 +3076,13 @@ describe("WorkspaceSessionCatalog", () => {
 
       await closeSurface(catalog, handler.target);
       expect(getManagedSurface(catalog, handler.target.surfacePiSessionId).retainCount).toBe(1);
-      expect(
-        surfaceSyncs.some(
-          (payload) =>
-            payload.reason === "surface.closed" &&
-            payload.target.surfacePiSessionId === handler.target.surfacePiSessionId,
-        ),
-      ).toBe(false);
 
       await closeSurface(catalog, handler.target);
       await waitFor(() => !getManagedSurfaces(catalog).has(handler.target.surfacePiSessionId));
-      expect(
-        surfaceSyncs.some(
-          (payload) =>
-            payload.reason === "surface.closed" &&
-            payload.target.surfacePiSessionId === handler.target.surfacePiSessionId,
-        ),
-      ).toBe(true);
 
       await closeSurface(catalog, created.target);
       await waitFor(() => getManagedSurfaces(catalog).size === 0);
-      expect(
-        surfaceSyncs.some(
-          (payload) =>
-            payload.reason === "surface.closed" &&
-            payload.target.surfacePiSessionId === created.target.surfacePiSessionId,
-        ),
-      ).toBe(true);
     } finally {
-      catalog.setSurfaceSyncListener(null);
       await catalog.dispose();
     }
   });
@@ -2936,10 +3126,6 @@ describe("WorkspaceSessionCatalog", () => {
   it("applies model and reasoning changes only to the targeted surface", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    const surfaceSyncs: SurfaceSyncMessage[] = [];
-    catalog.setSurfaceSyncListener((payload) => {
-      surfaceSyncs.push(payload);
-    });
 
     try {
       const created = await catalog.createSession({ title: "Surface Settings" }, DEFAULTS);
@@ -2948,39 +3134,64 @@ describe("WorkspaceSessionCatalog", () => {
         objective: "Own handler-local model and reasoning state.",
       });
       await catalog.openSurface(handler.target);
+      const orchestrator = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      const orchestratorModel = orchestrator.model;
+      const orchestratorReasoning = orchestrator.thinkingLevel;
 
       await setSurfaceModel(catalog, handler.target, "gpt-4.1-mini");
       await setSurfaceThoughtLevel(catalog, handler.target, "high");
 
-      const openSnapshots = await catalog.listOpenSurfaceSnapshots();
-      const orchestratorSnapshot =
-        openSnapshots.find(
-          (snapshot) => snapshot.target.surfacePiSessionId === created.target.surfacePiSessionId,
-        ) ?? null;
-      const handlerSnapshot =
-        openSnapshots.find(
-          (snapshot) => snapshot.target.surfacePiSessionId === handler.target.surfacePiSessionId,
-        ) ?? null;
-
-      expect(orchestratorSnapshot?.model).toBe(created.model);
-      expect(orchestratorSnapshot?.reasoningEffort).toBe(created.reasoningEffort);
-      expect(handlerSnapshot?.reasoningEffort).toBe("high");
-
-      const handlerUpdates = surfaceSyncs.filter(
-        (payload) =>
-          payload.reason === "surface.updated" &&
-          payload.target.surfacePiSessionId === handler.target.surfacePiSessionId,
-      );
-      expect(handlerUpdates).toHaveLength(2);
-      expect(handlerUpdates[0]?.snapshot?.model).toBe("gpt-4.1-mini");
-      expect(handlerUpdates[1]?.snapshot?.reasoningEffort).toBe("high");
-      expect(
-        surfaceSyncs.some(
-          (payload) => payload.target.surfacePiSessionId === created.target.surfacePiSessionId,
-        ),
-      ).toBe(false);
+      const handlerManaged = getManagedSurface(catalog, handler.target.surfacePiSessionId);
+      expect(orchestrator.model).toBe(orchestratorModel);
+      expect(orchestrator.thinkingLevel).toBe(orchestratorReasoning);
+      expect(handlerManaged.model).toBe("gpt-4.1-mini");
+      expect(handlerManaged.thinkingLevel).toBe("high");
     } finally {
-      catalog.setSurfaceSyncListener(null);
+      await catalog.dispose();
+    }
+  });
+
+  it("resolves active orchestrator prompt defaults from structured state", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "State-owned defaults" }, DEFAULTS);
+      const storedDefaults = await catalog.resolvePromptDefaultsForTarget(created.target);
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      managed.provider = "live-pi-provider";
+      managed.model = "live-pi-model";
+      managed.thinkingLevel = "xhigh";
+
+      expect(await catalog.resolvePromptDefaultsForTarget(created.target)).toEqual(storedDefaults);
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("does not copy unrelated live pi metadata into structured session defaults", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Narrow defaults commit" }, DEFAULTS);
+      const store = getStructuredSessionStore(catalog);
+      const before = structuredClone(store.getSessionState(created.target.workspaceSessionId).pi);
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      managed.agentProfileId = "live-pi-profile";
+      managed.loadedExtensionIds = ["live-pi-loaded"];
+      managed.availableExtensionIds = ["live-pi-available"];
+      managed.generatedAgentContextFingerprint = "live-pi-fingerprint";
+
+      await setSurfaceThoughtLevel(catalog, created.target, "high");
+
+      const after = store.getSessionState(created.target.workspaceSessionId).pi;
+      expect(after.reasoningEffort).toBe("high");
+      expect(after.orchestratorAgentProfileId).toBe(before.orchestratorAgentProfileId);
+      expect(after.loadedExtensionIds).toEqual(before.loadedExtensionIds);
+      expect(after.availableExtensionIds).toEqual(before.availableExtensionIds);
+      expect(after.generatedAgentContextFingerprint).toBe(before.generatedAgentContextFingerprint);
+    } finally {
       await catalog.dispose();
     }
   });
@@ -2988,27 +3199,17 @@ describe("WorkspaceSessionCatalog", () => {
   it("clamps surface reasoning when a model change no longer supports the current level", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    const surfaceSyncs: SurfaceSyncMessage[] = [];
-    catalog.setSurfaceSyncListener((payload) => {
-      surfaceSyncs.push(payload);
-    });
 
     try {
       const created = await catalog.createSession({ title: "Reasoning Clamp" }, DEFAULTS);
       await setSurfaceThoughtLevel(catalog, created.target, "high");
       await setSurfaceModel(catalog, created.target, "amazon.nova-2-lite-v1:0", "amazon-bedrock");
 
-      const [snapshot] = await catalog.listOpenSurfaceSnapshots();
-      expect(snapshot?.provider).toBe("amazon-bedrock");
-      expect(snapshot?.model).toBe("amazon.nova-2-lite-v1:0");
-      expect(snapshot?.reasoningEffort).toBe("off");
-
-      const latestUpdate = surfaceSyncs
-        .filter((payload) => payload.reason === "surface.updated")
-        .at(-1);
-      expect(latestUpdate?.snapshot?.reasoningEffort).toBe("off");
+      const managed = getManagedSurface(catalog, created.target.surfacePiSessionId);
+      expect(managed.provider).toBe("amazon-bedrock");
+      expect(managed.model).toBe("amazon.nova-2-lite-v1:0");
+      expect(managed.thinkingLevel).toBe("off");
     } finally {
-      catalog.setSurfaceSyncListener(null);
       await catalog.dispose();
     }
   });
@@ -3089,7 +3290,10 @@ describe("WorkspaceSessionCatalog", () => {
         reasoningEffort: "medium",
       });
       expect(fixedAfter?.extensionUsage.smithers).toBeUndefined();
-      expect(fixedExtensionResult.snapshot?.loadedExtensionIds).toContain("smithers");
+      expect(fixedExtensionResult).toEqual({ ok: true, target: fixed.target });
+      expect(
+        getManagedSurface(catalog, fixed.target.surfacePiSessionId).loadedExtensionIds,
+      ).toContain("smithers");
     } finally {
       await catalog.dispose();
     }

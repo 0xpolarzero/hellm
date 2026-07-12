@@ -10,6 +10,11 @@ import { inspect } from "node:util";
 import * as ts from "typescript";
 import type { SvvyActorKind } from "./actor-capabilities";
 import type { AgentSettingsStore } from "./agent-settings-store";
+import {
+  createAgentProfileMutationStore,
+  type AgentProfileAuthoritySnapshot,
+  type AgentProfileMutation,
+} from "./agent-profile-mutation-store";
 import type { AppLoggerEvent } from "./app-logger";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
@@ -197,6 +202,8 @@ type ExecuteTypescriptToolOptions = {
   workflowsModelCatalog?: SvvyxWorkflowsModelCatalogReader;
   workflowsSourceRoot?: string;
   agentSettingsStore?: AgentSettingsStore;
+  agentProfileSnapshot?: AgentProfileAuthoritySnapshot;
+  applyAgentProfileMutations?: (mutations: readonly AgentProfileMutation[]) => Promise<void>;
   env?: NodeJS.ProcessEnv;
   extensionsBuildRoot?: string;
   extensionsCliProbe?: SvvyxExtensionsCliProbe;
@@ -342,6 +349,8 @@ export function createExecuteTypescriptTool(
         workflowsModelCatalog: options.workflowsModelCatalog,
         workflowsSourceRoot: options.workflowsSourceRoot,
         agentSettingsStore: options.agentSettingsStore,
+        agentProfileSnapshot: options.agentProfileSnapshot,
+        applyAgentProfileMutations: options.applyAgentProfileMutations,
         env: options.env,
         extensionsBuildRoot: options.extensionsBuildRoot,
         extensionsCliProbe: options.extensionsCliProbe,
@@ -390,6 +399,8 @@ export async function runExecuteTypescript(input: {
   workflowsModelCatalog?: SvvyxWorkflowsModelCatalogReader;
   workflowsSourceRoot?: string;
   agentSettingsStore?: AgentSettingsStore;
+  agentProfileSnapshot?: AgentProfileAuthoritySnapshot;
+  applyAgentProfileMutations?: (mutations: readonly AgentProfileMutation[]) => Promise<void>;
   env?: NodeJS.ProcessEnv;
   extensionsBuildRoot?: string;
   extensionsCliProbe?: SvvyxExtensionsCliProbe;
@@ -583,6 +594,8 @@ export async function runExecuteTypescript(input: {
     workflowsModelCatalog: input.workflowsModelCatalog,
     workflowsSourceRoot: input.workflowsSourceRoot,
     agentSettingsStore: input.agentSettingsStore,
+    agentProfileSnapshot: input.agentProfileSnapshot,
+    applyAgentProfileMutations: input.applyAgentProfileMutations,
     env: input.env,
     extensionsBuildRoot: input.extensionsBuildRoot,
     extensionsCliProbe: input.extensionsCliProbe,
@@ -1623,6 +1636,8 @@ function createExecuteTypescriptExtensions(input: {
   workflowsModelCatalog?: SvvyxWorkflowsModelCatalogReader;
   workflowsSourceRoot?: string;
   agentSettingsStore?: AgentSettingsStore;
+  agentProfileSnapshot?: AgentProfileAuthoritySnapshot;
+  applyAgentProfileMutations?: (mutations: readonly AgentProfileMutation[]) => Promise<void>;
   env?: NodeJS.ProcessEnv;
   extensionsBuildRoot?: string;
   extensionsCliProbe?: SvvyxExtensionsCliProbe;
@@ -1780,8 +1795,16 @@ function createExecuteTypescriptExtensions(input: {
         let command: string | null = null;
         try {
           command = normalizeWorkflowsClientCommand(commandId, rawInput);
+          const agentProfileStore = input.agentProfileSnapshot
+            ? createAgentProfileMutationStore({
+                snapshot: input.agentProfileSnapshot,
+                networkAccess:
+                  input.agentSettingsStore?.getState().appPreferences.networkAccess ?? true,
+              })
+            : undefined;
           const result = await runSvvyxWorkflowsCommand({
             agentSettingsStore: input.agentSettingsStore,
+            agentProfileStore,
             command,
             cwd: input.cwd,
             env: input.env,
@@ -1792,8 +1815,16 @@ function createExecuteTypescriptExtensions(input: {
             extensionsGeneratedPackagePath: input.workflowsExtensionsGeneratedPackagePath,
             generatedPackagePath: input.workflowsGeneratedPackagePath,
             readModelCatalog: input.workflowsModelCatalog,
+            sourceCommandId: childCommand.id,
             sourceRoot: input.workflowsSourceRoot,
           });
+          const agentProfileMutations = agentProfileStore?.takeMutations() ?? [];
+          if (agentProfileMutations.length > 0) {
+            if (!input.applyAgentProfileMutations) {
+              throw new Error("Workflow-agent saves require runtime-owned source edit authority.");
+            }
+            await input.applyAgentProfileMutations(agentProfileMutations);
+          }
           if (result.commandFacts.workflowBuildOk === true) {
             input.onAppLog?.({
               level: "info",

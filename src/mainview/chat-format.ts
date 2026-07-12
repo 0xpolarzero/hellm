@@ -1,4 +1,4 @@
-import type { Model, Usage } from "@mariozechner/pi-ai";
+import type { RendererTranscriptUsage } from "../shared/renderer-transcript";
 
 const TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
@@ -9,24 +9,6 @@ export function formatCost(cost: number): string {
   return `$${cost.toFixed(4)}`;
 }
 
-function formatCostRate(value: number): string {
-  if (value >= 100) return value.toFixed(0);
-  if (value >= 10) return value.toFixed(1).replace(/\.0$/, "");
-  if (value >= 1) return value.toFixed(2).replace(/\.?0+$/, "");
-  return value.toFixed(3).replace(/\.?0+$/, "");
-}
-
-export function formatModelCost(model: Pick<Model<any>, "cost"> | null | undefined): string {
-  const cost = model?.cost;
-  if (!cost) return "Free";
-
-  const input = cost.input || 0;
-  const output = cost.output || 0;
-  if (input === 0 && output === 0) return "Free";
-
-  return `$${formatCostRate(input)}/$${formatCostRate(output)}`;
-}
-
 export function formatTokenCount(count: number): string {
   if (count < 1000) return count.toString();
   if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
@@ -34,7 +16,7 @@ export function formatTokenCount(count: number): string {
   return `${(count / 1000000).toFixed(1)}m`;
 }
 
-export function formatUsage(usage: Usage | null | undefined): string {
+export function formatUsage(usage: RendererTranscriptUsage | null | undefined): string {
   if (!usage) return "";
 
   const parts: string[] = [];

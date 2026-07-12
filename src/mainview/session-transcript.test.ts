@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import type {
+  RendererCommandResultEntry,
+  RendererConversationEntry,
+  RendererTranscriptAssistantEntry,
+  RendererTranscriptToolCallContent,
+} from "../shared/renderer-transcript";
 import { buildSessionTranscriptExport } from "./session-transcript";
 
 function zeroUsage() {
@@ -20,7 +24,7 @@ function zeroUsage() {
   };
 }
 
-function userMessage(timestamp: number, text: string): AgentMessage {
+function userMessage(timestamp: number, text: string): RendererConversationEntry {
   return {
     role: "user",
     timestamp,
@@ -28,9 +32,13 @@ function userMessage(timestamp: number, text: string): AgentMessage {
   };
 }
 
-function toolCall(id: string, name: string, argumentsValue: Record<string, unknown>): ToolCall {
+function toolCall(
+  id: string,
+  name: string,
+  argumentsValue: Record<string, unknown>,
+): RendererTranscriptToolCallContent {
   return {
-    type: "toolCall",
+    type: "tool-call",
     id,
     name,
     arguments: argumentsValue,
@@ -42,9 +50,9 @@ function assistantMessage(
   options: {
     responseId?: string;
     errorMessage?: string;
-    toolCalls?: ToolCall[];
+    toolCalls?: RendererTranscriptToolCallContent[];
   } = {},
-): AssistantMessage {
+): RendererTranscriptAssistantEntry {
   return {
     role: "assistant",
     timestamp,
@@ -63,9 +71,9 @@ function assistantMessage(
   };
 }
 
-function toolResultMessage(timestamp: number): ToolResultMessage {
+function toolResultMessage(timestamp: number): RendererCommandResultEntry {
   return {
-    role: "toolResult",
+    role: "command-result",
     toolCallId: "tool-call-1",
     toolName: "read",
     timestamp,
@@ -166,13 +174,13 @@ describe("session transcript export", () => {
           stopReason: "toolUse",
         },
         {
-          role: "toolResult",
+          role: "command-result",
           toolCallId: "tool-call-1",
           toolName: "execute_typescript",
           timestamp: 3,
           isError: false,
           content: [{ type: "text", text: '{"success":false}' }],
-        } satisfies ToolResultMessage,
+        } satisfies RendererCommandResultEntry,
         {
           ...assistantMessage(4, {
             toolCalls: [

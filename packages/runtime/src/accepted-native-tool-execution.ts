@@ -9,8 +9,6 @@ import type {
 } from "./accepted-native-tool-execution-service";
 import { RuntimeAcceptedNativeToolExecution } from "./accepted-native-tool-execution-service";
 import type { RunAcceptedLoadExtensionToolCallResult } from "./load-extension-operation";
-import type { RunAcceptedRequestUserInputToolCallInput } from "./request-user-input-operation";
-import type { RunAcceptedRequestUserInputToolCallResult } from "./request-user-input-operation";
 
 export type AcceptedDirectToolLaunchHandle = {
   facts: SandboxLaunchFacts;
@@ -84,20 +82,6 @@ export function runAcceptedLoadExtension<RuntimeContext, RuntimeError>(
       const acceptedTools: RuntimeAcceptedNativeToolExecutionService =
         yield* RuntimeAcceptedNativeToolExecution;
       return yield* acceptedTools.runLoadExtension(input);
-    }),
-  );
-}
-
-export function runAcceptedRequestUserInput<RuntimeContext, RuntimeError>(
-  managedRuntime: ManagedRuntime.ManagedRuntime<RuntimeContext, RuntimeError>,
-  input: RunAcceptedRequestUserInputToolCallInput,
-): Promise<RunAcceptedRequestUserInputToolCallResult> {
-  return runManagedRuntimeEffect(
-    managedRuntime,
-    Effect.gen(function* () {
-      const acceptedTools: RuntimeAcceptedNativeToolExecutionService =
-        yield* RuntimeAcceptedNativeToolExecution;
-      return yield* acceptedTools.runRequestUserInput(input);
     }),
   );
 }

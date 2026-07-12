@@ -23,6 +23,7 @@ import {
   type RuntimeSurfaceScopeServiceService,
 } from "./surface-runtime-scope-service";
 import { RuntimeEventBus } from "./runtime-event-bus";
+import { RuntimeShutdownAdmission } from "./runtime-shutdown-admission";
 
 export interface RuntimeWorkflowTaskAgentBridgeServiceService {
   runTaskAgent(
@@ -57,18 +58,23 @@ export const layerRuntimeWorkflowTaskAgentBridgeService = Layer.effect(
     const queueDispatcher = yield* RuntimeSurfaceQueueDispatcherService;
     const eventBus = yield* RuntimeEventBus;
     const verifier = yield* RuntimeWorkflowTaskAgentBridgeBearerVerifier;
+    const shutdownAdmission = yield* RuntimeShutdownAdmission;
 
     return RuntimeWorkflowTaskAgentBridgeService.of({
       runTaskAgent: (input) =>
-        runWorkflowTaskAgent({
-          input,
-          workflowTaskState,
-          surfaceScopes,
-          generatedContextRefresh,
-          queueDispatcher,
-          eventBus,
-          verifier,
-        }),
+        shutdownAdmission.assertAccepting("runtime.workflowTaskAgentBridge.runTaskAgent").pipe(
+          Effect.andThen(
+            runWorkflowTaskAgent({
+              input,
+              workflowTaskState,
+              surfaceScopes,
+              generatedContextRefresh,
+              queueDispatcher,
+              eventBus,
+              verifier,
+            }),
+          ),
+        ),
     });
   }),
 );

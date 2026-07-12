@@ -2,4 +2,5 @@ export type RuntimeSurfaceQueueWakeReason =
   | "message-submitted"
   | "request-input-answer-queued"
   | "queue-steered"
-  | "runtime-queue-inserted";
+  | "runtime-queue-inserted"
+  | "startup-recovery";

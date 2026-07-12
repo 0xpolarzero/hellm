@@ -37,6 +37,14 @@ export function sessionNavigationInvalidation(workspaceId: string): StateInvalid
   };
 }
 
+export function promptHistoryInvalidation(workspaceId: string): StateInvalidationDescriptor {
+  return {
+    scope: "workspace",
+    workspaceId: workspaceId as WorkspaceId,
+    invalidation: { model: "promptHistory" },
+  };
+}
+
 export function workspaceLayoutInvalidation(
   workspaceId: string,
   layoutIds: readonly WorkspaceLayoutSlotId[],

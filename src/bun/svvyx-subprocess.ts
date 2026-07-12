@@ -4,6 +4,11 @@ import type { AgentSettingsState } from "../shared/agent-settings";
 import { DEFAULT_AGENT_SETTINGS_STATE } from "../shared/agent-settings";
 import type { AppLoggerEvent } from "./app-logger";
 import type { AgentSettingsStore } from "./agent-settings-store";
+import {
+  createAgentProfileMutationStore,
+  type AgentProfileAuthoritySnapshot,
+  type AgentProfileMutation,
+} from "./agent-profile-mutation-store";
 import { createMacOsKeychainExtensionEnvSecretStore } from "./extension-env-secret-store";
 import {
   formatSvvyxArtifactsError,
@@ -29,6 +34,7 @@ import type {
 } from "@svvy/core";
 
 type SvvyxSubprocessContext = {
+  agentProfileSnapshot?: AgentProfileAuthoritySnapshot | null;
   agentSettingsState?: AgentSettingsState | null;
   canRequestArtifactOpen?: boolean;
   cwd: string;
@@ -47,6 +53,7 @@ type SvvyxSubprocessContext = {
 };
 
 type SvvyxSubprocessResult = {
+  agentProfileMutations?: readonly AgentProfileMutation[];
   agentSettingsState?: AgentSettingsState;
   appActions: SvvyxSubprocessAppAction[];
   appLogEvents: AppLoggerEvent[];
@@ -86,6 +93,12 @@ async function main(): Promise<number> {
   const intents: SvvyxSubprocessIntent[] = [];
   const progressEvents: SvvyxSubprocessProgressEvent[] = [];
   const agentSettingsStore = createSnapshotAgentSettingsStore(context.agentSettingsState);
+  const agentProfileStore = context.agentProfileSnapshot
+    ? createAgentProfileMutationStore({
+        snapshot: context.agentProfileSnapshot,
+        networkAccess: agentSettingsStore.getState().appPreferences.networkAccess,
+      })
+    : null;
   const envSecretStore = createMacOsKeychainExtensionEnvSecretStore();
   const extensionContextImpactState = createTransportRuntimeEffectRequestState(intents);
 
@@ -119,6 +132,7 @@ async function main(): Promise<number> {
       output = { ok: true };
     } else if (namespace === "workflows") {
       const result = await runSvvyxWorkflowsCommand({
+        agentProfileStore: agentProfileStore ?? undefined,
         agentSettingsStore,
         command,
         cwd: context.cwd,
@@ -131,6 +145,7 @@ async function main(): Promise<number> {
           ? () => [...context.workflowModelCatalog!]
           : undefined,
         sourceRoot: context.workflowsSourceRoot,
+        sourceCommandId: context.sourceCommandId ?? undefined,
         workspaceCwd: context.workspaceCwd,
       });
       output = result.output;
@@ -145,6 +160,7 @@ async function main(): Promise<number> {
       }
     } else if (namespace === "extensions") {
       const result = await runSvvyxExtensionsCommand({
+        agentProfileStore: agentProfileStore ?? undefined,
         agentSettingsStore,
         buildRoot: context.extensionsBuildRoot,
         command,
@@ -172,6 +188,9 @@ async function main(): Promise<number> {
     writeResult(
       context,
       {
+        ...(agentProfileStore && agentProfileStore.takeMutations().length > 0
+          ? { agentProfileMutations: agentProfileStore.takeMutations() }
+          : {}),
         ...(agentSettingsStore.dirty()
           ? { agentSettingsState: agentSettingsStore.getState() }
           : {}),
@@ -208,6 +227,9 @@ async function main(): Promise<number> {
     writeResult(
       context,
       {
+        ...(agentProfileStore && agentProfileStore.takeMutations().length > 0
+          ? { agentProfileMutations: agentProfileStore.takeMutations() }
+          : {}),
         ...(agentSettingsStore.dirty()
           ? { agentSettingsState: agentSettingsStore.getState() }
           : {}),
@@ -250,48 +272,7 @@ function createSnapshotAgentSettingsStore(
   return {
     dirty: () => dirty,
     getState: () => structuredClone(state),
-    setAgentProfile: (profile) =>
-      setState({
-        ...state,
-        agents: {
-          ...state.agents,
-          orchestrators: state.agents.orchestrators.map((candidate) =>
-            candidate.id === profile.id ? profile : candidate,
-          ),
-        },
-      }),
-    deleteAgentProfile: (id) =>
-      setState({
-        ...state,
-        agents: {
-          ...state.agents,
-          orchestrators: state.agents.orchestrators.filter((profile) => profile.id !== id),
-        },
-      }),
-    reorderOrchestratorProfiles: (ids) =>
-      setState({
-        ...state,
-        agents: {
-          ...state.agents,
-          orchestrators: ids
-            .map((id) => state.agents.orchestrators.find((profile) => profile.id === id))
-            .filter((profile): profile is (typeof state.agents.orchestrators)[number] => !!profile),
-        },
-      }),
-    setWorkflowAgent: (key, settings) =>
-      setState({ ...state, workflowAgents: { ...state.workflowAgents, [key]: settings } }),
-    deleteWorkflowAgent: (key) => {
-      const workflowAgents = { ...(state.workflowAgents as Record<string, unknown>) };
-      delete workflowAgents[key];
-      return setState({
-        ...state,
-        workflowAgents: workflowAgents as AgentSettingsState["workflowAgents"],
-      });
-    },
-    setExtensionDefaults: (extensionDefaults) => setState({ ...state, extensionDefaults }),
     setExtensionEnv: (extensionEnv) => setState({ ...state, extensionEnv }),
-    setRequestUserInput: (requestUserInput) => setState({ ...state, requestUserInput }),
-    setAppPreferences: (appPreferences) => setState({ ...state, appPreferences }),
     hydrateStateOwnedAppPreferences: (appPreferences) => setState({ ...state, appPreferences }),
   };
 }
@@ -437,6 +418,9 @@ function writeResult(
     diagnostics: result.ok ? [] : ["svvyx subprocess command failed"],
     appActions: result.appActions,
     appLogEvents: result.appLogEvents,
+    ...(result.agentProfileMutations
+      ? { agentProfileMutations: result.agentProfileMutations }
+      : {}),
     ...(result.agentSettingsState ? { agentSettingsState: result.agentSettingsState } : {}),
   };
   const unsignedEnvelope = {

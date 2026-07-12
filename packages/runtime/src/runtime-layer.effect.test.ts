@@ -17,11 +17,13 @@ import {
   RuntimeEventStreamError,
   RuntimeGeneratedPackageStatePort,
   RuntimeQueueStatePort,
+  RuntimeRecoveryStatePort,
   RuntimeRequestStatePort,
   RuntimeSessionWaitStatePort,
   RuntimeSourceStatePort,
   RuntimeSurfaceLifecycleStatePort,
   RuntimeThreadStatePort,
+  RuntimeTranscriptStatePort,
   RuntimeTurnStatePort,
   RuntimeWorkflowTaskStatePort,
   RuntimeWorkspaceStatePort,
@@ -29,6 +31,7 @@ import {
   PiRuntimePathsPort,
   PiSessionReferencePort,
   ProviderAuthPort,
+  ProviderAuthStatusStatePort,
   SandboxPolicySource,
   StateCommandPostCommitNotificationPort,
   StateContractError,
@@ -46,7 +49,12 @@ import {
   type GeneratedPackageBuildPlanResult,
   type GeneratedPackageName,
   type GeneratedPackagesRefreshResult,
+  type EnsureRuntimeRecoveryWorkInput,
   type IsoDateTimeString,
+  type ReasoningEffort,
+  type RecordRuntimeSourceDeleteInput,
+  type RecordRuntimeSourceSaveInput,
+  type RecordRuntimeWorkflowAgentSourceSaveInput,
   type RefreshGeneratedContextRequest,
   type RefreshGeneratedPackagesRequest,
   type RuntimeEvent,
@@ -56,20 +64,32 @@ import {
   type RuntimeEventSequence,
   type RuntimeGeneratedPackageFactRecord,
   type RuntimeGeneratedPackageStatePortService,
+  type RuntimeRecoveryStatePortService,
+  type RuntimeRecoveryWorkRecord,
+  type RuntimeSourceFactRecord,
+  type RuntimeSourceScanFactRecord,
+  type RuntimeSourceStatePortService,
   type RuntimeActorExtensionBindingStatePortService,
   type RuntimePromptBindingRecord,
   type RuntimeThreadStatePortService,
+  type RuntimeTranscriptStatePortService,
+  type RuntimeTranscriptStreamCursor,
   type RuntimeOwnerId,
   type SandboxPolicySourceService,
   type SourceInvalidationHint,
+  type SourceEditSession,
   type SourceReconcileRequest,
   type StateCommandReceipt,
   type StateInvalidationDescriptor,
+  type ProviderAuthStatusStatePortService,
   type SurfacePiSessionId,
   type WorkspaceId,
   type WorkspaceSessionId,
+  type WorkflowAgentSourceDeleteResult,
+  type WorkflowAgentSourceExportName,
+  type WorkflowAgentSourceLifecycleResult,
 } from "@svvy/core";
-import { layer as PiAdapterLayer } from "@svvy/pi-adapter";
+import { PiAdapter, layer as PiAdapterLayer } from "@svvy/pi-adapter";
 import {
   Extensions,
   layer,
@@ -92,6 +112,8 @@ import {
   RuntimeSourceInvalidationScanPort,
   makeRuntimeService,
   type RuntimeLayerCommandControlPortService,
+  type RuntimeLayerModelResolverPortService,
+  type RuntimeLayerProviderAuthPortService,
 } from "./runtime-layer";
 import { RuntimeEventBus } from "./runtime-event-bus";
 import { createRuntimeLayerConfigLayer, defaultRuntimeLayerConfig } from "./runtime-layer-config";
@@ -101,6 +123,7 @@ import { RuntimeRequestInputWaitService } from "./runtime-request-input-wait-ser
 import { RuntimePromptDefaultsService } from "./runtime-prompt-defaults-service";
 import { RuntimeQueueWakeService } from "./runtime-queue-wake-service";
 import { RuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
+import { RuntimeSourceReconcileRecoveryWorker } from "./runtime-source-reconcile-recovery-worker";
 import { RuntimeSurfaceEventPublisher } from "./runtime-surface-event-publisher";
 import {
   RuntimeWorkflowTaskAgentBridgeBearerVerifier,
@@ -112,6 +135,10 @@ import {
   runtimeWorkspaceScopeOwnerKey,
 } from "./workspace-runtime-scope-service";
 import { RuntimeSurfaceScopeService } from "./surface-runtime-scope-service";
+import {
+  RuntimeShutdownAdmission,
+  layerRuntimeShutdownAdmission,
+} from "./runtime-shutdown-admission";
 
 const workspaceId = "workspace_runtime_layer_effect" as WorkspaceId;
 const workspaceCwd = "/tmp/svvy-runtime-layer-effect" as AbsolutePath;
@@ -470,6 +497,55 @@ describe("@svvy/runtime Runtime.layer", () => {
     },
   );
 
+  it.effect("routes startup queue replay through the runtime-owned queue wake service", () => {
+    const published: StateInvalidationDescriptor[][] = [];
+    const queueWakes: Array<Parameters<RuntimeQueueWakeService["Service"]["wakeSurface"]>[0]> = [];
+
+    return Effect.gen(function* () {
+      const runtime = yield* Runtime;
+
+      yield* runtime.workspaceRecovery.wakeSurfaceQueue({ target });
+
+      assert.deepStrictEqual(queueWakes, [{ target, reason: "startup-recovery" }]);
+    }).pipe(Effect.provide(testRuntimeLayer({ published, queueWakes })));
+  });
+
+  it.effect("rejects public Runtime calls after the shared shutdown marker", () => {
+    const published: StateInvalidationDescriptor[][] = [];
+    let workspaceAcquisitions = 0;
+    return Effect.gen(function* () {
+      const runtime = yield* Runtime;
+      const shutdown = yield* RuntimeShutdownAdmission;
+      yield* shutdown.runShutdown(
+        Effect.succeed({
+          status: "drained",
+          interruptedTurns: 0,
+          interruptedCommands: 0,
+          releasedQueueClaims: 0,
+          recoveryRowsScheduled: 0,
+        }),
+      );
+
+      const error = yield* runtime.workspaces
+        .acquire({ cwd: workspaceCwd, owner, openReason: "test" })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error.reason, "runtime-shutdown");
+      assert.strictEqual(workspaceAcquisitions, 0);
+      assert.deepStrictEqual(published, []);
+    }).pipe(
+      Effect.provide(
+        testRuntimeLayer({
+          published,
+          onAcquireWorkspace: () => {
+            workspaceAcquisitions += 1;
+            return workspaceResult("existing");
+          },
+        }),
+      ),
+    );
+  });
+
   it.effect(
     "routes workspace and surface lifecycle through state ports and publishes after-commit invalidations",
     () => {
@@ -477,6 +553,7 @@ describe("@svvy/runtime Runtime.layer", () => {
       const livePublished: RuntimeEvent[] = [];
       const surfaceEventActions: string[] = [];
       const acquired: AcquireWorkspaceInput[] = [];
+      const requestInputRestoreCalls: string[] = [];
       const createdSurfaces: CreateOrchestratorSurfaceInput[] = [];
       const closedSurfaces: CloseSurfaceInput[] = [];
 
@@ -507,6 +584,7 @@ describe("@svvy/runtime Runtime.layer", () => {
         const closedSurface = yield* runtime.surfaces.close(closeSurfaceInput);
 
         assert.deepStrictEqual(acquired, [workspaceInput]);
+        assert.deepStrictEqual(requestInputRestoreCalls, ["restore"]);
         assert.deepStrictEqual(createdSurfaces, [createSurfaceInput]);
         assert.deepStrictEqual(closedSurfaces, [closeSurfaceInput]);
         assert.deepStrictEqual(acquiredWorkspace, workspaceResult("created"));
@@ -569,6 +647,7 @@ describe("@svvy/runtime Runtime.layer", () => {
               acquired.push(input);
               return workspaceResult("created");
             },
+            onRestoreOpenBlockingRequests: () => requestInputRestoreCalls.push("restore"),
             onCreateSurface: (input) => {
               createdSurfaces.push(input);
               return surfaceResult;
@@ -692,6 +771,561 @@ describe("@svvy/runtime Runtime.layer", () => {
       ),
     );
   });
+
+  it.effect(
+    "orchestrates workflow-agent create, duplicate, and delete through model admission, durable source facts, and invalidation hints",
+    () => {
+      const published: StateInvalidationDescriptor[][] = [];
+      const saved: RecordRuntimeSourceSaveInput[] = [];
+      const workflowSaves: RecordRuntimeWorkflowAgentSourceSaveInput[] = [];
+      const deleted: RecordRuntimeSourceDeleteInput[] = [];
+      const hints: SourceInvalidationHint[] = [];
+      const resolvedModels: Array<{ readonly provider: string; readonly model: string }> = [];
+      const sourceFacts = new Map<string, RuntimeSourceFactRecord>();
+      const original = workflowAgentSession("reviewerAgent", "Reviewer", "version_original");
+      sourceFacts.set(original.sourceId, runtimeSourceFact(original));
+
+      const extensions = Extensions.of({
+        sources: {
+          openEditSession: (
+            input: Parameters<ExtensionsService["sources"]["openEditSession"]>[0],
+          ) =>
+            Effect.sync(() => {
+              const session =
+                input.sourceId === original.sourceId
+                  ? original
+                  : workflowAgentSession(input.sourceId, "Reviewer copy", "version_copy");
+              return session;
+            }),
+          saveEditSession: () =>
+            Effect.succeed({
+              status: "saved",
+              sourceVersion: "version_saved",
+              fingerprint: "version_saved",
+              diagnostics: [],
+              reconcileRequired: true,
+            }),
+          createWorkflowAgent: (
+            input: Parameters<ExtensionsService["sources"]["createWorkflowAgent"]>[0],
+          ) =>
+            Effect.succeed(
+              workflowAgentLifecycleResult(
+                "created",
+                workflowAgentSession(
+                  input.draft.exportName,
+                  input.draft.displayName,
+                  "version_created",
+                ),
+              ),
+            ),
+          duplicateWorkflowAgent: (
+            input: Parameters<ExtensionsService["sources"]["duplicateWorkflowAgent"]>[0],
+          ) =>
+            Effect.succeed(
+              workflowAgentLifecycleResult(
+                "duplicated",
+                workflowAgentSession(
+                  input.draftPatch.exportName,
+                  input.draftPatch.displayName ?? "Reviewer copy",
+                  "version_copy",
+                ),
+              ),
+            ),
+          deleteWorkflowAgent: (
+            input: Parameters<ExtensionsService["sources"]["deleteWorkflowAgent"]>[0],
+          ) =>
+            Effect.succeed({
+              status: "deleted",
+              sourceKind: "workflow-agent",
+              sourceId: input.sourceId,
+              deletedPath:
+                `/tmp/svvy-runtime-layer-effect/workflows/agents/${input.sourceId}.agent.json` as AbsolutePath,
+              previousSourceVersion: input.expectedSourceVersion,
+              fileWriteReceipt: {
+                path: `/tmp/svvy-runtime-layer-effect/workflows/agents/${input.sourceId}.agent.json` as AbsolutePath,
+                deleted: true,
+              },
+              reconcileRequired: true,
+            } satisfies WorkflowAgentSourceDeleteResult),
+        },
+      } as unknown as ExtensionsService);
+      const sourceState = sourceStatePort({
+        read: (sourceId) => sourceFacts.get(sourceId) ?? null,
+        workflowSave: (input) => {
+          workflowSaves.push(input);
+          saved.push(input.source);
+          const fact = runtimeSourceFactFromSave(input.source);
+          sourceFacts.set(input.source.sourceId, fact);
+          return fact;
+        },
+        delete: (record) => {
+          deleted.push(record);
+          const current = sourceFacts.get(record.sourceId);
+          if (!current) throw new Error(`Missing source fact ${record.sourceId}`);
+          const fact = { ...current, deletedAt: record.deletedAt, updatedAt: record.deletedAt };
+          sourceFacts.set(record.sourceId, fact);
+          return fact;
+        },
+      });
+      const modelResolver: RuntimeLayerModelResolverPortService = {
+        resolveModel: (input) =>
+          Effect.sync(() => {
+            resolvedModels.push(input);
+            return {
+              ...input,
+              supportedReasoning: ["off", "low", "medium", "high"] as const,
+            };
+          }),
+      };
+
+      return Effect.gen(function* () {
+        const runtime = yield* Runtime;
+        const savedResult = yield* runtime.sourceEdits.save({
+          workspaceId,
+          source: {
+            sourceKind: "workflow-agent",
+            sourceId: original.sourceId,
+            expectedSourceVersion: original.sourceVersion,
+            text: workflowAgentText({
+              id: original.sourceId,
+              label: "Revised reviewer",
+            }),
+            saveMode: "compare-and-swap",
+          },
+        });
+        const created = yield* runtime.sourceEdits.createWorkflowAgent({
+          workspaceId,
+          source: {
+            draft: {
+              exportName: "strictReviewer" as WorkflowAgentSourceExportName,
+              displayName: "Strict reviewer",
+              provider: "openai",
+              model: "gpt-5.4",
+              reasoning: { effort: "high" },
+              instructionText: "Review strictly.",
+            },
+            sourceOwner: "agents-pane",
+          },
+        });
+        const duplicated = yield* runtime.sourceEdits.duplicateWorkflowAgent({
+          workspaceId,
+          source: {
+            sourceId: "reviewerAgent" as WorkflowAgentSourceExportName,
+            draftPatch: {
+              exportName: "reviewerCopy" as WorkflowAgentSourceExportName,
+              displayName: "Reviewer copy",
+            },
+            sourceOwner: "headless",
+          },
+        });
+        const removed = yield* runtime.sourceEdits.deleteWorkflowAgent({
+          workspaceId,
+          source: {
+            sourceId: "reviewerCopy" as WorkflowAgentSourceExportName,
+            expectedSourceVersion: duplicated.session.sourceVersion,
+            sourceOwner: "agents-pane",
+          },
+        });
+
+        assert.strictEqual(savedResult.status, "saved");
+        assert.strictEqual(created.status, "created");
+        assert.strictEqual(duplicated.status, "duplicated");
+        assert.strictEqual(removed.status, "deleted");
+        assert.deepStrictEqual(resolvedModels, [
+          { provider: "openai", model: "gpt-5.4" },
+          { provider: "openai", model: "gpt-5.4" },
+          { provider: "openai", model: "gpt-5.4" },
+        ]);
+        assert.deepStrictEqual(
+          saved.map((record) => record.sourceId),
+          ["reviewerAgent", "strictReviewer", "reviewerCopy"],
+        );
+        assert.deepStrictEqual(
+          deleted.map((record) => record.sourceId),
+          ["reviewerCopy"],
+        );
+        assert.strictEqual(deleted[0]?.previousFingerprint, "version_copy");
+        assert.deepStrictEqual(
+          workflowSaves.map(({ source, observation }) => ({
+            sourceId: observation.sourceId,
+            status: observation.validationStatus,
+            sameVersion: observation.sourceVersion === source.sourceVersion,
+            sameFingerprint: observation.fingerprint === source.fingerprint,
+            sameTimestamp: observation.observedAt === source.savedAt,
+          })),
+          [
+            {
+              sourceId: "reviewerAgent",
+              status: "valid",
+              sameVersion: true,
+              sameFingerprint: true,
+              sameTimestamp: true,
+            },
+            {
+              sourceId: "strictReviewer",
+              status: "valid",
+              sameVersion: true,
+              sameFingerprint: true,
+              sameTimestamp: true,
+            },
+            {
+              sourceId: "reviewerCopy",
+              status: "valid",
+              sameVersion: true,
+              sameFingerprint: true,
+              sameTimestamp: true,
+            },
+          ],
+        );
+        assert.deepStrictEqual(
+          hints.map((hint) => ({ domain: hint.domain, path: hint.path })),
+          [
+            { domain: "workflows", path: original.path },
+            { domain: "workflows", path: created.session.path },
+            { domain: "workflows", path: duplicated.session.path },
+            { domain: "workflows", path: removed.deletedPath },
+          ],
+        );
+        assert.strictEqual(published.length, 4);
+      }).pipe(
+        Effect.provide(
+          testRuntimeLayer({
+            published,
+            extensions,
+            sourceState,
+            modelResolver,
+            sourceInvalidation: sourceInvalidationService((hint) => hints.push(hint)),
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "rejects unavailable workflow-agent providers, models, reasoning, and auth before generic save writes",
+    () => {
+      let saveCalls = 0;
+      const current = workflowAgentSession("reviewAgent", "Review agent", "version_current");
+      const extensions = Extensions.of({
+        sources: {
+          openEditSession: () => Effect.succeed(current),
+          saveEditSession: () =>
+            Effect.sync(() => {
+              saveCalls += 1;
+              return {
+                status: "saved" as const,
+                sourceVersion: "version_saved",
+                fingerprint: "version_saved",
+                diagnostics: [],
+                reconcileRequired: true,
+              };
+            }),
+          createWorkflowAgent: () => Effect.die("unused"),
+          duplicateWorkflowAgent: () => Effect.die("unused"),
+          deleteWorkflowAgent: () => Effect.die("unused"),
+        },
+      } as unknown as ExtensionsService);
+      const cases = [
+        { provider: "missing-provider", model: "claude", reasoning: "high" as const },
+        { provider: "openai", model: "unknown", reasoning: "high" as const },
+        { provider: "openai", model: "gpt-5.4", reasoning: "xhigh" as const },
+        { provider: "anthropic", model: "claude", reasoning: "high" as const },
+      ];
+      const modelResolver: RuntimeLayerModelResolverPortService = {
+        resolveModel: (input) =>
+          (input.provider === "openai" && input.model === "gpt-5.4") ||
+          (input.provider === "anthropic" && input.model === "claude")
+            ? Effect.succeed({
+                ...input,
+                supportedReasoning: ["off", "low", "medium", "high"],
+              })
+            : Effect.fail(
+                new RuntimeContractError({
+                  operation: "test.model.resolve",
+                  reason: "invalid-input",
+                  message: "Model unavailable.",
+                }),
+              ),
+      };
+      const providerAuth: RuntimeLayerProviderAuthPortService = {
+        ensureUsableProviderAuth: (provider) =>
+          Effect.succeed(provider === "anthropic" ? undefined : "test-api-key"),
+        getProviderAuthUnavailableMessage: (provider) => `${provider} auth unavailable.`,
+      };
+
+      return Effect.gen(function* () {
+        const runtime = yield* Runtime;
+        const failures = yield* Effect.forEach(cases, (entry) =>
+          runtime.sourceEdits
+            .save({
+              workspaceId,
+              source: {
+                sourceKind: "workflow-agent",
+                sourceId: "reviewAgent",
+                expectedSourceVersion: current.sourceVersion,
+                text: workflowAgentText({
+                  id: "reviewAgent",
+                  label: "Review agent",
+                  provider: entry.provider,
+                  model: entry.model,
+                  reasoning: entry.reasoning,
+                }),
+                saveMode: "overwrite",
+              },
+            })
+            .pipe(Effect.flip),
+        );
+
+        assert.deepStrictEqual(
+          failures.map((failure) => failure.reason),
+          ["invalid-input", "invalid-input", "invalid-input", "dependency-not-ready"],
+        );
+        assert.strictEqual(saveCalls, 0);
+      }).pipe(
+        Effect.provide(
+          testRuntimeLayer({
+            published: [],
+            extensions,
+            modelResolver,
+            providerAuth,
+            sourceState: sourceStatePort(),
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("enqueues an exact source-reconcile retry when source fact recording fails", () => {
+    const ensured: EnsureRuntimeRecoveryWorkInput[] = [];
+    const published: StateInvalidationDescriptor[][] = [];
+    const livePublished: RuntimeEvent[] = [];
+    const recoveryWakes: string[] = [];
+    const session = workflowAgentSession("recoveryAgent", "Recovery agent", "version_recovery");
+    const extensions = Extensions.of({
+      sources: {
+        openEditSession: () =>
+          Effect.succeed({
+            sourceKind: "user-extension",
+            sourceId: "custom-tools",
+            path: "/tmp/svvy-runtime-layer-effect/extensions/custom-tools/index.ts" as AbsolutePath,
+            sourceVersion: "version_extension_current",
+            fingerprint: "version_extension_current",
+            text: "export default {};\n",
+            diagnostics: [],
+          }),
+        saveEditSession: () =>
+          Effect.succeed({
+            status: "saved",
+            sourceVersion: "version_extension_saved",
+            fingerprint: "version_extension_saved",
+            diagnostics: [],
+            reconcileRequired: true,
+          }),
+        createWorkflowAgent: () => Effect.succeed(workflowAgentLifecycleResult("created", session)),
+        duplicateWorkflowAgent: () => Effect.die("unused"),
+        deleteWorkflowAgent: () => Effect.die("unused"),
+      },
+    } as unknown as ExtensionsService);
+    const sourceState = sourceStatePort({
+      saveFailure: new StateContractError({
+        operation: "test.record-source-save",
+        reason: "transaction-failed",
+        message: "Source fact database is unavailable.",
+      }),
+    });
+    const recoveryState = recoveryStatePort((input) => {
+      ensured.push(input);
+      return runtimeRecoveryWork(input);
+    });
+
+    return Effect.gen(function* () {
+      const runtime = yield* Runtime;
+      const failure = yield* runtime.sourceEdits
+        .createWorkflowAgent({
+          workspaceId,
+          source: {
+            draft: {
+              exportName: "recoveryAgent" as WorkflowAgentSourceExportName,
+              displayName: "Recovery agent",
+              provider: "openai",
+              model: "gpt-5.4",
+              reasoning: { effort: "high" },
+            },
+            sourceOwner: "headless",
+          },
+        })
+        .pipe(Effect.flip);
+      const extensionFailure = yield* runtime.sourceEdits
+        .save({
+          workspaceId,
+          source: {
+            sourceKind: "user-extension",
+            sourceId: "custom-tools",
+            expectedSourceVersion: "version_extension_current",
+            text: "export default { ready: true };\n",
+            saveMode: "compare-and-swap",
+          },
+        })
+        .pipe(Effect.flip);
+
+      assert.deepInclude(failure, {
+        operation: "runtime.sourceEdits.createWorkflowAgent",
+        reason: "state-conflict",
+      });
+      assert.deepInclude(extensionFailure, {
+        operation: "runtime.sourceEdits.save",
+        reason: "state-conflict",
+      });
+      assert.strictEqual(ensured.length, 2);
+      assert.deepStrictEqual(
+        ensured.map((work) => work.maxAttempts),
+        [7, 7],
+      );
+      assert.deepInclude(ensured[0], {
+        scope: { kind: "app" },
+        kind: "source_reconcile",
+        ownerScope: {
+          kind: "source",
+          sourceKind: "workflow-agent",
+          sourceId: "recoveryAgent",
+        },
+        orderingKey: "source:workflow-agent:recoveryAgent",
+        maxAttempts: 7,
+        payloadJson: {
+          request: {
+            scope: { kind: "app-global" },
+            domains: ["workflows"],
+            reason: "recovery",
+          },
+          retry: {
+            operation: "record-save",
+            record: {
+              scope: { kind: "app-global" },
+              sourceKind: "workflow-agent",
+              sourceId: "recoveryAgent",
+              path: session.path,
+              previousSourceVersion: null,
+              sourceVersion: session.sourceVersion,
+              fingerprint: session.fingerprint,
+              diagnostics: [],
+              sourceCommandId: null,
+              savedAt: "1970-01-01T00:00:00.000Z",
+            },
+          },
+        },
+      });
+      assert.deepInclude(ensured[1], {
+        kind: "source_reconcile",
+        ownerScope: {
+          kind: "source",
+          sourceKind: "user-extension",
+          sourceId: "custom-tools",
+        },
+      });
+      assert.deepStrictEqual(
+        (
+          ensured[1]!.payloadJson as {
+            readonly request: SourceReconcileRequest;
+          }
+        ).request,
+        {
+          scope: { kind: "app-global" },
+          domains: ["extensions"],
+          reason: "recovery",
+        },
+      );
+      assert.deepStrictEqual(published, [[], []]);
+      assert.deepStrictEqual(
+        livePublished.map((event) =>
+          event.type === "runtime.recovery"
+            ? { type: event.type, scope: event.scope, status: event.status }
+            : event,
+        ),
+        [
+          { type: "runtime.recovery", scope: "app", status: "pending" },
+          { type: "runtime.recovery", scope: "app", status: "pending" },
+        ],
+      );
+      assert.deepStrictEqual(recoveryWakes, ["wake", "wake"]);
+    }).pipe(
+      Effect.provide(
+        testRuntimeLayer({
+          published,
+          livePublished,
+          recoveryWakes,
+          config: { recoveryRetryMaxAttempts: 7 as never },
+          extensions,
+          sourceState,
+          recoveryState,
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "wakes source recovery after its durable row commits even when status publication fails",
+    () => {
+      const recoveryWakes: string[] = [];
+      const ensured: EnsureRuntimeRecoveryWorkInput[] = [];
+      const session = workflowAgentSession(
+        "publicationRecoveryAgent",
+        "Publication recovery agent",
+        "version_publication_recovery",
+      );
+      const extensions = Extensions.of({
+        sources: {
+          openEditSession: () => Effect.die("unused"),
+          saveEditSession: () => Effect.die("unused"),
+          createWorkflowAgent: () =>
+            Effect.succeed(workflowAgentLifecycleResult("created", session)),
+          duplicateWorkflowAgent: () => Effect.die("unused"),
+          deleteWorkflowAgent: () => Effect.die("unused"),
+        },
+      } as unknown as ExtensionsService);
+
+      return Effect.gen(function* () {
+        const runtime = yield* Runtime;
+        yield* runtime.sourceEdits
+          .createWorkflowAgent({
+            workspaceId,
+            source: {
+              draft: {
+                exportName: "publicationRecoveryAgent" as WorkflowAgentSourceExportName,
+                displayName: "Publication recovery agent",
+                provider: "openai",
+                model: "gpt-5.4",
+                reasoning: { effort: "high" },
+              },
+              sourceOwner: "headless",
+            },
+          })
+          .pipe(Effect.flip);
+
+        assert.strictEqual(ensured.length, 1);
+        assert.deepStrictEqual(recoveryWakes, ["wake"]);
+      }).pipe(
+        Effect.provide(
+          testRuntimeLayer({
+            published: [],
+            recoveryWakes,
+            failRecoveryStatusPublication: true,
+            extensions,
+            sourceState: sourceStatePort({
+              saveFailure: new StateContractError({
+                operation: "test.record-source-save",
+                reason: "transaction-failed",
+                message: "Source fact database is unavailable.",
+              }),
+            }),
+            recoveryState: recoveryStatePort((input) => {
+              ensured.push(input);
+              return runtimeRecoveryWork(input);
+            }),
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("provides source invalidation hint and reconcile APIs through the root layer", () => {
     const hints: SourceInvalidationHint[] = [];
@@ -855,6 +1489,7 @@ describe("@svvy/runtime Runtime.layer", () => {
       assert.strictEqual(receipt.status, "ready");
       assert.deepStrictEqual(receipt.completedPhases, [
         "layer-acquisition",
+        "app-source-reconcile",
         "recovery-startup-scan",
         "event-bus",
       ]);
@@ -865,6 +1500,7 @@ describe("@svvy/runtime Runtime.layer", () => {
 
   it.effect("provides runtime-owned shutdown preparation through the root layer", () =>
     Effect.gen(function* () {
+      const runtime = yield* Runtime;
       const shutdown = yield* RuntimeShutdownPreparation;
       const result = yield* shutdown.prepareShutdown({
         reason: "app-shutdown",
@@ -879,9 +1515,268 @@ describe("@svvy/runtime Runtime.layer", () => {
         releasedQueueClaims: 0,
         recoveryRowsScheduled: 0,
       });
+      const rejected = yield* runtime.workspaces
+        .acquire({ cwd: workspaceCwd, owner, openReason: "test" })
+        .pipe(Effect.flip);
+      assert.strictEqual(rejected.reason, "runtime-shutdown");
+      const sourceRejected = yield* runtime.sourceInvalidation
+        .hint({
+          scope: { kind: "app-global" },
+          domain: "extensions",
+          path: "/tmp/svvy-runtime-layer-effect/extensions/web/index.ts" as AbsolutePath,
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(sourceRejected.reason, "runtime-shutdown");
+      const bridgeRejected = yield* runtime.workflowTaskAgentBridge
+        .runTaskAgent({
+          auth: { kind: "bearer", transport: "loopback-http", token: "" },
+          request: {} as never,
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(bridgeRejected.reason, "runtime-shutdown");
     }).pipe(Effect.provide(testRuntimeRootLayer())),
   );
 });
+
+const sourceFactInvalidation = {
+  scope: "app",
+  invalidation: { model: "workflowsGenerated" },
+} satisfies StateInvalidationDescriptor;
+
+function workflowAgentText(input: {
+  readonly id: string;
+  readonly label: string;
+  readonly provider?: string;
+  readonly model?: string;
+  readonly reasoning?: ReasoningEffort;
+}): string {
+  return `${JSON.stringify({
+    id: input.id,
+    label: input.label,
+    provider: input.provider ?? "openai",
+    model: input.model ?? "gpt-5.4",
+    reasoning: { effort: input.reasoning ?? "high" },
+    instructions: "Review the implementation.",
+  })}\n`;
+}
+
+function workflowAgentSession(
+  sourceId: string,
+  label: string,
+  sourceVersion: string,
+): WorkflowAgentSourceLifecycleResult["session"] {
+  return {
+    sourceKind: "workflow-agent",
+    sourceId: sourceId as WorkflowAgentSourceExportName,
+    path: `/tmp/svvy-runtime-layer-effect/workflows/agents/${sourceId}.agent.json` as AbsolutePath,
+    sourceVersion,
+    fingerprint: sourceVersion,
+    text: workflowAgentText({ id: sourceId, label }),
+    diagnostics: [],
+  };
+}
+
+function workflowAgentLifecycleResult(
+  status: WorkflowAgentSourceLifecycleResult["status"],
+  session: WorkflowAgentSourceLifecycleResult["session"],
+): WorkflowAgentSourceLifecycleResult {
+  return {
+    status,
+    session,
+    fileWriteReceipt: {
+      path: session.path,
+      previousExists: false,
+      bytes: new TextEncoder().encode(session.text).byteLength,
+    },
+    reconcileRequired: true,
+  };
+}
+
+function runtimeSourceFact(
+  session: SourceEditSession,
+  deletedAt: RuntimeSourceFactRecord["deletedAt"] = null,
+): RuntimeSourceFactRecord {
+  const timestamp = "2026-04-18T09:00:00.000Z" as RuntimeSourceFactRecord["createdAt"];
+  return {
+    scope: { kind: "app-global" },
+    scopeKey: "app-global",
+    sourceKind: session.sourceKind,
+    sourceId: session.sourceId,
+    path: session.path,
+    sourceVersion: session.sourceVersion,
+    fingerprint: session.fingerprint,
+    diagnostics: session.diagnostics,
+    sourceCommandId: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    deletedAt,
+  };
+}
+
+function runtimeSourceFactFromSave(input: RecordRuntimeSourceSaveInput): RuntimeSourceFactRecord {
+  return {
+    scope: input.scope,
+    scopeKey: "app-global",
+    sourceKind: input.sourceKind,
+    sourceId: input.sourceId,
+    path: input.path,
+    sourceVersion: input.sourceVersion,
+    fingerprint: input.fingerprint,
+    diagnostics: input.diagnostics,
+    sourceCommandId: input.sourceCommandId ?? null,
+    createdAt: input.savedAt,
+    updatedAt: input.savedAt,
+    deletedAt: null,
+  };
+}
+
+function sourceStatePort(
+  overrides: {
+    readonly read?: (sourceId: string) => RuntimeSourceFactRecord | null;
+    readonly save?: (input: RecordRuntimeSourceSaveInput) => RuntimeSourceFactRecord;
+    readonly workflowSave?: (
+      input: RecordRuntimeWorkflowAgentSourceSaveInput,
+    ) => RuntimeSourceFactRecord;
+    readonly delete?: (input: RecordRuntimeSourceDeleteInput) => RuntimeSourceFactRecord;
+    readonly saveFailure?: StateContractError;
+  } = {},
+): RuntimeSourceStatePortService {
+  return {
+    readSourceVersion: (input) => Effect.sync(() => overrides.read?.(input.sourceId) ?? null),
+    recordSourceSave: (input) =>
+      overrides.saveFailure
+        ? Effect.fail(overrides.saveFailure)
+        : Effect.sync(() => ({
+            value: overrides.save?.(input) ?? runtimeSourceFactFromSave(input),
+            afterCommit: [sourceFactInvalidation],
+          })),
+    recordSourceDelete: (input) =>
+      Effect.sync(() => ({
+        value:
+          overrides.delete?.(input) ??
+          runtimeSourceFact(
+            {
+              sourceKind: input.sourceKind,
+              sourceId: input.sourceId,
+              path: input.path,
+              sourceVersion: input.previousSourceVersion,
+              fingerprint: input.previousFingerprint,
+              text: "",
+              diagnostics: [],
+            },
+            input.deletedAt,
+          ),
+        afterCommit: [sourceFactInvalidation],
+      })),
+    recordWorkflowAgentSourceSave: (input) =>
+      overrides.saveFailure
+        ? Effect.fail(overrides.saveFailure)
+        : Effect.sync(() => ({
+            value:
+              overrides.workflowSave?.(input) ??
+              overrides.save?.(input.source) ??
+              runtimeSourceFactFromSave(input.source),
+            afterCommit: [sourceFactInvalidation],
+          })),
+    recordWorkflowAgentSourceDelete: (input) =>
+      Effect.sync(() => ({
+        value:
+          overrides.delete?.(input.source) ??
+          runtimeSourceFact(
+            {
+              sourceKind: input.source.sourceKind,
+              sourceId: input.source.sourceId,
+              path: input.source.path,
+              sourceVersion: input.source.previousSourceVersion,
+              fingerprint: input.source.previousFingerprint,
+              text: "",
+              diagnostics: [],
+            },
+            input.source.deletedAt,
+          ),
+        afterCommit: [sourceFactInvalidation],
+      })),
+    reconcileWorkflowAgentSources: () => Effect.die("unused"),
+    recordSourceScan: () => Effect.die("unused"),
+    reconcileDiscoveredHostSnippets: () => Effect.die("unused"),
+    recordObservedSourceDeletion: () => Effect.die("unused"),
+    recordSourceDiagnostic: () => Effect.die("unused"),
+  };
+}
+
+function startupRuntimeSourceStatePort(): RuntimeSourceStatePortService {
+  const unused = sourceStatePort();
+  return {
+    ...unused,
+    reconcileWorkflowAgentSources: (input) =>
+      Effect.succeed({
+        value: {
+          scope: { kind: "app-global" },
+          scopeKey: "app-global",
+          domain: "workflows",
+          sourceFingerprint: input.sourceFingerprint,
+          diagnostics: input.diagnostics,
+          lastObservedPath: null,
+          lastObservationKind: "scan",
+          observedAt: input.scannedAt,
+          createdAt: input.scannedAt,
+          updatedAt: input.scannedAt,
+        } satisfies RuntimeSourceScanFactRecord,
+        afterCommit: [sourceFactInvalidation],
+      }),
+  };
+}
+
+function sourceInvalidationService(
+  onHint: (input: SourceInvalidationHint) => void,
+): RuntimeSourceInvalidationService["Service"] {
+  return {
+    hint: (input) => Effect.sync(() => onHint(input)),
+    reconcile: () => Effect.die("unused"),
+    applyCommittedScanEvent: () => Effect.die("unused"),
+    refreshGeneratedContext: () => Effect.die("unused"),
+    refreshGeneratedPackages: () => Effect.die("unused"),
+  };
+}
+
+function runtimeRecoveryWork(input: EnsureRuntimeRecoveryWorkInput): RuntimeRecoveryWorkRecord {
+  return {
+    id: "recovery_source_reconcile_test" as RuntimeRecoveryWorkRecord["id"],
+    scope: input.scope,
+    kind: input.kind,
+    status: "pending",
+    ownerScope: input.ownerScope,
+    idempotencyKey: input.idempotencyKey,
+    orderingKey: input.orderingKey,
+    orderingSeq: input.orderingSeq,
+    priority: input.priority,
+    availableAt: input.availableAt,
+    attempts: 0,
+    maxAttempts: input.maxAttempts,
+    claimedBy: null,
+    claimedAt: null,
+    claimExpiresAt: null,
+    leaseVersion: 0,
+    payloadJson: input.payloadJson ?? null,
+    lastError: null,
+    createdAt: input.availableAt,
+    updatedAt: input.availableAt,
+    completedAt: null,
+  };
+}
+
+function recoveryStatePort(
+  ensure: (input: EnsureRuntimeRecoveryWorkInput) => RuntimeRecoveryWorkRecord,
+): RuntimeRecoveryStatePortService {
+  return {
+    normalizeWorkspaceRecoveryState: () => Effect.die("unused"),
+    listWorkspaceRecoveryStartupSnapshots: () => Effect.die("unused"),
+    ensureRecoveryWork: (input) => Effect.sync(() => ({ value: ensure(input), afterCommit: [] })),
+    claimNextRecoveryWork: () => Effect.die("unused"),
+    completeRecoveryWork: () => Effect.die("unused"),
+    failOrRetryRecoveryWork: () => Effect.die("unused"),
+  };
+}
 
 interface TestLayerOverrides {
   readonly published: StateInvalidationDescriptor[][];
@@ -904,12 +1799,35 @@ interface TestLayerOverrides {
     readonly lifecycle: "active" | "idle" | "disposed";
   }>;
   readonly workspaceScopeActions?: string[];
+  readonly extensions?: ExtensionsService;
+  readonly piAdapter?: PiAdapter["Service"];
+  readonly providerAuthStatusState?: ProviderAuthStatusStatePortService;
+  readonly modelResolver?: RuntimeLayerModelResolverPortService;
+  readonly providerAuth?: RuntimeLayerProviderAuthPortService;
+  readonly sourceState?: RuntimeSourceStatePortService;
+  readonly recoveryState?: RuntimeRecoveryStatePortService;
+  readonly recoveryWakes?: string[];
+  readonly queueWakes?: Array<Parameters<RuntimeQueueWakeService["Service"]["wakeSurface"]>[0]>;
+  readonly config?: Partial<typeof defaultRuntimeLayerConfig>;
+  readonly failRecoveryStatusPublication?: boolean;
+  readonly sourceInvalidation?: RuntimeSourceInvalidationService["Service"];
+  readonly onRestoreOpenBlockingRequests?: () => void;
 }
 
 function testRuntimeLayer(overrides: TestLayerOverrides) {
   const eventBus = RuntimeEventBus.of({
-    publishLive: (input) =>
-      Effect.sync(() => {
+    publishLive: (input) => {
+      if (input.event.type === "runtime.recovery" && overrides.failRecoveryStatusPublication) {
+        return Effect.fail(
+          new RuntimeEventStreamError({
+            operation: "test.runtime.recovery.publish",
+            reason: "stream-failed",
+            message: "Recovery status publication failed.",
+            latestSequence: (overrides.livePublished?.length ?? 0) as RuntimeEventSequence,
+          }),
+        );
+      }
+      return Effect.sync(() => {
         const event = {
           ...input.event,
           eventGenerationId: "runtime_layer_live_event_generation" as RuntimeEventGenerationId,
@@ -917,7 +1835,8 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
         } satisfies RuntimeEvent;
         overrides.livePublished?.push(event);
         return event;
-      }),
+      });
+    },
     publishStateInvalidations: (input) =>
       Effect.sync(() => {
         overrides.published.push([...input.afterCommit]);
@@ -935,9 +1854,20 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
   });
   const releaseResults = [...(overrides.releaseResults ?? [])];
   return Layer.effect(Runtime, makeRuntimeService()).pipe(
+    Layer.provideMerge(layerRuntimeShutdownAdmission),
     Layer.provide(Layer.succeed(RuntimeEventBus, eventBus)),
     Layer.provide(
       Layer.mergeAll(
+        createRuntimeLayerConfigLayer({
+          ...defaultRuntimeLayerConfig,
+          ...overrides.config,
+        }),
+        Layer.succeed(RuntimeSourceReconcileRecoveryWorker, {
+          wake: () =>
+            Effect.sync(() => {
+              overrides.recoveryWakes?.push("wake");
+            }),
+        }),
         Layer.succeed(RuntimePromptDefaultsStatePort, {
           resolvePromptDefaults: () =>
             Effect.succeed({
@@ -946,13 +1876,24 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
               reasoningEffort: "medium" as const,
             }),
         }),
-        Layer.succeed(RuntimeLayerProviderAuthPort, {
-          ensureUsableProviderAuth: () => Effect.succeed("test-api-key"),
-          getProviderAuthUnavailableMessage: () => "Provider auth unavailable.",
-        }),
-        Layer.succeed(RuntimeLayerModelResolverPort, {
-          resolveModelId: () => Effect.succeed("gpt-4o"),
-        }),
+        Layer.succeed(
+          RuntimeLayerProviderAuthPort,
+          overrides.providerAuth ?? {
+            ensureUsableProviderAuth: () => Effect.succeed("test-api-key"),
+            getProviderAuthUnavailableMessage: () => "Provider auth unavailable.",
+          },
+        ),
+        Layer.succeed(
+          RuntimeLayerModelResolverPort,
+          overrides.modelResolver ?? {
+            resolveModel: ({ provider, model }) =>
+              Effect.succeed({
+                provider,
+                model,
+                supportedReasoning: ["off", "low", "medium", "high"],
+              }),
+          },
+        ),
         Layer.succeed(AppLogWritePort, {
           append: () =>
             Effect.succeed({
@@ -960,7 +1901,9 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
               afterCommit: [],
             }),
         }),
-        layer.pipe(Layer.provide(testExtensionsPackageDataLayer())),
+        overrides.extensions
+          ? Layer.succeed(Extensions, overrides.extensions)
+          : layer.pipe(Layer.provide(testExtensionsPackageDataLayer())),
         testExtensionsPackageDataLayer(),
         Layer.succeed(RuntimePromptDefaultsService, {
           resolve: () =>
@@ -971,7 +1914,10 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
             }),
         }),
         Layer.succeed(RuntimeQueueWakeService, {
-          wakeSurface: () => Effect.void,
+          wakeSurface: (input) =>
+            Effect.sync(() => {
+              overrides.queueWakes?.push(input);
+            }),
         }),
         Layer.succeed(RuntimeWorkflowTaskAgentBridgeService, {
           runTaskAgent: () => Effect.die("unused"),
@@ -984,29 +1930,32 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
           RuntimeActorExtensionBindingStatePort,
           fakeRuntimeActorExtensionBindingStatePort(),
         ),
-        Layer.succeed(RuntimeSourceInvalidationService, {
-          hint: () => Effect.void,
-          reconcile: () =>
-            Effect.succeed({
-              changedReadModelCount: 0,
-              generatedPackageRefreshes: [],
-              recoveryWorkIds: [],
-            }),
-          applyCommittedScanEvent: () =>
-            Effect.succeed({
-              changedReadModelCount: 0,
-              generatedPackageRefreshes: [],
-              recoveryWorkIds: [],
-            }),
-          refreshGeneratedContext: () => Effect.void,
-          refreshGeneratedPackages: () =>
-            Effect.succeed({
-              scope: "app-global" as const,
-              packages: [],
-              workspaceLinks: [],
-              recoveryWorkIds: [],
-            }),
-        }),
+        Layer.succeed(
+          RuntimeSourceInvalidationService,
+          overrides.sourceInvalidation ?? {
+            hint: () => Effect.void,
+            reconcile: () =>
+              Effect.succeed({
+                changedReadModelCount: 0,
+                generatedPackageRefreshes: [],
+                recoveryWorkIds: [],
+              }),
+            applyCommittedScanEvent: () =>
+              Effect.succeed({
+                changedReadModelCount: 0,
+                generatedPackageRefreshes: [],
+                recoveryWorkIds: [],
+              }),
+            refreshGeneratedContext: () => Effect.void,
+            refreshGeneratedPackages: () =>
+              Effect.succeed({
+                scope: "app-global" as const,
+                packages: [],
+                workspaceLinks: [],
+                recoveryWorkIds: [],
+              }),
+          },
+        ),
         Layer.succeed(RuntimeSurfaceEventPublisher, {
           publishSurfaceChanged: (input) =>
             Effect.sync(() => {
@@ -1043,9 +1992,14 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
             }),
         }),
         layerRuntimeApprovalWaitService,
-        Layer.succeed(RuntimeRequestInputWaitService, noRequestInputWaitService()),
+        Layer.succeed(
+          RuntimeRequestInputWaitService,
+          noRequestInputWaitService(overrides.onRestoreOpenBlockingRequests),
+        ),
         layerRuntimeBunPlatform,
-        testPiAdapterHostLayer(),
+        overrides.piAdapter
+          ? Layer.succeed(PiAdapter, overrides.piAdapter)
+          : testPiAdapterHostLayer(),
         Layer.succeed(RuntimeGeneratedContextRefreshHostPort, {
           refresh: () => Promise.resolve(),
         }),
@@ -1103,6 +2057,7 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
           snapshot: () => Effect.succeed([]),
         }),
         Layer.succeed(RuntimeWorkspaceStatePort, {
+          resolvePromptTargetWorkspaceId: () => Effect.succeed(workspaceId),
           acquireWorkspace: (input) => {
             if (overrides.failAcquireWorkspace) {
               return Effect.fail(overrides.failAcquireWorkspace);
@@ -1159,15 +2114,32 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
               afterCommit: [surfaceInvalidation],
             })),
         }),
-        Layer.succeed(RuntimeSourceStatePort, {
-          readSourceVersion: () => Effect.succeed(null),
-          recordSourceSave: () => Effect.die("unused"),
-          recordSourceDelete: () => Effect.die("unused"),
-          recordSourceScan: () => Effect.die("unused"),
-          reconcileDiscoveredHostSnippets: () => Effect.die("unused"),
-          recordObservedSourceDeletion: () => Effect.die("unused"),
-          recordSourceDiagnostic: () => Effect.die("unused"),
-        }),
+        Layer.succeed(
+          RuntimeSourceStatePort,
+          overrides.sourceState ?? {
+            readSourceVersion: () => Effect.succeed(null),
+            recordSourceSave: () => Effect.die("unused"),
+            recordSourceDelete: () => Effect.die("unused"),
+            recordWorkflowAgentSourceSave: () => Effect.die("unused"),
+            recordWorkflowAgentSourceDelete: () => Effect.die("unused"),
+            reconcileWorkflowAgentSources: () => Effect.die("unused"),
+            recordSourceScan: () => Effect.die("unused"),
+            reconcileDiscoveredHostSnippets: () => Effect.die("unused"),
+            recordObservedSourceDeletion: () => Effect.die("unused"),
+            recordSourceDiagnostic: () => Effect.die("unused"),
+          },
+        ),
+        Layer.succeed(
+          RuntimeRecoveryStatePort,
+          overrides.recoveryState ?? unusedPort("RuntimeRecoveryStatePort"),
+        ),
+        Layer.succeed(
+          ProviderAuthStatusStatePort,
+          overrides.providerAuthStatusState ?? {
+            listProviderStatuses: () => Effect.succeed([]),
+            recordProviderStatus: () => Effect.die("unused"),
+          },
+        ),
         Layer.succeed(RuntimeQueueStatePort, unusedPort("RuntimeQueueStatePort")),
         Layer.succeed(RuntimeRequestStatePort, unusedPort("RuntimeRequestStatePort")),
         Layer.succeed(RuntimeApprovalStatePort, emptyApprovalStatePort()),
@@ -1177,6 +2149,7 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
           unusedPort("RuntimeGeneratedPackageStatePort"),
         ),
         Layer.succeed(RuntimeSessionWaitStatePort, unusedPort("RuntimeSessionWaitStatePort")),
+        Layer.succeed(RuntimeTranscriptStatePort, testRuntimeTranscriptStatePort()),
         Layer.succeed(RuntimeTurnStatePort, unusedPort("RuntimeTurnStatePort")),
         Layer.succeed(RuntimeEpisodeStatePort, unusedPort("RuntimeEpisodeStatePort")),
       ),
@@ -1215,7 +2188,12 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
           getProviderAuthUnavailableMessage: () => "Provider auth unavailable.",
         }),
         Layer.succeed(RuntimeLayerModelResolverPort, {
-          resolveModelId: () => Effect.succeed("gpt-4o"),
+          resolveModel: ({ provider, model }) =>
+            Effect.succeed({
+              provider,
+              model,
+              supportedReasoning: ["off", "low", "medium", "high"],
+            }),
         }),
         Layer.succeed(AppLogWritePort, {
           append: () =>
@@ -1256,6 +2234,15 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
                     },
                 ),
               planWorkspaceLink: () => Effect.die("unused"),
+            },
+            sources: {
+              openEditSession: () => Effect.die("unused"),
+              saveEditSession: () => Effect.die("unused"),
+              createWorkflowAgent: () => Effect.die("unused"),
+              duplicateWorkflowAgent: () => Effect.die("unused"),
+              deleteWorkflowAgent: () => Effect.die("unused"),
+              scanWorkflowAgents: () => Effect.succeed([]),
+              scaffoldMissingWorkflowAgents: () => Effect.succeed({ created: [], preserved: [] }),
             },
           } as unknown as ExtensionsService),
         ),
@@ -1315,7 +2302,24 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
           RuntimeSurfaceLifecycleStatePort,
           unusedPort("RuntimeSurfaceLifecycleStatePort"),
         ),
-        Layer.succeed(RuntimeSourceStatePort, unusedPort("RuntimeSourceStatePort")),
+        Layer.succeed(RuntimeSourceStatePort, startupRuntimeSourceStatePort()),
+        Layer.succeed(RuntimeRecoveryStatePort, {
+          normalizeWorkspaceRecoveryState: () =>
+            Effect.succeed({ value: undefined, afterCommit: [] }),
+          listWorkspaceRecoveryStartupSnapshots: () => Effect.succeed([]),
+          ensureRecoveryWork: () => Effect.die("unused"),
+          claimNextRecoveryWork: () =>
+            Effect.succeed({
+              value: null,
+              afterCommit: [],
+            }),
+          completeRecoveryWork: () => Effect.die("unused"),
+          failOrRetryRecoveryWork: () => Effect.die("unused"),
+        }),
+        Layer.succeed(ProviderAuthStatusStatePort, {
+          listProviderStatuses: () => Effect.succeed([]),
+          recordProviderStatus: () => Effect.die("unused"),
+        }),
         Layer.succeed(
           RuntimeActorExtensionBindingStatePort,
           unusedPort(
@@ -1328,6 +2332,7 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
         Layer.succeed(RuntimeCommandStatePort, testRuntimeCommandStatePort({ published: [] })),
         Layer.succeed(RuntimeGeneratedPackageStatePort, testRuntimeGeneratedPackageStatePort()),
         Layer.succeed(RuntimeSessionWaitStatePort, unusedPort("RuntimeSessionWaitStatePort")),
+        Layer.succeed(RuntimeTranscriptStatePort, testRuntimeTranscriptStatePort()),
         Layer.succeed(RuntimeTurnStatePort, unusedPort("RuntimeTurnStatePort")),
         Layer.succeed(RuntimeEpisodeStatePort, unusedPort("RuntimeEpisodeStatePort")),
         Layer.succeed(RuntimeWorkflowTaskStatePort, unusedPort("RuntimeWorkflowTaskStatePort")),
@@ -1343,6 +2348,38 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
 function unusedSandboxPolicySource(): SandboxPolicySourceService {
   return {
     snapshot: () => Effect.die("Unexpected sandbox policy snapshot read."),
+  };
+}
+
+function testRuntimeTranscriptStatePort(): RuntimeTranscriptStatePortService {
+  let cursor: RuntimeTranscriptStreamCursor | null = null;
+  return {
+    readSurfaceTranscript: (input) =>
+      Effect.succeed({
+        surfacePiSessionId: input.surfacePiSessionId,
+        messages: [],
+        activeAssistantMessage: null,
+        streamCursor: cursor,
+      }),
+    advanceStreamCursor: (input) =>
+      Effect.sync(() => {
+        cursor = {
+          surfacePiSessionId: input.surfacePiSessionId,
+          streamGenerationId: input.streamGenerationId,
+          streamSequence: (cursor?.streamGenerationId === input.streamGenerationId
+            ? cursor.streamSequence + 1
+            : 1) as never,
+        };
+        return { value: cursor, afterCommit: [] };
+      }),
+    commitUserMessage: () => Effect.die("Unexpected transcript user commit."),
+    beginAssistantMessage: () => Effect.die("Unexpected transcript assistant begin."),
+    appendAssistantContentDelta: () => Effect.die("Unexpected transcript delta."),
+    upsertAssistantToolCall: () => Effect.die("Unexpected transcript tool call."),
+    linkAssistantToolCallCommand: () => Effect.die("Unexpected transcript tool link."),
+    commitAssistantMessage: () => Effect.die("Unexpected transcript assistant commit."),
+    failAssistantMessage: () => Effect.die("Unexpected transcript assistant failure."),
+    bindPiHistoryEntry: () => Effect.die("Unexpected transcript history binding."),
   };
 }
 
@@ -1481,12 +2518,14 @@ function hintToReconcileRequest(input: SourceInvalidationHint): SourceReconcileR
   };
 }
 
-function noRequestInputWaitService(): RuntimeRequestInputWaitService["Service"] {
+function noRequestInputWaitService(
+  onRestoreOpenBlockingRequests?: () => void,
+): RuntimeRequestInputWaitService["Service"] {
   return RuntimeRequestInputWaitService.of({
     waitForBlockingRequest: () => Effect.die("Unexpected request-input blocking wait."),
     afterAnswerCommitted: () => Effect.die("Unexpected request-input answer post-commit."),
     afterTimerPausedCommitted: () => Effect.die("Unexpected request-input timer post-commit."),
-    restoreOpenBlockingRequests: () => Effect.void,
+    restoreOpenBlockingRequests: () => Effect.sync(() => onRestoreOpenBlockingRequests?.()),
     cancelBlockingRequestsForSurface: () => Effect.void,
   });
 }

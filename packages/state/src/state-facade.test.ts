@@ -27,6 +27,8 @@ import type {
   ExternalInstructionsSettings,
   GeneratedPackageBuildId,
   ModelId,
+  PositiveDurationMs,
+  QueueItemId,
   RuntimeClientRequestId,
   RuntimeClientSubmissionSource,
   RuntimeOwnerId,
@@ -36,6 +38,7 @@ import type {
   StateRevision,
   ThreadId,
   WorkflowTaskAttemptId,
+  WorkflowAgentSourceObservation,
   WorkspaceId,
   WorkspaceSessionId,
   WorkspacePaneId,
@@ -689,7 +692,16 @@ describe("State app-log facade slice", () => {
       });
       expect(settings).toEqual({
         kind: "settings",
-        value: { preferences: appPreferences.value },
+        value: {
+          preferences: appPreferences.value,
+          requestInput: {
+            mode: "nonblocking",
+            blockingTimeout: {
+              enabled: true,
+              durationMs: 300000 as PositiveDurationMs,
+            },
+          },
+        },
       });
       expect(baseline.app.map((readModel) => readModel.kind)).toEqual([
         "appLogSummary",
@@ -792,7 +804,19 @@ describe("State app-log facade slice", () => {
         revision: 1,
       });
       expect(settingsRefetch).toEqual([
-        { kind: "settings", value: { preferences: appPreferences.value } },
+        {
+          kind: "settings",
+          value: {
+            preferences: appPreferences.value,
+            requestInput: {
+              mode: "nonblocking",
+              blockingTimeout: {
+                enabled: true,
+                durationMs: 300000 as PositiveDurationMs,
+              },
+            },
+          },
+        },
       ]);
       expect(published).toEqual([
         {
@@ -1229,6 +1253,7 @@ describe("State app-log facade slice", () => {
 describe("State read-model kind expansion", () => {
   it("requires explicit workspace routing for workspace inspector reads", () => {
     for (const request of [
+      { kind: "promptHistory" },
       { kind: "handlerInspector", threadId: "thread-explicit-workspace" },
       {
         kind: "workflowTaskAttemptInspector",
@@ -1347,6 +1372,25 @@ describe("State read-model kind expansion", () => {
         model: "gpt-5.4",
         reasoningEffort: "high",
       });
+      const promptHistoryTarget = {
+        workspaceSessionId: created.workspaceSessionId,
+        surface: "orchestrator" as const,
+        surfacePiSessionId: created.surfacePiSessionId,
+      };
+      const firstHistorySubmission = store.acceptSubmittedSurfaceMessage({
+        target: promptHistoryTarget,
+        idempotencyKey: "prompt-history-facade-1",
+        promptHistoryText: "  Preserve this exact prompt.  ",
+        messageJson: JSON.stringify({ text: "  Preserve this exact prompt.  " }),
+      });
+      const secondHistorySubmission = store.acceptSubmittedSurfaceMessage({
+        target: promptHistoryTarget,
+        idempotencyKey: "prompt-history-facade-2",
+        promptHistoryText: "  Preserve this exact prompt.  ",
+        messageJson: JSON.stringify({ text: "  Preserve this exact prompt.  " }),
+      });
+      store.cancelSurfaceMessage({ id: firstHistorySubmission.queuedMessage.id });
+      store.cancelSurfaceMessage({ id: secondHistorySubmission.queuedMessage.id });
       store.setComposerDraft({
         sessionId: created.workspaceSessionId,
         surfacePiSessionId: created.surfacePiSessionId,
@@ -1375,6 +1419,17 @@ describe("State read-model kind expansion", () => {
         summary: "Run fixture command",
         arguments: { cmd: "printf ok" },
         facts: { exitCode: 0 },
+      });
+      const transcriptUser = store.commitRuntimeTranscriptUserMessage({
+        workspaceSessionId: created.workspaceSessionId as never,
+        surfacePiSessionId: created.surfacePiSessionId as never,
+        turnId: turn.id as never,
+        queueItemId: "queue-state-facade-transcript" as never,
+        message: { text: "Run fixture command" },
+        submittedAt: "2026-06-21T12:00:00.000Z" as never,
+        committedAt: "2026-06-21T12:00:01.000Z" as never,
+        streamGenerationId: "stream-state-facade-transcript" as never,
+        expectedCursor: null,
       });
       const handlerThread = store.createThread({
         turnId: turn.id,
@@ -1603,6 +1658,22 @@ describe("State read-model kind expansion", () => {
         subjectId: command.id,
         data: { stream: "stdout", source: "fixture", text: "ok\n" },
       });
+      const requestInput = store.createRequestUserInputRequest({
+        sessionId: created.workspaceSessionId,
+        surfacePiSessionId: created.surfacePiSessionId,
+        turnId: turn.id,
+        commandId: command.id,
+        toolItemId: "tool_request_input_fixture",
+        variant: "nonblocking",
+        timeout: null,
+        questions: [
+          {
+            title: "Pick path",
+            question: "Which path?",
+            defaultAnswer: { kind: "custom", text: "default path" },
+          },
+        ],
+      });
       store.finishCommand({
         commandId: command.id,
         status: "succeeded",
@@ -1620,27 +1691,22 @@ describe("State read-model kind expansion", () => {
           extensionId: "shell",
         },
       });
-      const requestInput = store.createRequestUserInputRequest({
-        sessionId: created.workspaceSessionId,
-        surfacePiSessionId: created.surfacePiSessionId,
-        turnId: turn.id,
-        commandId: command.id,
-        toolItemId: "tool_request_input_fixture",
-        variant: "blocking",
-        timeout: { enabled: true, durationMs: 300_000 },
-        questions: [
-          {
-            title: "Pick path",
-            question: "Which path?",
-            defaultAnswer: { kind: "custom", text: "default path" },
-          },
-        ],
+      const approvalCommand = store.createCommand({
+        turnId: handlerTurn.id,
+        surfacePiSessionId: handlerThread.surfacePiSessionId,
+        threadId: handlerThread.id,
+        toolName: "exec_command",
+        executor: "handler",
+        visibility: "surface",
+        title: "Approve fixture command",
+        summary: "Request fixture approval.",
       });
       const approval = store.createRuntimeApprovalRequest({
         sessionId: created.workspaceSessionId,
-        surfacePiSessionId: created.surfacePiSessionId,
-        turnId: turn.id,
-        commandId: command.id,
+        surfacePiSessionId: handlerThread.surfacePiSessionId,
+        threadId: handlerThread.id,
+        turnId: handlerTurn.id,
+        commandId: approvalCommand.id,
         toolCallId: "tool_approval_fixture",
         toolName: "exec_command",
         approvalMode: "user",
@@ -1652,6 +1718,68 @@ describe("State read-model kind expansion", () => {
         .getSessionState(created.workspaceSessionId)
         .events.find((event) => event.kind === "Extension change reverted");
       if (!revertedEvent) throw new Error("Expected the navigation product-event fixture.");
+
+      const workflowAgentObservedAt = iso("2026-06-21T12:45:00.000Z");
+      const workflowAgentObservations = [
+        {
+          sourceId: "brokenAgent",
+          path: "/tmp/workflows/agents/brokenAgent.agent.json" as typeof AbsolutePath.Type,
+          sourceVersion: "sha256:broken-agent",
+          fingerprint: "sha256:broken-agent",
+          validationStatus: "invalid",
+          diagnostics: [
+            {
+              severity: "error",
+              code: "workflow_agent_source_invalid",
+              message: "Workflow-agent source is not valid JSON.",
+            },
+          ],
+          parameters: null,
+          extensionOrder: [],
+          observedAt: workflowAgentObservedAt,
+        },
+        {
+          sourceId: "defaultAgent",
+          path: "/tmp/workflows/agents/defaultAgent.agent.json" as typeof AbsolutePath.Type,
+          sourceVersion: "sha256:default-agent",
+          fingerprint: "sha256:default-agent",
+          validationStatus: "valid",
+          diagnostics: [],
+          parameters: {
+            id: "defaultAgent",
+            label: "Default agent",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoning: { effort: "high" },
+            instructions: "Implement the requested task.",
+          },
+          extensionOrder: ["shell" as ExtensionId],
+          observedAt: workflowAgentObservedAt,
+        },
+        {
+          sourceId: "invalid-agent-name!",
+          path: "/tmp/workflows/agents/invalid-agent-name!.agent.json" as typeof AbsolutePath.Type,
+          sourceVersion: "sha256:invalid-agent",
+          fingerprint: "sha256:invalid-agent",
+          validationStatus: "invalid",
+          diagnostics: [
+            {
+              severity: "error",
+              code: "workflow_agent_source_invalid",
+              message: "Workflow-agent source filename is not a valid export name.",
+            },
+          ],
+          parameters: null,
+          extensionOrder: [],
+          observedAt: workflowAgentObservedAt,
+        },
+      ] satisfies readonly WorkflowAgentSourceObservation[];
+      store.reconcileRuntimeWorkflowAgentSources({
+        sourceFingerprint: "sha256:workflow-agent-read-model-scan",
+        observations: workflowAgentObservations,
+        diagnostics: [],
+        scannedAt: workflowAgentObservedAt,
+      });
 
       const router = createWorkspaceStateRouter({
         appGlobalStore: store,
@@ -1709,6 +1837,11 @@ describe("State read-model kind expansion", () => {
                 },
               ],
               commandRollups: [
+                {
+                  commandId: approvalCommand.id,
+                  status: "waiting",
+                  summary: "Waiting for approval: Run command: printf ok",
+                },
                 { commandId: command.id, status: "succeeded", summary: "Command finished" },
                 {
                   commandId: workflowCommand.id,
@@ -1744,6 +1877,46 @@ describe("State read-model kind expansion", () => {
         },
       });
 
+      const promptHistory = await runTestEffect(
+        readModels.fetch({
+          kind: "promptHistory",
+          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+        }),
+      );
+      expect(promptHistory).toEqual({
+        kind: "promptHistory",
+        value: {
+          workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+          entries: [
+            {
+              workspaceSessionId: created.workspaceSessionId,
+              surfacePiSessionId: created.surfacePiSessionId,
+              queueItemId: firstHistorySubmission.queuedMessage.id as QueueItemId,
+              text: "  Preserve this exact prompt.  ",
+              sentAt: firstHistorySubmission.queuedMessage.createdAt,
+            },
+            {
+              workspaceSessionId: created.workspaceSessionId,
+              surfacePiSessionId: created.surfacePiSessionId,
+              queueItemId: secondHistorySubmission.queuedMessage.id as QueueItemId,
+              text: "  Preserve this exact prompt.  ",
+              sentAt: secondHistorySubmission.queuedMessage.createdAt,
+            },
+          ],
+        },
+      });
+      expect(
+        await runTestEffect(
+          readModels.refetchInvalidation({
+            descriptor: {
+              scope: "workspace",
+              workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+              invalidation: { model: "promptHistory" },
+            },
+          }),
+        ),
+      ).toEqual([promptHistory]);
+
       const transcript = await runTestEffect(
         readModels.fetch({ kind: "surfaceTranscript", target: created.target }),
       );
@@ -1754,8 +1927,88 @@ describe("State read-model kind expansion", () => {
           surfaceStatus: "running",
           promptLock: { activeTurnId: turn.id, queuedCount: 0 },
           composerDraft: { text: "draft text", attachmentIds: ["attachment-1"] },
-          messages: [{ role: "user", turnId: turn.id, text: "Run fixture command" }],
+          messages: [
+            {
+              role: "user",
+              turnId: turn.id,
+              message: { text: "Run fixture command" },
+            },
+          ],
+          activeAssistantMessage: null,
+          streamCursor: transcriptUser.cursor,
         },
+      });
+      const assistant = store.beginRuntimeTranscriptAssistantMessage({
+        workspaceSessionId: created.workspaceSessionId as never,
+        surfacePiSessionId: created.surfacePiSessionId as never,
+        turnId: turn.id as never,
+        api: null,
+        providerId: "openai" as never,
+        modelId: "gpt-5.4" as never,
+        startedAt: "2026-06-21T12:00:02.000Z" as never,
+        streamGenerationId: "stream-state-facade-transcript" as never,
+        expectedCursor: transcriptUser.cursor,
+      });
+      const assistantText = store.appendRuntimeTranscriptAssistantContentDelta({
+        messageId: assistant.message.messageId,
+        surfacePiSessionId: created.surfacePiSessionId as never,
+        streamGenerationId: "stream-state-facade-transcript" as never,
+        expectedCursor: assistant.cursor,
+        contentIndex: 0,
+        kind: "text",
+        delta: "Fixture complete.",
+      });
+      const streamingTranscript = await runTestEffect(
+        readModels.fetch({ kind: "surfaceTranscript", target: created.target }),
+      );
+      expect(streamingTranscript).toMatchObject({
+        kind: "surfaceTranscript",
+        value: {
+          messages: [{ role: "user", message: { text: "Run fixture command" } }],
+          activeAssistantMessage: {
+            messageId: assistant.message.messageId,
+            status: "streaming",
+            content: [{ kind: "text", contentIndex: 0, text: "Fixture complete." }],
+          },
+          streamCursor: assistantText.cursor,
+        },
+      });
+      const assistantTool = store.upsertRuntimeTranscriptAssistantToolCall({
+        messageId: assistant.message.messageId,
+        surfacePiSessionId: created.surfacePiSessionId as never,
+        streamGenerationId: "stream-state-facade-transcript" as never,
+        expectedCursor: assistantText.cursor,
+        contentIndex: 1,
+        toolCallId: "tool-call-state-facade" as never,
+        toolName: "exec_command",
+        argumentsJson: '{"cmd":"printf ok"}',
+        argumentsStatus: "accepted",
+      });
+      const linkedAssistant = store.linkRuntimeTranscriptAssistantToolCallCommand({
+        messageId: assistant.message.messageId,
+        surfacePiSessionId: created.surfacePiSessionId as never,
+        streamGenerationId: "stream-state-facade-transcript" as never,
+        expectedCursor: assistantTool.cursor,
+        contentIndex: 1,
+        toolCallId: "tool-call-state-facade" as never,
+        commandId: command.id as never,
+      });
+      store.commitRuntimeTranscriptAssistantMessage({
+        messageId: assistant.message.messageId,
+        surfacePiSessionId: created.surfacePiSessionId as never,
+        streamGenerationId: "stream-state-facade-transcript" as never,
+        expectedCursor: linkedAssistant.cursor,
+        content: linkedAssistant.message.content,
+        api: "openai-responses",
+        providerId: "openai" as never,
+        modelId: "gpt-5.4" as never,
+        responseId: null,
+        usage: null,
+        stopReason: "stop",
+        errorMessage: null,
+        piHistoryEntry: null,
+        messageTimestamp: "2026-06-21T12:00:03.000Z" as never,
+        finishedAt: "2026-06-21T12:00:04.000Z" as never,
       });
       store.finishTurn({
         turnId: turn.id,
@@ -1770,15 +2023,22 @@ describe("State read-model kind expansion", () => {
         kind: "surfaceTranscript",
         value: {
           messages: [
-            { role: "user", turnId: turn.id, text: "Run fixture command" },
             {
-              messageId: `${turn.id}:assistant`,
+              role: "user",
+              turnId: turn.id,
+              message: { text: "Run fixture command" },
+            },
+            {
               role: "assistant",
               turnId: turn.id,
-              text: "Fixture complete.",
-              commandIds: [command.id],
+              status: "completed",
+              content: [
+                { kind: "text", text: "Fixture complete." },
+                { kind: "tool-call", commandId: command.id },
+              ],
             },
           ],
+          activeAssistantMessage: null,
         },
       });
 
@@ -1845,6 +2105,69 @@ describe("State read-model kind expansion", () => {
       const agents = await runTestEffect(readModels.fetch({ kind: "agents" }));
       expect(agents.kind).toBe("agents");
       if (agents.kind !== "agents") throw new Error("Expected agents read model.");
+      expect(agents.value.workflowAgents).toEqual([
+        {
+          sourceId: "brokenAgent",
+          path: "/tmp/workflows/agents/brokenAgent.agent.json",
+          sourceVersion: "sha256:broken-agent",
+          fingerprint: "sha256:broken-agent",
+          validationStatus: "invalid",
+          diagnostics: [
+            {
+              severity: "error",
+              code: "workflow_agent_source_invalid",
+              message: "Workflow-agent source is not valid JSON.",
+            },
+          ],
+          parameters: null,
+          extensionOrder: [],
+          observedAt: workflowAgentObservedAt,
+          updatedAt: workflowAgentObservedAt,
+          builtin: false,
+          deletable: true,
+        },
+        {
+          sourceId: "defaultAgent",
+          path: "/tmp/workflows/agents/defaultAgent.agent.json",
+          sourceVersion: "sha256:default-agent",
+          fingerprint: "sha256:default-agent",
+          validationStatus: "valid",
+          diagnostics: [],
+          parameters: {
+            id: "defaultAgent",
+            label: "Default agent",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoning: { effort: "high" },
+            instructions: "Implement the requested task.",
+          },
+          extensionOrder: ["shell"],
+          observedAt: workflowAgentObservedAt,
+          updatedAt: workflowAgentObservedAt,
+          builtin: true,
+          deletable: false,
+        },
+        {
+          sourceId: "invalid-agent-name!",
+          path: "/tmp/workflows/agents/invalid-agent-name!.agent.json",
+          sourceVersion: "sha256:invalid-agent",
+          fingerprint: "sha256:invalid-agent",
+          validationStatus: "invalid",
+          diagnostics: [
+            {
+              severity: "error",
+              code: "workflow_agent_source_invalid",
+              message: "Workflow-agent source filename is not a valid export name.",
+            },
+          ],
+          parameters: null,
+          extensionOrder: [],
+          observedAt: workflowAgentObservedAt,
+          updatedAt: workflowAgentObservedAt,
+          builtin: false,
+          deletable: false,
+        },
+      ] as unknown as typeof agents.value.workflowAgents);
       expect(agents.value.configuredProfiles).toEqual([
         {
           profileId: "thread-handler",
@@ -2370,6 +2693,91 @@ describe("State read-model kind expansion", () => {
     }
   });
 
+  it("commits full actor extension defaults idempotently with agents invalidation", async () => {
+    const workspaceId = "workspace_actor_extension_defaults" as WorkspaceId;
+    const store = createStructuredSessionStateStore({
+      databasePath: ":memory:",
+      digest: testDigest,
+      now: () => "2026-07-11T10:00:00.000Z",
+      workspace: {
+        id: workspaceId,
+        label: "Actor extension defaults",
+        cwd: "/tmp/svvy-actor-extension-defaults" as typeof AbsolutePath.Type,
+        artifactDir: "/tmp/svvy-actor-extension-defaults-artifacts" as typeof AbsolutePath.Type,
+      },
+    });
+    const appLogStore = createAppLogStore({ now: () => "2026-07-11T10:00:00.000Z" });
+    const router = createWorkspaceStateRouter({
+      appGlobalStore: store,
+      workspaceStores: [{ store }],
+    });
+    const service = stateCommandsFromRouter({
+      router,
+      appLogs: appLogStateFromStore(appLogStore),
+    });
+    const published: StateCommandPostCommitNotificationInput[] = [];
+    const managedRuntime = ManagedRuntime.make(
+      Layer.merge(
+        Layer.succeed(StateCommands, service),
+        Layer.succeed(
+          StateCommandPostCommitNotificationPort,
+          StateCommandPostCommitNotificationPort.of({
+            notifyCommittedStateCommand: (input) =>
+              Effect.sync(() => {
+                published.push(input);
+                return {
+                  receipt: input.receipt,
+                  acceptedDescriptorCount: input.descriptors.length,
+                  rebaselineRequired: false,
+                };
+              }),
+          }),
+        ),
+      ),
+    );
+
+    try {
+      const commands = createStateCommandsFacade(managedRuntime);
+      const input = {
+        actor: "workflow-task" as const,
+        extensionUsage: {
+          ["shell" as ExtensionId]: "loaded" as const,
+          ["smithers" as ExtensionId]: "available" as const,
+        },
+        extensionOrder: ["smithers" as ExtensionId, "shell" as ExtensionId],
+        clientSubmission: {
+          clientRequestId: "actor-extension-defaults-command" as RuntimeClientRequestId,
+          source: "test" as RuntimeClientSubmissionSource,
+        },
+      };
+
+      const applied = await commands.agentProfiles.setActorExtensionDefaults(input);
+      const duplicate = await commands.agentProfiles.setActorExtensionDefaults(input);
+
+      expect(applied.receipt).toMatchObject({
+        clientRequestId: "actor-extension-defaults-command",
+        outcome: "applied",
+      });
+      expect(duplicate.receipt).toEqual({ ...applied.receipt, outcome: "duplicate" });
+      expect(
+        store.listAgentActorExtensionDefaults().find((record) => record.actor === "workflow-task"),
+      ).toMatchObject({
+        actor: "workflow-task",
+        extensionUsage: { shell: "loaded", smithers: "available" },
+        extensionOrder: ["smithers", "shell"],
+      });
+      expect(published).toHaveLength(1);
+      expect(published[0]).toMatchObject({
+        operation: "stateCommands.agentProfiles.setActorExtensionDefaults",
+        descriptors: [{ scope: "app", invalidation: { model: "agents" } }],
+      });
+    } finally {
+      await managedRuntime.dispose();
+      appLogStore.close();
+      store.close();
+    }
+  });
+
   it("commits typed session navigation commands with explicit routing and idempotent receipts", async () => {
     let idSeq = 0;
     let cursor = Date.parse("2026-07-11T10:00:00.000Z");
@@ -2651,11 +3059,12 @@ describe("State read-model kind expansion", () => {
   });
 
   it("keeps app and workspace rebaseline stores separate", async () => {
-    const makeStore = (workspaceId: WorkspaceId) =>
-      createStructuredSessionStateStore({
+    const makeStore = (workspaceId: WorkspaceId) => {
+      let idSequence = 0;
+      return createStructuredSessionStateStore({
         databasePath: ":memory:",
         digest: testDigest,
-        idFactory: (prefix) => `${prefix}-${workspaceId}`,
+        idFactory: (prefix) => `${prefix}-${workspaceId}-${++idSequence}`,
         now: () => "2026-06-21T12:00:00.000Z",
         workspace: {
           id: workspaceId,
@@ -2664,6 +3073,7 @@ describe("State read-model kind expansion", () => {
           artifactDir: `/tmp/${workspaceId}-artifacts` as typeof AbsolutePath.Type,
         },
       });
+    };
     const appGlobalStore = makeStore("workspace_rebaseline_app_global" as WorkspaceId);
     const workspaceId = "workspace_rebaseline_routed" as WorkspaceId;
     const workspaceStore = makeStore(workspaceId);
@@ -2672,12 +3082,35 @@ describe("State read-model kind expansion", () => {
     try {
       appGlobalStore.updateAppPreferences({ appearance: "dark" });
       workspaceStore.updateAppPreferences({ appearance: "light" });
+      appGlobalStore.setRequestInputVariant({ mode: "blocking" });
+      appGlobalStore.setRequestInputBlockingTimeout({
+        enabled: false,
+        durationMs: 420000 as PositiveDurationMs,
+      });
+      workspaceStore.setRequestInputBlockingTimeout({
+        enabled: true,
+        durationMs: 1000 as PositiveDurationMs,
+      });
       const snippet = workspaceStore.createManagedSnippet({
         workspaceId,
         title: "Workspace-only snippet",
         body: "Workspace body",
         metadata: { description: null, argumentHint: null },
         enabled: true,
+      });
+      const promptHistorySurface = workspaceStore.createOrchestratorSurface({
+        workspaceId,
+        title: "Prompt history rebaseline",
+      });
+      const promptHistorySubmission = workspaceStore.acceptSubmittedSurfaceMessage({
+        target: {
+          workspaceSessionId: promptHistorySurface.workspaceSessionId,
+          surface: "orchestrator",
+          surfacePiSessionId: promptHistorySurface.surfacePiSessionId,
+        },
+        idempotencyKey: "prompt-history-rebaseline",
+        promptHistoryText: "Rebaseline this prompt",
+        messageJson: JSON.stringify({ text: "Rebaseline this prompt" }),
       });
       const tab = {
         workspaceTabId: "workspace-tab-rebaseline" as WorkspaceTabId,
@@ -2806,7 +3239,11 @@ describe("State read-model kind expansion", () => {
       const appPreferences = workspaceBaseline.app.find(
         (result) => result.kind === "appPreferences",
       );
+      const settings = workspaceBaseline.app.find((result) => result.kind === "settings");
       const snippets = workspaceBaseline.workspaces.find((result) => result.kind === "snippets");
+      const promptHistory = workspaceBaseline.workspaces.find(
+        (result) => result.kind === "promptHistory",
+      );
       expect(appPreferences).toMatchObject({
         kind: "appPreferences",
         value: { appearance: "dark" },
@@ -2815,6 +3252,46 @@ describe("State read-model kind expansion", () => {
         kind: "snippets",
         value: { managed: [{ id: snippet.id, title: "Workspace-only snippet" }] },
       });
+      expect(promptHistory).toMatchObject({
+        kind: "promptHistory",
+        value: {
+          workspaceId,
+          entries: [
+            {
+              queueItemId: promptHistorySubmission.queuedMessage.id,
+              text: "Rebaseline this prompt",
+            },
+          ],
+        },
+      });
+      expect(settings).toMatchObject({
+        kind: "settings",
+        value: {
+          preferences: { appearance: "dark" },
+          requestInput: {
+            mode: "blocking",
+            blockingTimeout: { enabled: false, durationMs: 420000 },
+          },
+        },
+      });
+
+      const settingsRefetch = await runTestEffect(
+        readModels.refetchInvalidation({
+          descriptor: { scope: "app", invalidation: { model: "settings" } },
+        }),
+      );
+      expect(settingsRefetch).toMatchObject([
+        {
+          kind: "settings",
+          value: {
+            preferences: { appearance: "dark" },
+            requestInput: {
+              mode: "blocking",
+              blockingTimeout: { enabled: false, durationMs: 420000 },
+            },
+          },
+        },
+      ]);
 
       const chrome = await runTestEffect(
         readModels.refetchInvalidation({
@@ -2874,6 +3351,17 @@ describe("State read-model kind expansion", () => {
         expect.objectContaining({
           kind: "appPreferences",
           value: expect.objectContaining({ appearance: "dark" }),
+        }),
+      );
+      expect(appBaseline.app).toContainEqual(
+        expect.objectContaining({
+          kind: "settings",
+          value: expect.objectContaining({
+            requestInput: {
+              mode: "blocking",
+              blockingTimeout: { enabled: false, durationMs: 420000 },
+            },
+          }),
         }),
       );
     } finally {
@@ -2939,6 +3427,64 @@ describe("State read-model kind expansion", () => {
     } finally {
       appLogStore.close();
       store.close();
+    }
+  });
+
+  it("routes surface read models by committed target identity", async () => {
+    const makeStore = (workspaceId: WorkspaceId) =>
+      createStructuredSessionStateStore({
+        databasePath: ":memory:",
+        digest: testDigest,
+        idFactory: (prefix) => `${prefix}-${workspaceId}`,
+        now: () => "2026-06-21T12:00:00.000Z",
+        workspace: {
+          id: workspaceId,
+          label: workspaceId,
+          cwd: `/tmp/${workspaceId}` as typeof AbsolutePath.Type,
+          artifactDir: `/tmp/${workspaceId}-artifacts` as typeof AbsolutePath.Type,
+        },
+      });
+    const appGlobalStore = makeStore("workspace_surface_app_global" as WorkspaceId);
+    const workspaceId = "workspace_surface_routed" as WorkspaceId;
+    const workspaceStore = makeStore(workspaceId);
+    const appLogStore = createAppLogStore({ now: () => "2026-06-21T12:00:00.000Z" });
+
+    try {
+      const surface = workspaceStore.createOrchestratorSurface({
+        workspaceId,
+        title: "Routed surface",
+      });
+      const router = createWorkspaceStateRouter({
+        appGlobalStore,
+        workspaceStores: [],
+      });
+      const readModels = stateReadModelsFromRouter({
+        router,
+        appLogs: appLogStateFromStore(appLogStore),
+      });
+      router.registerWorkspaceState({ store: workspaceStore });
+
+      await expect(
+        Promise.all(
+          (
+            [
+              "surfaceTranscript",
+              "surfaceSummary",
+              "surfaceComposer",
+              "surfaceQueuedMessages",
+            ] as const
+          ).map((kind) => runTestEffect(readModels.fetch({ kind, target: surface.target }))),
+        ),
+      ).resolves.toMatchObject([
+        { kind: "surfaceTranscript", value: { target: surface.target } },
+        { kind: "surfaceSummary", value: { target: surface.target, title: "Routed surface" } },
+        { kind: "surfaceComposer", value: { target: surface.target } },
+        { kind: "surfaceQueuedMessages", value: { target: surface.target } },
+      ]);
+    } finally {
+      appLogStore.close();
+      workspaceStore.close();
+      appGlobalStore.close();
     }
   });
 

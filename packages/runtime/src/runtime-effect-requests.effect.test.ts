@@ -288,6 +288,11 @@ function extensionsServiceWithReadiness(
     sources: {
       openEditSession: () => Effect.die("Unexpected source edit open."),
       saveEditSession: () => Effect.die("Unexpected source edit save."),
+      createWorkflowAgent: () => Effect.die("Unexpected workflow-agent create."),
+      duplicateWorkflowAgent: () => Effect.die("Unexpected workflow-agent duplicate."),
+      deleteWorkflowAgent: () => Effect.die("Unexpected workflow-agent delete."),
+      scanWorkflowAgents: () => Effect.die("Unexpected workflow-agent scan."),
+      scaffoldMissingWorkflowAgents: () => Effect.die("Unexpected workflow-agent scaffold."),
     },
   } satisfies ExtensionsService);
 }
@@ -336,8 +341,6 @@ describe("runtime effect request application", () => {
               input: {
                 target,
                 sourceCommandId: commandId,
-                mode: "nonblocking",
-                timeout: null,
                 questions: [
                   {
                     title: "CI scope",
@@ -465,8 +468,6 @@ describe("runtime effect request application", () => {
           input: {
             target,
             sourceCommandId: commandId,
-            mode: "nonblocking",
-            timeout: null,
             questions: [
               {
                 title: "Scope",
@@ -549,8 +550,6 @@ describe("runtime effect request application", () => {
                 input: {
                   target,
                   sourceCommandId: commandId,
-                  mode: "nonblocking",
-                  timeout: null,
                   questions: [
                     {
                       title: "Publication",
@@ -621,8 +620,6 @@ describe("runtime effect request application", () => {
             input: {
               target,
               sourceCommandId: commandId,
-              mode: "nonblocking",
-              timeout: null,
               questions: [
                 {
                   title: "Scope",
@@ -873,8 +870,6 @@ describe("runtime effect request application", () => {
                   surfacePiSessionId: "pi_runtime_effects_other" as SurfacePiSessionId,
                 },
                 sourceCommandId: "command_runtime_effects_02" as CommandId,
-                mode: "nonblocking",
-                timeout: null,
                 questions: [
                   {
                     title: "Scope",
@@ -2041,10 +2036,6 @@ describe("runtime effect request application", () => {
               baseEnv: {},
             },
             commandRecord: requestUserInputCommandRecord(),
-            requestInput: {
-              mode: "nonblocking",
-              blockingTimeout: { enabled: true, durationMs: BLOCKING_TIMEOUT_MS },
-            },
           }).pipe(
             Effect.provideService(RuntimeRequestStatePort, requestStatePort),
             Effect.provideService(RuntimeCommandStatePort, commandStatePort),
@@ -2152,6 +2143,14 @@ describe("runtime effect request application", () => {
           const calls: string[] = [];
           let createdDetails: RuntimeRequestInputDetailsRecord | null = null;
           const requestStatePort = {
+            readRequestInputSettings: () =>
+              Effect.succeed({
+                mode: "blocking" as const,
+                blockingTimeout: { enabled: true, durationMs: BLOCKING_TIMEOUT_MS },
+              }),
+            setRequestInputVariant: () => Effect.die("Unexpected request input variant mutation."),
+            setRequestInputBlockingTimeout: () =>
+              Effect.die("Unexpected request input timeout mutation."),
             createRequestInput: (input) => {
               createCalls.push(input);
               createdDetails = {
@@ -2169,6 +2168,7 @@ describe("runtime effect request application", () => {
                 completedAt: null,
                 timeout: input.timeout
                   ? {
+                      timerVersion: 1,
                       enabled: input.timeout.enabled,
                       durationMs: input.timeout.durationMs,
                       startedAt: "2026-04-18T09:00:00.000Z",
@@ -2300,10 +2300,6 @@ describe("runtime effect request application", () => {
               baseEnv: {},
             },
             commandRecord,
-            requestInput: {
-              mode: "blocking",
-              blockingTimeout: { enabled: true, durationMs: BLOCKING_TIMEOUT_MS },
-            },
           }).pipe(
             Effect.provideService(RuntimeRequestStatePort, requestStatePort),
             Effect.provideService(RuntimeCommandStatePort, commandStatePort),
@@ -2400,11 +2396,21 @@ function assertRuntimeEffectError(
 function unexpectedRequestStateMethods(): Pick<
   RuntimeRequestStatePortService,
   | "getRequestInput"
+  | "readRequestInputSettings"
+  | "setRequestInputBlockingTimeout"
+  | "setRequestInputVariant"
   | "listOpenBlockingRequestInputs"
   | "defaultOpenRequestInputQuestions"
   | "cancelRequestInput"
 > {
   return {
+    readRequestInputSettings: () =>
+      Effect.succeed({
+        mode: "nonblocking",
+        blockingTimeout: { enabled: true, durationMs: BLOCKING_TIMEOUT_MS },
+      }),
+    setRequestInputVariant: () => Effect.die("Unexpected request input variant mutation."),
+    setRequestInputBlockingTimeout: () => Effect.die("Unexpected request input timeout mutation."),
     getRequestInput: () => Effect.die("Unexpected request input get."),
     listOpenBlockingRequestInputs: () => Effect.die("Unexpected request input open blocking list."),
     defaultOpenRequestInputQuestions: () =>

@@ -132,8 +132,6 @@ describe("request_user_input handler", () => {
                 surfacePiSessionId: context.surfacePiSessionId,
               },
               sourceCommandId: "command_request_input_handler_01" as CommandId,
-              mode: "nonblocking",
-              timeout: null,
               questions: [
                 {
                   title: "CI scope",

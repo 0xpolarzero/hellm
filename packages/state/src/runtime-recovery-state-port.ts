@@ -152,6 +152,8 @@ function runtimeRecoveryWorkOwnerScopeFromState(
   switch (ownerScope.kind) {
     case "workspace":
       return ownerScope;
+    case "source":
+      return ownerScope;
     case "workspace_session":
       return {
         kind: ownerScope.kind,

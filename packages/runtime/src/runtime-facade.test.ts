@@ -23,6 +23,7 @@ import type {
   RequestInputOptionId,
   RequestInputQuestionId,
   RequestInputRequestId,
+  SetRequestInputBlockingTimeoutInput,
   RuntimeApprovalId,
   RuntimeClientCorrelationId,
   RuntimeClientRequestId,
@@ -32,8 +33,9 @@ import type {
   RuntimeEventSequence,
   RuntimeEventSubscriptionClose,
   RuntimeOwnerId,
-  SaveExtensionSourceEditInput,
+  RuntimeSaveExtensionSourceEditInput,
   SetRequestInputTimerPausedInput,
+  SetRequestInputVariantInput,
   SourceEditSaveResult,
   SourceEditSession,
   SourceInvalidationHint,
@@ -46,6 +48,9 @@ import type {
   WriteCommandStdinInput,
   WorkspaceId,
   WorkspaceSessionId,
+  WorkflowAgentSourceExportName,
+  WorkflowAgentSourceLifecycleResult,
+  WorkflowAgentSourceDeleteResult,
 } from "@svvy/core";
 import { RuntimeContractError, RuntimeEventRebaselineRequired } from "@svvy/core";
 
@@ -154,6 +159,8 @@ function runtimeService(overrides: RuntimeServiceTestOverrides): RuntimeService 
       close: () => Effect.die("unused"),
     },
     requestInput: {
+      setVariant: () => Effect.die("unused"),
+      setBlockingTimeout: () => Effect.die("unused"),
       answer: () => Effect.die("unused"),
       setTimerPaused: () => Effect.die("unused"),
     },
@@ -168,6 +175,9 @@ function runtimeService(overrides: RuntimeServiceTestOverrides): RuntimeService 
     sourceEdits: {
       open: () => Effect.die("unused"),
       save: () => Effect.die("unused"),
+      createWorkflowAgent: () => Effect.die("unused"),
+      duplicateWorkflowAgent: () => Effect.die("unused"),
+      deleteWorkflowAgent: () => Effect.die("unused"),
     },
     sourceInvalidation: {
       hint: () => Effect.die("unused"),
@@ -175,6 +185,9 @@ function runtimeService(overrides: RuntimeServiceTestOverrides): RuntimeService 
       applyCommittedScanEvent: () => Effect.die("unused"),
       refreshGeneratedContext: () => Effect.die("unused"),
       refreshGeneratedPackages: () => Effect.die("unused"),
+    },
+    workspaceRecovery: {
+      wakeSurfaceQueue: () => Effect.die("unused"),
     },
     workflowTaskAgentBridge: {
       runTaskAgent: () => Effect.die("unused"),
@@ -445,6 +458,54 @@ describe("@svvy/runtime facade", () => {
     }
   });
 
+  it("decodes and forwards request-input setting mutations", async () => {
+    const variantInput = { mode: "blocking" } satisfies SetRequestInputVariantInput;
+    const timeoutInput = {
+      enabled: false,
+      durationMs: 45_000 as SetRequestInputBlockingTimeoutInput["durationMs"],
+    } satisfies SetRequestInputBlockingTimeoutInput;
+    const settings = { mode: "blocking" as const, blockingTimeout: timeoutInput };
+    const calls: unknown[] = [];
+    const managedRuntime = createTestManagedRuntime(
+      runtimeService({
+        messages: {
+          submit: () => Effect.succeed(submitResult(submitInput)),
+          abort: () => Effect.void,
+        },
+        queues: { steer: () => Effect.void },
+        requestInput: {
+          setVariant: (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              return settings;
+            }),
+          setBlockingTimeout: (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              return settings;
+            }),
+          answer: () => Effect.die("Unexpected requestInput.answer call."),
+          setTimerPaused: () => Effect.die("Unexpected requestInput.setTimerPaused call."),
+        },
+        commands: { cancel: () => Effect.succeed(cancelledCommandResult) },
+        events: () => Effect.succeed(testEventSubscription(Stream.empty)),
+      }),
+    );
+    const facade = createRuntimeFacade(managedRuntime);
+
+    try {
+      await expect(facade.requestInput.setVariant(variantInput)).resolves.toEqual(settings);
+      await expect(facade.requestInput.setBlockingTimeout(timeoutInput)).resolves.toEqual(settings);
+      expect(calls).toEqual([variantInput, timeoutInput]);
+      await expect(
+        facade.requestInput.setVariant({ mode: "blocking", unknown: true } as never),
+      ).rejects.toMatchObject({ reason: "typed-failure" });
+    } finally {
+      await facade.close();
+      await managedRuntime.dispose();
+    }
+  });
+
   it("forwards request-input answers through the Effect Runtime service", async () => {
     const answerInput = {
       surfacePiSessionId: "pi_orch_01" as SurfacePiSessionId,
@@ -475,6 +536,8 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         requestInput: {
+          setVariant: () => Effect.die("Unexpected requestInput.setVariant call."),
+          setBlockingTimeout: () => Effect.die("Unexpected requestInput.setBlockingTimeout call."),
           answer: (input) =>
             Effect.sync(() => {
               answered.push(input);
@@ -519,6 +582,8 @@ describe("@svvy/runtime facade", () => {
         },
         queues: { steer: () => Effect.void },
         requestInput: {
+          setVariant: () => Effect.die("Unexpected requestInput.setVariant call."),
+          setBlockingTimeout: () => Effect.die("Unexpected requestInput.setBlockingTimeout call."),
           answer: () => Effect.die("Unexpected requestInput.answer call."),
           setTimerPaused: (input) =>
             Effect.sync(() => {
@@ -952,7 +1017,7 @@ describe("@svvy/runtime facade", () => {
 
   it("forwards extension source edit sessions through the source edit API", async () => {
     const opened: OpenExtensionSourceEditInput[] = [];
-    const saved: SaveExtensionSourceEditInput[] = [];
+    const saved: RuntimeSaveExtensionSourceEditInput[] = [];
     const sourcePath = "/tmp/svvy/extensions/web/index.ts" as AbsolutePath;
     const session = {
       sourceKind: "user-extension",
@@ -991,6 +1056,9 @@ describe("@svvy/runtime facade", () => {
               saved.push(input);
               return saveResult;
             }),
+          createWorkflowAgent: () => Effect.die("unused"),
+          duplicateWorkflowAgent: () => Effect.die("unused"),
+          deleteWorkflowAgent: () => Effect.die("unused"),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
       }),
@@ -1006,12 +1074,15 @@ describe("@svvy/runtime facade", () => {
       ).resolves.toEqual(session);
       await expect(
         facade.sourceEdits.save({
-          sourceKind: "user-extension",
-          sourceId: "web",
-          expectedSourceVersion: "version_01",
-          text: "export default { loaded: true };",
-          saveMode: "compare-and-swap",
-          sourceCommandId: "cmd_source_save_01" as CommandId,
+          workspaceId: "ws_source_save_01" as WorkspaceId,
+          source: {
+            sourceKind: "user-extension",
+            sourceId: "web",
+            expectedSourceVersion: "version_01",
+            text: "export default { loaded: true };",
+            saveMode: "compare-and-swap",
+            sourceCommandId: "cmd_source_save_01" as CommandId,
+          },
         }),
       ).resolves.toEqual(saveResult);
       expect(opened).toEqual([{ sourceKind: "user-extension", sourceId: "web" }]);
@@ -1049,6 +1120,9 @@ describe("@svvy/runtime facade", () => {
               } satisfies SourceEditSession;
             }),
           save: () => Effect.die("unused"),
+          createWorkflowAgent: () => Effect.die("unused"),
+          duplicateWorkflowAgent: () => Effect.die("unused"),
+          deleteWorkflowAgent: () => Effect.die("unused"),
         },
         events: () => Effect.succeed(testEventSubscription(Stream.empty)),
       }),
@@ -1066,7 +1140,130 @@ describe("@svvy/runtime facade", () => {
         type: "runtime-facade-error",
         reason: "typed-failure",
       });
+      await expect(
+        facade.sourceEdits.save({
+          source: {
+            sourceKind: "workflow-agent",
+            sourceId: "reviewAgent",
+            expectedSourceVersion: "version_01",
+            text: "{}\n",
+            saveMode: "compare-and-swap",
+          },
+        } as unknown as Parameters<typeof facade.sourceEdits.save>[0]),
+      ).rejects.toMatchObject({
+        type: "runtime-facade-error",
+        reason: "typed-failure",
+      });
       expect(opened).toBe(0);
+    } finally {
+      await facade.close();
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("forwards runtime-scoped workflow-agent lifecycle requests through the facade", async () => {
+    const createdInputs: Array<
+      Parameters<RuntimeService["sourceEdits"]["createWorkflowAgent"]>[0]
+    > = [];
+    const duplicatedInputs: Array<
+      Parameters<RuntimeService["sourceEdits"]["duplicateWorkflowAgent"]>[0]
+    > = [];
+    const deletedInputs: Array<
+      Parameters<RuntimeService["sourceEdits"]["deleteWorkflowAgent"]>[0]
+    > = [];
+    const sourceId = "strictReviewer" as WorkflowAgentSourceExportName;
+    const session = {
+      sourceKind: "workflow-agent",
+      sourceId,
+      path: "/tmp/svvy/workflows/agents/strictReviewer.agent.json" as AbsolutePath,
+      sourceVersion: "version_created",
+      fingerprint: "version_created",
+      text: "{}\n",
+      diagnostics: [],
+    } satisfies WorkflowAgentSourceLifecycleResult["session"];
+    const lifecycleResult = {
+      status: "created",
+      session,
+      fileWriteReceipt: { path: session.path, previousExists: false, bytes: 3 },
+      reconcileRequired: true,
+    } satisfies WorkflowAgentSourceLifecycleResult;
+    const deleteResult = {
+      status: "deleted",
+      sourceKind: "workflow-agent",
+      sourceId,
+      deletedPath: session.path,
+      previousSourceVersion: session.sourceVersion,
+      fileWriteReceipt: { path: session.path, deleted: true },
+      reconcileRequired: true,
+    } satisfies WorkflowAgentSourceDeleteResult;
+    const managedRuntime = createTestManagedRuntime(
+      runtimeService({
+        messages: { submit: () => Effect.die("unused"), abort: () => Effect.void },
+        queues: { steer: () => Effect.void },
+        commands: { cancel: () => Effect.succeed(cancelledCommandResult) },
+        sourceEdits: {
+          open: () => Effect.die("unused"),
+          save: () => Effect.die("unused"),
+          createWorkflowAgent: (input) =>
+            Effect.sync(() => {
+              createdInputs.push(input);
+              return lifecycleResult;
+            }),
+          duplicateWorkflowAgent: (input) =>
+            Effect.sync(() => {
+              duplicatedInputs.push(input);
+              return { ...lifecycleResult, status: "duplicated" as const };
+            }),
+          deleteWorkflowAgent: (input) =>
+            Effect.sync(() => {
+              deletedInputs.push(input);
+              return deleteResult;
+            }),
+        },
+        events: () => Effect.succeed(testEventSubscription(Stream.empty)),
+      }),
+    );
+    const facade = createRuntimeFacade(managedRuntime);
+
+    try {
+      await expect(
+        facade.sourceEdits.createWorkflowAgent({
+          workspaceId: "ws_source_lifecycle" as WorkspaceId,
+          source: {
+            draft: {
+              exportName: sourceId,
+              displayName: "Strict reviewer",
+              provider: "openai",
+              model: "gpt-5.4",
+              reasoning: { effort: "high" },
+            },
+            sourceOwner: "agents-pane",
+          },
+        }),
+      ).resolves.toEqual(lifecycleResult);
+      await expect(
+        facade.sourceEdits.duplicateWorkflowAgent({
+          workspaceId: "ws_source_lifecycle" as WorkspaceId,
+          source: {
+            sourceId,
+            draftPatch: { exportName: "strictReviewerCopy" as WorkflowAgentSourceExportName },
+            sourceOwner: "headless",
+          },
+        }),
+      ).resolves.toMatchObject({ status: "duplicated" });
+      await expect(
+        facade.sourceEdits.deleteWorkflowAgent({
+          workspaceId: "ws_source_lifecycle" as WorkspaceId,
+          source: {
+            sourceId,
+            expectedSourceVersion: session.sourceVersion,
+            sourceOwner: "agents-pane",
+          },
+        }),
+      ).resolves.toEqual(deleteResult);
+      expect(createdInputs).toHaveLength(1);
+      expect(duplicatedInputs).toHaveLength(1);
+      expect(deletedInputs).toHaveLength(1);
     } finally {
       await facade.close();
       await managedRuntime.dispose();

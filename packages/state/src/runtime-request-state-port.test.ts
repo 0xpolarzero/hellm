@@ -19,6 +19,7 @@ import {
 import { layerRuntimeRequestStatePort } from "./index";
 import { runtimeRequestStatePortFromStore } from "./structured-session-adapters";
 import {
+  createStructuredSessionStateStore,
   layerStructuredSessionState,
   StructuredSessionState,
   type StructuredRequestUserInputAnswerRecord,
@@ -38,6 +39,49 @@ const workspaceSessionId = "session-runtime-request-state-port" as WorkspaceSess
 const timeoutDurationMs = 300_000 as PositiveDurationMs;
 
 describe("RuntimeRequestStatePort", () => {
+  it("reads and writes durable settings with exact app invalidations", async () => {
+    const store = createStructuredSessionStateStore({ workspace });
+    const port = runtimeRequestStatePortFromStore(store);
+
+    try {
+      expect((await runTestEffect(port.readRequestInputSettings())) as unknown).toEqual({
+        mode: "nonblocking",
+        blockingTimeout: { enabled: true, durationMs: 300000 },
+      });
+
+      const variant = await runTestEffect(port.setRequestInputVariant({ mode: "blocking" }));
+      expect(variant.value as unknown).toEqual({
+        mode: "blocking",
+        blockingTimeout: { enabled: true, durationMs: 300000 },
+      });
+      expect(variant.afterCommit as unknown).toEqual([
+        { scope: "app", invalidation: { model: "settings" } },
+        {
+          scope: "app",
+          invalidation: { model: "extensions", ids: ["request-user-input"] },
+        },
+        { scope: "app", invalidation: { model: "agents" } },
+      ]);
+
+      const timeout = await runTestEffect(
+        port.setRequestInputBlockingTimeout({
+          enabled: false,
+          durationMs: 120000 as PositiveDurationMs,
+        }),
+      );
+      expect(timeout.value as unknown).toEqual({
+        mode: "blocking",
+        blockingTimeout: { enabled: false, durationMs: 120000 },
+      });
+      expect(timeout.afterCommit as unknown).toEqual([
+        { scope: "app", invalidation: { model: "settings" } },
+      ]);
+      expect(store.readCurrentStateRevision() as unknown).toBe(2);
+    } finally {
+      store.close();
+    }
+  });
+
   it("creates, reads, answers, and queues nonblocking request input through an Effect service", async () => {
     await runTestEffect(
       Effect.scoped(
@@ -80,13 +124,20 @@ describe("RuntimeRequestStatePort", () => {
             (choice) => choice.label === "Full suite",
           )!;
           const questionId = details.questions[0]!.questionId as RequestInputQuestionId;
-          const answered = yield* port.answerRequestInput({
+          const answerInput = {
             surfacePiSessionId: "session-runtime-request-state-port" as SurfacePiSessionId,
             requestId: requestRecord.requestId,
             questionId,
             answer: { kind: "option", optionId: fullSuite.optionId as RequestInputOptionId },
             delivery: "enqueue-and-run",
-          });
+            clientSubmission: {
+              submissionId: "submission_request_input_answer" as never,
+              clientRequestId: "client_request_input_answer" as never,
+              source: "test" as never,
+            },
+          } as const;
+          const answered = yield* port.answerRequestInput(answerInput);
+          const duplicate = yield* port.answerRequestInput(answerInput);
           const completed = yield* port.getRequestInput({ requestId: requestRecord.requestId });
 
           expect(requestRecord).toMatchObject({
@@ -147,6 +198,11 @@ describe("RuntimeRequestStatePort", () => {
           expect(answered.value.answer.delivery.queuedItemId).toMatch(/^queued-message-/);
           expect(answered.value.target).toEqual(orchestratorTarget());
           expect(answered.afterCommit as unknown).toEqual(request.afterCommit as unknown);
+          expect(duplicate.value.answer).toEqual({
+            ...answered.value.answer,
+            status: "duplicate",
+          });
+          expect(duplicate.afterCommit).toEqual([]);
           expect(completed.status).toBe("completed");
           expect(completed.answers).toContainEqual(
             expect.objectContaining({
@@ -175,7 +231,7 @@ describe("RuntimeRequestStatePort", () => {
     await runTestEffect(
       Effect.scoped(
         Effect.gen(function* () {
-          const { port, turn, command } = yield* createPortHarness("blocking");
+          const { port, state, turn, command } = yield* createPortHarness("blocking");
           const request = yield* port.createRequestInput({
             target: orchestratorTarget(),
             turnId: turn.id as TurnId,
@@ -192,6 +248,8 @@ describe("RuntimeRequestStatePort", () => {
             ],
           });
           const requestRecord = request.value;
+          const waitingCommand = yield* state.findCommandById(command.id);
+          const waitingSession = yield* state.getSessionState(workspaceSessionId);
 
           const open = yield* port.listOpenBlockingRequestInputs({
             workspaceSessionId,
@@ -202,10 +260,31 @@ describe("RuntimeRequestStatePort", () => {
             requestId: requestRecord.requestId,
             paused: true,
           });
+          const pausedAgain = yield* port.setRequestInputTimerPaused({
+            surfacePiSessionId: "session-runtime-request-state-port" as SurfacePiSessionId,
+            requestId: requestRecord.requestId,
+            paused: true,
+          });
+          const resumed = yield* port.setRequestInputTimerPaused({
+            surfacePiSessionId: "session-runtime-request-state-port" as SurfacePiSessionId,
+            requestId: requestRecord.requestId,
+            paused: false,
+          });
+          const resumedTimeout = resumed.value.timeout;
+          if (!resumedTimeout?.expiresAt) {
+            throw new Error("Expected resumed blocking timeout facts.");
+          }
           const defaulted = yield* port.defaultOpenRequestInputQuestions({
             requestId: requestRecord.requestId,
             answeredBy: "timeout_default",
+            expectedTimerVersion: resumedTimeout.timerVersion,
+            expectedExpiresAt: resumedTimeout.expiresAt,
           });
+          const ordinaryAfterDefault = yield* port.listOpenBlockingRequestInputs({
+            workspaceSessionId,
+          });
+          const defaultedCommand = yield* state.findCommandById(command.id);
+          const defaultedSession = yield* state.getSessionState(workspaceSessionId);
 
           const cancelHarness = yield* createPortHarness("blocking-cancel");
           const cancellable = yield* port.createRequestInput({
@@ -227,8 +306,15 @@ describe("RuntimeRequestStatePort", () => {
           const cancelled = yield* port.cancelRequestInput({
             requestId: cancellableRecord.requestId,
           });
+          const cancelledCommand = yield* state.findCommandById(cancelHarness.command.id);
+          const cancelledSession = yield* state.getSessionState(workspaceSessionId);
 
           expect(open.map((entry) => entry.requestId)).toEqual([requestRecord.requestId]);
+          expect(waitingCommand?.status).toBe("waiting");
+          expect(waitingSession.session.wait).toMatchObject({
+            kind: "user",
+            owner: { kind: "orchestrator" },
+          });
           expect(paused.value).toMatchObject({
             requestId: requestRecord.requestId,
             timeout: expect.objectContaining({
@@ -236,7 +322,13 @@ describe("RuntimeRequestStatePort", () => {
               expiresAt: null,
             }),
           });
-          expect(paused.afterCommit as unknown).toEqual(request.afterCommit as unknown);
+          expect(paused.afterCommit as unknown).toEqual(
+            request.afterCommit.filter(
+              (descriptor) => descriptor.invalidation.model !== "sessionNavigation",
+            ) as unknown,
+          );
+          expect(pausedAgain.afterCommit).toEqual([]);
+          expect(resumed.value.timeout?.timerVersion).toBe(3);
           expect(defaulted.value).toMatchObject({
             requestId: requestRecord.requestId,
             status: "expired",
@@ -247,12 +339,17 @@ describe("RuntimeRequestStatePort", () => {
             ],
           });
           expect(defaulted.afterCommit as unknown).toEqual(request.afterCommit as unknown);
+          expect(ordinaryAfterDefault).toEqual([]);
+          expect(defaultedCommand?.status).toBe("succeeded");
+          expect(defaultedSession.session.wait).toBeNull();
           expect(cancelled.value).toMatchObject({
             requestId: cancellableRecord.requestId,
             status: "cancelled",
             questions: [expect.objectContaining({ status: "cancelled" })],
           });
           expect(cancelled.afterCommit as unknown).toEqual(cancellable.afterCommit as unknown);
+          expect(cancelledCommand?.status).toBe("cancelled");
+          expect(cancelledSession.session.wait).toBeNull();
         }).pipe(
           Effect.provide(
             layerRuntimeRequestStatePort.pipe(
@@ -272,7 +369,7 @@ describe("RuntimeRequestStatePort", () => {
     await runTestEffect(
       Effect.scoped(
         Effect.gen(function* () {
-          const { port, turn, command } = yield* createPortHarness("blocking-multi");
+          const { port, state, turn, command } = yield* createPortHarness("blocking-multi");
           const request = yield* port.createRequestInput({
             target: orchestratorTarget(),
             turnId: turn.id as TurnId,
@@ -305,6 +402,7 @@ describe("RuntimeRequestStatePort", () => {
             delivery: "enqueue-and-run",
           });
           const stillOpen = yield* port.getRequestInput({ requestId: request.value.requestId });
+          const commandAfterFirst = yield* state.findCommandById(command.id);
           const secondAnswer = yield* port.answerRequestInput({
             surfacePiSessionId: details.surfacePiSessionId,
             requestId: details.requestId,
@@ -313,6 +411,8 @@ describe("RuntimeRequestStatePort", () => {
             delivery: "enqueue-and-run",
           });
           const completed = yield* port.getRequestInput({ requestId: request.value.requestId });
+          const commandAfterSecond = yield* state.findCommandById(command.id);
+          const sessionAfterSecond = yield* state.getSessionState(workspaceSessionId);
 
           expect(firstAnswer.value.answer.delivery).toEqual({
             kind: "blocking-open",
@@ -325,11 +425,14 @@ describe("RuntimeRequestStatePort", () => {
               expect.objectContaining({ questionId: secondQuestion.questionId, status: "open" }),
             ],
           });
+          expect(commandAfterFirst?.status).toBe("waiting");
           expect(secondAnswer.value.answer.delivery).toEqual({
             kind: "blocking-resolved",
             queuedItemId: null,
           });
           expect(completed.status).toBe("completed");
+          expect(commandAfterSecond?.status).toBe("succeeded");
+          expect(sessionAfterSecond.session.wait).toBeNull();
         }).pipe(
           Effect.provide(
             layerRuntimeRequestStatePort.pipe(
@@ -470,6 +573,7 @@ describe("RuntimeRequestStatePort", () => {
       variant: "blocking",
       status: "open",
       timeout: {
+        timerVersion: 2,
         enabled: true,
         durationMs: 300_000,
         startedAt: "2026-04-18T08:55:00.000Z",
@@ -493,7 +597,7 @@ describe("RuntimeRequestStatePort", () => {
           requestId: request.requestId,
           paused: true,
         });
-        return request;
+        return { record: request, changed: true };
       },
     } as unknown as StructuredSessionStateStore);
 
@@ -581,7 +685,7 @@ function createPortHarness(label: string) {
     });
     yield* state.startCommand(command.id);
     const port = yield* RuntimeRequestStatePort;
-    return { port, turn, command };
+    return { port, state, turn, command };
   });
 }
 

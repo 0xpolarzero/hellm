@@ -1,0 +1,12 @@
+{
+  "id": "explorerAgent",
+  "label": "Explorer",
+  "provider": "zai",
+  "model": "glm-5-turbo",
+  "reasoning": {
+    "effort": "medium"
+  },
+  "instructions": "Inspect the repository and return concise findings, evidence, and unresolved questions. Do not edit files.",
+  "overrides": {},
+  "extensionOrder": []
+}

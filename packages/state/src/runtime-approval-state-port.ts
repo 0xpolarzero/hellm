@@ -49,10 +49,13 @@ export function runtimeApprovalStatePortFromStructuredSessionState(
       ),
     resolveApprovalRequest: (input) =>
       state.resolveRuntimeApprovalRequest(input).pipe(
-        Effect.map(mapRuntimeApprovalRecord),
-        Effect.map((record) =>
-          mutationResult(record, runtimeApprovalInvalidations(state.workspaceId, record)),
-        ),
+        Effect.map(({ record: structuredRecord, changed }) => {
+          const record = mapRuntimeApprovalRecord(structuredRecord);
+          return mutationResult(
+            record,
+            changed ? runtimeApprovalInvalidations(state.workspaceId, record) : [],
+          );
+        }),
       ),
     getApprovalRequest: (input) =>
       state.getRuntimeApprovalRequest(input.requestId).pipe(Effect.map(mapRuntimeApprovalRecord)),

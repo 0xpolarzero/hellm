@@ -19,6 +19,7 @@ import {
   type QueueItemId,
   type RequestInputQuestionId,
   type RequestInputRequestId,
+  type RequestInputSettings,
   type StartRuntimeHandlerThreadsInput,
   type StartRuntimeHandlerThreadsResult,
   type RuntimeActorExtensionBindingStatePortService,
@@ -56,6 +57,10 @@ import { RuntimeApprovalWaitService } from "./runtime-approval-wait-service";
 import { RuntimeQueueWakeService } from "./runtime-queue-wake-service";
 import { RuntimeRequestInputWaitService } from "./runtime-request-input-wait-service";
 import { RuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
+import {
+  layerRuntimeShutdownAdmission,
+  RuntimeShutdownAdmission,
+} from "./runtime-shutdown-admission";
 
 const workspaceId = "workspace_accepted_tool_service" as WorkspaceId;
 const target = {
@@ -149,8 +154,33 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
           envFacts: launchEnvFacts,
         })),
       );
+
+      const shutdown = yield* RuntimeShutdownAdmission;
+      yield* shutdown.runShutdown(
+        Effect.succeed({
+          status: "drained",
+          interruptedTurns: 0,
+          interruptedCommands: 0,
+          releasedQueueClaims: 0,
+          recoveryRowsScheduled: 0,
+        }),
+      );
+      const rejected = yield* service
+        .acquireDirectToolLaunch({
+          scope: { kind: "workspace", workspaceId },
+          surfacePiSessionId: target.surfacePiSessionId,
+          commandId,
+          toolName: "exec_command",
+          command: ["/bin/true"],
+          cwd: launchCwd,
+          envFacts: launchEnvFacts,
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(rejected.reason, "runtime-shutdown");
+      assert.strictEqual(calls.length, cases.length);
     }).pipe(
       Effect.provide(layerRuntimeAcceptedNativeToolExecution),
+      Effect.provide(layerRuntimeShutdownAdmission),
       Effect.provideService(RuntimeRequestStatePort, requestStatePort({ createCalls: [] })),
       Effect.provideService(
         RuntimeCommandStatePort,
@@ -199,6 +229,7 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
       const progressCalls: Parameters<RuntimeCommandStatePortService["recordCommandEvent"]>[0][] =
         [];
       const finishCalls: Parameters<RuntimeCommandStatePortService["finishCommand"]>[0][] = [];
+      let settingsReads = 0;
 
       return Effect.gen(function* () {
         const service = yield* RuntimeAcceptedNativeToolExecution;
@@ -221,10 +252,6 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
           },
           command: commandContext(),
           commandRecord: runtimeCommandRecord("running"),
-          requestInput: {
-            mode: "nonblocking",
-            blockingTimeout: { enabled: true, durationMs: BLOCKING_TIMEOUT_MS },
-          },
         });
 
         assert.deepStrictEqual(result.result, {
@@ -246,6 +273,7 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
         );
         assert.strictEqual(progressCalls.length, 1);
         assert.strictEqual(finishCalls.length, 1);
+        assert.strictEqual(settingsReads, 1);
         assert.deepStrictEqual(published, [
           [requestInvalidation],
           [commandInvalidation],
@@ -253,7 +281,16 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
         ]);
       }).pipe(
         Effect.provide(layerRuntimeAcceptedNativeToolExecution),
-        Effect.provideService(RuntimeRequestStatePort, requestStatePort({ createCalls })),
+        Effect.provide(layerRuntimeShutdownAdmission),
+        Effect.provideService(
+          RuntimeRequestStatePort,
+          requestStatePort({
+            createCalls,
+            onReadSettings: () => {
+              settingsReads += 1;
+            },
+          }),
+        ),
         Effect.provideService(
           RuntimeCommandStatePort,
           commandStatePort({ progressCalls, finishCalls }),
@@ -331,6 +368,7 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
       assert.strictEqual(result.result.threads[0]?.threadId, threadId);
     }).pipe(
       Effect.provide(layerRuntimeAcceptedNativeToolExecution),
+      Effect.provide(layerRuntimeShutdownAdmission),
       Effect.provideService(
         RuntimeCommandStatePort,
         commandStatePort({ progressCalls: [], finishCalls }),
@@ -427,10 +465,6 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
           },
           command: commandContext(),
           commandRecord,
-          requestInput: {
-            mode: "blocking",
-            blockingTimeout: { enabled: true, durationMs: BLOCKING_TIMEOUT_MS },
-          },
         });
 
         assert.deepStrictEqual(result.result, waitedResult);
@@ -470,6 +504,7 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
         assert.deepStrictEqual(published, [[requestInvalidation], [commandInvalidation]]);
       }).pipe(
         Effect.provide(layerRuntimeAcceptedNativeToolExecution),
+        Effect.provide(layerRuntimeShutdownAdmission),
         Effect.provideService(RuntimeApprovalStatePort, unusedApprovalStatePort()),
         Effect.provideService(RuntimeSessionWaitStatePort, unusedSessionWaitStatePort()),
         Effect.provideService(RuntimeApprovalWaitService, unusedApprovalWaitService()),
@@ -477,6 +512,10 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
           RuntimeRequestStatePort,
           requestStatePort({
             createCalls,
+            settings: {
+              mode: "blocking",
+              blockingTimeout: { enabled: true, durationMs: BLOCKING_TIMEOUT_MS },
+            },
             createStatus: "open",
             afterCreate: (request) => {
               createdDetails = requestDetails({
@@ -485,6 +524,7 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
                 completedAt: null,
                 timeout: request.timeout
                   ? {
+                      timerVersion: 1,
                       enabled: request.timeout.enabled,
                       durationMs: request.timeout.durationMs,
                       startedAt: "2026-04-18T09:00:00.000Z",
@@ -729,8 +769,22 @@ function requestStatePort(input: {
     request: Parameters<RuntimeRequestStatePortService["createRequestInput"]>[0],
   ) => void;
   getDetails?: () => RuntimeRequestInputDetailsRecord | Effect.Effect<never, never, never>;
+  settings?: RequestInputSettings;
+  onReadSettings?: () => void;
 }): RuntimeRequestStatePortService {
   return {
+    readRequestInputSettings: () =>
+      Effect.sync(() => {
+        input.onReadSettings?.();
+        return (
+          input.settings ?? {
+            mode: "nonblocking",
+            blockingTimeout: { enabled: true, durationMs: BLOCKING_TIMEOUT_MS },
+          }
+        );
+      }),
+    setRequestInputVariant: () => Effect.die("Unexpected request input variant mutation."),
+    setRequestInputBlockingTimeout: () => Effect.die("Unexpected request input timeout mutation."),
     createRequestInput: (request) => {
       input.createCalls.push(request);
       input.afterCreate?.(request);
@@ -919,6 +973,11 @@ function unusedExtensionsService(): ExtensionsService {
     sources: {
       openEditSession: () => Effect.die("Unexpected source edit open."),
       saveEditSession: () => Effect.die("Unexpected source edit save."),
+      createWorkflowAgent: () => Effect.die("Unexpected workflow-agent create."),
+      duplicateWorkflowAgent: () => Effect.die("Unexpected workflow-agent duplicate."),
+      deleteWorkflowAgent: () => Effect.die("Unexpected workflow-agent delete."),
+      scanWorkflowAgents: () => Effect.die("Unexpected workflow-agent scan."),
+      scaffoldMissingWorkflowAgents: () => Effect.die("Unexpected workflow-agent scaffold."),
     },
   });
 }

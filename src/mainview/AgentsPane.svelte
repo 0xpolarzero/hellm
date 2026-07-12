@@ -1,11 +1,14 @@
 <script lang="ts">
+  import AlertTriangleIcon from "@lucide/svelte/icons/alert-triangle";
+  import CheckIcon from "@lucide/svelte/icons/check";
+  import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import PlusIcon from "@lucide/svelte/icons/plus";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import { onDestroy, onMount } from "svelte";
   import { flip } from "svelte/animate";
   import {
-    DEFAULT_WORKFLOW_AGENT_SETTINGS,
     type AgentProfileId,
-    type AgentSettingsState,
+    type PreferredExternalEditor,
     type WorkflowAgentKey,
     type WorkflowAgentSettings,
   } from "../shared/agent-settings";
@@ -17,8 +20,18 @@
     ConfiguredAgentProfileReadModelRecord,
     ExtensionInventoryItemReadModel,
   } from "../shared/workspace-contract";
-  import type { AgentProfileId as StateAgentProfileId, ExtensionId, ExtensionUsageState } from "@svvy/core";
-  import type { FileBackedSaveMode } from "../shared/file-backed-edit";
+  import type {
+    AgentProfileId as StateAgentProfileId,
+    ExtensionId,
+    ExtensionUsageState,
+    SourceEditSession,
+    WorkflowAgentSourceExportName,
+  } from "@svvy/core";
+  import {
+    FILE_BACKED_EDIT_CONFLICT_CODE,
+    FileBackedEditConflictError,
+    type FileBackedSaveMode,
+  } from "../shared/file-backed-edit";
   import { countPromptTokens } from "../shared/token-count";
   import type { ChatRuntime } from "./chat-runtime";
   import { formatTokenCount } from "./chat-format";
@@ -34,6 +47,10 @@
   import WorkflowAgentRowForm from "./WorkflowAgentRowForm.svelte";
   import { createWorkflowAgentId as createWorkflowAgentExportId } from "./agent-profile-ids";
   import { configuredAgentProfileReasoningEffort } from "./configured-agent-profile";
+  import Tooltip from "./ui/Tooltip.svelte";
+  import { dismissConfirmation } from "./ui/dismiss-confirmation";
+
+  type WorkflowAgentSourceRecord = AgentsReadModel["workflowAgents"][number];
 
   type Props = {
     runtime: ChatRuntime;
@@ -50,7 +67,6 @@
   }: Props = $props();
 
   let agents = $state<AgentsReadModel | null>(null);
-  let legacySettings = $state<AgentSettingsState | null>(null);
   let loading = $state(true);
   let errorMessage = $state<string | null>(null);
   let savingProfileId = $state<string | null>(null);
@@ -97,10 +113,14 @@
   const threadHandler = $derived(
     agents?.configuredProfiles.find((profile) => profile.actor === "handler") ?? null,
   );
-  const workflowAgents = $derived(
-    Object.values(legacySettings?.workflowAgents ?? {}).toSorted((left, right) =>
-      left.label.localeCompare(right.label) || left.id.localeCompare(right.id),
-    ),
+  const workflowAgentRows = $derived(
+    (agents?.workflowAgents ?? [])
+      .map((record) => ({ record, agent: workflowAgentSettings(record) }))
+      .toSorted((left, right) =>
+        (left.agent?.label ?? left.record.sourceId).localeCompare(
+          right.agent?.label ?? right.record.sourceId,
+        ) || left.record.sourceId.localeCompare(right.record.sourceId),
+      ),
   );
 
   function reorderConfiguredProfiles(
@@ -138,7 +158,6 @@
       if (requestId !== settingsLoadRequest) return;
       agents = nextAgents;
       loading = false;
-      void loadLegacyWorkflowSettings(requestId);
       void loadAgentModelChoices(requestId);
       void loadExtensionsInventory(requestId);
     } catch (error) {
@@ -148,21 +167,6 @@
       if (requestId === settingsLoadRequest) {
         loading = false;
       }
-    }
-  }
-
-  async function loadLegacyWorkflowSettings(requestId: number) {
-    const snapshot = runtime.agentSettingsSnapshot;
-    if (snapshot && requestId === settingsLoadRequest) {
-      legacySettings = snapshot;
-    }
-    try {
-      const nextSettings = await runtime.getAgentSettings();
-      if (requestId === settingsLoadRequest) {
-        legacySettings = nextSettings;
-      }
-    } catch {
-      // Workflow-agent source rows remain on the legacy settings facade until their own cutover.
     }
   }
 
@@ -212,8 +216,104 @@
     ) {
       return "handler";
     }
-    if (legacySettings?.workflowAgents[profileId as WorkflowAgentKey]) return "workflow-task";
+    if (agents?.workflowAgents.some((record) => record.sourceId === profileId)) {
+      return "workflow-task";
+    }
     return "orchestrator";
+  }
+
+  function workflowAgentSettings(
+    record: WorkflowAgentSourceRecord,
+  ): WorkflowAgentSettings | null {
+    if (record.validationStatus !== "valid" || !record.parameters) return null;
+    return {
+      id: record.sourceId,
+      label: record.parameters.label,
+      provider: record.parameters.provider,
+      model: record.parameters.model,
+      reasoningEffort: record.parameters.reasoning.effort,
+      instructions: record.parameters.instructions,
+      overrides: { ...record.parameters.overrides },
+      extensionOrder: [...record.extensionOrder],
+      sourceVersion: record.sourceVersion,
+    };
+  }
+
+  function workflowAgentSourceText(agent: WorkflowAgentSettings): string {
+    const overrides = Object.fromEntries(
+      Object.entries(agent.overrides ?? {}).toSorted(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    );
+    return `${JSON.stringify(
+      {
+        id: agent.id,
+        label: agent.label,
+        provider: agent.provider,
+        model: agent.model,
+        reasoning: { effort: agent.reasoningEffort },
+        instructions: agent.instructions,
+        ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
+        ...((agent.extensionOrder?.length ?? 0) > 0
+          ? { extensionOrder: agent.extensionOrder }
+          : {}),
+      },
+      null,
+      2,
+    )}\n`;
+  }
+
+  function preferredExternalEditor(value: string | null | undefined): PreferredExternalEditor {
+    if (
+      value === "code" ||
+      value === "cursor" ||
+      value === "zed" ||
+      value === "sublime"
+    ) {
+      return value;
+    }
+    return value ? "custom" : "system";
+  }
+
+  function workflowAgentFromSourceEditSession(
+    session: SourceEditSession,
+    fallback: WorkflowAgentSettings,
+  ): WorkflowAgentSettings {
+    try {
+      const raw = JSON.parse(session.text) as Record<string, unknown>;
+      const reasoning = raw.reasoning as { effort?: unknown } | undefined;
+      if (
+        raw.id !== session.sourceId ||
+        typeof raw.label !== "string" ||
+        typeof raw.provider !== "string" ||
+        typeof raw.model !== "string" ||
+        typeof raw.instructions !== "string" ||
+        typeof reasoning?.effort !== "string"
+      ) {
+        return { ...fallback, sourceVersion: session.sourceVersion };
+      }
+      const rawOverrides = raw.overrides;
+      const overrides =
+        rawOverrides && typeof rawOverrides === "object" && !Array.isArray(rawOverrides)
+          ? (rawOverrides as Record<string, ExtensionUsageState>)
+          : {};
+      const extensionOrder = Array.isArray(raw.extensionOrder)
+        ? raw.extensionOrder.filter((value): value is string => typeof value === "string")
+        : [];
+      return {
+        id: session.sourceId,
+        label: raw.label,
+        provider: raw.provider,
+        model: raw.model,
+        reasoningEffort: reasoning.effort as WorkflowAgentSettings["reasoningEffort"],
+        instructions: raw.instructions,
+        overrides: { ...overrides },
+        extensionOrder,
+        sourceVersion: session.sourceVersion,
+      };
+    } catch {
+      return { ...fallback, sourceVersion: session.sourceVersion };
+    }
   }
 
   function workflowAgentInstructionText(agent: WorkflowAgentSettings): string {
@@ -364,24 +464,45 @@
   }
 
   async function saveWorkflowAgent(
+    record: WorkflowAgentSourceRecord,
     agent: WorkflowAgentSettings,
     options?: { baseSourceVersion?: string; mode?: FileBackedSaveMode },
   ): Promise<WorkflowAgentSettings> {
-    savingWorkflowAgentKey = agent.id;
+    savingWorkflowAgentKey = record.sourceId;
     errorMessage = null;
     try {
-      legacySettings = await runtime.updateWorkflowAgent(agent.id, {
-        ...agent,
-        overrides: { ...agent.overrides },
-        extensionOrder: [...(agent.extensionOrder ?? [])],
-      }, options);
+      const baseSourceVersion = options?.baseSourceVersion ?? record.sourceVersion;
+      const result = await runtime.saveSourceEdit({
+        sourceKind: "workflow-agent",
+        sourceId: record.sourceId,
+        expectedSourceVersion: baseSourceVersion,
+        text: workflowAgentSourceText(agent),
+        saveMode: options?.mode ?? "compare-and-swap",
+      });
+      agents = await runtime.getAgents();
+      if (result.status === "stale") {
+        throw new FileBackedEditConflictError<WorkflowAgentSettings>({
+          code: FILE_BACKED_EDIT_CONFLICT_CODE,
+          current: workflowAgentFromSourceEditSession(result.current, agent),
+          currentVersion: result.current.sourceVersion,
+          baseVersion: baseSourceVersion,
+        });
+      }
       if (workflowAgentInstructionDrafts[agent.id] !== undefined) {
         const { [agent.id]: _discarded, ...rest } = workflowAgentInstructionDrafts;
         workflowAgentInstructionDrafts = rest;
       }
-      return legacySettings.workflowAgents[agent.id] ?? agent;
+      const current = agents?.workflowAgents.find(
+        (candidate) => candidate.sourceId === record.sourceId,
+      );
+      return (current && workflowAgentSettings(current)) ?? {
+        ...agent,
+        sourceVersion: result.sourceVersion,
+      };
     } catch (error) {
-      errorMessage = error instanceof Error ? error.message : "Unable to save workflow agent.";
+      if (!(error instanceof FileBackedEditConflictError)) {
+        errorMessage = error instanceof Error ? error.message : "Unable to save workflow agent.";
+      }
       throw error;
     } finally {
       savingWorkflowAgentKey = null;
@@ -410,22 +531,36 @@
   }
 
   async function setWorkflowAgentExtensionUsage(
+    record: WorkflowAgentSourceRecord,
     agent: WorkflowAgentSettings,
     extensionId: string,
     state: ExtensionUsageState,
   ): Promise<WorkflowAgentSettings> {
     errorMessage = null;
     try {
-      legacySettings = await runtime.setAgentProfileExtensionUsage({
-        agentProfile: agent.id,
-        extensionId,
-        state,
+      const item = extensionUsageItems({
+        actor: "workflow-task",
+        profileId: agent.id,
+        usage: agent.overrides ?? {},
+      });
+      const overrides = { ...agent.overrides };
+      if (item.find((candidate) => candidate.id === extensionId)?.defaultState === state) {
+        delete overrides[extensionId];
+      } else {
+        overrides[extensionId] = state;
+      }
+      const saved = await saveWorkflowAgent(record, {
+        ...agent,
+        overrides,
+        extensionOrder: [...(agent.extensionOrder ?? [])],
       });
       refreshAgentContextPreview(agent.id, "workflow-task");
-      return legacySettings.workflowAgents[agent.id] ?? agent;
+      return saved;
     } catch (error) {
-      errorMessage =
-        error instanceof Error ? error.message : "Unable to save workflow agent extension usage.";
+      if (!(error instanceof FileBackedEditConflictError)) {
+        errorMessage =
+          error instanceof Error ? error.message : "Unable to save workflow agent extension usage.";
+      }
       throw error;
     }
   }
@@ -438,23 +573,12 @@
   ): Promise<void> {
     errorMessage = null;
     try {
-      if (actor === "orchestrator") {
-        agents = await runtime.promoteConfiguredProfileExtensionDefault({
-          actor,
-          profileId: profileId as StateAgentProfileId,
-          extensionId: extensionId as ExtensionId,
-          usage: state,
-        });
-        refreshAgentContextPreview(profileId, actor);
-        return;
-      }
-      const inventory = await runtime.setExtensionDefaultUsage({
-        actorKind: actor,
-        extensionId,
-        state,
+      agents = await runtime.promoteConfiguredProfileExtensionDefault({
+        actor,
+        profileId: profileId as StateAgentProfileId,
+        extensionId: extensionId as ExtensionId,
+        usage: state,
       });
-      extensionInventoryItems = inventory.extensions;
-      legacySettings = await runtime.getAgentSettings();
       refreshAgentContextPreview(profileId, actor);
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to save extension default.";
@@ -473,10 +597,13 @@
     );
   }
 
-  async function openWorkflowAgentSource(agent: WorkflowAgentSettings): Promise<void> {
+  async function openWorkflowAgentSource(record: WorkflowAgentSourceRecord): Promise<void> {
     errorMessage = null;
     try {
-      await runtime.openWorkflowAgentSourceInEditor(agent.id);
+      await runtime.openSourceInEditor({
+        sourceKind: "workflow-agent",
+        sourceId: record.sourceId,
+      });
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to open workflow agent source.";
     }
@@ -533,6 +660,7 @@
   }
 
   async function updateWorkflowAgentExtensionEditor(
+    record: WorkflowAgentSourceRecord,
     agent: WorkflowAgentSettings,
     updates: Pick<WorkflowAgentSettings, "overrides" | "extensionOrder">,
   ): Promise<WorkflowAgentSettings> {
@@ -543,35 +671,44 @@
         overrides: { ...updates.overrides },
         extensionOrder: [...(updates.extensionOrder ?? [])],
       };
-      legacySettings = await runtime.updateWorkflowAgent(agent.id, nextAgent);
+      const saved = await saveWorkflowAgent(record, nextAgent);
       refreshAgentContextPreview(agent.id, "workflow-task");
-      return legacySettings.workflowAgents[agent.id] ?? nextAgent;
+      return saved;
     } catch (error) {
-      errorMessage =
-        error instanceof Error ? error.message : "Unable to save workflow agent extensions.";
+      if (!(error instanceof FileBackedEditConflictError)) {
+        errorMessage =
+          error instanceof Error ? error.message : "Unable to save workflow agent extensions.";
+      }
       throw error;
     }
   }
 
-  function resetWorkflowAgentExtensionSelection(agent: WorkflowAgentSettings) {
-    return updateWorkflowAgentExtensionEditor(agent, {
+  function resetWorkflowAgentExtensionSelection(
+    record: WorkflowAgentSourceRecord,
+    agent: WorkflowAgentSettings,
+  ) {
+    return updateWorkflowAgentExtensionEditor(record, agent, {
       overrides: {},
       extensionOrder: [...(agent.extensionOrder ?? [])],
     });
   }
 
-  function resetWorkflowAgentExtensionOrder(agent: WorkflowAgentSettings) {
-    return updateWorkflowAgentExtensionEditor(agent, {
+  function resetWorkflowAgentExtensionOrder(
+    record: WorkflowAgentSourceRecord,
+    agent: WorkflowAgentSettings,
+  ) {
+    return updateWorkflowAgentExtensionEditor(record, agent, {
       overrides: { ...agent.overrides },
       extensionOrder: [],
     });
   }
 
   function setWorkflowAgentExtensionOrder(
+    record: WorkflowAgentSourceRecord,
     agent: WorkflowAgentSettings,
     extensionOrder: string[],
   ) {
-    return updateWorkflowAgentExtensionEditor(agent, {
+    return updateWorkflowAgentExtensionEditor(record, agent, {
       overrides: { ...agent.overrides },
       extensionOrder,
     });
@@ -595,7 +732,10 @@
   }
 
   function createWorkflowAgentId(baseName: string): WorkflowAgentKey {
-    return createWorkflowAgentExportId(baseName, Object.keys(legacySettings?.workflowAgents ?? {}));
+    return createWorkflowAgentExportId(
+      baseName,
+      workflowAgentRows.map(({ record }) => record.sourceId),
+    );
   }
 
   async function createOrchestratorProfile(source?: ConfiguredAgentProfileReadModelRecord) {
@@ -617,46 +757,94 @@
     expandedProfileIds = new Set(expandedProfileIds);
   }
 
-  async function createWorkflowAgent(source?: WorkflowAgentSettings) {
-    const baseAgent = source ?? workflowAgents[0] ?? Object.values(DEFAULT_WORKFLOW_AGENT_SETTINGS)[0];
-    if (!baseAgent) return;
-    const label = source ? `${source.label} copy` : `Workflow agent ${workflowAgents.length + 1}`;
+  async function createWorkflowAgent() {
+    const baseAgent = workflowAgentRows.find(({ agent }) => agent !== null)?.agent ?? null;
+    if (!baseAgent) {
+      errorMessage = "A valid workflow-agent source is required before creating another agent.";
+      return;
+    }
+    const label = `Workflow agent ${workflowAgentRows.length + 1}`;
     const id = createWorkflowAgentId(label);
-    const agent: WorkflowAgentSettings = {
-      ...baseAgent,
-      id,
-      label,
-      overrides: { ...baseAgent.overrides },
-      extensionOrder: [...(baseAgent.extensionOrder ?? [])],
-    };
-    await saveWorkflowAgent(agent);
-    expandedProfileIds.add(agent.id);
+    errorMessage = null;
+    try {
+      await runtime.createWorkflowAgentSource({
+        draft: {
+          exportName: id as WorkflowAgentSourceExportName,
+          displayName: label,
+          provider: baseAgent.provider,
+          model: baseAgent.model,
+          reasoning: { effort: baseAgent.reasoningEffort },
+          instructionText: baseAgent.instructions,
+          extensionUsageOverrides: Object.entries(baseAgent.overrides ?? {})
+            .toSorted(([left], [right]) => left.localeCompare(right))
+            .map(([extensionId, usage]) => ({
+              extensionId: extensionId as ExtensionId,
+              usage,
+            })),
+          extensionOrder: (baseAgent.extensionOrder ?? []).map(
+            (extensionId) => extensionId as ExtensionId,
+          ),
+        },
+        sourceOwner: "agents-pane",
+      });
+      agents = await runtime.getAgents();
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : "Unable to create workflow agent.";
+      return;
+    }
+    expandedProfileIds.add(id);
     expandedProfileIds = new Set(expandedProfileIds);
   }
 
-  function isDefaultWorkflowAgent(agent: WorkflowAgentSettings): boolean {
-    return Object.prototype.hasOwnProperty.call(DEFAULT_WORKFLOW_AGENT_SETTINGS, agent.id);
+  async function duplicateWorkflowAgent(
+    record: WorkflowAgentSourceRecord,
+    agent: WorkflowAgentSettings,
+  ) {
+    const label = `${agent.label} copy`;
+    const id = createWorkflowAgentId(label);
+    errorMessage = null;
+    try {
+      await runtime.duplicateWorkflowAgentSource({
+        sourceId: record.sourceId as WorkflowAgentSourceExportName,
+        draftPatch: {
+          exportName: id as WorkflowAgentSourceExportName,
+          displayName: label,
+        },
+        sourceOwner: "agents-pane",
+      });
+      agents = await runtime.getAgents();
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : "Unable to duplicate workflow agent.";
+      return;
+    }
+    expandedProfileIds.add(id);
+    expandedProfileIds = new Set(expandedProfileIds);
   }
 
-  function requestDeleteWorkflowAgent(agent: WorkflowAgentSettings) {
-    if (isDefaultWorkflowAgent(agent) || deletingWorkflowAgentKey) return;
-    confirmingDeleteWorkflowAgentKey = agent.id;
+  function requestDeleteWorkflowAgent(record: WorkflowAgentSourceRecord) {
+    if (!record.deletable || deletingWorkflowAgentKey) return;
+    confirmingDeleteWorkflowAgentKey = record.sourceId;
   }
 
-  async function deleteWorkflowAgent(agent: WorkflowAgentSettings) {
+  async function deleteWorkflowAgent(record: WorkflowAgentSourceRecord) {
     if (
-      isDefaultWorkflowAgent(agent) ||
+      !record.deletable ||
       deletingWorkflowAgentKey ||
-      confirmingDeleteWorkflowAgentKey !== agent.id
+      confirmingDeleteWorkflowAgentKey !== record.sourceId
     ) {
       return;
     }
-    deletingWorkflowAgentKey = agent.id;
+    deletingWorkflowAgentKey = record.sourceId;
     errorMessage = null;
     try {
-      legacySettings = await runtime.deleteWorkflowAgent(agent.id);
+      await runtime.deleteWorkflowAgentSource({
+        sourceId: record.sourceId as WorkflowAgentSourceExportName,
+        expectedSourceVersion: record.sourceVersion,
+        sourceOwner: "agents-pane",
+      });
+      agents = await runtime.getAgents();
       confirmingDeleteWorkflowAgentKey = null;
-      expandedProfileIds.delete(agent.id);
+      expandedProfileIds.delete(record.sourceId);
       expandedProfileIds = new Set(expandedProfileIds);
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to delete workflow agent.";
@@ -883,11 +1071,11 @@
     usage: Readonly<Record<string, ExtensionUsageState>>;
   }): ExtensionUsageControlItem[] {
     const stateActorDefaults =
-      input.actor === "orchestrator"
+      input.actor === "orchestrator" || input.actor === "workflow-task"
         ? agents?.actorExtensionDefaults.find((record) => record.actor === input.actor)
         : null;
     const inventoryDefaults =
-      input.actor === "orchestrator"
+      input.actor === "orchestrator" || input.actor === "workflow-task"
         ? mergeActorExtensionDefaults({
             actor: input.actor,
             inventoryDefaults: runtime.extensionsInventorySnapshot?.defaults,
@@ -899,9 +1087,7 @@
       extensionInventoryItems,
       inventoryDefaults,
       networkAccess:
-        runtime.appPreferencesSnapshot?.networkAccess ??
-        legacySettings?.appPreferences.networkAccess ??
-        true,
+        runtime.appPreferencesSnapshot?.networkAccess ?? true,
     });
   }
 
@@ -918,15 +1104,11 @@
 
   function syncRuntimeSnapshots() {
     const nextAgents = runtime.agentsSnapshot;
-    const nextSettings = runtime.agentSettingsSnapshot;
     const nextModelChoices = runtime.modelMetadataSnapshot;
     const nextExtensionsInventory = runtime.extensionsInventorySnapshot;
     if (nextAgents) {
       agents = nextAgents;
       loading = false;
-    }
-    if (nextSettings) {
-      legacySettings = nextSettings;
     }
     if (nextModelChoices) {
       modelChoices = [...nextModelChoices];
@@ -962,7 +1144,6 @@
 
   $effect(() => {
     void agents;
-    void legacySettings;
     void targetAgentProfileId;
     void targetView;
     if (agents && targetView === "generated-context-preview") {
@@ -970,7 +1151,12 @@
       if (targetProfileId) {
         expandedProfileIds.add(targetProfileId);
         expandedProfileIds = new Set(expandedProfileIds);
-        void loadAgentContextPreview(targetProfileId, actorForProfileId(targetProfileId));
+        const targetWorkflowAgent = agents.workflowAgents.find(
+          (record) => record.sourceId === targetProfileId,
+        );
+        if (!targetWorkflowAgent || targetWorkflowAgent.validationStatus === "valid") {
+          void loadAgentContextPreview(targetProfileId, actorForProfileId(targetProfileId));
+        }
       }
     }
     queueMicrotask(focusTargetAgentProfile);
@@ -1043,7 +1229,7 @@
       <div class="agent-category-heading">
         <div class="agent-category-title">
           <span>Workflow Agents</span>
-          <small>{workflowAgents.length}</small>
+          <small>{workflowAgentRows.length}</small>
         </div>
         <div class="agent-category-actions">
           <Button
@@ -1058,14 +1244,18 @@
         </div>
       </div>
       <div class="agent-rows">
-        {#each workflowAgents as agent (agent.id)}
-          {@const expanded = expandedProfileIds.has(agent.id)}
+        {#each workflowAgentRows as row (row.record.sourceId)}
+          {@const expanded = expandedProfileIds.has(row.record.sourceId)}
           <article
             class={`agent-profile-row workflow-agent-row ${expanded ? "expanded" : ""}`.trim()}
-            data-workflow-agent-id={agent.id}
-            data-targeted={targetAgentProfileId === agent.id ? "true" : undefined}
+            data-workflow-agent-id={row.record.sourceId}
+            data-targeted={targetAgentProfileId === row.record.sourceId ? "true" : undefined}
           >
-            {@render workflowAgentRowContent(agent, expanded)}
+            {#if row.agent}
+              {@render workflowAgentRowContent(row.record, row.agent, expanded)}
+            {:else}
+              {@render invalidWorkflowAgentRowContent(row.record)}
+            {/if}
           </article>
         {/each}
       </div>
@@ -1075,16 +1265,23 @@
   {/if}
 </section>
 
-{#snippet workflowAgentRowContent(agent: WorkflowAgentSettings, expanded: boolean)}
+{#snippet workflowAgentRowContent(
+  record: WorkflowAgentSourceRecord,
+  agent: WorkflowAgentSettings,
+  expanded: boolean,
+)}
   <WorkflowAgentRowForm
     {agent}
     {expanded}
     {modelChoices}
-    confirmingDelete={confirmingDeleteWorkflowAgentKey === agent.id}
-    deleting={deletingWorkflowAgentKey === agent.id}
-    isDefault={isDefaultWorkflowAgent(agent)}
-    saving={savingWorkflowAgentKey === agent.id}
-    preferredExternalEditor={legacySettings?.appPreferences.preferredExternalEditor}
+    builtin={record.builtin}
+    confirmingDelete={confirmingDeleteWorkflowAgentKey === record.sourceId}
+    deletable={record.deletable}
+    deleting={deletingWorkflowAgentKey === record.sourceId}
+    saving={savingWorkflowAgentKey === record.sourceId}
+    preferredExternalEditor={preferredExternalEditor(
+      runtime.appPreferencesSnapshot?.externalEditor,
+    )}
     sourceTokenCountLabel={expanded
       ? formatPromptTokenCount(workflowAgentInstructionTokenCount(agent))
       : null}
@@ -1094,17 +1291,17 @@
       usage: agent.overrides ?? {},
     })}
     onCancelDelete={cancelDeleteWorkflowAgentConfirmation}
-    onConfirmDelete={() => void deleteWorkflowAgent(agent)}
-    onDuplicate={() => void createWorkflowAgent(agent)}
-    onSave={saveWorkflowAgent}
+    onConfirmDelete={() => void deleteWorkflowAgent(record)}
+    onDuplicate={() => void duplicateWorkflowAgent(record, agent)}
+    onSave={(next, options) => saveWorkflowAgent(record, next, options)}
     onOpenExtension={openExtension}
-    onOpenSource={() => void openWorkflowAgentSource(agent)}
+    onOpenSource={() => void openWorkflowAgentSource(record)}
     onInstructionsChange={(instructions) => setWorkflowAgentInstructionDraft(agent.id, instructions)}
-    onRequestDelete={() => requestDeleteWorkflowAgent(agent)}
+    onRequestDelete={() => requestDeleteWorkflowAgent(record)}
     onSetExtensionDefault={(extensionId, state) =>
       setActorExtensionDefault("workflow-task", agent.id, extensionId, state)}
     onSetExtensionUsage={(extensionId, state) =>
-      setWorkflowAgentExtensionUsage(agent, extensionId, state)}
+      setWorkflowAgentExtensionUsage(record, agent, extensionId, state)}
     onToggleExpanded={() => toggleExpanded(agent.id, "workflow-task")}
   />
   {#if expanded}
@@ -1124,16 +1321,85 @@
         previewError={contextPreviewErrorsByProfileId[previewKey] ?? null}
         {preview}
         onOpenExtension={openExtension}
-        onOrderChange={(extensionOrder) => setWorkflowAgentExtensionOrder(agent, extensionOrder)}
-        onResetOrder={() => resetWorkflowAgentExtensionOrder(agent)}
-        onResetSelection={() => resetWorkflowAgentExtensionSelection(agent)}
+        onOrderChange={(extensionOrder) =>
+          setWorkflowAgentExtensionOrder(record, agent, extensionOrder)}
+        onResetOrder={() => resetWorkflowAgentExtensionOrder(record, agent)}
+        onResetSelection={() => resetWorkflowAgentExtensionSelection(record, agent)}
         onSetExtensionDefault={(extensionId, state) =>
           setActorExtensionDefault("workflow-task", agent.id, extensionId, state)}
         onStateChange={(extensionId, state) =>
-          setWorkflowAgentExtensionUsage(agent, extensionId, state)}
+          setWorkflowAgentExtensionUsage(record, agent, extensionId, state)}
       />
     </div>
   {/if}
+{/snippet}
+
+{#snippet invalidWorkflowAgentRowContent(record: WorkflowAgentSourceRecord)}
+  <div class="invalid-workflow-agent-main">
+    <AlertTriangleIcon size={14} aria-hidden="true" />
+    <div class="invalid-workflow-agent-identity">
+      <strong>{record.sourceId}</strong>
+      <span>Invalid workflow-agent source</span>
+    </div>
+    <div
+      class="invalid-workflow-agent-actions"
+      use:dismissConfirmation={{
+        active: confirmingDeleteWorkflowAgentKey === record.sourceId,
+        onDismiss: cancelDeleteWorkflowAgentConfirmation,
+      }}
+    >
+      <Tooltip label="Open workflow-agent source">
+        <button
+          type="button"
+          class="invalid-workflow-agent-action"
+          aria-label={`Open ${record.sourceId} source`}
+          disabled={deletingWorkflowAgentKey === record.sourceId}
+          onclick={() => void openWorkflowAgentSource(record)}
+        >
+          <ExternalLinkIcon size={13} aria-hidden="true" />
+        </button>
+      </Tooltip>
+      {#if confirmingDeleteWorkflowAgentKey === record.sourceId}
+        <Tooltip label="Confirm delete">
+          <button
+            type="button"
+            class="invalid-workflow-agent-action danger"
+            aria-label={`Confirm deleting ${record.sourceId}`}
+            disabled={deletingWorkflowAgentKey === record.sourceId}
+            onclick={() => void deleteWorkflowAgent(record)}
+          >
+            <CheckIcon size={13} aria-hidden="true" />
+          </button>
+        </Tooltip>
+      {:else}
+        <Tooltip
+          label={record.deletable
+            ? "Delete workflow agent"
+            : "This invalid source filename cannot be deleted here"}
+        >
+          <button
+            type="button"
+            class="invalid-workflow-agent-action danger"
+            aria-label={`Delete ${record.sourceId}`}
+            disabled={!record.deletable || deletingWorkflowAgentKey === record.sourceId}
+            onclick={() => requestDeleteWorkflowAgent(record)}
+          >
+            <Trash2Icon size={13} aria-hidden="true" />
+          </button>
+        </Tooltip>
+      {/if}
+    </div>
+  </div>
+  <div class="invalid-workflow-agent-diagnostics" role="status">
+    {#each record.diagnostics as diagnostic}
+      <p>
+        <span>{diagnostic.severity}</span>
+        {diagnostic.message}
+      </p>
+    {:else}
+      <p>Source validation failed without a diagnostic.</p>
+    {/each}
+  </div>
 {/snippet}
 
 {#snippet profileRowContent(
@@ -1378,6 +1644,94 @@
 
   .agent-profile-row.dragging {
     opacity: 0.58;
+  }
+
+  .invalid-workflow-agent-main {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.42rem;
+    min-width: 0;
+    color: var(--ui-danger);
+  }
+
+  .invalid-workflow-agent-identity {
+    display: grid;
+    gap: 0.04rem;
+    min-width: 0;
+  }
+
+  .invalid-workflow-agent-identity strong,
+  .invalid-workflow-agent-identity span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .invalid-workflow-agent-identity strong {
+    color: var(--ui-text-primary);
+    font-size: var(--text-sm);
+  }
+
+  .invalid-workflow-agent-identity span,
+  .invalid-workflow-agent-diagnostics {
+    color: var(--ui-text-tertiary);
+    font-size: var(--text-xs);
+  }
+
+  .invalid-workflow-agent-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.08rem;
+  }
+
+  .invalid-workflow-agent-action {
+    display: grid;
+    place-items: center;
+    width: 1.32rem;
+    height: 1.45rem;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    color: var(--ui-text-tertiary);
+    cursor: pointer;
+  }
+
+  .invalid-workflow-agent-action:hover:not(:disabled),
+  .invalid-workflow-agent-action:focus-visible:not(:disabled) {
+    outline: none;
+    background: var(--ui-hover-bg);
+    color: var(--ui-text-primary);
+    box-shadow: var(--ui-focus-ring);
+  }
+
+  .invalid-workflow-agent-action.danger:hover:not(:disabled),
+  .invalid-workflow-agent-action.danger:focus-visible:not(:disabled) {
+    background: var(--ui-danger-soft);
+    color: var(--ui-danger);
+  }
+
+  .invalid-workflow-agent-action:disabled {
+    cursor: default;
+    opacity: 0.36;
+  }
+
+  .invalid-workflow-agent-diagnostics {
+    display: grid;
+    gap: 0.14rem;
+    padding-left: 1.82rem;
+  }
+
+  .invalid-workflow-agent-diagnostics p {
+    margin: 0;
+    line-height: 1.4;
+  }
+
+  .invalid-workflow-agent-diagnostics span {
+    margin-right: 0.3rem;
+    color: var(--ui-danger);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
   }
 
   .agent-profile-main {

@@ -17,6 +17,7 @@ import { homedir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import type { SvvyActorKind } from "./actor-capabilities";
 import type { AgentSettingsStore } from "./agent-settings-store";
+import type { AgentProfileMutationStore } from "./agent-profile-mutation-store";
 import {
   ExtensionDependencyApprovalStore,
   extensionDependencyIdentityFromDeclaration,
@@ -34,12 +35,11 @@ import type {
   AgentProfileId,
   ExtensionId,
   PromptExecutionExternalInstructionSource,
+  RequestInputVariant,
   RuntimeExtensionContextImpactStateFacade,
   RuntimeExtensionUsageProfileKey,
 } from "@svvy/core";
 import {
-  DEFAULT_AGENT_SETTINGS_STATE,
-  DEFAULT_ORCHESTRATOR_PROFILE_ID,
   DEFAULT_THREAD_HANDLER_PROFILE_ID,
   type ExternalInstructionActor,
   type AgentProfileSettings,
@@ -233,6 +233,7 @@ type SvvyxExternalInstructionSource =
   | PromptExecutionExternalInstructionSource;
 
 export async function runSvvyxExtensionsCommand(input: {
+  agentProfileStore?: AgentProfileMutationStore;
   agentSettingsStore?: AgentSettingsStore;
   buildRoot?: string;
   cliProbe?: SvvyxExtensionsCliProbe;
@@ -246,6 +247,7 @@ export async function runSvvyxExtensionsCommand(input: {
   externalInstructionSources?: readonly SvvyxExternalInstructionSource[];
   extensionsRoot?: string;
   extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
+  requestInputVariant?: RequestInputVariant;
 }): Promise<SvvyxExtensionsCommandResult> {
   const words = splitCommandLine(input.command);
   if (words[0] !== "svvyx" || words[1] !== "extensions") {
@@ -603,6 +605,7 @@ function dependencyApprovalPausedOutput(output: unknown): output is {
 
 export async function readBuiltinExtensionsInventory(
   input: {
+    agentProfileStore?: AgentProfileMutationStore;
     agentSettingsStore?: AgentSettingsStore;
     cliProbe?: SvvyxExtensionsCliProbe;
     cwd?: string;
@@ -613,8 +616,10 @@ export async function readBuiltinExtensionsInventory(
     extensionsRoot?: string;
     externalInstructionSources?: readonly SvvyxExternalInstructionSource[];
     includeUserExtensions?: boolean;
+    requestInputVariant?: RequestInputVariant;
   } = {},
 ): Promise<ExtensionsInventoryReadModel> {
+  const agentProfileStore = requireAgentProfileStore(input.agentProfileStore);
   const extensions: ExtensionInventoryItemReadModel[] = [];
   const resolveBuiltinForInventory = (id: string): ResolvedExtensionRecord => {
     const record = input.extensionsRoot
@@ -683,11 +688,12 @@ export async function readBuiltinExtensionsInventory(
         extension,
         input.cwd ?? process.cwd(),
         input.extensionsRoot,
+        input.requestInputVariant ?? "nonblocking",
       ),
       usage:
         extension.category === "user"
-          ? userExtensionUsageStates(extension.id, input.agentSettingsStore)
-          : usageStates(extension.id, input.agentSettingsStore),
+          ? userExtensionUsageStates(extension.id, agentProfileStore)
+          : usageStates(extension.id, agentProfileStore),
       requirements: {
         cliRequirements,
         env: envRequirements,
@@ -703,12 +709,12 @@ export async function readBuiltinExtensionsInventory(
   }
   return {
     extensions,
-    defaults: extensionDefaultsReadModel(extensionRecords, input.agentSettingsStore),
+    defaults: extensionDefaultsReadModel(extensionRecords, agentProfileStore),
     reversibleChanges: readExtensionChangeCards(input.extensionsRoot, {
       includeUserExtensions: input.includeUserExtensions === true,
     }),
     snapshots: listExtensionSnapshotSummaries(input.extensionsRoot, {
-      agentSettingsStore: input.agentSettingsStore,
+      agentProfileStore,
       envSecretStore: input.envSecretStore,
     }),
   };
@@ -897,6 +903,7 @@ function extensionToolingReadModel(
   extension: ResolvedExtensionRecord,
   cwd: string,
   extensionsRoot: string | undefined,
+  requestInputVariant: RequestInputVariant,
 ): ExtensionToolingReadModel {
   const typescriptApiDeclaration = extensionTypescriptApiDeclaration(extension, cwd);
   if (isAppOwnedBuiltinSvvyxCommandNamespace(extension)) {
@@ -909,7 +916,7 @@ function extensionToolingReadModel(
     ...(extension.interface === "native_tool"
       ? {
           nativeToolSchema: generatedReadonlyBlock({
-            content: buildNativeToolSchemaJsonForExtension(extension),
+            content: buildNativeToolSchemaJsonForExtension(extension, requestInputVariant),
             name: "tool-schema.json",
             path: `generated/native-tools/${extension.id}.schema.json`,
           }),
@@ -1176,9 +1183,9 @@ function extensionMinimalInstructionReadModel(
 
 function extensionDefaultsReadModel(
   extensions: readonly ResolvedExtensionRecord[],
-  store?: AgentSettingsStore,
+  store: AgentProfileMutationStore,
 ): ExtensionsInventoryReadModel["defaults"] {
-  const settings = store?.getState() ?? DEFAULT_AGENT_SETTINGS_STATE;
+  const settings = store.getState();
   const usage: Record<string, ExtensionDefaultUsageReadModel[]> = {};
   const defaultUsage = settings.extensionDefaults.usage as Partial<
     Record<ExternalInstructionActor, Record<string, ExtensionUsageState>>
@@ -1402,7 +1409,7 @@ export function assertExtensionEnvWriteValue(value: string): void {
 function runCreateCommand(
   words: string[],
   options: {
-    agentSettingsStore?: AgentSettingsStore;
+    agentProfileStore?: AgentProfileMutationStore;
     extensionsRoot?: string;
   },
 ): SvvyxExtensionsCommandResult {
@@ -1476,22 +1483,18 @@ function runCreateCommand(
       2,
     ) + "\n",
   );
-  if (options.agentSettingsStore) {
-    const settings = options.agentSettingsStore.getState();
-    options.agentSettingsStore.setExtensionDefaults({
-      ...settings.extensionDefaults,
-      usage: {
-        ...settings.extensionDefaults.usage,
-        orchestrator: {
-          ...settings.extensionDefaults.usage.orchestrator,
+  if (options.agentProfileStore) {
+    const settings = options.agentProfileStore.getState();
+    for (const actor of ["orchestrator", "workflow-task"] as const) {
+      options.agentProfileStore.setActorExtensionDefaults({
+        actor,
+        extensionUsage: {
+          ...settings.actorExtensionDefaults[actor].extensionUsage,
           [id]: "loaded",
         },
-        "workflow-task": {
-          ...settings.extensionDefaults.usage["workflow-task"],
-          [id]: "loaded",
-        },
-      },
-    });
+        extensionOrder: settings.actorExtensionDefaults[actor].extensionOrder,
+      });
+    }
   }
 
   const issues: ExtensionIssue[] = [
@@ -1525,7 +1528,7 @@ function runCreateCommand(
           },
         ],
       },
-      usage: userExtensionUsageStates(id),
+      usage: userExtensionUsageStates(id, options.agentProfileStore),
       state: {
         draftChanged: true,
         buildRequired: true,
@@ -1554,7 +1557,7 @@ function runCreateCommand(
 function runDuplicateCommand(
   words: string[],
   options: {
-    agentSettingsStore?: AgentSettingsStore;
+    agentProfileStore?: AgentProfileMutationStore;
     cwd?: string;
     extensionsRoot?: string;
   },
@@ -1631,22 +1634,18 @@ function runDuplicateCommand(
       2,
     ) + "\n",
   );
-  if (options.agentSettingsStore) {
-    const settings = options.agentSettingsStore.getState();
-    options.agentSettingsStore.setExtensionDefaults({
-      ...settings.extensionDefaults,
-      usage: {
-        ...settings.extensionDefaults.usage,
-        orchestrator: {
-          ...settings.extensionDefaults.usage.orchestrator,
+  if (options.agentProfileStore) {
+    const settings = options.agentProfileStore.getState();
+    for (const actor of ["orchestrator", "workflow-task"] as const) {
+      options.agentProfileStore.setActorExtensionDefaults({
+        actor,
+        extensionUsage: {
+          ...settings.actorExtensionDefaults[actor].extensionUsage,
           [id]: "loaded",
         },
-        "workflow-task": {
-          ...settings.extensionDefaults.usage["workflow-task"],
-          [id]: "loaded",
-        },
-      },
-    });
+        extensionOrder: settings.actorExtensionDefaults[actor].extensionOrder,
+      });
+    }
   }
   return {
     output: {
@@ -1976,7 +1975,7 @@ function runInstructionsCommand(
 function runSetUsageCommand(
   words: string[],
   options: {
-    agentSettingsStore?: AgentSettingsStore;
+    agentProfileStore?: AgentProfileMutationStore;
     extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
     extensionsRoot?: string;
   },
@@ -1984,12 +1983,12 @@ function runSetUsageCommand(
   const flags = parseFlags(words);
   requireJson(flags);
   rejectUnknownFlags(flags, ["agent-profile", "extension", "json", "state"]);
-  const store = requireAgentSettingsStore(options.agentSettingsStore);
+  const store = requireAgentProfileStore(options.agentProfileStore);
   const extensionId = requireSingleFlagValue(flags, "extension");
   const agentProfile = requireSingleFlagValue(flags, "agent-profile");
   const state = validateUsageState(requireSingleFlagValue(flags, "state"));
   return setExtensionUsage({
-    agentSettingsStore: store,
+    agentProfileStore: store,
     extensionContextImpactState: options.extensionContextImpactState,
     extensionsRoot: options.extensionsRoot,
     extensionId,
@@ -2001,7 +2000,7 @@ function runSetUsageCommand(
 function runDefaultsCommand(
   words: string[],
   options: {
-    agentSettingsStore?: AgentSettingsStore;
+    agentProfileStore?: AgentProfileMutationStore;
     extensionsRoot?: string;
   },
 ): SvvyxExtensionsCommandResult {
@@ -2009,7 +2008,7 @@ function runDefaultsCommand(
   if (!action) {
     throw extensionsCommandError("invalid_argument", "Missing defaults command.");
   }
-  const store = requireAgentSettingsStore(options.agentSettingsStore);
+  const store = requireAgentProfileStore(options.agentProfileStore);
   const flags = parseFlags(words.slice(1));
   requireJson(flags);
 
@@ -2038,8 +2037,8 @@ function runDefaultsCommand(
       requestedState: state,
     });
     const settings = store.getState();
-    const usage = structuredClone(settings.extensionDefaults.usage);
-    const actorUsage = { ...usage[actor] };
+    const actorDefaults = settings.actorExtensionDefaults[actor];
+    const actorUsage = { ...actorDefaults.extensionUsage };
     const builtinState =
       extension.category === "user"
         ? "loaded"
@@ -2053,10 +2052,10 @@ function runDefaultsCommand(
     } else {
       actorUsage[extension.id] = state;
     }
-    usage[actor] = actorUsage;
-    const next = store.setExtensionDefaults({
-      ...settings.extensionDefaults,
-      usage,
+    const next = store.setActorExtensionDefaults({
+      actor,
+      extensionUsage: actorUsage,
+      extensionOrder: actorDefaults.extensionOrder,
     });
     return {
       output: {
@@ -2081,10 +2080,14 @@ function runDefaultsCommand(
     const ids = flags.get("extension") ?? [];
     const nextOrder = normalizeDefaultExtensionOrder(ids, options.extensionsRoot);
     const settings = store.getState();
-    const next = store.setExtensionDefaults({
-      ...settings.extensionDefaults,
-      order: nextOrder,
-    });
+    let next = settings;
+    for (const actor of ["orchestrator", "workflow-task"] as const) {
+      next = store.setActorExtensionDefaults({
+        actor,
+        extensionUsage: next.actorExtensionDefaults[actor].extensionUsage,
+        extensionOrder: nextOrder,
+      });
+    }
     return {
       output: {
         ok: true,
@@ -2100,10 +2103,14 @@ function runDefaultsCommand(
   if (action === "reset-order") {
     rejectUnknownFlags(flags, ["json"]);
     const settings = store.getState();
-    const next = store.setExtensionDefaults({
-      ...settings.extensionDefaults,
-      order: [],
-    });
+    let next = settings;
+    for (const actor of ["orchestrator", "workflow-task"] as const) {
+      next = store.setActorExtensionDefaults({
+        actor,
+        extensionUsage: next.actorExtensionDefaults[actor].extensionUsage,
+        extensionOrder: [],
+      });
+    }
     return {
       output: {
         ok: true,
@@ -2124,7 +2131,7 @@ export type SetExtensionUsageResult = SvvyxExtensionsCommandResult & {
 };
 
 export function setExtensionUsage(input: {
-  agentSettingsStore: AgentSettingsStore;
+  agentProfileStore: AgentProfileMutationStore;
   extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
   extensionsRoot?: string;
   extensionId: string;
@@ -2142,8 +2149,8 @@ export function setExtensionUsage(input: {
 
   const target =
     input.targetActor === "workflow-task"
-      ? resolveWorkflowUsageProfile(input.agentSettingsStore, input.agentProfile)
-      : resolveUsageProfile(input.agentSettingsStore, input.agentProfile);
+      ? resolveWorkflowUsageProfile(input.agentProfileStore, input.agentProfile)
+      : resolveUsageProfile(input.agentProfileStore, input.agentProfile);
   if (input.targetActor && target.actor !== input.targetActor) {
     throw extensionsCommandError(
       "AGENT_PROFILE_NOT_FOUND",
@@ -2158,17 +2165,17 @@ export function setExtensionUsage(input: {
   });
   const beforeState = configuredExtensionUsageState({
     actor: target.actor,
-    agentSettingsStore: input.agentSettingsStore,
+    agentProfileStore: input.agentProfileStore,
     extensionId: extension.id,
     profile: target.profile,
   });
   const defaultState = configuredDefaultExtensionUsageState({
     actor: target.actor,
-    agentSettingsStore: input.agentSettingsStore,
+    agentProfileStore: input.agentProfileStore,
     extensionId: extension.id,
     profile: profileWithoutExtensionUsage(target.profile, extension.id),
   });
-  setUsageProfile(input.agentSettingsStore, target, extension.id, input.state, {
+  setUsageProfile(input.agentProfileStore, target, extension.id, input.state, {
     explicit: input.state !== defaultState,
   });
   const changeId = recordExtensionUsageChange({
@@ -2216,11 +2223,13 @@ export function setExtensionUsage(input: {
   };
 }
 
-function requireAgentSettingsStore(store: AgentSettingsStore | undefined): AgentSettingsStore {
+function requireAgentProfileStore(
+  store: AgentProfileMutationStore | undefined,
+): AgentProfileMutationStore {
   if (!store) {
     throw extensionsCommandError(
-      "SETTINGS_STORE_UNAVAILABLE",
-      "Extension usage changes require the app-global agent settings store.",
+      "PROFILE_AUTHORITY_UNAVAILABLE",
+      "Extension usage changes require the DB-backed agent profile authority.",
     );
   }
   return store;
@@ -2286,7 +2295,7 @@ function moveInstructionFileToTrash(
 }
 
 function resolveUsageProfile(
-  store: AgentSettingsStore,
+  store: AgentProfileMutationStore,
   requested: string,
 ):
   | {
@@ -2327,7 +2336,7 @@ function resolveUsageProfile(
 }
 
 function resolveWorkflowUsageProfile(
-  store: AgentSettingsStore,
+  store: AgentProfileMutationStore,
   requested: string,
 ): Extract<UsageProfileTarget, { actor: "workflow-task" }> {
   const workflowAgent = store.getState().workflowAgents[requested];
@@ -2347,7 +2356,7 @@ function resolveWorkflowUsageProfile(
 type UsageProfileTarget = ReturnType<typeof resolveUsageProfile>;
 
 function setUsageProfile(
-  store: AgentSettingsStore,
+  store: AgentProfileMutationStore,
   target: UsageProfileTarget,
   extensionId: string,
   state: ExtensionUsageState,
@@ -2360,15 +2369,18 @@ function setUsageProfile(
     delete nextExtensionUsage[extensionId];
   }
   if (target.actor === "workflow-task") {
-    store.setWorkflowAgent(target.profile.id, {
+    store.setWorkflowAgent({
       ...target.profile,
       overrides: nextExtensionUsage,
     });
     return;
   }
-  store.setAgentProfile({
-    ...target.profile,
-    extensionUsage: nextExtensionUsage,
+  store.setProfileExtensionUsage({
+    actor: target.actor,
+    profileId: target.profile.id,
+    extensionId,
+    usage: state,
+    explicit: options.explicit,
   });
 }
 
@@ -2402,19 +2414,21 @@ function profileWithoutExtensionUsage<T extends AgentProfileSettings | WorkflowA
 
 function configuredExtensionUsageState(input: {
   actor: SvvyActorKind;
-  agentSettingsStore?: AgentSettingsStore;
+  agentProfileStore?: AgentProfileMutationStore;
   extensionId: string;
   profile: AgentProfileSettings | WorkflowAgentSettings;
 }): ExtensionUsageState {
-  const defaults = input.agentSettingsStore?.getState().extensionDefaults;
+  const settings = input.agentProfileStore?.getState();
+  const defaultActor = input.actor === "workflow-task" ? "workflow-task" : "orchestrator";
+  const defaults = settings?.actorExtensionDefaults[defaultActor];
   const profileExtensionUsage =
     "extensionUsage" in input.profile
       ? input.profile.extensionUsage
       : (input.profile.overrides ?? {});
   const state = resolveActorExtensionState({
     actor: input.actor,
-    defaultExtensionOrder: defaults?.order,
-    defaultExtensionUsage: defaults?.usage,
+    defaultExtensionOrder: defaults?.extensionOrder,
+    defaultExtensionUsage: settings?.extensionDefaults.usage,
     profileExtensionUsage,
   });
   if (state.loadedExtensionIds.includes(input.extensionId)) {
@@ -2428,13 +2442,13 @@ function configuredExtensionUsageState(input: {
 
 function configuredDefaultExtensionUsageState(input: {
   actor: SvvyActorKind;
-  agentSettingsStore?: AgentSettingsStore;
+  agentProfileStore?: AgentProfileMutationStore;
   extensionId: string;
   profile: AgentProfileSettings | WorkflowAgentSettings;
 }): ExtensionUsageState {
   return configuredExtensionUsageState({
     actor: input.actor,
-    agentSettingsStore: input.agentSettingsStore,
+    agentProfileStore: input.agentProfileStore,
     extensionId: input.extensionId,
     profile: input.profile,
   });
@@ -2452,6 +2466,7 @@ function assertUsageStateAllowedForActor(input: {
 async function runInspectCommand(
   words: string[],
   options: {
+    agentProfileStore?: AgentProfileMutationStore;
     buildRoot?: string;
     cliProbe?: SvvyxExtensionsCliProbe;
     cwd?: string;
@@ -2534,8 +2549,11 @@ async function runInspectCommand(
       paths,
       usage:
         extension.category === "user"
-          ? userExtensionUsageStates(extension.id, options.agentSettingsStore)
-          : usageStates(extension.id, options.agentSettingsStore),
+          ? userExtensionUsageStates(
+              extension.id,
+              requireAgentProfileStore(options.agentProfileStore),
+            )
+          : usageStates(extension.id, requireAgentProfileStore(options.agentProfileStore)),
       requirements: {
         cliRequirements,
         env: envRequirements,
@@ -3271,6 +3289,7 @@ async function runResetCommand(
 async function runSnapshotsCommand(
   words: string[],
   options: {
+    agentProfileStore?: AgentProfileMutationStore;
     agentSettingsStore?: AgentSettingsStore;
     buildRoot?: string;
     cliProbe?: SvvyxExtensionsCliProbe;
@@ -3295,7 +3314,7 @@ async function runSnapshotsCommand(
       output: {
         ok: true,
         snapshots: listExtensionSnapshotSummaries(root, {
-          agentSettingsStore: options.agentSettingsStore,
+          agentProfileStore: options.agentProfileStore,
           envSecretStore: options.envSecretStore,
         }),
       },
@@ -3313,7 +3332,7 @@ async function runSnapshotsCommand(
       throw extensionsCommandError("INVALID_SNAPSHOT_NAME", "Snapshot name cannot be empty.");
     }
     const snapshot = saveExtensionSnapshot(root, name, {
-      agentSettingsStore: options.agentSettingsStore,
+      agentProfileStore: options.agentProfileStore,
       envSecretStore: options.envSecretStore,
     });
     return {
@@ -3401,7 +3420,7 @@ const INITIAL_EXTENSION_SNAPSHOT_NAME = "Initial";
 export function listExtensionSnapshotSummaries(
   root: string | undefined,
   options: {
-    agentSettingsStore?: AgentSettingsStore;
+    agentProfileStore?: AgentProfileMutationStore;
     envSecretStore?: ExtensionEnvSecretStore;
   } = {},
 ): ExtensionSnapshotReadModel[] {
@@ -3419,7 +3438,7 @@ function saveExtensionSnapshot(
   root: string,
   name: string,
   options: {
-    agentSettingsStore?: AgentSettingsStore;
+    agentProfileStore?: AgentProfileMutationStore;
     envSecretStore?: ExtensionEnvSecretStore;
     snapshotId?: string;
   } = {},
@@ -3438,7 +3457,7 @@ function saveExtensionSnapshot(
   copySnapshotDirectory(join(root, "sources", "user"), join(snapshotRoot, "sources", "user"));
   copySnapshotDirectory(join(root, "sources", "builtin"), join(snapshotRoot, "sources", "builtin"));
   copySnapshotPackage(root, snapshotRoot);
-  writeSnapshotRegistryState(root, snapshotRoot, options.agentSettingsStore);
+  writeSnapshotRegistryState(root, snapshotRoot, options.agentProfileStore);
   const preservedSecretCount = preserveSnapshotSecretState(
     root,
     snapshotId,
@@ -3458,7 +3477,7 @@ function saveExtensionSnapshot(
 function ensureInitialExtensionSnapshot(
   root: string,
   options: {
-    agentSettingsStore?: AgentSettingsStore;
+    agentProfileStore?: AgentProfileMutationStore;
     envSecretStore?: ExtensionEnvSecretStore;
   } = {},
 ): void {
@@ -3506,6 +3525,7 @@ async function loadExtensionSnapshot(
   root: string,
   snapshotId: string,
   options: {
+    agentProfileStore?: AgentProfileMutationStore;
     agentSettingsStore?: AgentSettingsStore;
     buildRoot?: string;
     cliProbe?: SvvyxExtensionsCliProbe;
@@ -3530,7 +3550,7 @@ async function loadExtensionSnapshot(
   replaceDirectoryFromSnapshot(snapshotUserRoot, liveUserRoot);
   replaceDirectoryFromSnapshot(snapshotBuiltinSourceRoot, liveBuiltinSourceRoot);
   restoreSnapshotPackageState(root, snapshotRoot);
-  const restoredUsageStates = restoreSnapshotUsageStates(snapshotRoot, options.agentSettingsStore);
+  const restoredUsageStates = restoreSnapshotUsageStates(snapshotRoot, options.agentProfileStore);
   const secretState = restoreSnapshotSecretState(
     snapshotId,
     options.envSecretStore,
@@ -3933,7 +3953,7 @@ function snapshotSecretStateKey(snapshotId: string): SnapshotSecretStateStoreKey
 
 function restoreSnapshotUsageStates(
   snapshotRoot: string,
-  store: AgentSettingsStore | undefined,
+  store: AgentProfileMutationStore | undefined,
 ): {
   restored: number;
   affectedProfiles: string[];
@@ -3950,15 +3970,28 @@ function restoreSnapshotUsageStates(
   const builtinSources = Array.isArray(state.builtinSources) ? state.builtinSources : [];
   let restored = 0;
   const affectedProfiles = new Set<string>();
-  const extensionDefaults = (state as { extensionDefaults?: unknown }).extensionDefaults;
-  if (
-    extensionDefaults &&
-    typeof extensionDefaults === "object" &&
-    !Array.isArray(extensionDefaults)
-  ) {
-    store.setExtensionDefaults(
-      extensionDefaults as Parameters<AgentSettingsStore["setExtensionDefaults"]>[0],
-    );
+  const actorExtensionDefaults = Array.isArray(state.actorExtensionDefaults)
+    ? state.actorExtensionDefaults
+    : [];
+  for (const value of actorExtensionDefaults) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const record = value as {
+      actor?: unknown;
+      extensionOrder?: unknown;
+      extensionUsage?: unknown;
+    };
+    if (
+      (record.actor === "orchestrator" || record.actor === "workflow-task") &&
+      isExtensionUsageRecord(record.extensionUsage) &&
+      Array.isArray(record.extensionOrder) &&
+      record.extensionOrder.every((extensionId) => typeof extensionId === "string")
+    ) {
+      store.setActorExtensionDefaults({
+        actor: record.actor,
+        extensionUsage: record.extensionUsage,
+        extensionOrder: record.extensionOrder,
+      });
+    }
   }
   for (const entry of [...userExtensions, ...builtinSources]) {
     const extension =
@@ -4006,7 +4039,7 @@ function restoreSnapshotUsageStates(
 }
 
 function resolveSnapshotUsageProfile(input: {
-  store: AgentSettingsStore;
+  store: AgentProfileMutationStore;
   actorKind: unknown;
   agentProfile: string;
 }): UsageProfileTarget | null {
@@ -4047,6 +4080,13 @@ function isExtensionUsageState(value: unknown): value is ExtensionUsageState {
   return value === "loaded" || value === "available" || value === "unavailable";
 }
 
+function isExtensionUsageRecord(value: unknown): value is Record<string, ExtensionUsageState> {
+  return (
+    Boolean(value && typeof value === "object" && !Array.isArray(value)) &&
+    Object.values(value as Record<string, unknown>).every(isExtensionUsageState)
+  );
+}
+
 function snapshotPackageFileIsSafe(path: string): boolean {
   const content = readFileSync(path, "utf8");
   if (
@@ -4065,7 +4105,7 @@ function snapshotPackageFileIsSafe(path: string): boolean {
 function writeSnapshotRegistryState(
   root: string,
   snapshotRoot: string,
-  agentSettingsStore?: AgentSettingsStore,
+  agentProfileStore?: AgentProfileMutationStore,
 ): void {
   const userExtensions = listImmediateDirectories(join(root, "sources", "user")).map((id) => {
     const extension = readUserExtensionRecord(id, root);
@@ -4074,7 +4114,7 @@ function writeSnapshotRegistryState(
       title: extension?.title ?? id,
       category: "user",
       interface: extension?.interface ?? "instructions",
-      usage: userExtensionUsageStates(id, agentSettingsStore),
+      usage: userExtensionUsageStates(id, agentProfileStore),
     };
   });
   const builtinSources = listImmediateDirectories(join(root, "sources", "builtin")).map((id) => {
@@ -4084,7 +4124,7 @@ function writeSnapshotRegistryState(
       title: extension?.title ?? id,
       category: "builtin",
       interface: extension?.interface ?? "instructions",
-      usage: usageStates(id, agentSettingsStore),
+      usage: usageStates(id, agentProfileStore),
     };
   });
   mkdirSync(join(snapshotRoot, "registry"), { recursive: true });
@@ -4093,9 +4133,14 @@ function writeSnapshotRegistryState(
     JSON.stringify(
       {
         schemaVersion: 1,
-        extensionDefaults:
-          agentSettingsStore?.getState().extensionDefaults ??
-          DEFAULT_AGENT_SETTINGS_STATE.extensionDefaults,
+        actorExtensionDefaults: (["orchestrator", "workflow-task"] as const).map((actor) => {
+          const defaults = agentProfileStore?.getState().actorExtensionDefaults[actor];
+          return {
+            actor,
+            extensionUsage: { ...defaults?.extensionUsage },
+            extensionOrder: [...(defaults?.extensionOrder ?? [])],
+          };
+        }),
         userExtensions,
         builtinSources,
       },
@@ -5235,6 +5280,25 @@ export function probeCliRequirement(
     };
   }
 
+  if (requirement.versionCommand && isPackageRunnerVersionCommand(requirement.versionCommand)) {
+    return {
+      id: requirement.id,
+      binary: requirement.binary,
+      package: requirement.package ?? null,
+      required: requirement.required,
+      defaultVersion,
+      currentVersion: null,
+      latestVersion: null,
+      status: "available",
+      updateAvailable: false,
+      detectedVersion: null,
+      path,
+      versionCommand: requirement.versionCommand,
+      installCommand: null,
+      updateCommand: null,
+    };
+  }
+
   const detectedVersion = detectCliVersion(requirement, env, path);
   if (!detectedVersion) {
     return {
@@ -5273,6 +5337,25 @@ export function probeCliRequirement(
     installCommand: null,
     updateCommand: updateAvailable ? resolveInstallCommand(requirement, defaultVersion) : null,
   };
+}
+
+function isPackageRunnerVersionCommand(commandLine: string): boolean {
+  let words: string[];
+  try {
+    words = splitCommandLine(commandLine);
+  } catch {
+    return false;
+  }
+  if (words.length < 2 || hasShellControlSyntax(commandLine)) {
+    return false;
+  }
+  const executable = basename(words[0]!);
+  return (
+    executable === "bunx" ||
+    executable === "npx" ||
+    executable === "pnpx" ||
+    ((executable === "pnpm" || executable === "yarn") && words[1] === "dlx")
+  );
 }
 
 function detectCliVersion(
@@ -6864,6 +6947,7 @@ function listJsonFiles(root: string): string[] {
 async function runRevertCommand(
   words: string[],
   options: {
+    agentProfileStore?: AgentProfileMutationStore;
     agentSettingsStore?: AgentSettingsStore;
     buildRoot?: string;
     cliProbe?: SvvyxExtensionsCliProbe;
@@ -7292,12 +7376,12 @@ function readExtensionUsageChange(
 function revertExtensionUsageChange(
   change: NonNullable<ReturnType<typeof readExtensionUsageChange>>,
   options: {
-    agentSettingsStore?: AgentSettingsStore;
+    agentProfileStore?: AgentProfileMutationStore;
     extensionsRoot?: string;
     extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
   },
 ): SvvyxExtensionsCommandResult {
-  const store = requireAgentSettingsStore(options.agentSettingsStore);
+  const store = requireAgentProfileStore(options.agentProfileStore);
   const target = resolveUsageProfile(store, change.agentProfile);
   if (target.profile.id !== change.profileId) {
     throw extensionsCommandError(
@@ -7310,7 +7394,7 @@ function revertExtensionUsageChange(
   }
   const currentState = configuredExtensionUsageState({
     actor: target.actor,
-    agentSettingsStore: store,
+    agentProfileStore: store,
     extensionId: change.extensionId,
     profile: target.profile,
   });
@@ -7326,7 +7410,7 @@ function revertExtensionUsageChange(
   requireExtension(change.extensionId, options.extensionsRoot);
   const defaultState = configuredDefaultExtensionUsageState({
     actor: target.actor,
-    agentSettingsStore: store,
+    agentProfileStore: store,
     extensionId: change.extensionId,
     profile: profileWithoutExtensionUsage(target.profile, change.extensionId),
   });
@@ -7877,7 +7961,7 @@ function defaultExtensionsRoot(): string {
   return join(homedir(), ".config", "svvy", "extensions");
 }
 
-function userExtensionUsageStates(extensionId: string, store?: AgentSettingsStore) {
+function userExtensionUsageStates(extensionId: string, store?: AgentProfileMutationStore) {
   return usageStatesForUserExtension(extensionId, store, {
     orchestrator: "loaded",
     handler: "unavailable",
@@ -7887,19 +7971,12 @@ function userExtensionUsageStates(extensionId: string, store?: AgentSettingsStor
 
 function usageStatesForUserExtension(
   extensionId: string,
-  store: AgentSettingsStore | undefined,
+  store: AgentProfileMutationStore | undefined,
   fallback: Record<SvvyActorKind, ExtensionUsageState>,
 ) {
   const settings = store?.getState();
   const defaultUsage = settings?.extensionDefaults.usage;
-  const orchestratorProfiles =
-    settings?.agents.orchestrators ??
-    ([
-      {
-        id: DEFAULT_ORCHESTRATOR_PROFILE_ID,
-        extensionUsage: {} as Record<string, ExtensionUsageState>,
-      },
-    ] as const);
+  const orchestratorProfiles = settings?.agents.orchestrators ?? [];
   const handlerProfile = settings?.agents.special.threadHandler;
   return [
     ...orchestratorProfiles.map((profile) => ({
@@ -7917,34 +7994,25 @@ function usageStatesForUserExtension(
       state: handlerProfile?.extensionUsage[extensionId] ?? fallback.handler,
       configurable: true,
     },
-    ...Object.values(settings?.workflowAgents ?? DEFAULT_AGENT_SETTINGS_STATE.workflowAgents).map(
-      (profile) => ({
-        actorKind: "workflow-task" as const,
-        agentProfile: profile.id,
-        state:
-          profile.overrides?.[extensionId] ??
-          defaultUsage?.["workflow-task"]?.[extensionId] ??
-          fallback["workflow-task"],
-        configurable: true,
-      }),
-    ),
+    ...Object.values(settings?.workflowAgents ?? {}).map((profile) => ({
+      actorKind: "workflow-task" as const,
+      agentProfile: profile.id,
+      state:
+        profile.overrides?.[extensionId] ??
+        defaultUsage?.["workflow-task"]?.[extensionId] ??
+        fallback["workflow-task"],
+      configurable: true,
+    })),
   ];
 }
 
-function usageStates(extensionId: string, store?: AgentSettingsStore) {
+function usageStates(extensionId: string, store?: AgentProfileMutationStore) {
   return usageStatesForDefaultProfiles(extensionId, store);
 }
 
-function usageStatesForDefaultProfiles(extensionId: string, store?: AgentSettingsStore) {
+function usageStatesForDefaultProfiles(extensionId: string, store?: AgentProfileMutationStore) {
   const settings = store?.getState();
-  const orchestratorProfiles =
-    settings?.agents.orchestrators ??
-    ([
-      {
-        id: DEFAULT_ORCHESTRATOR_PROFILE_ID,
-        extensionUsage: {} as Record<string, ExtensionUsageState>,
-      },
-    ] as const);
+  const orchestratorProfiles = settings?.agents.orchestrators ?? [];
   const handlerProfile = settings?.agents.special.threadHandler;
   return [
     ...orchestratorProfiles.map((profile) =>
@@ -7954,7 +8022,7 @@ function usageStatesForDefaultProfiles(extensionId: string, store?: AgentSetting
         extensionId,
         state: resolveActorExtensionState({
           actor: "orchestrator",
-          defaultExtensionOrder: settings?.extensionDefaults.order,
+          defaultExtensionOrder: settings?.actorExtensionDefaults.orchestrator.extensionOrder,
           defaultExtensionUsage: settings?.extensionDefaults.usage,
           profileExtensionUsage: profile.extensionUsage,
         }),
@@ -7966,24 +8034,23 @@ function usageStatesForDefaultProfiles(extensionId: string, store?: AgentSetting
       extensionId,
       state: resolveActorExtensionState({
         actor: "handler",
-        defaultExtensionOrder: settings?.extensionDefaults.order,
+        defaultExtensionOrder: settings?.actorExtensionDefaults.orchestrator.extensionOrder,
         defaultExtensionUsage: settings?.extensionDefaults.usage,
         profileExtensionUsage: handlerProfile?.extensionUsage ?? {},
       }),
     }),
-    ...Object.values(settings?.workflowAgents ?? DEFAULT_AGENT_SETTINGS_STATE.workflowAgents).map(
-      (profile) =>
-        usageRow({
-          actorKind: "workflow-task",
-          agentProfile: profile.id,
-          extensionId,
-          state: resolveActorExtensionState({
-            actor: "workflow-task",
-            defaultExtensionOrder: settings?.extensionDefaults.order,
-            defaultExtensionUsage: settings?.extensionDefaults.usage,
-            profileExtensionUsage: profile.overrides ?? {},
-          }),
+    ...Object.values(settings?.workflowAgents ?? {}).map((profile) =>
+      usageRow({
+        actorKind: "workflow-task",
+        agentProfile: profile.id,
+        extensionId,
+        state: resolveActorExtensionState({
+          actor: "workflow-task",
+          defaultExtensionOrder: settings?.actorExtensionDefaults["workflow-task"].extensionOrder,
+          defaultExtensionUsage: settings?.extensionDefaults.usage,
+          profileExtensionUsage: profile.overrides ?? {},
         }),
+      }),
     ),
   ];
 }

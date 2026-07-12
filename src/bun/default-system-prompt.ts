@@ -15,10 +15,11 @@ import {
 import { buildWebPromptContext } from "./web-runtime/prompt-context";
 import {
   getExtensionRecord,
+  getRequestUserInputVariantInstructions,
   resolveActorExtensionState,
   type ExtensionRecord,
 } from "@svvy/extensions";
-import type { RequestUserInputSettings } from "../shared/agent-settings";
+import type { RequestInputSettings } from "@svvy/core";
 import type {
   GeneratedAgentContextEntry,
   GeneratedAgentContextInstructionBlock,
@@ -176,21 +177,11 @@ export const EXTENSION_MANAGING_CONTEXT_BODY = [
   "Do not treat Extension Managing as actor-local runtime capability loading; use Extension Loading for actor-local list_extensions and load_extension work.",
 ].join("\n");
 
-export const REQUEST_USER_INPUT_NONBLOCKING_CONTEXT_BODY = [
-  "Loaded native extension: Request User Input.",
-  "",
-  "Use `request_user_input` only for user decisions that could materially steer the work and where you can choose a conservative default now.",
-  "Ask one to three short questions. For each question, provide a concise `title` for the side panel. Use either exactly two or three options with exactly one `recommended: true`, or a freeform `defaultAnswer`.",
-  "Continue with the returned answer. If a later `request_user_input.answer` message arrives, treat it as a normal queued answer follow-up and reassess only if it materially changes the work.",
-].join("\n");
+export const REQUEST_USER_INPUT_NONBLOCKING_CONTEXT_BODY =
+  getRequestUserInputVariantInstructions("nonblocking");
 
-export const REQUEST_USER_INPUT_BLOCKING_CONTEXT_BODY = [
-  "Loaded native extension: Request User Input.",
-  "",
-  "Use `request_user_input` only when the answer is required before proceeding safely.",
-  "Ask one to three short questions. For each question, provide a concise `title` for the side panel. Use either exactly two or three options with exactly one `recommended: true`, or a freeform `defaultAnswer`, because the configured timeout may fall back to that default.",
-  'When the tool returns, continue with the returned answer. If the answer is marked `answeredBy: "timeout_default"`, treat it as a fallback, not confirmed user preference.',
-].join("\n");
+export const REQUEST_USER_INPUT_BLOCKING_CONTEXT_BODY =
+  getRequestUserInputVariantInstructions("blocking");
 
 export const THREAD_ORCHESTRATION_CONTEXT_BODY = [
   "Loaded native extension: Thread Orchestration.",
@@ -491,7 +482,7 @@ export function buildSystemPromptFromLibrary(
     externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
     networkAccess?: boolean;
     workspaceKey?: string;
-    requestUserInputSettings?: RequestUserInputSettings;
+    requestUserInputSettings?: RequestInputSettings;
   } = {},
 ): string {
   return buildSystemPromptFromExtensionState(actor, {
@@ -528,7 +519,7 @@ export function buildSystemPrompt(
     networkAccess?: boolean;
     generatedAgentContextState?: GeneratedAgentContextState;
     workspaceKey?: string;
-    requestUserInputSettings?: RequestUserInputSettings;
+    requestUserInputSettings?: RequestInputSettings;
   } = {},
 ): string {
   if (options.generatedAgentContextState) {
@@ -549,7 +540,7 @@ function buildSystemPromptFromExtensionState(
     networkAccess?: boolean;
     generatedAgentContextState?: GeneratedAgentContextState;
     workspaceKey?: string;
-    requestUserInputSettings?: RequestUserInputSettings;
+    requestUserInputSettings?: RequestInputSettings;
   } = {},
 ): string {
   const extensionState = resolvePromptExtensionState(actor, options);
@@ -702,7 +693,7 @@ function buildLoadedExtensionPromptSections(input: {
   return [];
 }
 
-function buildRequestUserInputContextBody(settings?: RequestUserInputSettings): string {
+function buildRequestUserInputContextBody(settings?: RequestInputSettings): string {
   return settings?.mode === "blocking"
     ? REQUEST_USER_INPUT_BLOCKING_CONTEXT_BODY
     : REQUEST_USER_INPUT_NONBLOCKING_CONTEXT_BODY;

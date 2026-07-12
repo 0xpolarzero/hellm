@@ -85,6 +85,8 @@ describe("RuntimeApprovalStatePort", () => {
           const request = requestResult.value;
           const listed = yield* port.listOpenApprovalRequests({ surfacePiSessionId });
           const read = yield* port.getApprovalRequest({ requestId: request.requestId });
+          const waitingCommand = yield* state.findCommandById(command.id);
+          const waitingSession = yield* state.getSessionState(workspaceSessionId);
           const resolvedResult = yield* port.resolveApprovalRequest({
             requestId: request.requestId,
             status: "approved",
@@ -92,6 +94,20 @@ describe("RuntimeApprovalStatePort", () => {
             decisionReason: "Looks good.",
           });
           const resolved = resolvedResult.value;
+          const replayedResult = yield* port.resolveApprovalRequest({
+            requestId: request.requestId,
+            status: "approved",
+            reviewer: "user",
+            decisionReason: "Looks good.",
+          });
+          const conflictingResolution = yield* Effect.flip(
+            port.resolveApprovalRequest({
+              requestId: request.requestId,
+              status: "denied",
+              reviewer: "user",
+              decisionReason: "Changed decision.",
+            }),
+          );
           const remaining = yield* port.listOpenApprovalRequests();
 
           expect(request).toMatchObject({
@@ -109,6 +125,18 @@ describe("RuntimeApprovalStatePort", () => {
           });
           expect(listed.map((entry) => entry.requestId)).toEqual([request.requestId]);
           expect(read.requestId).toBe(request.requestId);
+          expect(waitingCommand).toMatchObject({
+            status: "waiting",
+            facts: {
+              approval: "pending",
+              approvalRequestId: request.requestId,
+            },
+          });
+          expect(waitingSession.session.wait).toMatchObject({
+            kind: "approval",
+            owner: { kind: "orchestrator" },
+            reason: "Run command: bun test",
+          });
           expect(requestResult.afterCommit).toEqual([
             {
               scope: "workspace",
@@ -148,7 +176,14 @@ describe("RuntimeApprovalStatePort", () => {
             completedAt: expect.any(String),
           });
           expect(resolvedResult.afterCommit).toEqual(requestResult.afterCommit);
+          expect(replayedResult.value).toEqual(resolved);
+          expect(replayedResult.afterCommit).toEqual([]);
+          expect(conflictingResolution).toMatchObject({
+            reason: "conflict",
+          });
           expect(remaining).toEqual([]);
+          expect((yield* state.findCommandById(command.id))?.status).toBe("running");
+          expect((yield* state.getSessionState(workspaceSessionId)).session.wait).toBeNull();
         }).pipe(
           Effect.provide(
             layerRuntimeApprovalStatePort.pipe(

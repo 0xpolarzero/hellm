@@ -120,6 +120,9 @@ test("renders seeded transcript timestamps, tool error states, and reasoning fal
   await launchEdgeCaseApp(async ({ page }) => {
     await openSession(page, SESSION_TITLE);
     await waitForExactText(page.locator("[data-testid=active-surface-title]"), SESSION_TITLE);
+    await page
+      .getByText("This assistant row should show a redacted reasoning block.", { exact: true })
+      .waitFor({ state: "visible" });
 
     const times = page.locator("time");
     expect(await times.count()).toBe(3);

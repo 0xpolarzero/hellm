@@ -18,6 +18,7 @@ import { WorkspaceLayoutSlotIdSchema } from "./workspace-layout-contracts";
 
 export const WorkspaceReadModelInvalidationSchema = Schema.Union([
   Schema.Struct({ model: Schema.Literal("sessionNavigation") }),
+  Schema.Struct({ model: Schema.Literal("promptHistory") }),
   Schema.Struct({
     model: Schema.Literal("workspaceLayout"),
     ids: Schema.Array(WorkspaceLayoutSlotIdSchema),

@@ -315,24 +315,186 @@ export async function seedSessions(
         createdAt,
         updatedAt,
       });
+      let activeTurn: ReturnType<typeof store.startTurn> | null = null;
+      let transcriptCursor:
+        | ReturnType<typeof store.commitRuntimeTranscriptUserMessage>["cursor"]
+        | null = null;
+      let lastAssistantMessageId: string | undefined;
+      let lastAssistantText: string | undefined;
+      const toolCommands = new Map<string, string>();
+      const streamGenerationId = `seed-stream-${seeded.id}` as never;
+      const finishActiveTurn = () => {
+        if (!activeTurn) return;
+        store.finishTurn({
+          turnId: activeTurn.id,
+          status: "completed",
+          ...(lastAssistantMessageId ? { assistantMessageId: lastAssistantMessageId } : {}),
+          ...(lastAssistantText ? { assistantText: lastAssistantText } : {}),
+        });
+        activeTurn = null;
+        lastAssistantMessageId = undefined;
+        lastAssistantText = undefined;
+      };
       for (const message of session.messages) {
-        if (message.role !== "user") continue;
-        structuredNow =
+        const messageTimestamp =
           typeof message.timestamp === "number"
             ? new Date(message.timestamp).toISOString()
             : updatedAt;
-        const requestSummary = message.content
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join("\n")
-          .trim();
-        const turn = store.startTurn({
-          sessionId: seeded.id,
-          surfacePiSessionId: seeded.id,
-          requestSummary,
+        structuredNow = messageTimestamp;
+        if (message.role === "user") {
+          finishActiveTurn();
+          const text = message.content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n");
+          activeTurn = store.startTurn({
+            sessionId: seeded.id,
+            surfacePiSessionId: seeded.id,
+            requestSummary: text.trim(),
+          });
+          const committed = store.commitRuntimeTranscriptUserMessage({
+            workspaceSessionId: seeded.id as never,
+            surfacePiSessionId: seeded.id as never,
+            turnId: activeTurn.id as never,
+            queueItemId: `seed-queue-${seeded.id}-${activeTurn.id}` as never,
+            message: { text },
+            submittedAt: messageTimestamp as never,
+            committedAt: messageTimestamp as never,
+            streamGenerationId,
+            expectedCursor: transcriptCursor,
+          });
+          transcriptCursor = committed.cursor;
+          continue;
+        }
+        if (message.role === "toolResult") {
+          const commandId = toolCommands.get(message.toolCallId);
+          if (!commandId) continue;
+          const text = message.content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n");
+          store.recordLifecycleEvent({
+            sessionId: seeded.id,
+            kind: "command.output",
+            subjectKind: "command",
+            subjectId: commandId,
+            at: messageTimestamp,
+            data: {
+              stream: message.isError ? "stderr" : "stdout",
+              source: "final-result",
+              text,
+            },
+          });
+          store.finishCommand({
+            commandId,
+            status: message.isError ? "failed" : "succeeded",
+            summary: text,
+            error: message.isError ? text : null,
+            at: messageTimestamp,
+          });
+          continue;
+        }
+        if (message.role !== "assistant" || !activeTurn) continue;
+
+        let assistant = store.beginRuntimeTranscriptAssistantMessage({
+          workspaceSessionId: seeded.id as never,
+          surfacePiSessionId: seeded.id as never,
+          turnId: activeTurn.id as never,
+          api: message.api ?? null,
+          providerId: message.provider as never,
+          modelId: message.model as never,
+          startedAt: messageTimestamp as never,
+          streamGenerationId,
+          expectedCursor: transcriptCursor,
         });
-        store.finishTurn({ turnId: turn.id, status: "completed" });
+        for (const [contentIndex, content] of message.content.entries()) {
+          if (content.type === "text" || content.type === "thinking") {
+            assistant = store.appendRuntimeTranscriptAssistantContentDelta({
+              messageId: assistant.message.messageId,
+              surfacePiSessionId: seeded.id as never,
+              streamGenerationId,
+              expectedCursor: assistant.cursor,
+              contentIndex,
+              kind: content.type,
+              delta: content.type === "text" ? content.text : content.thinking,
+              ...(content.type === "thinking" && content.redacted ? { redacted: true } : {}),
+              ...(content.type === "thinking" && content.thinkingSignature
+                ? { thinkingSignature: content.thinkingSignature }
+                : {}),
+            });
+            continue;
+          }
+          if (content.type === "toolCall") {
+            const command = store.createOrReuseStreamingCommand({
+              toolCallId: content.id,
+              turnId: activeTurn.id,
+              surfacePiSessionId: seeded.id,
+              toolName: content.name,
+              executor: "orchestrator",
+              visibility: "summary",
+              title: `Run ${content.name}`,
+              summary: `${content.name} is running.`,
+              arguments: content.arguments,
+            });
+            store.startCommand(command.id);
+            toolCommands.set(content.id, command.id);
+            assistant = store.upsertRuntimeTranscriptAssistantToolCall({
+              messageId: assistant.message.messageId,
+              surfacePiSessionId: seeded.id as never,
+              streamGenerationId,
+              expectedCursor: assistant.cursor,
+              contentIndex,
+              toolCallId: content.id as never,
+              toolName: content.name,
+              argumentsJson: JSON.stringify(content.arguments),
+              argumentsStatus: "accepted",
+              ...(content.thoughtSignature ? { thoughtSignature: content.thoughtSignature } : {}),
+            });
+            assistant = store.linkRuntimeTranscriptAssistantToolCallCommand({
+              messageId: assistant.message.messageId,
+              surfacePiSessionId: seeded.id as never,
+              streamGenerationId,
+              expectedCursor: assistant.cursor,
+              contentIndex,
+              toolCallId: content.id as never,
+              commandId: command.id as never,
+            });
+          }
+        }
+        const terminalInput = {
+          messageId: assistant.message.messageId,
+          surfacePiSessionId: seeded.id as never,
+          streamGenerationId,
+          expectedCursor: assistant.cursor,
+          api: message.api ?? null,
+          providerId: message.provider as never,
+          modelId: message.model as never,
+          responseId: null,
+          usage: message.usage,
+          stopReason: message.stopReason,
+          errorMessage: message.errorMessage ?? null,
+          piHistoryEntry: null,
+          messageTimestamp: messageTimestamp as never,
+          finishedAt: messageTimestamp as never,
+        } as const;
+        const terminal =
+          message.stopReason === "error" || message.stopReason === "aborted"
+            ? store.failRuntimeTranscriptAssistantMessage({
+                ...terminalInput,
+                status: message.stopReason === "error" ? "failed" : "cancelled",
+              })
+            : store.commitRuntimeTranscriptAssistantMessage({
+                ...terminalInput,
+                content: assistant.message.content,
+              });
+        transcriptCursor = terminal.cursor;
+        lastAssistantMessageId = terminal.message.messageId;
+        lastAssistantText = terminal.message.content
+          .filter((content) => content.kind === "text")
+          .map((content) => content.text)
+          .join("\n");
       }
+      finishActiveTurn();
     }
   } finally {
     store.close();

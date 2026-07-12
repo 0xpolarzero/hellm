@@ -3,9 +3,8 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
+import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Redacted from "effect/Redacted";
 import {
   getModel,
@@ -22,7 +21,6 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import {
   unsafeDecodeRuntimeSubmittedMessageSyncForTestsAndBootstrap,
-  decodeUnknownRequestUserInputAnswerQueuePayloadExit,
   unsafeDecodeRuntimeClientSubmissionInputSyncForTestsAndBootstrap,
   normalizeRuntimeClientSubmissionMetadata,
   type RuntimeClientSubmissionInput,
@@ -60,7 +58,7 @@ import {
   type StateContractError,
   type StateInvalidationDescriptor,
   type StateMutationResult,
-  type RequestUserInputAnswerQueuePayload,
+  type RequestInputSettings,
   type RuntimePromptTelemetryMessage,
   type RuntimeRecoveryStatePortService,
   type RuntimeExtensionContextImpactStateFacade,
@@ -78,6 +76,7 @@ import {
   type ProviderAuthPortService,
   type PiRuntimePathsPortService,
   type SurfacePiSessionId,
+  type PromptTarget as CorePromptTarget,
   type TitleJobId,
   type TurnId,
   type WorkspaceId,
@@ -87,23 +86,16 @@ import {
 } from "@svvy/core";
 import type {
   ArtifactOpenMessage,
-  ComposerDraft,
-  ConversationSurfaceSnapshot,
-  ConversationTurnTiming,
   CreateSessionRequest,
   ForkSessionRequest,
   PromptTarget,
   PromptClientSubmissionMetadata,
-  QueuedSurfaceMessage,
   SetExtensionContextAutoUpdateRequest,
   SurfaceMutationResponse,
-  SurfaceSyncMessage,
+  SurfaceOpenResponse,
   UpdateComposerDraftRequest,
   WorkspaceMutationResponse,
   WorkspaceArtifactPreview,
-  RequestUserInputAnswerRequest,
-  SetRequestUserInputTimerPausedRequest,
-  WorkspaceSessionSummary,
   AgentContextPreviewRequest,
   AgentContextPreviewExtension,
   AgentContextPreviewResponse,
@@ -119,13 +111,12 @@ import {
   type AppPreferences,
   type AgentProfileId,
   type AgentProfileSettings,
-  type RequestUserInputSettings,
-  type WorkflowAgentKey,
 } from "../shared/agent-settings";
 import {
-  projectWorkspaceSessionSummary,
-  projectWorkspaceSessionSummaryFromInfo,
-} from "./session-projection";
+  createAgentProfileMutationStore,
+  type AgentProfileAuthoritySnapshot,
+  type AgentProfileMutation,
+} from "./agent-profile-mutation-store";
 import { defaultRuntimeLayerConfig, type RuntimeLayerConfig } from "@svvy/runtime/bootstrap";
 import { type PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
 import {
@@ -134,7 +125,6 @@ import {
   type StructuredPiSessionRecord,
   type StructuredSessionSnapshot,
   type StructuredSessionStateStore,
-  type StructuredSurfaceQueuedMessageRecord,
   structuredSessionStateFromStore,
 } from "@svvy/state/structured-session-state";
 import {
@@ -144,6 +134,7 @@ import {
   type OrchestratorAgentProfileInput,
   type SetProfileExtensionUsageCommandInput,
   type ThreadHandlerProfileInput,
+  type WorkflowAgentSourceReadModelRecord,
 } from "@svvy/state";
 import { buildStructuredArtifactLink } from "@svvy/state/structured-session-projections";
 import {
@@ -175,11 +166,6 @@ import {
   createLoadExtensionTool,
   type RunAcceptedLoadExtension,
 } from "./extension-tools";
-import {
-  createRequestUserInputTool,
-  RequestUserInputRuntime,
-  type RunAcceptedRequestUserInput,
-} from "./request-user-input-tool";
 import { getCredential, resolveApiKey, resolveAuthState } from "./auth-store";
 import { getOAuthRefreshError, refreshIfNeeded, supportsOAuth } from "./oauth-login";
 import { runtimeSubmittedMessagePromptText } from "@svvy/pi-adapter/messages";
@@ -337,7 +323,6 @@ export interface SendAgentPromptResult {
   queued?: boolean;
   queuedMessageId?: string;
   dispatched?: boolean;
-  snapshot?: ConversationSurfaceSnapshot;
 }
 
 export interface EditCommittedUserMessageOptions {
@@ -398,7 +383,6 @@ interface CreateManagedSessionOptions {
   ) => void | Promise<void>;
   onAppLog?: (event: AppLoggerEvent) => void;
   runTaskAgentBridge?: runTaskAgentBridgeEnvProvider;
-  requestUserInputRuntime?: RequestUserInputRuntime;
   runtimeCommandStdin?: LiveCommandStdinRegistry;
   openArtifact?: (input: { sessionId: string; artifactId: string }) => boolean | Promise<boolean>;
   approvalBoundary?: RuntimeApprovalBoundary;
@@ -416,22 +400,11 @@ interface CreateManagedSessionOptions {
     facts: SandboxLaunchFacts;
     close(): Promise<void>;
   }>;
-  runAcceptedRequestUserInput?: RunAcceptedRequestUserInput;
   runAcceptedLoadExtension?: RunAcceptedLoadExtension;
   requestDirectToolApproval?: RuntimeApprovalBoundary;
   workflowsExtensionsGeneratedPackagePath?: string;
   workflowsGeneratedPackagePath?: string;
   workflowsSourceRoot?: string;
-}
-
-type WorkspaceSessionInfo = Awaited<ReturnType<typeof SessionManager.list>>[number];
-
-function messageTimestampMs(timestamp: string | number): number {
-  if (typeof timestamp === "number") return timestamp;
-  const numericTimestamp = Number(timestamp);
-  if (Number.isFinite(numericTimestamp)) return numericTimestamp;
-  const parsedTimestamp = Date.parse(timestamp);
-  return Number.isFinite(parsedTimestamp) ? parsedTimestamp : 0;
 }
 
 export type TitleGenerationLogEvent =
@@ -454,6 +427,7 @@ export type WorkflowsGeneratedPackageLogEvent = {
 };
 
 type WorkspaceRecoveryOptions = {
+  artifactDirectory?: string;
   workflowsExtensionsGeneratedPackagePath?: string;
   workflowsGeneratedPackagePath?: string;
   workflowsSourceRoot?: string;
@@ -472,7 +446,8 @@ type WorkspaceRecoveryOptions = {
   refreshGeneratedPackages?: (
     input: InternalRefreshGeneratedPackagesRequest,
   ) => Promise<GeneratedPackagesRefreshResult>;
-  runAcceptedRequestUserInput?: RunAcceptedRequestUserInput;
+  runtimeStartupOwnsRecovery?: boolean;
+  wakeSurfaceQueue?: (target: PromptTarget) => Promise<void>;
   runTaskAgent?: (input: AuthenticatedRunTaskAgentInput) => Promise<RunTaskAgentResult>;
   runAcceptedLoadExtension?: RunAcceptedLoadExtension;
   requestDirectToolApproval?: RuntimeApprovalBoundary;
@@ -496,19 +471,6 @@ const missingRuntimeApprovalBoundary: RuntimeApprovalBoundary = async () => ({
   reason: "Runtime approval admission is not wired for this workspace runtime.",
 });
 
-function requiredAcceptedRequestUserInputRunner(
-  runAcceptedRequestUserInput: WorkspaceRecoveryOptions["runAcceptedRequestUserInput"],
-): RunAcceptedRequestUserInput {
-  if (!runAcceptedRequestUserInput) {
-    return () => {
-      throw new Error(
-        "WorkspaceSessionCatalog requires runtime-owned request_user_input execution.",
-      );
-    };
-  }
-  return runAcceptedRequestUserInput;
-}
-
 function requiredAcceptedLoadExtensionRunner(
   runAcceptedLoadExtension: WorkspaceRecoveryOptions["runAcceptedLoadExtension"],
 ): RunAcceptedLoadExtension {
@@ -528,6 +490,7 @@ type CommittedStateInvalidationPublisher = (
 
 export interface CatalogAgentProfileAuthoritySnapshot {
   readonly configuredProfiles: readonly ConfiguredAgentProfileReadModelRecord[];
+  readonly workflowAgents: readonly WorkflowAgentSourceReadModelRecord[];
   readonly actorExtensionDefaults: readonly AgentActorExtensionDefaultsReadModelRecord[];
 }
 
@@ -538,6 +501,23 @@ export interface CatalogAgentProfileAuthority {
   setProfileExtensionUsage(
     input: Omit<SetProfileExtensionUsageCommandInput, "clientSubmission">,
   ): Promise<void>;
+  setActorExtensionDefaults(input: {
+    actor: "orchestrator" | "workflow-task";
+    extensionUsage: Readonly<Record<string, ExtensionUsageState>>;
+    extensionOrder: readonly string[];
+  }): Promise<void>;
+  saveWorkflowAgentSource(input: {
+    sourceId: string;
+    expectedSourceVersion: string;
+    text: string;
+  }): Promise<void>;
+  upsertWorkflowAgentSource(
+    input: Extract<AgentProfileMutation, { kind: "workflow-agent-source.upsert" }>,
+  ): Promise<void>;
+}
+
+export interface CatalogRequestInputSettingsAuthority {
+  read(): RequestInputSettings;
 }
 
 type PendingCommittedStateInvalidation = {
@@ -574,19 +554,22 @@ export class WorkspaceSessionCatalog {
   private readonly runtimeWorkspaceStatePort: RuntimeWorkspaceStatePortService;
   private readonly runtimeExtensionContextImpactState: RuntimeExtensionContextImpactStateFacade;
   private readonly recoveryCoordinator: WorkspaceRecoveryCoordinator;
+  private readonly activeTurnRecovery: Promise<void>;
+  private recoveryPreparation: Promise<void> | null = null;
+  private recoveryPrepared = false;
+  private recoveryStarted = false;
   private readonly agentSettingsStore: ReturnType<typeof createAgentSettingsStore>;
   private agentProfileAuthority: CatalogAgentProfileAuthority | null = null;
   private agentProfileAuthoritySnapshot: CatalogAgentProfileAuthoritySnapshot | null = null;
+  private requestInputSettingsAuthority: CatalogRequestInputSettingsAuthority | null = null;
   private readonly generatedAgentContextStore: GeneratedAgentContextStore;
   private readonly generatedAgentContextAggregateCache: ReturnType<
     typeof createGeneratedAgentContextAggregateCache
   >;
   private readonly extensionsRoot: string;
-  private readonly requestUserInputRuntime = new RequestUserInputRuntime();
   private readonly approvalBoundary: RuntimeApprovalBoundary;
   private closed = false;
   private artifactOpenListener: ((payload: ArtifactOpenMessage) => void) | null = null;
-  private surfaceSyncListener: ((payload: SurfaceSyncMessage) => void) | null = null;
   private titleGenerationLogListener: ((event: TitleGenerationLogEvent) => void) | null = null;
   private workflowsGeneratedPackageLogListener:
     | ((event: WorkflowsGeneratedPackageLogEvent) => void)
@@ -612,9 +595,7 @@ export class WorkspaceSessionCatalog {
     this.extensionsRoot = extensionsRootForAgentDir(this.agentDir);
     const workspaceLabel = basename(this.cwd) || "workspace";
     this.agentSettingsStore = createAgentSettingsStore({
-      cwd: this.cwd,
       agentDir: this.agentDir,
-      workflowsSourceRoot: this.recoveryOptions.workflowsSourceRoot,
     });
     this.structuredSessionStore = createStructuredSessionStateStore({
       digest: {
@@ -626,11 +607,16 @@ export class WorkspaceSessionCatalog {
         id: this.workspaceId,
         label: workspaceLabel,
         cwd: this.cwd,
-        artifactDir: resolveConfiguredArtifactDirectory(
-          this.agentSettingsStore.getState().appPreferences.artifactDirectory,
-          this.cwd,
-        ),
+        artifactDir:
+          this.recoveryOptions.artifactDirectory ??
+          resolveConfiguredArtifactDirectory(
+            this.agentSettingsStore.getState().appPreferences.artifactDirectory,
+            this.cwd,
+          ),
       },
+      workspaceArtifactDirectoryAuthority: this.recoveryOptions.artifactDirectory
+        ? "state-preference"
+        : "seed",
       databasePath: join(this.sessionDir, STRUCTURED_SESSION_DB_FILENAME),
     });
     this.catalogStateMutations = structuredSessionCatalogMutationsFromStore(
@@ -681,7 +667,6 @@ export class WorkspaceSessionCatalog {
       maxRequestBytes: this.runtimeLayerConfig.workflowTaskAgentBridgeMaxRequestBytes,
       runTaskAgent: (request, bearerToken) => this.runRunTaskAgentInput(request, bearerToken),
     });
-    this.requestUserInputRuntime.setSettings(this.agentSettingsStore.getState().requestUserInput);
     this.generatedAgentContextStore = createGeneratedAgentContextStore({
       agentDir: this.sessionDir,
     });
@@ -696,7 +681,15 @@ export class WorkspaceSessionCatalog {
         recoverSurfaceTurn: async (surfacePiSessionId) => {
           await this.recoverInterruptedSurfaceTurn(surfacePiSessionId);
         },
-        drainSurfaceQueue: async () => {},
+        wakeSurfaceQueue: async (target) => {
+          const wakeSurfaceQueue = this.recoveryOptions.wakeSurfaceQueue;
+          if (!wakeSurfaceQueue) {
+            throw new Error(
+              "Workspace queue recovery requires the runtime-owned surface queue wake seam.",
+            );
+          }
+          await wakeSurfaceQueue(target);
+        },
         generateTitle: async (owner) => {
           if (owner.sessionId) {
             await this.runQueuedTitleGeneration(owner.sessionId);
@@ -714,25 +707,12 @@ export class WorkspaceSessionCatalog {
       },
       this.runRuntimeState.bind(this),
     );
-    if (this.recoveryOptions.refreshGeneratedPackages) {
-      this.recoveryCoordinator.enqueue({
-        kind: "workspace_generated_package_link_repair",
-        ownerScope: { kind: "workspace" },
-        idempotencyKey: `workspace_generated_package_link_repair:${this.workspaceId}`,
-        orderingKey: `workspace:${this.workspaceId}`,
-        priority: 5,
-        payloadJson: {
-          refreshGeneratedPackages: {
-            scope: "workspace-link-repair",
-            workspaceId: this.workspaceId,
-            packages: ["@svvyx/extensions", "@svvyx/workflows"],
-            reason: "startup-recovery",
-          },
-        },
-      });
+    if (this.recoveryOptions.runtimeStartupOwnsRecovery) {
+      this.activeTurnRecovery = Promise.resolve();
+    } else {
+      this.recoveryCoordinator.seedActiveTurnRecoveryFromDurableState();
+      this.activeTurnRecovery = this.recoveryCoordinator.startActiveTurnRecovery();
     }
-    this.recoveryCoordinator.seedFromDurableState();
-    this.recoveryCoordinator.start();
   }
 
   private get threadSurfaceDir(): string {
@@ -754,12 +734,39 @@ export class WorkspaceSessionCatalog {
     this.structuredSessionStore.close();
   }
 
-  setArtifactOpenListener(listener: ((payload: ArtifactOpenMessage) => void) | null): void {
-    this.artifactOpenListener = listener;
+  prepareWorkspaceRecoveryAfterRegistration(): Promise<void> {
+    if (this.closed) {
+      return Promise.reject(
+        new Error("Cannot prepare workspace recovery after the session catalog is closed."),
+      );
+    }
+    if (this.recoveryPrepared) return Promise.resolve();
+    if (this.recoveryPreparation) return this.recoveryPreparation;
+    const preparation = this.activeTurnRecovery.then(() => {
+      if (this.closed) return;
+      this.recoveryCoordinator.normalizeAndSeedRemainingRecoveryFromDurableState();
+      this.recoveryPrepared = true;
+    });
+    this.recoveryPreparation = preparation;
+    return preparation;
   }
 
-  setSurfaceSyncListener(listener: ((payload: SurfaceSyncMessage) => void) | null): void {
-    this.surfaceSyncListener = listener;
+  startWorkspaceRecovery(): void {
+    if (this.closed) {
+      throw new Error("Cannot start workspace recovery after the session catalog is closed.");
+    }
+    if (!this.recoveryPrepared) {
+      throw new Error(
+        "Workspace recovery must normalize durable state after registration before queue replay starts.",
+      );
+    }
+    if (this.recoveryStarted) return;
+    this.recoveryStarted = true;
+    void this.recoveryCoordinator.start();
+  }
+
+  setArtifactOpenListener(listener: ((payload: ArtifactOpenMessage) => void) | null): void {
+    this.artifactOpenListener = listener;
   }
 
   setTitleGenerationLogListener(listener: ((event: TitleGenerationLogEvent) => void) | null): void {
@@ -789,8 +796,16 @@ export class WorkspaceSessionCatalog {
     this.agentProfileAuthoritySnapshot = null;
   }
 
+  setRequestInputSettingsAuthority(authority: CatalogRequestInputSettingsAuthority): void {
+    this.requestInputSettingsAuthority = authority;
+  }
+
   getRuntimeExtensionContextImpactState(): RuntimeExtensionContextImpactStateFacade {
     return this.runtimeExtensionContextImpactState;
+  }
+
+  getRequestInputSettings(): RequestInputSettings {
+    return this.readCommittedRequestInputSettings();
   }
 
   getExtensionStatePort(): ExtensionStatePortService {
@@ -888,6 +903,20 @@ export class WorkspaceSessionCatalog {
         extensionUsage: { ...profile.extensionUsage },
         extensionOrder: [...profile.extensionOrder],
       })),
+      workflowAgents: snapshot.workflowAgents.map((source) => ({
+        ...source,
+        diagnostics: source.diagnostics.map((diagnostic) => ({ ...diagnostic })),
+        parameters: source.parameters
+          ? {
+              ...source.parameters,
+              reasoning: { ...source.parameters.reasoning },
+              ...(source.parameters.overrides
+                ? { overrides: { ...source.parameters.overrides } }
+                : {}),
+            }
+          : null,
+        extensionOrder: [...source.extensionOrder],
+      })),
       actorExtensionDefaults: snapshot.actorExtensionDefaults.map((defaults) => ({
         ...defaults,
         extensionUsage: { ...defaults.extensionUsage },
@@ -913,6 +942,54 @@ export class WorkspaceSessionCatalog {
       );
     }
     return this.agentProfileAuthoritySnapshot;
+  }
+
+  private newAgentProfileMutationStore() {
+    return createAgentProfileMutationStore({
+      snapshot: this.requireAgentProfileAuthoritySnapshot() as AgentProfileAuthoritySnapshot,
+      networkAccess: this.agentSettingsStore.getState().appPreferences.networkAccess,
+    });
+  }
+
+  async getAgentProfileMutationStore() {
+    await this.refreshAgentProfileAuthority();
+    return this.newAgentProfileMutationStore();
+  }
+
+  async applyAgentProfileMutations(mutations: readonly AgentProfileMutation[]): Promise<void> {
+    const authority = this.requireAgentProfileAuthority();
+    for (const mutation of mutations) {
+      if (mutation.kind === "profile-extension-usage.set") {
+        await authority.setProfileExtensionUsage({
+          actor: mutation.actor,
+          profileId: mutation.profileId as CoreAgentProfileId,
+          extensionId: mutation.extensionId as CoreExtensionId,
+          usage: mutation.usage,
+        });
+        continue;
+      }
+      if (mutation.kind === "actor-extension-defaults.set") {
+        await authority.setActorExtensionDefaults(mutation);
+        continue;
+      }
+      if (mutation.kind === "workflow-agent-source.upsert") {
+        await authority.upsertWorkflowAgentSource(mutation);
+        continue;
+      }
+      await authority.saveWorkflowAgentSource(mutation);
+    }
+    if (mutations.length > 0) {
+      await this.refreshAgentProfileAuthority();
+    }
+  }
+
+  private readCommittedRequestInputSettings(): RequestInputSettings {
+    if (!this.requestInputSettingsAuthority) {
+      throw new Error(
+        "WorkspaceSessionCatalog requires the app-global state-backed request-input settings authority.",
+      );
+    }
+    return this.requestInputSettingsAuthority.read();
   }
 
   private enqueueRuntimeSurfaceMessage(
@@ -943,25 +1020,18 @@ export class WorkspaceSessionCatalog {
     ).value;
   }
 
-  updateRequestUserInputSettings(settings: RequestUserInputSettings): AgentSettingsState {
-    const next = this.agentSettingsStore.setRequestUserInput(settings);
-    this.requestUserInputRuntime.setSettings(next.requestUserInput);
-    void this.emitOpenSurfacePromptBindingUpdates();
-    return next;
-  }
-
   updateAppPreferences(preferences: AppPreferences): AgentSettingsState {
     const next = this.agentSettingsStore.hydrateStateOwnedAppPreferences(preferences);
-    void this.emitOpenSurfacePromptBindingUpdates();
+    this.markOpenSurfacesForPromptRefresh();
     return next;
   }
 
   async notifyAppPreferencesChanged(): Promise<void> {
-    await this.emitOpenSurfacePromptBindingUpdates();
+    this.markOpenSurfacesForPromptRefresh();
   }
 
   async notifySourceInputsChanged(_reason: string): Promise<void> {
-    await this.emitOpenSurfacePromptBindingUpdates();
+    this.markOpenSurfacesForPromptRefresh();
   }
 
   async getAgentContextPreview(
@@ -1008,38 +1078,48 @@ export class WorkspaceSessionCatalog {
       };
     }
     if (actor === "workflow-task") {
-      const settings = this.agentSettingsStore.getState();
+      const validProfiles = profileAuthority.workflowAgents.filter(
+        (candidate) => candidate.validationStatus === "valid" && candidate.parameters !== null,
+      );
       const profile =
-        request.profileId && request.profileId in settings.workflowAgents
-          ? settings.workflowAgents[request.profileId as WorkflowAgentKey]
-          : (settings.workflowAgents.explorer ?? Object.values(settings.workflowAgents)[0]);
-      if (!profile) {
+        (request.profileId
+          ? validProfiles.find((candidate) => candidate.sourceId === request.profileId)
+          : undefined) ??
+        validProfiles.find((candidate) => candidate.sourceId === "defaultAgent") ??
+        validProfiles[0];
+      if (!profile?.parameters) {
         throw new Error("No workflow task-agent profile is available.");
       }
+      const parameters = profile.parameters;
+      const actorDefaults = profileAuthority.actorExtensionDefaults.find(
+        (candidate) => candidate.actor === "workflow-task",
+      );
       const extensionState = resolveActorExtensionState({
         actor: "workflow-task",
-        defaultExtensionOrder: settings.extensionDefaults.order,
-        defaultExtensionUsage: settings.extensionDefaults.usage,
-        profileExtensionUsage: profile.overrides ?? {},
+        defaultExtensionOrder: actorDefaults?.extensionOrder ?? [],
+        defaultExtensionUsage: actorDefaults
+          ? { "workflow-task": actorDefaults.extensionUsage }
+          : {},
+        profileExtensionUsage: parameters.overrides ?? {},
         profileExtensionOrder: profile.extensionOrder,
       });
       const systemPrompt = this.buildPromptFromLibrary("workflow-task", {
         ...extensionState,
         externalInstructionSources,
-        customInstructions: profile.instructions,
+        customInstructions: parameters.instructions,
       });
       const tokenCount = countPromptTokens({
-        provider: profile.provider,
-        model: profile.model,
+        provider: parameters.provider,
+        model: parameters.model,
         text: systemPrompt,
       });
       return {
         actor,
-        profileId: profile.id,
-        profileName: profile.label,
-        provider: profile.provider,
-        model: profile.model,
-        reasoningEffort: profile.reasoningEffort,
+        profileId: parameters.id,
+        profileName: parameters.label,
+        provider: parameters.provider,
+        model: parameters.model,
+        reasoningEffort: parameters.reasoning.effort,
         loadedExtensionIds: extensionState.loadedExtensionIds,
         availableExtensionIds: extensionState.availableExtensionIds,
         systemPrompt,
@@ -1048,7 +1128,7 @@ export class WorkspaceSessionCatalog {
           actor,
           extensionState,
           externalInstructionSources,
-          { provider: profile.provider, model: profile.model },
+          { provider: parameters.provider, model: parameters.model },
         ),
       };
     }
@@ -1099,44 +1179,26 @@ export class WorkspaceSessionCatalog {
     state: ExtensionUsageState;
   }): Promise<{
     actor: "orchestrator" | "handler" | "workflow-task";
-    settings: AgentSettingsState;
+    snapshot: CatalogAgentProfileAuthoritySnapshot;
   }> {
-    const profileAuthority = await this.refreshAgentProfileAuthority();
-    const configuredProfile = profileAuthority.configuredProfiles.find(
+    const snapshot = await this.refreshAgentProfileAuthority();
+    const configuredProfile = snapshot.configuredProfiles.find(
       (profile) => profile.profileId === input.agentProfile,
     );
-    if (configuredProfile) {
-      if (input.extensionId === "extension-loading") {
-        throw new Error("Extension Loading is fixed loaded and cannot be changed.");
-      }
-      await this.requireAgentProfileAuthority().setProfileExtensionUsage({
-        actor: configuredProfile.actor,
-        profileId: configuredProfile.profileId,
-        extensionId: input.extensionId as CoreExtensionId,
-        usage: input.state,
-      });
-      const refreshed = await this.refreshAgentProfileAuthority();
-      return {
-        actor: configuredProfile.actor,
-        settings: projectConfiguredProfilesIntoAgentSettings(
-          this.agentSettingsStore.getState(),
-          refreshed,
-        ),
-      };
-    }
-
+    const store = this.newAgentProfileMutationStore();
     const result = setExtensionUsage({
-      agentSettingsStore: this.agentSettingsStore,
+      agentProfileStore: store,
       extensionContextImpactState: this.getRuntimeExtensionContextImpactState(),
       extensionsRoot: this.extensionsRoot,
       agentProfile: input.agentProfile,
       extensionId: input.extensionId,
       state: input.state,
-      targetActor: "workflow-task",
+      targetActor: configuredProfile?.actor ?? "workflow-task",
     });
+    await this.applyAgentProfileMutations(store.takeMutations());
     return {
       actor: result.actor,
-      settings: this.agentSettingsStore.getState(),
+      snapshot: this.requireAgentProfileAuthoritySnapshot(),
     };
   }
 
@@ -1222,7 +1284,7 @@ export class WorkspaceSessionCatalog {
   async createSession(
     request: CreateSessionRequest,
     defaults: SessionDefaults,
-  ): Promise<ConversationSurfaceSnapshot> {
+  ): Promise<SurfaceOpenResponse> {
     const profileAuthority = await this.refreshAgentProfileAuthority();
     const parentSessionFile = request.parentSessionId
       ? await this.getSessionFileForId(request.parentSessionId)
@@ -1263,27 +1325,27 @@ export class WorkspaceSessionCatalog {
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
     session.retainCount += 1;
-    const committed = this.syncGeneratedAgentContextBindingForTarget(target, session);
+    const created = this.initializeStructuredPiSession(session, {
+      title: request.title?.trim() || "New orchestrator",
+      parentSessionId: request.parentSessionId ?? null,
+    });
+    this.persistGeneratedAgentContextBinding(target, session);
     this.persistManagedSessionSnapshot(session);
-    if (committed) {
-      await this.publishCommittedCatalogMutation("session.create", committed, {
-        workspaceSessionId: target.workspaceSessionId,
-        surfacePiSessionId: target.surfacePiSessionId,
-      });
-    }
-    return this.buildSurfaceSnapshot(session, target);
+    await this.publishCommittedCatalogMutation("session.create", created, {
+      workspaceSessionId: target.workspaceSessionId,
+      surfacePiSessionId: target.surfacePiSessionId,
+    });
+    return { target: structuredClone(target) };
   }
 
-  async openSession(sessionId: string): Promise<ConversationSurfaceSnapshot> {
+  async openSession(sessionId: string): Promise<SurfaceOpenResponse> {
     return this.openSurface(this.buildOrchestratorPromptTarget(sessionId));
   }
 
-  async openSurface(target: PromptTarget): Promise<ConversationSurfaceSnapshot> {
+  async openSurface(target: PromptTarget): Promise<SurfaceOpenResponse> {
     this.assertValidPromptTarget(target);
-    const session = await this.retainManagedSurface(target);
-    return await this.buildSurfaceSnapshot(session, target, {
-      refreshExternalSources: true,
-    });
+    await this.retainManagedSurface(target);
+    return { target: structuredClone(target) };
   }
 
   async closeSurface(target: PromptTarget): Promise<WorkspaceMutationResponse> {
@@ -1294,43 +1356,7 @@ export class WorkspaceSessionCatalog {
   async resolvePromptDefaultsForTarget(target: PromptTarget): Promise<AgentDefaults> {
     await this.refreshAgentProfileAuthority();
     this.assertValidPromptTarget(target);
-    const activeSurface = this.managedSurfaces.get(target.surfacePiSessionId);
-    if (activeSurface) {
-      return {
-        provider: activeSurface.provider,
-        model: activeSurface.model,
-        reasoningEffort: activeSurface.thinkingLevel,
-      };
-    }
-
-    if (target.surface === "handler") {
-      const threadSettings = this.resolveThreadProfileSettings(target.surfacePiSessionId);
-      if (threadSettings) {
-        return threadSettings;
-      }
-    }
-
-    const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
-    if (
-      snapshot?.pi.provider &&
-      snapshot.pi.model &&
-      isAgentReasoningEffort(snapshot.pi.reasoningEffort)
-    ) {
-      return {
-        provider: snapshot.pi.provider,
-        model: snapshot.pi.model,
-        reasoningEffort: snapshot.pi.reasoningEffort,
-      };
-    }
-
-    const defaultProfile = this.resolveOrchestratorAgentProfile(DEFAULT_ORCHESTRATOR_PROFILE_ID);
-    return defaultProfile
-      ? {
-          provider: defaultProfile.provider,
-          model: defaultProfile.model,
-          reasoningEffort: defaultProfile.reasoningEffort,
-        }
-      : DEFAULT_AGENT_SETTINGS;
+    return this.resolveStateBackedPromptDefaults(target);
   }
 
   async renameSession(sessionId: string, title: string): Promise<WorkspaceMutationResponse> {
@@ -1340,22 +1366,12 @@ export class WorkspaceSessionCatalog {
       throw new Error("Session title cannot be empty.");
     }
     const snapshot = this.getStructuredSnapshot(sessionId);
+    if (!snapshot) {
+      return { ok: true };
+    }
     const titleStatus = snapshot?.pi.titleGenerationStatus;
     if (titleStatus === "pending" || titleStatus === "running") {
       throw new Error("Session title is being generated. Rename is temporarily locked.");
-    }
-    const exists = await this.syncStructuredPiSessionFromWorkspaceSession(sessionId);
-    if (!exists) {
-      return { ok: true };
-    }
-
-    const activeOrchestrator = this.managedSurfaces.get(sessionId) ?? null;
-
-    if (activeOrchestrator) {
-      activeOrchestrator.session.sessionManager.appendSessionInfo(trimmedTitle);
-    } else {
-      const sessionFile = await this.getSessionFileForId(sessionId);
-      SessionManager.open(sessionFile!, this.sessionDir).appendSessionInfo(trimmedTitle);
     }
     await this.publishCommittedCatalogMutation(
       "session.rename",
@@ -1369,20 +1385,19 @@ export class WorkspaceSessionCatalog {
   async forkSession(
     request: ForkSessionRequest,
     defaults: SessionDefaults,
-  ): Promise<ConversationSurfaceSnapshot> {
+  ): Promise<SurfaceOpenResponse> {
     const profileAuthority = await this.refreshAgentProfileAuthority();
+    const sourceSnapshot = this.getStructuredSnapshot(request.sessionId);
+    const sourceAgentProfileId =
+      sourceSnapshot?.pi.orchestratorAgentProfileId ??
+      defaults.agentProfileId ??
+      DEFAULT_ORCHESTRATOR_PROFILE_ID;
     const sourceSessionFile = await this.getSessionFileForId(request.sessionId, false);
     if (!sourceSessionFile || !existsSync(sourceSessionFile)) {
-      const activeOrchestrator = this.managedSurfaces.get(request.sessionId) ?? null;
-      const fallbackDefaults = activeOrchestrator
-        ? {
-            provider: activeOrchestrator.provider,
-            model: activeOrchestrator.model,
-            thinkingLevel: activeOrchestrator.thinkingLevel,
-            agentProfileId: activeOrchestrator.agentProfileId,
-          }
-        : defaults;
-      return this.createSession({ title: request.title }, fallbackDefaults);
+      return this.createSession(
+        { title: request.title, agentProfileId: sourceAgentProfileId },
+        defaults,
+      );
     }
 
     const forkedSessionManager = request.messageTimestamp
@@ -1392,16 +1407,21 @@ export class WorkspaceSessionCatalog {
       forkedSessionManager.appendSessionInfo(request.title);
     }
 
-    const sourceAgentProfile = this.resolveOrchestratorAgentProfile(
-      (this.managedSurfaces.get(request.sessionId)?.agentProfileId ??
-        defaults.agentProfileId ??
-        DEFAULT_ORCHESTRATOR_PROFILE_ID) as AgentProfileId,
+    const sourceAgentProfile = this.resolveOrchestratorAgentProfile(sourceAgentProfileId);
+    const sourcePromptDefaults = this.resolveStateBackedPromptDefaults(
+      this.buildOrchestratorPromptTarget(request.sessionId),
     );
-    const extensionState = this.resolveConfiguredProfileExtensionState(
-      "orchestrator",
-      sourceAgentProfile,
-      profileAuthority,
-    );
+    const extensionState =
+      sourceSnapshot?.pi.loadedExtensionIds && sourceSnapshot.pi.availableExtensionIds
+        ? {
+            loadedExtensionIds: sourceSnapshot.pi.loadedExtensionIds,
+            availableExtensionIds: sourceSnapshot.pi.availableExtensionIds,
+          }
+        : this.resolveConfiguredProfileExtensionState(
+            "orchestrator",
+            sourceAgentProfile,
+            profileAuthority,
+          );
     const externalContextSources = await this.buildCurrentExternalContextSources();
     const aggregate = this.buildPromptAggregateFromLibrary("orchestrator", {
       ...extensionState,
@@ -1410,9 +1430,9 @@ export class WorkspaceSessionCatalog {
     const session = await this.createManagedSurfaceRecord({
       sessionManager: forkedSessionManager,
       actorKind: "orchestrator",
-      provider: sourceAgentProfile.provider,
-      model: sourceAgentProfile.model,
-      thinkingLevel: sourceAgentProfile.reasoningEffort,
+      provider: sourcePromptDefaults.provider,
+      model: sourcePromptDefaults.model,
+      thinkingLevel: sourcePromptDefaults.reasoningEffort,
       systemPrompt: aggregate.outputs.prompt,
       generatedAgentContextAggregateKey: aggregate.cacheKey,
       generatedAgentContextAggregate: aggregate.outputs,
@@ -1423,14 +1443,17 @@ export class WorkspaceSessionCatalog {
     });
     const target = this.buildOrchestratorPromptTarget(session.sessionId);
     session.retainCount += 1;
-    const committed = this.syncStructuredPiSessionFromOrchestratorSession(session);
-    if (committed) {
-      await this.publishCommittedCatalogMutation("session.fork", committed, {
-        workspaceSessionId: target.workspaceSessionId,
-        surfacePiSessionId: target.surfacePiSessionId,
-      });
-    }
-    return this.buildSurfaceSnapshot(session, target);
+    const committed = this.initializeStructuredPiSession(session, {
+      title: request.title?.trim() || sourceSnapshot?.pi.title || "New orchestrator",
+      parentSessionId: request.sessionId,
+      messageCount: sourceSnapshot?.pi.messageCount ?? 0,
+    });
+    this.persistGeneratedAgentContextBinding(target, session);
+    await this.publishCommittedCatalogMutation("session.fork", committed, {
+      workspaceSessionId: target.workspaceSessionId,
+      surfacePiSessionId: target.surfacePiSessionId,
+    });
+    return { target: structuredClone(target) };
   }
 
   async deleteSession(sessionId: string): Promise<WorkspaceMutationResponse> {
@@ -1450,9 +1473,6 @@ export class WorkspaceSessionCatalog {
     for (const surface of managedSurfaces) {
       surface.session.dispose();
       this.managedSurfaces.delete(surface.sessionId);
-      await this.emitSurfaceClosed(
-        this.resolvePromptTargetForSurfacePiSessionId(surface.sessionId),
-      );
     }
 
     if (sessionFile && existsSync(sessionFile)) {
@@ -1472,9 +1492,7 @@ export class WorkspaceSessionCatalog {
     return { ok: true };
   }
 
-  async updateComposerDraft(
-    input: UpdateComposerDraftRequest,
-  ): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
+  async updateComposerDraft(input: UpdateComposerDraftRequest): Promise<SurfaceMutationResponse> {
     this.assertValidPromptTarget(input.target);
     await this.publishCommittedCatalogMutation(
       "surface.composer-draft.update",
@@ -1504,15 +1522,14 @@ export class WorkspaceSessionCatalog {
 
   async refreshQueuedSurfaceMutation(input: {
     target: PromptTarget;
-  }): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
+  }): Promise<SurfaceMutationResponse> {
     this.assertValidPromptTarget(input.target);
-    const snapshot = await this.emitQueuedSurfaceUpdate(input.target);
-    return { ok: true, target: structuredClone(input.target), snapshot };
+    return { ok: true, target: structuredClone(input.target) };
   }
 
   async setExtensionContextAutoUpdate(
     input: SetExtensionContextAutoUpdateRequest,
-  ): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
+  ): Promise<SurfaceMutationResponse> {
     this.assertValidPromptTarget(input.target);
     if (input.target.surface === "handler") {
       if (!input.target.threadId) {
@@ -1543,25 +1560,13 @@ export class WorkspaceSessionCatalog {
         },
       );
     }
-    const session = this.managedSurfaces.get(input.target.surfacePiSessionId);
-    const snapshot = session
-      ? await this.buildSurfaceSnapshot(session, input.target, { refreshExternalSources: true })
-      : undefined;
-    if (session) {
-      await this.emitSurfaceSync({
-        session,
-        reason: "surface.updated",
-        target: input.target,
-        refreshExternalSources: true,
-      });
-    }
-    return { ok: true, target: structuredClone(input.target), snapshot };
+    return { ok: true, target: structuredClone(input.target) };
   }
 
   async editQueuedSurfaceMessage(input: {
     target: PromptTarget;
     queuedMessageId: string;
-  }): Promise<{ ok: boolean; text?: string; snapshot?: ConversationSurfaceSnapshot }> {
+  }): Promise<{ ok: boolean; text?: string }> {
     this.assertValidPromptTarget(input.target);
     const queued = this.assertQueuedMessageBelongsToSurface(input.queuedMessageId, input.target);
     if (queued.kind !== "user_message") {
@@ -1584,15 +1589,14 @@ export class WorkspaceSessionCatalog {
         queuedMessageId: input.queuedMessageId,
       },
     );
-    const snapshot = await this.emitQueuedSurfaceUpdate(input.target);
-    return { ok: true, text, snapshot };
+    return { ok: true, text };
   }
 
   async reorderQueuedSurfaceMessage(input: {
     target: PromptTarget;
     queuedMessageId: string;
     beforeQueuedMessageId?: string | null;
-  }): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
+  }): Promise<SurfaceMutationResponse> {
     this.assertValidPromptTarget(input.target);
     this.assertQueuedMessageBelongsToSurface(input.queuedMessageId, input.target);
     if (input.beforeQueuedMessageId) {
@@ -1612,82 +1616,20 @@ export class WorkspaceSessionCatalog {
         queuedMessageId: input.queuedMessageId,
       },
     );
-    const snapshot = await this.emitQueuedSurfaceUpdate(input.target);
-    return { ok: true, target: structuredClone(input.target), snapshot };
+    return { ok: true, target: structuredClone(input.target) };
   }
 
   async steerQueuedSurfaceMessage(input: {
     target: PromptTarget;
     queuedMessageId: string;
-  }): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
+  }): Promise<SurfaceMutationResponse> {
     this.assertValidPromptTarget(input.target);
     this.assertQueuedMessageBelongsToSurface(input.queuedMessageId, input.target);
     await this.markRuntimeSurfaceMessageQueuedAsync({
       id: input.queuedMessageId,
       position: "front",
     });
-    const snapshot = await this.emitQueuedSurfaceUpdate(input.target);
-    return { ok: true, target: structuredClone(input.target), snapshot };
-  }
-
-  async answerRequestUserInput(
-    input: RequestUserInputAnswerRequest,
-  ): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
-    const request = this.structuredSessionStore.getRequestUserInputRequest(input.requestId);
-    if (request.surfacePiSessionId !== input.surfacePiSessionId) {
-      throw new Error("Request user input answer does not belong to the target surface.");
-    }
-    const target = this.resolvePromptTargetForSurfacePiSessionId(request.surfacePiSessionId);
-    if (target.workspaceSessionId !== request.sessionId) {
-      throw new Error("Request user input request is not bound to a known workspace session.");
-    }
-    const answered = this.structuredSessionStore.answerRequestUserInput({
-      surfacePiSessionId: target.surfacePiSessionId,
-      requestId: input.requestId,
-      questionId: input.questionId,
-      answer: input.answer,
-      delivery: input.delivery,
-    });
-    if (!answered.queuedMessage) {
-      return { ok: true, target: structuredClone(target) };
-    }
-    const snapshot = await this.emitQueuedSurfaceUpdate(target);
-    return { ok: true, target: structuredClone(target), snapshot };
-  }
-
-  async afterRequestInputAnswered(input: {
-    surfacePiSessionId: string;
-    requestId: string;
-    queuedItemId: string | null;
-  }): Promise<{ ok: boolean; target: PromptTarget; snapshot?: ConversationSurfaceSnapshot }> {
-    const request = this.structuredSessionStore.getRequestUserInputRequest(input.requestId);
-    if (request.surfacePiSessionId !== input.surfacePiSessionId) {
-      throw new Error("Request user input answer does not belong to the target surface.");
-    }
-    const target = this.resolvePromptTargetForSurfacePiSessionId(request.surfacePiSessionId);
-    if (target.workspaceSessionId !== request.sessionId) {
-      throw new Error("Request user input request is not bound to a known workspace session.");
-    }
-    if (!input.queuedItemId) {
-      return { ok: true, target: structuredClone(target) };
-    }
-    const snapshot = await this.emitQueuedSurfaceUpdate(target);
-    return { ok: true, target: structuredClone(target), snapshot };
-  }
-
-  async setRequestUserInputTimerPaused(
-    input: SetRequestUserInputTimerPausedRequest,
-  ): Promise<{ ok: boolean }> {
-    const request = this.structuredSessionStore.getRequestUserInputRequest(input.requestId);
-    if (request.surfacePiSessionId !== input.surfacePiSessionId) {
-      throw new Error("Request user input timer does not belong to the target surface.");
-    }
-    this.structuredSessionStore.setRequestUserInputTimerPaused({
-      surfacePiSessionId: input.surfacePiSessionId,
-      requestId: input.requestId,
-      paused: input.paused,
-    });
-    return { ok: true };
+    return { ok: true, target: structuredClone(input.target) };
   }
 
   private async abortManagedSurfaceForDelete(session: ManagedSession): Promise<void> {
@@ -1706,8 +1648,9 @@ export class WorkspaceSessionCatalog {
 
     const resolvedModel = resolveRegisteredModel(session.modelRegistry, provider, model);
     const supportedThinkingLevels = resolvedModel ? getSupportedThinkingLevels(resolvedModel) : [];
-    const thinkingLevel = supportedThinkingLevels.includes(session.thinkingLevel)
-      ? session.thinkingLevel
+    const currentDefaults = this.resolveStateBackedPromptDefaults(target);
+    const thinkingLevel = supportedThinkingLevels.includes(currentDefaults.reasoningEffort)
+      ? currentDefaults.reasoningEffort
       : supportedThinkingLevels.includes("medium")
         ? "medium"
         : (supportedThinkingLevels[0] ?? "off");
@@ -1715,7 +1658,12 @@ export class WorkspaceSessionCatalog {
     session.model = model;
     session.thinkingLevel = thinkingLevel;
     session.recreateOnNextPrompt = true;
-    await this.updateOrchestratorProfileFromComposer(target, session, {
+    await this.updateOrchestratorProfileFromComposer(target, {
+      provider,
+      model,
+      reasoningEffort: thinkingLevel,
+    });
+    await this.commitSurfacePromptDefaults("surface.model.update", target, {
       provider,
       model,
       reasoningEffort: thinkingLevel,
@@ -1724,7 +1672,6 @@ export class WorkspaceSessionCatalog {
     if (session.activePrompt) {
       this.syncManagedState(session);
       this.persistManagedSessionSnapshot(session);
-      await this.commitSurfaceMetadata("surface.model.update", target, session);
       return { ok: true, target: structuredClone(target) };
     }
 
@@ -1740,13 +1687,6 @@ export class WorkspaceSessionCatalog {
       // Fall back to recreating on the next prompt.
     }
 
-    await this.commitSurfaceMetadata("surface.model.update", target, session);
-
-    await this.emitSurfaceSync({
-      reason: "surface.updated",
-      session,
-      target,
-    });
     return { ok: true, target: structuredClone(target) };
   }
 
@@ -1759,26 +1699,26 @@ export class WorkspaceSessionCatalog {
       return { ok: false, target: structuredClone(target) };
     }
 
+    const currentDefaults = this.resolveStateBackedPromptDefaults(target);
     session.thinkingLevel = level;
-    await this.updateOrchestratorProfileFromComposer(target, session, {
+    await this.updateOrchestratorProfileFromComposer(target, {
+      reasoningEffort: level,
+    });
+    await this.commitSurfacePromptDefaults("surface.reasoning.update", target, {
+      ...currentDefaults,
       reasoningEffort: level,
     });
 
     if (session.activePrompt) {
       session.recreateOnNextPrompt = true;
       this.persistManagedSessionSnapshot(session);
-      await this.commitSurfaceMetadata("surface.reasoning.update", target, session);
       return { ok: true, target: structuredClone(target) };
     }
 
     session.session.setThinkingLevel(level);
-    this.syncManagedState(session);
-    await this.commitSurfaceMetadata("surface.reasoning.update", target, session);
-    await this.emitSurfaceSync({
-      reason: "surface.updated",
-      session,
-      target,
-    });
+    if (!session.recreateOnNextPrompt) {
+      this.syncManagedState(session);
+    }
     return { ok: true, target: structuredClone(target) };
   }
 
@@ -1800,33 +1740,45 @@ export class WorkspaceSessionCatalog {
       externalSourceHashes: [...session.externalSourceHashes],
     };
     const extensionState = applyExtensionUsageState(
-      {
-        loadedExtensionIds: session.loadedExtensionIds,
-        availableExtensionIds: session.availableExtensionIds,
-      },
+      this.resolveSurfaceExtensionState(input.target.surfacePiSessionId) ??
+        this.resolveCurrentExtensionStateForTarget(input.target, null),
       input.extensionId,
       input.state,
     );
-    session.loadedExtensionIds = extensionState.loadedExtensionIds;
-    session.availableExtensionIds = extensionState.availableExtensionIds;
-    session.recreateOnNextPrompt = true;
-    await this.updateOrchestratorProfileFromComposer(input.target, session, {
+    await this.updateOrchestratorProfileFromComposer(input.target, {
       extensionUsage: { [input.extensionId]: input.state },
     });
+    const committedBinding = await this.runRuntimeStateAsync(
+      this.runtimeActorExtensionBindingStatePort.setActorExtensionBinding({
+        target: input.target as CorePromptTarget,
+        loadedExtensionIds: extensionState.loadedExtensionIds.map(
+          (extensionId) => extensionId as CoreExtensionId,
+        ),
+        availableExtensionIds: extensionState.availableExtensionIds.map(
+          (extensionId) => extensionId as CoreExtensionId,
+        ),
+        reason: "composer-control",
+      }),
+    );
+    const durableBinding = await this.publishCommittedCatalogMutation(
+      "surface.extension-usage.update",
+      committedBinding,
+      {
+        workspaceSessionId: input.target.workspaceSessionId,
+        surfacePiSessionId: input.target.surfacePiSessionId,
+        threadId: input.target.threadId,
+      },
+    );
+    session.loadedExtensionIds = [...durableBinding.loadedExtensionIds];
+    session.availableExtensionIds = [...durableBinding.availableExtensionIds];
+    session.recreateOnNextPrompt = true;
 
     if (session.activePrompt) {
       this.syncManagedState(session);
       this.persistManagedSessionSnapshot(session);
-      await this.commitSurfaceMetadata("surface.extension-usage.update", input.target, session);
-      await this.emitSurfaceSync({
-        reason: "surface.updated",
-        session,
-        target: input.target,
-      });
       return {
         ok: true,
         target: structuredClone(input.target),
-        snapshot: await this.buildSurfaceSnapshot(session, input.target),
       };
     }
 
@@ -1847,47 +1799,42 @@ export class WorkspaceSessionCatalog {
     });
     refreshed.recreateOnNextPrompt = false;
     this.syncManagedState(refreshed);
-    const committed = this.syncGeneratedAgentContextBindingForTarget(input.target, refreshed);
+    this.persistGeneratedAgentContextBinding(input.target, refreshed);
+    await this.commitSurfaceGeneratedAgentContextFingerprint(
+      "surface.extension-usage.update",
+      input.target,
+      refreshed.generatedAgentContextFingerprint,
+    );
     this.recordAgentContextUpdatedEvent(input.target, previousBinding, refreshed);
     this.persistManagedSessionSnapshot(refreshed);
-    if (committed) {
-      await this.publishCommittedCatalogMutation("surface.extension-usage.update", committed, {
-        workspaceSessionId: input.target.workspaceSessionId,
-        surfacePiSessionId: input.target.surfacePiSessionId,
-      });
-    } else {
-      await this.commitSurfaceMetadata("surface.extension-usage.update", input.target, refreshed);
-    }
-    await this.emitSurfaceSync({
-      reason: "surface.updated",
-      session: refreshed,
-      target: input.target,
-    });
     return {
       ok: true,
       target: structuredClone(input.target),
-      snapshot: await this.buildSurfaceSnapshot(refreshed, input.target),
     };
   }
 
-  private async commitSurfaceMetadata(
+  private async commitSurfacePromptDefaults(
     operation: string,
     target: PromptTarget,
-    session: ManagedSession,
+    defaults: AgentDefaults,
   ): Promise<void> {
     if (target.surface === "orchestrator") {
-      const committed = this.syncStructuredPiSessionFromOrchestratorSession(session);
-      if (committed) {
-        await this.publishCommittedCatalogMutation(operation, committed, {
+      await this.publishCommittedCatalogMutation(
+        operation,
+        this.catalogStateMutations.updateOrchestratorPromptDefaults({
+          sessionId: target.workspaceSessionId,
+          ...defaults,
+        }),
+        {
           workspaceSessionId: target.workspaceSessionId,
           surfacePiSessionId: target.surfacePiSessionId,
-        });
-      }
+        },
+      );
       return;
     }
 
     if (!target.threadId) {
-      throw new Error("Handler surface metadata requires a thread id.");
+      throw new Error("Handler surface prompt defaults require a thread id.");
     }
     const thread = this.requireStructuredSnapshot(target.workspaceSessionId).threads.find(
       (candidate) => candidate.id === target.threadId,
@@ -1912,13 +1859,46 @@ export class WorkspaceSessionCatalog {
         threadId: target.threadId,
         agentProfileJson: JSON.stringify({
           ...profile,
-          provider: session.provider,
-          model: session.model,
-          reasoningEffort: session.thinkingLevel,
+          provider: defaults.provider,
+          model: defaults.model,
+          reasoningEffort: defaults.reasoningEffort,
         }),
-        loadedExtensionIds: session.loadedExtensionIds,
-        availableExtensionIds: session.availableExtensionIds,
-        generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
+      }),
+      {
+        workspaceSessionId: target.workspaceSessionId,
+        surfacePiSessionId: target.surfacePiSessionId,
+        threadId: target.threadId,
+      },
+    );
+  }
+
+  private async commitSurfaceGeneratedAgentContextFingerprint(
+    operation: string,
+    target: PromptTarget,
+    generatedAgentContextFingerprint: string,
+  ): Promise<void> {
+    if (target.surface === "orchestrator") {
+      await this.publishCommittedCatalogMutation(
+        operation,
+        this.catalogStateMutations.setOrchestratorGeneratedAgentContextFingerprint({
+          sessionId: target.workspaceSessionId,
+          generatedAgentContextFingerprint,
+        }),
+        {
+          workspaceSessionId: target.workspaceSessionId,
+          surfacePiSessionId: target.surfacePiSessionId,
+        },
+      );
+      return;
+    }
+    if (!target.threadId) {
+      throw new Error("Handler generated context bindings require a thread id.");
+    }
+    await this.publishCommittedCatalogMutation(
+      operation,
+      this.catalogStateMutations.updateThreadSurfaceMetadata({
+        threadId: target.threadId,
+        generatedAgentContextFingerprint,
       }),
       {
         workspaceSessionId: target.workspaceSessionId,
@@ -1930,7 +1910,6 @@ export class WorkspaceSessionCatalog {
 
   private async updateOrchestratorProfileFromComposer(
     target: PromptTarget,
-    session: ManagedSession,
     updates: Partial<
       Pick<AgentProfileSettings, "provider" | "model" | "reasoningEffort" | "extensionUsage">
     >,
@@ -1939,8 +1918,11 @@ export class WorkspaceSessionCatalog {
       return false;
     }
     const profileAuthority = await this.refreshAgentProfileAuthority();
+    const profileId =
+      this.getStructuredSnapshot(target.workspaceSessionId)?.pi.orchestratorAgentProfileId ??
+      DEFAULT_ORCHESTRATOR_PROFILE_ID;
     const configuredProfile = profileAuthority.configuredProfiles.find(
-      (profile) => profile.actor === "orchestrator" && profile.profileId === session.agentProfileId,
+      (profile) => profile.actor === "orchestrator" && profile.profileId === profileId,
     );
     const profile = configuredProfile
       ? configuredAgentProfileSettings(configuredProfile)
@@ -2031,7 +2013,9 @@ export class WorkspaceSessionCatalog {
     }
 
     const sessionFile = await this.getSessionFileForId(surfacePiSessionId);
-    const threadAgentSettings = this.resolveThreadProfileSettings(surfacePiSessionId);
+    const target = this.resolvePromptTargetForSurfacePiSessionId(surfacePiSessionId);
+    const promptDefaults = this.resolveStateBackedPromptDefaults(target);
+    const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
     const surfaceExtensionState = this.resolveSurfaceExtensionState(surfacePiSessionId);
     const storedGeneratedAgentContextFingerprint =
       this.resolveStoredGeneratedAgentContextFingerprint(surfacePiSessionId);
@@ -2044,9 +2028,9 @@ export class WorkspaceSessionCatalog {
     return this.createManagedSurfaceRecord({
       sessionManager: SessionManager.open(sessionFile!, dirname(sessionFile!)),
       actorKind,
-      provider: threadAgentSettings?.provider,
-      model: threadAgentSettings?.model,
-      thinkingLevel: threadAgentSettings?.reasoningEffort,
+      provider: promptDefaults.provider,
+      model: promptDefaults.model,
+      thinkingLevel: promptDefaults.reasoningEffort,
       systemPrompt: storedGeneratedAgentContextBinding?.systemPrompt ?? systemPrompt,
       generatedAgentContextAggregateKey:
         storedGeneratedAgentContextBinding?.aggregateCacheKey ?? aggregate?.cacheKey,
@@ -2061,7 +2045,7 @@ export class WorkspaceSessionCatalog {
       agentProfileId:
         actorKind === "handler"
           ? DEFAULT_THREAD_HANDLER_PROFILE_ID
-          : DEFAULT_ORCHESTRATOR_PROFILE_ID,
+          : (snapshot?.pi.orchestratorAgentProfileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID),
       loadedExtensionIds:
         surfaceExtensionState?.loadedExtensionIds ??
         storedGeneratedAgentContextBinding?.loadedExtensionIds,
@@ -2076,17 +2060,14 @@ export class WorkspaceSessionCatalog {
     });
   }
 
-  private async releaseManagedSurface(
-    surfacePiSessionId: string,
-    options: { emitClosed?: boolean } = {},
-  ): Promise<void> {
+  private async releaseManagedSurface(surfacePiSessionId: string): Promise<void> {
     const session = this.managedSurfaces.get(surfacePiSessionId);
     if (!session) {
       return;
     }
 
     session.retainCount = Math.max(0, session.retainCount - 1);
-    await this.disposeManagedSurfaceIfUnused(session, options);
+    await this.disposeManagedSurfaceIfUnused(session);
   }
 
   private async recreateManagedSurface(
@@ -2152,6 +2133,8 @@ export class WorkspaceSessionCatalog {
       externalSourceHashes: boundExternalSourceHashes,
       agentDir: this.agentDir,
       agentSettingsStore: this.agentSettingsStore,
+      agentProfileSnapshot: this.requireAgentProfileAuthoritySnapshot(),
+      applyAgentProfileMutations: this.applyAgentProfileMutations.bind(this),
       extensionContextImpactState: this.getRuntimeExtensionContextImpactState(),
       readArtifactRootForSession: (sessionId) =>
         this.structuredSessionStore.getSessionState(sessionId).workspace.artifactDir,
@@ -2172,7 +2155,6 @@ export class WorkspaceSessionCatalog {
       queueThreadReportNotification: this.queueThreadReportNotification.bind(this),
       refreshGeneratedContext: this.refreshGeneratedContextForLoadExtension.bind(this),
       onRequestContextLoaded: this.markPromptRefreshRequired.bind(this),
-      requestUserInputRuntime: this.requestUserInputRuntime,
       openArtifact: this.openArtifactFromRuntime.bind(this),
       onWorkflowsGeneratedPackageChanged: this.emitWorkflowsGeneratedPackageLog.bind(this),
       onAppLog: this.emitAppLog.bind(this),
@@ -2182,7 +2164,6 @@ export class WorkspaceSessionCatalog {
       acquireExecuteTypescriptLaunch: this.recoveryOptions.acquireExecuteTypescriptLaunch,
       acquireDirectToolLaunch: this.recoveryOptions.acquireDirectToolLaunch,
       runAcceptedLoadExtension: this.recoveryOptions.runAcceptedLoadExtension,
-      runAcceptedRequestUserInput: this.recoveryOptions.runAcceptedRequestUserInput,
       approvalBoundary: this.approvalBoundary,
       extensionsRoot: this.extensionsRoot,
       workflowsExtensionsGeneratedPackagePath:
@@ -2218,6 +2199,8 @@ export class WorkspaceSessionCatalog {
         this.generatedAgentContextStore.getState().revision,
       agentDir: this.agentDir,
       agentSettingsStore: this.agentSettingsStore,
+      agentProfileSnapshot: this.requireAgentProfileAuthoritySnapshot(),
+      applyAgentProfileMutations: this.applyAgentProfileMutations.bind(this),
       extensionContextImpactState: this.getRuntimeExtensionContextImpactState(),
       readArtifactRootForSession: (sessionId) =>
         this.structuredSessionStore.getSessionState(sessionId).workspace.artifactDir,
@@ -2236,14 +2219,12 @@ export class WorkspaceSessionCatalog {
       acquireExecuteTypescriptLaunch: this.recoveryOptions.acquireExecuteTypescriptLaunch,
       acquireDirectToolLaunch: this.recoveryOptions.acquireDirectToolLaunch,
       runAcceptedLoadExtension: this.recoveryOptions.runAcceptedLoadExtension,
-      runAcceptedRequestUserInput: this.recoveryOptions.runAcceptedRequestUserInput,
       createHandlerThread: this.createHandlerThread.bind(this),
       queueThreadFollowup: this.queueThreadFollowup.bind(this),
       queueThreadReportRequest: this.queueThreadReportRequest.bind(this),
       queueThreadReportNotification: this.queueThreadReportNotification.bind(this),
       refreshGeneratedContext: this.refreshGeneratedContextForLoadExtension.bind(this),
       onRequestContextLoaded: this.markPromptRefreshRequired.bind(this),
-      requestUserInputRuntime: this.requestUserInputRuntime,
       openArtifact: this.openArtifactFromRuntime.bind(this),
       onWorkflowsGeneratedPackageChanged: this.emitWorkflowsGeneratedPackageLog.bind(this),
       onAppLog: this.emitAppLog.bind(this),
@@ -2267,361 +2248,12 @@ export class WorkspaceSessionCatalog {
     }
   }
 
-  private async disposeManagedSurfaceIfUnused(
-    session: ManagedSession,
-    options: { emitClosed?: boolean } = {},
-  ): Promise<void> {
+  private async disposeManagedSurfaceIfUnused(session: ManagedSession): Promise<void> {
     if (session.retainCount > 0 || session.activePrompt) {
       return;
     }
     session.session.dispose();
     this.managedSurfaces.delete(session.sessionId);
-    if (options.emitClosed ?? true) {
-      await this.emitSurfaceClosed(
-        this.resolvePromptTargetForSurfacePiSessionId(session.sessionId),
-      );
-    }
-  }
-
-  private buildLiveSummaryFromManagedSession(session: ManagedSession): WorkspaceSessionSummary {
-    const header = session.session.sessionManager.getHeader();
-    return projectWorkspaceSessionSummary({
-      id: session.sessionId,
-      parentSessionFile: header?.parentSession,
-      name: session.session.sessionManager.getSessionName(),
-      firstMessage: undefined,
-      createdAt: header?.timestamp ?? new Date().toISOString(),
-      updatedAt: header?.timestamp ?? new Date().toISOString(),
-      messageCount: countVisibleMessages(session.session.agent.state.messages),
-      messages: session.session.agent.state.messages,
-      provider: session.provider,
-      modelId: session.model,
-      thinkingLevel: session.thinkingLevel,
-    });
-  }
-
-  private projectSummaryFromStructuredSnapshot(
-    snapshot: StructuredSessionSnapshot,
-  ): WorkspaceSessionSummary {
-    const baseSummary = projectWorkspaceSessionSummaryFromInfo({
-      id: snapshot.pi.sessionId,
-      name: snapshot.pi.title,
-      firstMessage: undefined,
-      created: snapshot.pi.createdAt,
-      modified: snapshot.pi.updatedAt,
-      messageCount: snapshot.pi.messageCount,
-    });
-
-    return {
-      ...baseSummary,
-      ...(snapshot.pi.parentSessionId ? { parentSessionId: snapshot.pi.parentSessionId } : {}),
-      provider: snapshot.pi.provider,
-      modelId: snapshot.pi.model,
-      thinkingLevel: snapshot.pi.reasoningEffort,
-    };
-  }
-
-  async listOpenSurfaceSnapshots(): Promise<ConversationSurfaceSnapshot[]> {
-    const snapshots: ConversationSurfaceSnapshot[] = [];
-    for (const session of this.managedSurfaces.values()) {
-      snapshots.push(
-        await this.buildSurfaceSnapshot(
-          session,
-          this.resolvePromptTargetForSurfacePiSessionId(session.sessionId),
-        ),
-      );
-    }
-    return snapshots;
-  }
-
-  private async buildSurfaceSnapshot(
-    session: ManagedSession,
-    target: PromptTarget,
-    options: { refreshExternalSources?: boolean } = {},
-  ): Promise<ConversationSurfaceSnapshot> {
-    await this.refreshAgentProfileAuthority();
-    const currentExternalSources = options.refreshExternalSources
-      ? await this.buildCurrentExternalContextSources()
-      : session.externalContextSources;
-    const activeTurn = session.activePrompt ? this.getActiveRunningTurnForSurface(target) : null;
-    const messages = structuredClone(session.session.agent.state.messages);
-    const promptBinding = this.buildPromptBinding(session, target, currentExternalSources);
-    return {
-      target: structuredClone(target),
-      provider: session.provider,
-      model: session.model,
-      reasoningEffort: session.thinkingLevel,
-      agentProfileId: session.agentProfileId,
-      loadedExtensionIds: [...session.loadedExtensionIds],
-      availableExtensionIds: [...session.availableExtensionIds],
-      systemPrompt: session.systemPrompt,
-      resolvedSystemPrompt: getResolvedSystemPrompt(session),
-      externalContextSources: structuredClone(session.externalContextSources),
-      promptBinding,
-      messages,
-      pendingUserMessage: session.pendingUserMessage
-        ? structuredClone(session.pendingUserMessage.message)
-        : null,
-      queuedMessages: this.buildQueuedSurfaceMessages(target),
-      composerDraft: this.buildComposerDraft(target.surfacePiSessionId),
-      streamMessage: session.activeStreamMessage
-        ? structuredClone(session.activeStreamMessage)
-        : null,
-      streamSequence: session.activeStreamMessage ? session.activeStreamSequence : 0,
-      promptStatus: session.activePrompt ? "streaming" : "idle",
-      activeTurnId: activeTurn?.id ?? null,
-      activeTurnStartedAt: activeTurn?.startedAt ?? null,
-      turnTimings: this.buildSurfaceTurnTimings(target, messages),
-    };
-  }
-
-  private buildComposerDraft(surfacePiSessionId: string): ComposerDraft {
-    const draft = this.structuredSessionStore.getComposerDraft(surfacePiSessionId);
-    return {
-      text: draft?.text ?? "",
-      attachments: draft?.attachments ? structuredClone(draft.attachments) : [],
-      snippetMentions: draft?.snippetMentions ? structuredClone(draft.snippetMentions) : [],
-      updatedAt: draft?.updatedAt ?? null,
-    };
-  }
-
-  private getActiveRunningTurnForSurface(
-    target: PromptTarget,
-  ): StructuredSessionSnapshot["turns"][number] | null {
-    const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
-    if (!snapshot) {
-      return null;
-    }
-
-    return (
-      snapshot.turns
-        .filter(
-          (turn) =>
-            turn.surfacePiSessionId === target.surfacePiSessionId && turn.status === "running",
-        )
-        .toSorted((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt))[0] ??
-      null
-    );
-  }
-
-  private buildSurfaceTurnTimings(
-    target: PromptTarget,
-    messages: AgentMessage[],
-  ): ConversationTurnTiming[] {
-    const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
-    if (!snapshot) {
-      return [];
-    }
-
-    const turns = snapshot.turns
-      .filter(
-        (turn) =>
-          turn.surfacePiSessionId === target.surfacePiSessionId &&
-          turn.status === "completed" &&
-          turn.finishedAt,
-      )
-      .toSorted((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt));
-    const assistantMessages = messages
-      .filter((message) => message.role === "assistant")
-      .toSorted(
-        (left, right) => messageTimestampMs(left.timestamp) - messageTimestampMs(right.timestamp),
-      );
-    const timings: ConversationTurnTiming[] = [];
-    let assistantIndex = 0;
-
-    for (let turnIndex = 0; turnIndex < turns.length; turnIndex += 1) {
-      const turn = turns[turnIndex];
-      if (!turn || !turn.finishedAt) {
-        continue;
-      }
-      const nextTurn = turns[turnIndex + 1] ?? null;
-      const turnStartedAtMs = Date.parse(turn.startedAt);
-      const nextTurnStartedAtMs = nextTurn
-        ? Date.parse(nextTurn.startedAt)
-        : Number.POSITIVE_INFINITY;
-
-      while (assistantIndex < assistantMessages.length) {
-        const message = assistantMessages[assistantIndex];
-        if (!message) {
-          break;
-        }
-        const messageTimestamp = messageTimestampMs(message.timestamp);
-        if (messageTimestamp < turnStartedAtMs) {
-          assistantIndex += 1;
-          continue;
-        }
-        if (messageTimestamp >= nextTurnStartedAtMs) {
-          break;
-        }
-
-        timings.push({
-          turnId: turn.id,
-          assistantMessageTimestamp: message.timestamp,
-          startedAt: turn.startedAt,
-          finishedAt: turn.finishedAt,
-        });
-        assistantIndex += 1;
-        break;
-      }
-    }
-
-    return timings;
-  }
-
-  private buildQueuedSurfaceMessages(target: PromptTarget): QueuedSurfaceMessage[] {
-    return this.structuredSessionStore
-      .listQueuedSurfaceMessages({ surfacePiSessionId: target.surfacePiSessionId })
-      .filter((message) => message.status !== "dispatching")
-      .flatMap((message) => {
-        if (message.kind === "workflow_task_agent_start") {
-          return [];
-        }
-        const payload =
-          message.kind === "thread_report_notification"
-            ? this.parseThreadReportNotificationQueuePayload(message)
-            : null;
-        const followupPayload =
-          message.kind === "thread_followup" ? this.parseThreadFollowupQueuePayload(message) : null;
-        const reportRequestPayload =
-          message.kind === "report_request" ? this.parseReportRequestQueuePayload(message) : null;
-        const requestUserInputAnswerPayload =
-          message.kind === "request_user_input_answer"
-            ? this.parseRequestUserInputAnswerQueuePayload(message)
-            : null;
-        return [
-          {
-            id: message.id,
-            kind: message.kind,
-            text:
-              message.kind === "initial_handler_start"
-                ? "Start handler thread"
-                : followupPayload
-                  ? followupPayload.message
-                  : reportRequestPayload
-                    ? `Report requested: ${reportRequestPayload.request}`
-                    : requestUserInputAnswerPayload
-                      ? this.getQueuedMessageText(message.messageJson)
-                      : payload
-                        ? `Thread report: ${payload.summary}`
-                        : this.getQueuedMessageText(message.messageJson) || "Queued message",
-            title: payload
-              ? "Thread report"
-              : requestUserInputAnswerPayload
-                ? "User answer"
-                : undefined,
-            summary: followupPayload?.message
-              ? followupPayload.message
-              : reportRequestPayload?.request
-                ? reportRequestPayload.request
-                : requestUserInputAnswerPayload
-                  ? this.getQueuedMessageText(message.messageJson)
-                  : payload?.summary,
-            threadId:
-              payload?.threadId ??
-              followupPayload?.threadId ??
-              reportRequestPayload?.threadId ??
-              message.threadId ??
-              undefined,
-            sourceCommandId: payload?.sourceCommandId,
-            status:
-              message.status === "failed"
-                ? "failed"
-                : message.status === "dispatching"
-                  ? "dispatching"
-                  : message.status === "steering"
-                    ? "steering"
-                    : "queued",
-            failureError: message.failureError ?? undefined,
-            createdAt: message.createdAt,
-            updatedAt: message.updatedAt,
-          },
-        ];
-      });
-  }
-
-  private parseThreadReportNotificationQueuePayload(
-    message: StructuredSurfaceQueuedMessageRecord,
-  ): ThreadReportNotificationQueuePayload | null {
-    if (!message.payloadJson) {
-      return null;
-    }
-    try {
-      const payload = JSON.parse(message.payloadJson) as ThreadReportNotificationQueuePayload;
-      if (
-        typeof payload.threadId !== "string" ||
-        typeof payload.sourceCommandId !== "string" ||
-        typeof payload.turnId !== "string" ||
-        typeof payload.summary !== "string" ||
-        typeof payload.episodeId !== "string"
-      ) {
-        return null;
-      }
-      return payload;
-    } catch {
-      return null;
-    }
-  }
-
-  private parseThreadFollowupQueuePayload(
-    message: StructuredSurfaceQueuedMessageRecord,
-  ): ThreadFollowupQueuePayload | null {
-    if (!message.payloadJson) {
-      return null;
-    }
-    try {
-      const payload = JSON.parse(message.payloadJson) as ThreadFollowupQueuePayload;
-      if (
-        typeof payload.threadId !== "string" ||
-        typeof payload.sourceCommandId !== "string" ||
-        typeof payload.message !== "string" ||
-        typeof payload.activate !== "boolean"
-      ) {
-        return null;
-      }
-      return payload;
-    } catch {
-      return null;
-    }
-  }
-
-  private parseReportRequestQueuePayload(
-    message: StructuredSurfaceQueuedMessageRecord,
-  ): ReportRequestQueuePayload | null {
-    if (!message.payloadJson) {
-      return null;
-    }
-    try {
-      const payload = JSON.parse(message.payloadJson) as ReportRequestQueuePayload;
-      if (
-        typeof payload.threadId !== "string" ||
-        typeof payload.sourceCommandId !== "string" ||
-        typeof payload.request !== "string"
-      ) {
-        return null;
-      }
-      return payload;
-    } catch {
-      return null;
-    }
-  }
-
-  private parseRequestUserInputAnswerQueuePayload(
-    message: StructuredSurfaceQueuedMessageRecord,
-  ): RequestUserInputAnswerQueuePayload | null {
-    if (!message.payloadJson) {
-      return null;
-    }
-    try {
-      return Exit.match(
-        decodeUnknownRequestUserInputAnswerQueuePayloadExit(JSON.parse(message.payloadJson)),
-        {
-          onFailure: () => null,
-          onSuccess: (value) => value,
-        },
-      );
-    } catch {
-      return null;
-    }
   }
 
   private getQueuedMessageText(messageJson: string): string {
@@ -2654,56 +2286,9 @@ export class WorkspaceSessionCatalog {
     return queued;
   }
 
-  private async emitQueuedSurfaceUpdate(
-    target: PromptTarget,
-  ): Promise<ConversationSurfaceSnapshot | undefined> {
-    const session = this.managedSurfaces.get(target.surfacePiSessionId);
-    if (!session) {
-      return undefined;
-    }
-    await this.emitSurfaceSync({
-      session,
-      reason: "surface.updated",
-      target,
-    });
-    return this.buildSurfaceSnapshot(session, target);
-  }
-
-  private async emitOpenSurfacePromptBindingUpdates(): Promise<void> {
-    if (this.closed) {
-      return;
-    }
+  private markOpenSurfacesForPromptRefresh(): void {
     for (const session of this.managedSurfaces.values()) {
-      await this.emitSurfaceSync({
-        session,
-        reason: "surface.updated",
-        target: this.resolvePromptTargetForSurfacePiSessionId(session.sessionId),
-        refreshExternalSources: true,
-      });
-    }
-  }
-
-  private async emitSurfaceSync(input: {
-    refreshExternalSources?: boolean;
-    session: ManagedSession;
-    reason: SurfaceSyncMessage["reason"];
-    target: PromptTarget;
-  }): Promise<void> {
-    if (!this.surfaceSyncListener) {
-      return;
-    }
-
-    try {
-      this.surfaceSyncListener({
-        workspaceId: this.workspaceId,
-        reason: input.reason,
-        target: structuredClone(input.target),
-        snapshot: await this.buildSurfaceSnapshot(input.session, input.target, {
-          refreshExternalSources: input.refreshExternalSources === true,
-        }),
-      });
-    } catch (error) {
-      console.error("Failed to emit surface sync payload:", error);
+      session.recreateOnNextPrompt = true;
     }
   }
 
@@ -2732,17 +2317,6 @@ export class WorkspaceSessionCatalog {
     }
   }
 
-  private async emitSurfaceClosed(target: PromptTarget): Promise<void> {
-    if (!this.surfaceSyncListener) {
-      return;
-    }
-    this.surfaceSyncListener({
-      workspaceId: this.workspaceId,
-      reason: "surface.closed",
-      target: structuredClone(target),
-    });
-  }
-
   private async recoverInterruptedSurfaceTurn(surfacePiSessionId: string): Promise<void> {
     const snapshot = this.structuredSessionStore
       .listSessionStates()
@@ -2764,12 +2338,14 @@ export class WorkspaceSessionCatalog {
 
     await this.publishCommittedCatalogMutation(
       "surface.turn-recovery.interrupted",
-      this.catalogStateMutations.recoverInterruptedSurfaceTurn({
-        turnId: turn.id,
-        status: turn.status === "waiting" ? "waiting" : "failed",
-        reason:
-          "Prompt acceptance could not be proven after workspace restart; recovery did not silently resend it.",
-      }),
+      this.runRuntimeState(
+        this.runtimeTurnStatePort.recoverInterruptedTurn({
+          turnId: turn.id as TurnId,
+          terminalStatus: "failed",
+          reason:
+            "Prompt acceptance could not be proven after workspace restart; recovery did not silently resend it.",
+        }),
+      ),
       {
         workspaceSessionId: snapshot.session.id,
         surfacePiSessionId,
@@ -2787,16 +2363,6 @@ export class WorkspaceSessionCatalog {
     };
   }
 
-  private buildSystemPromptForTarget(
-    target: PromptTarget,
-    options: {
-      extensionState?: { loadedExtensionIds: string[]; availableExtensionIds: string[] };
-      externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
-    } = {},
-  ): string {
-    return this.buildAggregateForTarget(target, options).outputs.prompt;
-  }
-
   private resolveOrchestratorAgentProfile(profileId: AgentProfileId): AgentProfileSettings {
     return configuredAgentProfileSettings(
       requireConfiguredAgentProfile(
@@ -2805,6 +2371,48 @@ export class WorkspaceSessionCatalog {
         profileId,
       ),
     );
+  }
+
+  private resolveStateBackedPromptDefaults(target: PromptTarget): AgentDefaults {
+    if (target.surface === "handler") {
+      const threadSettings = this.resolveThreadProfileSettings(target.surfacePiSessionId);
+      if (threadSettings) {
+        return threadSettings;
+      }
+      const handlerProfile = configuredAgentProfileSettings(
+        requireConfiguredAgentProfile(
+          this.requireAgentProfileAuthoritySnapshot(),
+          "handler",
+          DEFAULT_THREAD_HANDLER_PROFILE_ID,
+        ),
+      );
+      return {
+        provider: handlerProfile.provider,
+        model: handlerProfile.model,
+        reasoningEffort: handlerProfile.reasoningEffort,
+      };
+    }
+
+    const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
+    if (
+      snapshot?.pi.provider &&
+      snapshot.pi.model &&
+      isAgentReasoningEffort(snapshot.pi.reasoningEffort)
+    ) {
+      return {
+        provider: snapshot.pi.provider,
+        model: snapshot.pi.model,
+        reasoningEffort: snapshot.pi.reasoningEffort,
+      };
+    }
+
+    const profileId = snapshot?.pi.orchestratorAgentProfileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID;
+    const profile = this.resolveOrchestratorProfileSettingsFromSnapshot(snapshot, profileId);
+    return {
+      provider: profile.provider,
+      model: profile.model,
+      reasoningEffort: profile.reasoningEffort,
+    };
   }
 
   private resolveThreadProfileSettings(
@@ -2896,10 +2504,7 @@ export class WorkspaceSessionCatalog {
     return null;
   }
 
-  private syncGeneratedAgentContextBindingForTarget(
-    target: PromptTarget,
-    session: ManagedSession,
-  ): StateMutationResult<StructuredPiSessionRecord | null> | null {
+  private persistGeneratedAgentContextBinding(target: PromptTarget, session: ManagedSession): void {
     this.structuredSessionStore.upsertGeneratedAgentContextBinding({
       surfacePiSessionId: session.sessionId,
       ownerKind: target.surface === "handler" && target.threadId ? "thread" : "session",
@@ -2919,17 +2524,6 @@ export class WorkspaceSessionCatalog {
       availableExtensionIds: session.availableExtensionIds,
       externalSourceHashes: session.externalSourceHashes,
     });
-    if (target.surface === "orchestrator") {
-      return this.syncStructuredPiSessionFromOrchestratorSession(session);
-    }
-    if (!target.threadId) {
-      return null;
-    }
-    this.structuredSessionStore.updateThread({
-      threadId: target.threadId,
-      generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
-    });
-    return null;
   }
 
   private recordAgentContextUpdatedEvent(
@@ -3010,9 +2604,9 @@ export class WorkspaceSessionCatalog {
       this.requireAgentProfileAuthoritySnapshot(),
     );
     const sessionLoadedExtensionIds =
-      managed?.loadedExtensionIds ?? snapshot?.pi.loadedExtensionIds ?? [];
+      snapshot?.pi.loadedExtensionIds ?? managed?.loadedExtensionIds ?? [];
     const sessionAvailableExtensionIds =
-      managed?.availableExtensionIds ?? snapshot?.pi.availableExtensionIds ?? [];
+      snapshot?.pi.availableExtensionIds ?? managed?.availableExtensionIds ?? [];
     if (options.includeManagedLoadedExtensions === false) {
       const baselineProfile = this.resolveOrchestratorProfileSettingsFromSnapshot(
         snapshot,
@@ -3074,7 +2668,7 @@ export class WorkspaceSessionCatalog {
       ).map((record) => [record.id, record]),
     );
     const generatedAgentContextState = this.generatedAgentContextStore.getState();
-    const requestUserInputSettings = this.agentSettingsStore.getState().requestUserInput;
+    const requestUserInputSettings = this.readCommittedRequestInputSettings();
     return activeIds.map((entry) => {
       const record = records.get(entry.id);
       const extensionRecords = record ? [record] : [];
@@ -3142,7 +2736,7 @@ export class WorkspaceSessionCatalog {
       this.extensionsRoot,
     );
     const generatedAgentContextState = this.generatedAgentContextStore.getState();
-    const requestUserInputSettings = this.agentSettingsStore.getState().requestUserInput;
+    const requestUserInputSettings = this.readCommittedRequestInputSettings();
     const prompt = buildSystemPrompt(actor, {
       ...options,
       loadedExtensionRecords,
@@ -3187,7 +2781,10 @@ export class WorkspaceSessionCatalog {
           loadedExtensionIds,
           loadedExtensionRecords,
         }),
-        nativeToolSchemasJson: buildNativeToolSchemasJson(loadedExtensionRecords),
+        nativeToolSchemasJson: buildNativeToolSchemasJson(
+          loadedExtensionRecords,
+          requestUserInputSettings.mode,
+        ),
       }),
     );
   }
@@ -3222,53 +2819,6 @@ export class WorkspaceSessionCatalog {
         options.extensionState?.availableExtensionIds ?? thread?.availableExtensionIds,
       externalInstructionSources: options.externalInstructionSources ?? [],
     });
-  }
-
-  private buildPromptBinding(
-    session: ManagedSession,
-    target: PromptTarget,
-    currentExternalSources: readonly GeneratedAgentContextExternalSource[],
-  ) {
-    const currentState = this.generatedAgentContextStore.getState();
-    const currentExtensionState = this.resolveCurrentExtensionStateForTarget(target, session, {
-      includeManagedLoadedExtensions: false,
-    });
-    const currentSystemPrompt = this.buildSystemPromptForTarget(target, {
-      extensionState: currentExtensionState,
-      externalInstructionSources: currentExternalSources,
-    });
-    const currentExternalSourceHashes = externalSourceHashes(currentExternalSources);
-    const boundExternalSourceHashes = session.externalSourceHashes;
-    const currentFingerprint = createGeneratedAgentContextFingerprint({
-      systemPrompt: currentSystemPrompt,
-      loadedExtensionIds: currentExtensionState.loadedExtensionIds,
-      availableExtensionIds: currentExtensionState.availableExtensionIds,
-      externalContextSources: currentExternalSources,
-    });
-    return {
-      currentRevision: currentState.revision,
-      boundSystemPrompt: session.systemPrompt,
-      currentSystemPrompt,
-      boundFingerprint: session.generatedAgentContextFingerprint,
-      currentFingerprint,
-      boundExternalSourceHashes,
-      currentExternalSourceHashes,
-      updateExtensionContextBeforeNextTurn:
-        this.getExtensionContextAutoUpdateForTarget(target) ?? true,
-      stale: session.generatedAgentContextFingerprint !== currentFingerprint,
-    };
-  }
-
-  private getExtensionContextAutoUpdateForTarget(target: PromptTarget): boolean | null {
-    const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
-    if (!snapshot) {
-      return null;
-    }
-    if (target.surface === "handler") {
-      const thread = snapshot.threads.find((candidate) => candidate.id === target.threadId);
-      return thread?.updateExtensionContextBeforeNextTurn ?? true;
-    }
-    return snapshot.pi.updateExtensionContextBeforeNextTurn ?? true;
   }
 
   private resolveOrchestratorProfileSettingsFromSnapshot(
@@ -3362,76 +2912,25 @@ export class WorkspaceSessionCatalog {
     }
   }
 
-  private projectSummaryFromSessionInfo(info: WorkspaceSessionInfo): WorkspaceSessionSummary {
-    return projectWorkspaceSessionSummaryFromInfo({
-      id: info.id,
-      parentSessionPath: info.parentSessionPath,
-      name: info.name,
-      firstMessage: info.firstMessage,
-      created: info.created,
-      modified: info.modified,
-      messageCount: info.messageCount,
-    });
-  }
-
-  private syncStructuredPiSessionFromSummary(
-    summary: WorkspaceSessionSummary,
-  ): StateMutationResult<StructuredPiSessionRecord | null> | null {
-    if (this.structuredSessionStore.isSessionDeleted(summary.id)) {
-      return null;
-    }
-
-    try {
-      const snapshot = this.getStructuredSnapshot(summary.id);
-      return this.catalogStateMutations.upsertPiSession({
-        sessionId: summary.id,
-        parentSessionId: summary.parentSessionId,
-        title: summary.title,
-        provider: summary.provider ?? snapshot?.pi.provider,
-        model: summary.modelId ?? snapshot?.pi.model,
-        reasoningEffort: summary.thinkingLevel ?? snapshot?.pi.reasoningEffort,
-        orchestratorAgentProfileId:
-          snapshot?.pi.orchestratorAgentProfileId ??
-          (DEFAULT_ORCHESTRATOR_PROFILE_ID as CoreAgentProfileId),
-        orchestratorAgentProfileJson:
-          snapshot?.pi.orchestratorAgentProfileJson ??
-          JSON.stringify(this.resolveOrchestratorAgentProfile(DEFAULT_ORCHESTRATOR_PROFILE_ID)),
-        generatedAgentContextFingerprint: snapshot?.pi.generatedAgentContextFingerprint ?? null,
-        loadedExtensionIds: snapshot?.pi.loadedExtensionIds,
-        availableExtensionIds: snapshot?.pi.availableExtensionIds,
-        titleNamerAgentJson:
-          snapshot?.pi.titleNamerAgentJson ??
-          JSON.stringify(this.agentSettingsStore.getState().agents.titleNamer),
-        messageCount: summary.messageCount,
-        status: summary.status,
-        createdAt: summary.createdAt,
-        updatedAt: summary.updatedAt,
-      });
-    } catch (error) {
-      console.error("Failed to upsert structured session metadata:", error);
-      return null;
-    }
-  }
-
-  private syncStructuredPiSessionFromOrchestratorSession(
+  private initializeStructuredPiSession(
     session: ManagedSession,
-  ): StateMutationResult<StructuredPiSessionRecord | null> | null {
-    if (this.structuredSessionStore.isSessionDeleted(session.sessionId)) {
-      return null;
-    }
-
-    const summary = this.buildLiveSummaryFromManagedSession(session);
-    const snapshot = this.getStructuredSnapshot(session.sessionId);
+    input: {
+      title: string;
+      parentSessionId: string | null;
+      messageCount?: number;
+    },
+  ): StateMutationResult<StructuredPiSessionRecord | null> {
     const configuredProfile = this.requireAgentProfileAuthoritySnapshot().configuredProfiles.find(
       (profile) => profile.actor === "orchestrator" && profile.profileId === session.agentProfileId,
     );
     const profile = configuredProfile
       ? configuredAgentProfileSettings(configuredProfile)
-      : this.resolveOrchestratorProfileSettingsFromSnapshot(snapshot, session.agentProfileId);
+      : this.resolveOrchestratorAgentProfile(session.agentProfileId);
+    const timestamp = new Date().toISOString();
     return this.catalogStateMutations.upsertPiSession({
-      sessionId: summary.id,
-      parentSessionId: summary.parentSessionId,
-      title: summary.title,
+      sessionId: session.sessionId,
+      parentSessionId: input.parentSessionId,
+      title: input.title,
       provider: session.provider,
       model: session.model,
       reasoningEffort: session.thinkingLevel,
@@ -3441,39 +2940,11 @@ export class WorkspaceSessionCatalog {
       loadedExtensionIds: session.loadedExtensionIds,
       availableExtensionIds: session.availableExtensionIds,
       titleNamerAgentJson: JSON.stringify(this.agentSettingsStore.getState().agents.titleNamer),
-      messageCount: summary.messageCount,
-      status: summary.status,
-      createdAt: summary.createdAt,
-      updatedAt: summary.updatedAt,
+      messageCount: input.messageCount ?? 0,
+      status: "idle",
+      createdAt: timestamp,
+      updatedAt: timestamp,
     });
-  }
-
-  private async syncStructuredPiSessionFromWorkspaceSession(
-    workspaceSessionId: string,
-  ): Promise<boolean> {
-    if (this.structuredSessionStore.isSessionDeleted(workspaceSessionId)) {
-      return false;
-    }
-
-    const orchestratorSurface = this.managedSurfaces.get(workspaceSessionId);
-    if (orchestratorSurface) {
-      this.syncStructuredPiSessionFromOrchestratorSession(orchestratorSurface);
-      return true;
-    }
-
-    const infos = await SessionManager.list(this.cwd, this.sessionDir);
-    const info = infos.find((candidate) => candidate.id === workspaceSessionId);
-    if (info) {
-      this.syncStructuredPiSessionFromSummary(this.projectSummaryFromSessionInfo(info));
-      return true;
-    }
-
-    const snapshot = this.getStructuredSnapshot(workspaceSessionId);
-    if (snapshot) {
-      this.syncStructuredPiSessionFromSummary(this.projectSummaryFromStructuredSnapshot(snapshot));
-      return true;
-    }
-    return false;
   }
 
   private async queueThreadReportNotification(
@@ -3498,8 +2969,6 @@ export class WorkspaceSessionCatalog {
       messageJson: "{}",
       payloadJson: JSON.stringify(payload),
     });
-
-    void this.emitQueuedSurfaceUpdate(orchestratorTarget);
   }
 
   private getStructuredSnapshot(sessionId: string): StructuredSessionSnapshot | null {
@@ -3670,12 +3139,6 @@ export class WorkspaceSessionCatalog {
           wait: null,
         });
       }
-      const target: PromptTarget = {
-        workspaceSessionId: input.runtime.workspaceSessionId,
-        surface: "handler",
-        surfacePiSessionId: thread.surfacePiSessionId,
-        threadId: thread.id,
-      };
       const payload: ThreadFollowupQueuePayload = {
         threadId: thread.id,
         sourceCommandId: input.commandId,
@@ -3691,7 +3154,6 @@ export class WorkspaceSessionCatalog {
         messageJson: "{}",
         payloadJson: JSON.stringify(payload),
       });
-      await this.emitQueuedSurfaceUpdate(target);
       const refreshed = this.requireStructuredSnapshot(
         input.runtime.workspaceSessionId,
       ).threads.find((entry) => entry.id === thread.id);
@@ -3737,13 +3199,6 @@ export class WorkspaceSessionCatalog {
       messageJson: "{}",
       payloadJson: JSON.stringify(payload),
     });
-    const target: PromptTarget = {
-      workspaceSessionId: input.runtime.workspaceSessionId,
-      surface: "handler",
-      surfacePiSessionId: thread.surfacePiSessionId,
-      threadId: thread.id,
-    };
-    await this.emitQueuedSurfaceUpdate(target);
     return {
       threadId: thread.id,
       surfacePiSessionId: thread.surfacePiSessionId,
@@ -4111,7 +3566,9 @@ export class WorkspaceSessionCatalog {
   ): Promise<void> {
     const refreshGeneratedPackages = this.recoveryOptions.refreshGeneratedPackages;
     if (!refreshGeneratedPackages) {
-      return;
+      throw new Error(
+        "Workspace generated-package recovery requires the runtime-owned refresh seam.",
+      );
     }
     try {
       const result = await refreshGeneratedPackages(input);
@@ -4255,6 +3712,8 @@ async function createManagedSession(
   options: CreateManagedSessionOptions & {
     agentDir: string;
     agentSettingsStore: ReturnType<typeof createAgentSettingsStore>;
+    agentProfileSnapshot: AgentProfileAuthoritySnapshot;
+    applyAgentProfileMutations: (mutations: readonly AgentProfileMutation[]) => Promise<void>;
     extensionContextImpactState: RuntimeExtensionContextImpactStateFacade;
     readArtifactRootForSession: (sessionId: string) => string | null;
     actorExtensionBindingState: RuntimeActorExtensionBindingStatePortService;
@@ -4316,6 +3775,8 @@ async function createManagedSession(
     workflowsGeneratedPackagePath: options.workflowsGeneratedPackagePath,
     workflowsSourceRoot: options.workflowsSourceRoot,
     extensionsRoot: options.extensionsRoot,
+    agentProfileSnapshot: options.agentProfileSnapshot,
+    applyAgentProfileMutations: options.applyAgentProfileMutations,
     extensionsEnvValues: () =>
       options.agentSettingsStore.getState().extensionEnv.nonSecretOverrides,
   });
@@ -4340,21 +3801,6 @@ async function createManagedSession(
     runAcceptedLoadExtension: requiredAcceptedLoadExtensionRunner(options.runAcceptedLoadExtension),
     extensionsRoot: options.extensionsRoot,
   });
-  const requestUserInputTool = createRequestUserInputTool({
-    runtime: promptExecutionRuntime,
-    state: {
-      commandState: options.commandState,
-      requestState: options.requestState,
-      sessionWaitState: options.sessionWaitState,
-      turnState: options.turnState,
-      runState: options.runState,
-    },
-    runToolEffect: options.runCatalogEffect,
-    runAcceptedRequestUserInput: requiredAcceptedRequestUserInputRunner(
-      options.runAcceptedRequestUserInput,
-    ),
-    requestUserInputRuntime: options.requestUserInputRuntime,
-  });
   const directTools = createSvvyDirectTools({
     cwd: options.sessionManager.getCwd(),
     workspaceId: options.workspaceId,
@@ -4365,6 +3811,8 @@ async function createManagedSession(
     readArtifactRootForSession: options.readArtifactRootForSession,
     runState: options.runState,
     agentSettingsStore: options.agentSettingsStore,
+    agentProfileSnapshot: options.agentProfileSnapshot,
+    applyAgentProfileMutations: options.applyAgentProfileMutations,
     approvalMode: () => options.agentSettingsStore.getState().appPreferences.approvalMode,
     approvalBoundary: options.approvalBoundary,
     networkAccess: () => options.agentSettingsStore.getState().appPreferences.networkAccess,
@@ -4448,9 +3896,7 @@ async function createManagedSession(
     executeTypescriptTool,
   ] as const;
   const loadedExtensions = new Set(extensionState.loadedExtensionIds);
-  const sharedInteractiveTools = loadedExtensions.has("request-user-input")
-    ? ([...sharedWorkTools, requestUserInputTool] as const)
-    : sharedWorkTools;
+  const sharedInteractiveTools = sharedWorkTools;
   const orchestratorThreadTools = loadedExtensions.has("thread-orchestration")
     ? ([
         threadListTool,
@@ -4620,18 +4066,6 @@ async function createManagedSession(
   return managedSession;
 }
 
-function countVisibleMessages(messages: AgentMessage[]): number {
-  return messages.filter(
-    (message) =>
-      message.role === "user" || message.role === "assistant" || message.role === "toolResult",
-  ).length;
-}
-
-function getResolvedSystemPrompt(session: ManagedSession): string {
-  const resolved = session.session.agent.state.systemPrompt?.trim();
-  return resolved && resolved.length > 0 ? resolved : session.systemPrompt;
-}
-
 function buildGeneratedSvvyxGuidance(records: readonly ResolvedExtensionRecord[]): string {
   const svvyxRecords = records.filter((record) => record.interface === "svvyx");
   if (svvyxRecords.length === 0) {
@@ -4653,10 +4087,17 @@ function buildGeneratedSvvyxGuidance(records: readonly ResolvedExtensionRecord[]
 }
 
 function createPromptSettingsFingerprint(input: {
-  requestUserInputSettings: RequestUserInputSettings;
+  requestUserInputSettings: RequestInputSettings;
   customInstructions?: string;
 }): string {
-  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        requestInputVariant: input.requestUserInputSettings.mode,
+        customInstructions: input.customInstructions,
+      }),
+    )
+    .digest("hex");
 }
 
 function externalSourceHashes(sources: readonly GeneratedAgentContextExternalSource[]): string[] {
@@ -4733,21 +4174,6 @@ function configuredAgentProfileSettings(
     builtin: profile.builtin,
     locked: profile.locked,
   };
-}
-
-function projectConfiguredProfilesIntoAgentSettings(
-  settings: AgentSettingsState,
-  snapshot: CatalogAgentProfileAuthoritySnapshot,
-): AgentSettingsState {
-  const projected = structuredClone(settings);
-  projected.agents.orchestrators = snapshot.configuredProfiles
-    .filter((profile) => profile.actor === "orchestrator")
-    .map(configuredAgentProfileSettings);
-  const handler = snapshot.configuredProfiles.find((profile) => profile.actor === "handler");
-  if (handler) {
-    projected.agents.special.threadHandler = configuredAgentProfileSettings(handler);
-  }
-  return projected;
 }
 
 function applyExtensionUsageState(

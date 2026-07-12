@@ -1,13 +1,18 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import {
   RuntimeApprovalStatePort,
   RuntimeCommandStatePort,
+  RuntimeRecoveryStatePort,
   RuntimeSessionWaitStatePort,
+  RuntimeTurnStatePort,
+  type RecoverInterruptedRuntimeTurnInput,
 } from "@svvy/core";
 
 import {
@@ -17,11 +22,18 @@ import {
   defaultRuntimeLayerConfig,
   layerRuntimeShutdownPreparation,
   layerRuntimeStartupReadiness,
+  RuntimeLayerCommandControlPort,
 } from "./bootstrap";
 import { RuntimeShutdownPreparation, RuntimeStartupReadiness } from "./runtime-layer-config";
 import { RuntimeApprovalWaitService } from "./runtime-approval-wait-service";
 import { RuntimeEventBus } from "./runtime-event-bus";
 import { RuntimeRequestInputWaitService } from "./runtime-request-input-wait-service";
+import {
+  RuntimeSurfaceScopeService,
+  type RuntimeSurfaceScopeServiceService,
+} from "./surface-runtime-scope-service";
+import { RuntimeWorkflowAgentSourceIndex } from "./runtime-workflow-agent-source-index";
+import { layerRuntimeShutdownAdmission } from "./runtime-shutdown-admission";
 
 describe("@svvy/runtime Effect runtime-layer config", () => {
   it.effect("parses environment overrides through the Effect config service", () =>
@@ -126,14 +138,25 @@ describe("@svvy/runtime Effect runtime-layer config", () => {
     }).pipe(Effect.provide(createRuntimeLayerConfigLayer(defaultRuntimeLayerConfig))),
   );
 
-  it.effect("provides startup readiness through the promoted Effect service layer", () =>
-    Effect.gen(function* () {
+  it.effect("recovers active turns before normalizing queues and restoring blocking waits", () => {
+    const calls: string[] = [];
+    return Effect.gen(function* () {
       const readiness = yield* RuntimeStartupReadiness;
       const receipt = yield* readiness.awaitReady;
 
+      assert.deepStrictEqual(calls, [
+        "sources",
+        "snapshots",
+        "recover:turn_startup_recovery",
+        "publish",
+        "normalize",
+        "publish",
+        "restore-request-input",
+      ]);
       assert.strictEqual(receipt.status, "ready");
       assert.deepStrictEqual(receipt.completedPhases, [
         "layer-acquisition",
+        "app-source-reconcile",
         "recovery-startup-scan",
         "event-bus",
       ]);
@@ -143,46 +166,325 @@ describe("@svvy/runtime Effect runtime-layer config", () => {
       Effect.provide(
         layerRuntimeStartupReadiness.pipe(
           Layer.provide(createRuntimeLayerConfigLayer(defaultRuntimeLayerConfig)),
-          Layer.provide(Layer.succeed(RuntimeRequestInputWaitService, noRequestInputWaitService())),
+          Layer.provide(
+            Layer.succeed(RuntimeRequestInputWaitService, {
+              ...noRequestInputWaitService(),
+              restoreOpenBlockingRequests: () =>
+                Effect.sync(() => calls.push("restore-request-input")),
+            }),
+          ),
+          Layer.provide(
+            Layer.succeed(RuntimeWorkflowAgentSourceIndex, {
+              ...noWorkflowAgentSourceIndex(),
+              scaffoldAndReconcile: Effect.sync(() => {
+                calls.push("sources");
+                return {
+                  sourceFingerprint: "startup-recovery-workflow-agent-sources",
+                  observations: [],
+                  diagnostics: [],
+                  scannedAt: "2026-06-29T00:00:00.000Z" as never,
+                };
+              }),
+            }),
+          ),
+          Layer.provide(
+            Layer.succeed(RuntimeRecoveryStatePort, {
+              listWorkspaceRecoveryStartupSnapshots: () =>
+                Effect.sync(() => {
+                  calls.push("snapshots");
+                  return [
+                    {
+                      session: {
+                        id: "session_startup_recovery",
+                        orchestratorPiSessionId: "surface_startup_recovery",
+                      },
+                      pi: { titleGenerationStatus: "not-started" },
+                      turns: [
+                        {
+                          id: "turn_startup_recovery",
+                          status: "running",
+                          surfacePiSessionId: "surface_startup_recovery",
+                          threadId: null,
+                        },
+                      ],
+                      queuedMessages: [],
+                      threads: [],
+                    },
+                  ] as never;
+                }),
+              normalizeWorkspaceRecoveryState: () =>
+                Effect.sync(() => {
+                  calls.push("normalize");
+                  return { value: undefined, afterCommit: [] };
+                }),
+            } as never),
+          ),
+          Layer.provide(
+            Layer.succeed(RuntimeTurnStatePort, {
+              recoverInterruptedTurn: ({ turnId }: RecoverInterruptedRuntimeTurnInput) =>
+                Effect.sync(() => {
+                  calls.push(`recover:${turnId}`);
+                  return {
+                    value: {
+                      changed: true,
+                      turn: {
+                        id: turnId,
+                        sessionId: "session_startup_recovery",
+                        surfacePiSessionId: "surface_startup_recovery",
+                        threadId: null,
+                        requestSummary: "Recover startup turn",
+                        turnDecision: "pending",
+                        status: "cancelled",
+                        assistantMessageId: null,
+                        assistantText: null,
+                        startedAt: "2026-06-29T00:00:00.000Z",
+                        updatedAt: "2026-06-29T00:00:01.000Z",
+                        finishedAt: "2026-06-29T00:00:01.000Z",
+                      },
+                      terminalizedAssistantMessageId: null,
+                      terminalizedCommandIds: [],
+                      settledQueueItemId: null,
+                      cancelledRequestInputIds: [],
+                      cancelledApprovalIds: [],
+                      sessionWaitCleared: false,
+                    },
+                    afterCommit: [],
+                  } as never;
+                }),
+            } as never),
+          ),
+          Layer.provide(
+            Layer.succeed(RuntimeEventBus, {
+              ...noRuntimeEventBus(),
+              publishStateInvalidations: () =>
+                Effect.sync(() => {
+                  calls.push("publish");
+                  return [];
+                }),
+            }),
+          ),
         ),
       ),
-    ),
+    );
+  });
+
+  it.effect(
+    "provides one idempotent shutdown preparation through the promoted Effect layer",
+    () => {
+      let snapshots = 0;
+      return Effect.gen(function* () {
+        const shutdown = yield* RuntimeShutdownPreparation;
+        const result = yield* shutdown.prepareShutdown({
+          reason: "app-shutdown",
+          requestedAt: "2026-06-29T00:00:00.000Z",
+          drainTimeoutMs: 123,
+        });
+        const repeated = yield* shutdown.prepareShutdown({
+          reason: "runtime-restart",
+          requestedAt: "2026-06-29T00:00:01.000Z",
+          drainTimeoutMs: 1,
+        });
+
+        assert.deepStrictEqual(result, {
+          status: "drained",
+          interruptedTurns: 0,
+          interruptedCommands: 0,
+          releasedQueueClaims: 0,
+          recoveryRowsScheduled: 0,
+        });
+        assert.strictEqual(repeated, result);
+        assert.strictEqual(snapshots, 2);
+      }).pipe(
+        Effect.provide(
+          layerRuntimeShutdownPreparation.pipe(
+            Layer.provide(layerRuntimeShutdownAdmission),
+            Layer.provide(createRuntimeLayerConfigLayer(defaultRuntimeLayerConfig)),
+            Layer.provide(Layer.succeed(RuntimeApprovalStatePort, emptyApprovalStatePort())),
+            Layer.provide(
+              Layer.succeed(RuntimeCommandStatePort, unusedPort("RuntimeCommandStatePort")),
+            ),
+            Layer.provide(
+              Layer.succeed(RuntimeLayerCommandControlPort, {
+                cancel: () => Effect.die("Unexpected live command cancellation."),
+              }),
+            ),
+            Layer.provide(
+              Layer.succeed(RuntimeSessionWaitStatePort, unusedPort("RuntimeSessionWaitStatePort")),
+            ),
+            Layer.provide(Layer.succeed(RuntimeEventBus, noRuntimeEventBus())),
+            Layer.provide(Layer.succeed(RuntimeApprovalWaitService, noApprovalWaitService())),
+            Layer.provide(
+              Layer.succeed(RuntimeRequestInputWaitService, noRequestInputWaitService()),
+            ),
+            Layer.provide(Layer.succeed(RuntimeTurnStatePort, unusedPort("RuntimeTurnStatePort"))),
+            Layer.provide(
+              Layer.succeed(RuntimeSurfaceScopeService, {
+                snapshot: () =>
+                  Effect.sync(() => {
+                    snapshots += 1;
+                    return [];
+                  }),
+              } as never),
+            ),
+          ),
+        ),
+      );
+    },
   );
 
-  it.effect("provides shutdown preparation through the promoted Effect service layer", () =>
-    Effect.gen(function* () {
-      const shutdown = yield* RuntimeShutdownPreparation;
-      const result = yield* shutdown.prepareShutdown({
-        reason: "app-shutdown",
-        requestedAt: "2026-06-29T00:00:00.000Z",
-        drainTimeoutMs: 123,
-      });
+  it.effect(
+    "force-terminalizes durable active-turn facts after the shutdown drain deadline",
+    () => {
+      const calls: string[] = [];
+      const activeTurnId = "turn_shutdown_forced" as never;
+      let forceInterruptEntered: Deferred.Deferred<void>;
+      let allowForceInterrupt: Deferred.Deferred<void>;
+      return Effect.scoped(
+        Effect.gen(function* () {
+          forceInterruptEntered = yield* Deferred.make<void>();
+          allowForceInterrupt = yield* Deferred.make<void>();
+          const shutdown = yield* RuntimeShutdownPreparation;
+          const shutdownFiber = yield* shutdown
+            .prepareShutdown({
+              reason: "runtime-restart",
+              requestedAt: "2026-06-29T00:00:00.000Z",
+              drainTimeoutMs: 0,
+            })
+            .pipe(Effect.forkScoped);
 
-      assert.deepStrictEqual(result, {
-        status: "drained",
-        interruptedTurns: 0,
-        interruptedCommands: 0,
-        releasedQueueClaims: 0,
-        recoveryRowsScheduled: 0,
-      });
-    }).pipe(
-      Effect.provide(
-        layerRuntimeShutdownPreparation.pipe(
-          Layer.provide(createRuntimeLayerConfigLayer(defaultRuntimeLayerConfig)),
-          Layer.provide(Layer.succeed(RuntimeApprovalStatePort, emptyApprovalStatePort())),
-          Layer.provide(
-            Layer.succeed(RuntimeCommandStatePort, unusedPort("RuntimeCommandStatePort")),
+          yield* Deferred.await(forceInterruptEntered);
+          assert.notInclude(calls, "recover:turn_shutdown_forced:cancelled");
+          yield* Deferred.succeed(allowForceInterrupt, undefined);
+          const result = yield* Fiber.join(shutdownFiber);
+
+          assert.deepStrictEqual(result, {
+            status: "forced",
+            interruptedTurns: 1,
+            interruptedCommands: 2,
+            releasedQueueClaims: 1,
+            recoveryRowsScheduled: 0,
+          });
+          assert.deepStrictEqual(calls, [
+            "request-input:surface_shutdown_forced",
+            "interrupt:surface_shutdown_forced:turn_shutdown_forced",
+            "force-interrupt:surface_shutdown_forced:turn_shutdown_forced",
+            "recover:turn_shutdown_forced:cancelled",
+            "cancel-command:command_shutdown_1",
+            "cancel-command:command_shutdown_2",
+          ]);
+        }),
+      ).pipe(
+        Effect.provide(
+          layerRuntimeShutdownPreparation.pipe(
+            Layer.provide(layerRuntimeShutdownAdmission),
+            Layer.provide(createRuntimeLayerConfigLayer(defaultRuntimeLayerConfig)),
+            Layer.provide(Layer.succeed(RuntimeApprovalStatePort, emptyApprovalStatePort())),
+            Layer.provide(
+              Layer.succeed(RuntimeCommandStatePort, unusedPort("RuntimeCommandStatePort")),
+            ),
+            Layer.provide(
+              Layer.succeed(RuntimeLayerCommandControlPort, {
+                cancel: ({ commandId }) =>
+                  Effect.sync(() => {
+                    calls.push(`cancel-command:${commandId}`);
+                    return { commandId, status: "cancelled" as const };
+                  }),
+              }),
+            ),
+            Layer.provide(
+              Layer.succeed(RuntimeSessionWaitStatePort, unusedPort("RuntimeSessionWaitStatePort")),
+            ),
+            Layer.provide(Layer.succeed(RuntimeEventBus, noRuntimeEventBus())),
+            Layer.provide(Layer.succeed(RuntimeApprovalWaitService, noApprovalWaitService())),
+            Layer.provide(
+              Layer.succeed(
+                RuntimeRequestInputWaitService,
+                RuntimeRequestInputWaitService.of({
+                  ...noRequestInputWaitService(),
+                  cancelBlockingRequestsForSurface: ({ surfacePiSessionId }) =>
+                    Effect.sync(() => calls.push(`request-input:${surfacePiSessionId}`)),
+                }),
+              ),
+            ),
+            Layer.provide(
+              Layer.succeed(RuntimeTurnStatePort, {
+                recoverInterruptedTurn: ({
+                  turnId,
+                  terminalStatus,
+                }: RecoverInterruptedRuntimeTurnInput) =>
+                  Effect.sync(() => {
+                    calls.push(`recover:${turnId}:${terminalStatus}`);
+                    return {
+                      value: {
+                        changed: true,
+                        turn: {
+                          id: turnId,
+                          sessionId: "session_shutdown_forced",
+                          surfacePiSessionId: "surface_shutdown_forced",
+                          threadId: null,
+                          requestSummary: "Interrupted shutdown turn",
+                          turnDecision: "pending",
+                          status: "failed",
+                          assistantMessageId: null,
+                          assistantText: null,
+                          startedAt: "2026-06-29T00:00:00.000Z",
+                          updatedAt: "2026-06-29T00:00:01.000Z",
+                          finishedAt: "2026-06-29T00:00:01.000Z",
+                        },
+                        terminalizedAssistantMessageId: "message_shutdown_forced",
+                        terminalizedCommandIds: ["command_shutdown_1", "command_shutdown_2"],
+                        settledQueueItemId: "queue_shutdown_forced",
+                        cancelledRequestInputIds: [],
+                        cancelledApprovalIds: [],
+                        sessionWaitCleared: false,
+                      },
+                      afterCommit: [],
+                    } as never;
+                  }),
+              } as never),
+            ),
+            Layer.provide(
+              Layer.succeed(RuntimeSurfaceScopeService, {
+                snapshot: () =>
+                  Effect.succeed([
+                    {
+                      surfacePiSessionId: "surface_shutdown_forced",
+                      retainCount: 1,
+                      activeTurnId,
+                    },
+                  ] as never),
+                interrupt: ({
+                  surfacePiSessionId,
+                  turnId,
+                  force,
+                }: Parameters<RuntimeSurfaceScopeServiceService["interrupt"]>[0]) =>
+                  Effect.gen(function* () {
+                    calls.push(
+                      `${force ? "force-interrupt" : "interrupt"}:${surfacePiSessionId}:${turnId}`,
+                    );
+                    if (force) {
+                      yield* Deferred.succeed(forceInterruptEntered, undefined);
+                      yield* Deferred.await(allowForceInterrupt);
+                    }
+                  }),
+              } as never),
+            ),
           ),
-          Layer.provide(
-            Layer.succeed(RuntimeSessionWaitStatePort, unusedPort("RuntimeSessionWaitStatePort")),
-          ),
-          Layer.provide(Layer.succeed(RuntimeEventBus, noRuntimeEventBus())),
-          Layer.provide(Layer.succeed(RuntimeApprovalWaitService, noApprovalWaitService())),
         ),
-      ),
-    ),
+      );
+    },
   );
 });
+
+function noWorkflowAgentSourceIndex(): RuntimeWorkflowAgentSourceIndex["Service"] {
+  const reconcile = Effect.succeed({
+    sourceFingerprint: "empty-workflow-agent-sources",
+    observations: [],
+    diagnostics: [],
+    scannedAt: "2026-06-29T00:00:00.000Z" as never,
+  });
+  return { scaffoldAndReconcile: reconcile, reconcile };
+}
 
 function noRequestInputWaitService(): RuntimeRequestInputWaitService["Service"] {
   return RuntimeRequestInputWaitService.of({

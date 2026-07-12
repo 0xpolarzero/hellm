@@ -102,11 +102,14 @@ export function runtimeCommandStatePortFromStructuredSessionState(
         ),
       ),
     createOrReuseStreamingCommand: (input) =>
-      state.createOrReuseStreamingCommand(input).pipe(
-        Effect.map(mapRuntimeCommandRecord),
-        Effect.map((record) =>
-          mutationResult(record, commandInvalidations(state.workspaceId, record)),
-        ),
+      state.createOrReuseStreamingCommandMutation(input).pipe(
+        Effect.map(({ record: structuredRecord, changed }) => {
+          const record = mapRuntimeCommandRecord(structuredRecord);
+          return mutationResult(
+            record,
+            changed ? commandInvalidations(state.workspaceId, record) : [],
+          );
+        }),
       ),
     findCommandByToolCallId: (input) =>
       state
@@ -117,25 +120,34 @@ export function runtimeCommandStatePortFromStructuredSessionState(
         .findCommandById(input.commandId)
         .pipe(Effect.map((record) => (record ? mapRuntimeCommandRecord(record) : null))),
     updateCommandArguments: (input) =>
-      state.updateCommandArguments(input.commandId, input.arguments).pipe(
-        Effect.map(mapRuntimeCommandRecord),
-        Effect.map((record) =>
-          mutationResult(record, commandInvalidations(state.workspaceId, record)),
-        ),
+      state.updateCommandArgumentsMutation(input.commandId, input.arguments).pipe(
+        Effect.map(({ record: structuredRecord, changed }) => {
+          const record = mapRuntimeCommandRecord(structuredRecord);
+          return mutationResult(
+            record,
+            changed ? commandInvalidations(state.workspaceId, record) : [],
+          );
+        }),
       ),
     startCommand: (input) =>
-      state.startCommand(input.commandId).pipe(
-        Effect.map(mapRuntimeCommandRecord),
-        Effect.map((record) =>
-          mutationResult(record, commandInvalidations(state.workspaceId, record)),
-        ),
+      state.startCommandMutation(input.commandId).pipe(
+        Effect.map(({ record: structuredRecord, changed }) => {
+          const record = mapRuntimeCommandRecord(structuredRecord);
+          return mutationResult(
+            record,
+            changed ? commandInvalidations(state.workspaceId, record) : [],
+          );
+        }),
       ),
     finishCommand: (input) =>
-      state.finishCommand(input).pipe(
-        Effect.map(mapRuntimeCommandRecord),
-        Effect.map((record) =>
-          mutationResult(record, commandInvalidations(state.workspaceId, record)),
-        ),
+      state.finishCommandMutation(input).pipe(
+        Effect.map(({ record: structuredRecord, changed }) => {
+          const record = mapRuntimeCommandRecord(structuredRecord);
+          return mutationResult(
+            record,
+            changed ? commandInvalidations(state.workspaceId, record) : [],
+          );
+        }),
       ),
     recordCommandEvent: (input) => recordCommandEvent(state, input),
     recordStdinWrite: (input) => recordCommandStdinWrite(state, input),

@@ -17,6 +17,7 @@ import {
   RuntimeSourceStatePort,
   RuntimeSurfaceLifecycleStatePort,
   RuntimeThreadStatePort,
+  RuntimeTranscriptStatePort,
   RuntimeTurnStatePort,
   RuntimeWorkspaceStatePort,
   StateContractError,
@@ -24,6 +25,7 @@ import {
   type CommandId,
   type GeneratedPackageName,
   type PromptTarget,
+  type PositiveDurationMs,
   type RuntimeOwnerId,
   type RuntimeSurfaceMessageRecord,
   type StateInvalidationDescriptor,
@@ -206,6 +208,43 @@ describe("workspace state router", () => {
       expect(workspaceA.store.readGeneratedPackageFacts().length).toBe(0);
       const routed = await runTestEffect(router.generatedPackage.readGeneratedPackageFacts());
       expect(routed.length).toBe(1);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("routes request-user-input settings only to the app-global store", async () => {
+    const { registry, cleanup } = createRegistry();
+    const appGlobal = makeStore(registry, "workspace_app_global", "appglobal");
+    const workspaceA = makeStore(registry, "workspace_a", "a");
+    const router = createWorkspaceStateRouter({
+      appGlobalStore: appGlobal.store,
+      workspaceStores: [{ store: workspaceA.store, isDefaultWorkspace: true }],
+    });
+
+    try {
+      await runTestEffect(router.request.setRequestInputVariant({ mode: "blocking" }));
+      await runTestEffect(
+        router.request.setRequestInputBlockingTimeout({
+          enabled: false,
+          durationMs: 90000 as PositiveDurationMs,
+        }),
+      );
+
+      expect((await runTestEffect(router.request.readRequestInputSettings())) as unknown).toEqual({
+        mode: "blocking",
+        blockingTimeout: { enabled: false, durationMs: 90000 },
+      });
+      expect(appGlobal.store.readRequestInputSettings() as unknown).toEqual({
+        mode: "blocking",
+        blockingTimeout: { enabled: false, durationMs: 90000 },
+      });
+      expect(workspaceA.store.readRequestInputSettings() as unknown).toEqual({
+        mode: "nonblocking",
+        blockingTimeout: { enabled: true, durationMs: 300000 },
+      });
+      expect(appGlobal.store.readCurrentStateRevision() as unknown).toBe(2);
+      expect(workspaceA.store.readCurrentStateRevision() as unknown).toBe(0);
     } finally {
       cleanup();
     }
@@ -501,7 +540,7 @@ describe("workspace state router", () => {
     }
   });
 
-  it("wires each of the fourteen runtime-facing port tags to its router service", async () => {
+  it("wires each of the fifteen runtime-facing port tags to its router service", async () => {
     const { registry, cleanup } = createRegistry();
     const appGlobal = makeStore(registry, "workspace_app_global", "appglobal");
     const workspaceA = makeStore(registry, "workspace_a", "a");
@@ -539,6 +578,7 @@ describe("workspace state router", () => {
           const command = yield* RuntimeCommandStatePort;
           const sessionWait = yield* RuntimeSessionWaitStatePort;
           const thread = yield* RuntimeThreadStatePort;
+          const transcript = yield* RuntimeTranscriptStatePort;
           const turn = yield* RuntimeTurnStatePort;
           const episode = yield* RuntimeEpisodeStatePort;
 
@@ -555,6 +595,7 @@ describe("workspace state router", () => {
             command: command === router.command,
             sessionWait: sessionWait === router.sessionWait,
             thread: thread === router.thread,
+            transcript: transcript === router.transcript,
             turn: turn === router.turn,
             episode: episode === router.episode,
           };
@@ -604,6 +645,11 @@ describe("workspace state router", () => {
                 threadId: "thread-unregistered" as ThreadId,
               }),
             ),
+            transcript: yield* tolerate(
+              transcript.readSurfaceTranscript({
+                surfacePiSessionId: "surface-unregistered" as SurfacePiSessionId,
+              }),
+            ),
             turn: yield* tolerate(
               turn.setTurnDecision({ turnId: "turn-unregistered", decision: "reply" }),
             ),
@@ -636,10 +682,11 @@ describe("workspace state router", () => {
         command: true,
         sessionWait: true,
         thread: true,
+        transcript: true,
         turn: true,
         episode: true,
       });
-      expect(Object.keys(observed.dispatched)).toHaveLength(14);
+      expect(Object.keys(observed.dispatched)).toHaveLength(15);
       expect(
         Object.values(observed.dispatched).every(
           (outcome) => outcome === "ok" || outcome === "typed-failure",

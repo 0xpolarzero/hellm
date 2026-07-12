@@ -111,8 +111,6 @@ describe("@svvy/runtime prompt execution service", () => {
             input: {
               target,
               sourceCommandId: commandId,
-              mode: "nonblocking",
-              timeout: null,
               questions: [
                 {
                   title: "Scope",
@@ -160,6 +158,14 @@ describe("@svvy/runtime prompt execution service", () => {
         hasCommandOutputEvent: () => Effect.die("Unexpected hasCommandOutputEvent call."),
       } satisfies RuntimeCommandStatePortService;
       const requestState = {
+        readRequestInputSettings: () =>
+          Effect.succeed({
+            mode: "nonblocking" as const,
+            blockingTimeout: { enabled: true, durationMs: 300_000 as never },
+          }),
+        setRequestInputVariant: () => Effect.die("Unexpected request input variant mutation."),
+        setRequestInputBlockingTimeout: () =>
+          Effect.die("Unexpected request input timeout mutation."),
         createRequestInput: (input) =>
           Effect.sync(() => {
             calls.push(`request:create:${input.turnId}:${input.sourceCommandId}`);
@@ -218,6 +224,9 @@ describe("@svvy/runtime prompt execution service", () => {
         subscribe: () => Effect.die("Unexpected subscription."),
       });
       const toolExecutor = buildRuntimeToolExecutor({
+        acceptedNativeTools: {
+          runRequestUserInput: () => Effect.die("Unexpected accepted request input execution."),
+        },
         extensions,
         target,
         actorBinding: {
@@ -256,7 +265,7 @@ describe("@svvy/runtime prompt execution service", () => {
         turnId,
         surfacePiSessionId,
         piToolCallId: toolCallId,
-        toolName: "request_user_input",
+        toolName: "synthetic_runtime_effect_tool",
         argumentsJson: "{}",
         emit: (update) =>
           Effect.sync(() => {
@@ -288,6 +297,106 @@ describe("@svvy/runtime prompt execution service", () => {
               "publish:0",
             ]);
             assert.strictEqual(emitted.length, 1);
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "routes request_user_input through accepted execution without generic command settlement",
+    () => {
+      const calls: string[] = [];
+      const acceptedInputs: unknown[] = [];
+      const commandState = {
+        createOrReuseStreamingCommand: () =>
+          Effect.sync(() => ({ value: commandRecord({ status: "requested" }), afterCommit: [] })),
+        startCommand: () =>
+          Effect.sync(() => {
+            calls.push("command:start");
+            return { value: commandRecord({ status: "running" }), afterCommit: [] };
+          }),
+        finishCommand: () =>
+          Effect.sync(() => {
+            calls.push("command:generic-finish");
+            return { value: commandRecord({ status: "succeeded" }), afterCommit: [] };
+          }),
+        createCommand: () => Effect.die("Unexpected createCommand call."),
+        findCommandByToolCallId: () => Effect.die("Unexpected command lookup."),
+        findCommandById: () => Effect.die("Unexpected command lookup."),
+        updateCommandArguments: () => Effect.die("Unexpected argument update."),
+        recordCommandEvent: () => Effect.die("Unexpected command event."),
+        recordStdinWrite: () => Effect.die("Unexpected stdin write."),
+        hasCommandOutputEvent: () => Effect.die("Unexpected command output query."),
+      } satisfies RuntimeCommandStatePortService;
+      const eventBus = RuntimeEventBus.of({
+        publishLive: () => Effect.die("Unexpected live publication."),
+        publishStateInvalidations: () => Effect.succeed([]),
+        subscribe: () => Effect.die("Unexpected subscription."),
+      });
+      const toolResult = {
+        content: [{ type: "text" as const, text: '{"answers":[]}' }],
+        details: { status: "succeeded" as const, commandFacts: { questionCount: 0 } },
+      };
+      const toolExecutor = buildRuntimeToolExecutor({
+        acceptedNativeTools: {
+          runRequestUserInput: (input) =>
+            Effect.sync(() => {
+              acceptedInputs.push(input);
+              calls.push("accepted:request-user-input");
+              return { toolResult, result: { answers: [] } };
+            }),
+        },
+        extensions: Extensions.of({
+          nativeTools: {
+            handler: () => Effect.die("Generic handler must not receive request_user_input."),
+          },
+        } as unknown as ExtensionsService),
+        target,
+        actorBinding: {
+          actorKind: "orchestrator",
+          loadedExtensionIds: [extensionId],
+          availableExtensionIds: [],
+          unavailableExtensionIds: [],
+          instructionOrder: [extensionId],
+          source: "surface-binding",
+        },
+        promptContext,
+        commandState,
+        requestState: {} as RuntimeRequestStatePortService,
+        actorBindingState: {} as RuntimeActorExtensionBindingStatePortService,
+        episodeState: {} as RuntimeEpisodeStatePortService,
+        threadState: {} as RuntimeThreadStatePortService,
+        queueState: {} as RuntimeQueueStatePortService,
+        eventBus,
+        sourceInvalidation: {} as RuntimeSourceInvalidationService["Service"],
+      });
+
+      return toolExecutor({
+        turnId,
+        surfacePiSessionId,
+        piToolCallId: toolCallId,
+        toolName: "request_user_input",
+        argumentsJson: JSON.stringify({
+          questions: [
+            {
+              title: "Scope",
+              question: "Run focused tests?",
+              defaultAnswer: "Run focused tests.",
+            },
+          ],
+        }),
+        emit: () => Effect.void,
+      }).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            assert.deepStrictEqual(result, toolResult);
+            assert.deepStrictEqual(calls, ["command:start", "accepted:request-user-input"]);
+            assert.strictEqual(acceptedInputs.length, 1);
+            assert.deepStrictEqual(
+              (acceptedInputs[0] as { commandRecord: RuntimeCommandRecord }).commandRecord.status,
+              "running",
+            );
           }),
         ),
       );

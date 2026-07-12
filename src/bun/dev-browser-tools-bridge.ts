@@ -1,7 +1,14 @@
 import type { BrowserWindow } from "electrobun/bun";
 import { mountElectrobunToolBridge } from "electrobun-browser-tools/bridge";
 import type { AgentDefaults } from "../shared/agent-settings";
-import type { ProviderAuthInfo, WorkspaceInfoResponse } from "../shared/workspace-contract";
+import type {
+  ProviderAuthInfo,
+  SurfaceComposerReadModel,
+  SurfaceQueuedMessagesReadModel,
+  SurfaceSummaryReadModel,
+  SurfaceTranscriptReadModel,
+  WorkspaceInfoResponse,
+} from "../shared/workspace-contract";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 type ErrorKind = "app" | "rpc";
@@ -34,14 +41,11 @@ type DevBrowserToolsBridgeInstance = {
   }) => void;
 };
 
-type OpenSurfaceSnapshot = {
-  messages: unknown[];
-  model: string;
-  provider: string;
-  reasoningEffort: string;
-  systemPrompt: string;
-  promptStatus: string;
-  target: unknown;
+export type DevBrowserToolsSurfaceReadModelBundle = {
+  transcript: SurfaceTranscriptReadModel;
+  summary: SurfaceSummaryReadModel;
+  composer: SurfaceComposerReadModel;
+  queuedMessages: SurfaceQueuedMessagesReadModel;
 };
 
 type WorkspaceSessionsState = {
@@ -83,7 +87,9 @@ type MountDevBrowserToolsBridgeOptions = {
   getWorkspaceBranch: (cwd: string) => string | undefined;
   getOpenWorkspaces: () => WorkspaceInfoResponse[];
   listProviderAuthSummaries: () => Promise<ProviderAuthInfo[]>;
-  listOpenSurfaceSnapshots: (workspaceId: string) => Promise<OpenSurfaceSnapshot[]>;
+  listOpenSurfaceReadModels: (
+    workspaceId: string,
+  ) => Promise<DevBrowserToolsSurfaceReadModelBundle[]>;
   listWorkspaceSessions: (workspaceId: string) => Promise<WorkspaceSessionsState>;
   mainWindow: BrowserWindow;
 };
@@ -114,8 +120,8 @@ export async function mountDevBrowserToolsBridge(
     const sessions = activeWorkspace
       ? await options.listWorkspaceSessions(activeWorkspace.workspaceId)
       : { sessions: [] };
-    const openSurfaces = activeWorkspace
-      ? await options.listOpenSurfaceSnapshots(activeWorkspace.workspaceId)
+    const openSurfaceReadModels = activeWorkspace
+      ? await options.listOpenSurfaceReadModels(activeWorkspace.workspaceId)
       : [];
     const providerAuths = await options.listProviderAuthSummaries();
     const openWorkspaces = options.getOpenWorkspaces();
@@ -146,16 +152,12 @@ export async function mountDevBrowserToolsBridge(
         total: sessions.sessions.length,
       },
       surfaces: {
-        items: openSurfaces.map((surface) => ({
-          messageCount: surface.messages.length,
-          model: surface.model,
-          promptStatus: surface.promptStatus,
-          provider: surface.provider,
-          reasoningEffort: surface.reasoningEffort,
-          systemPrompt: surface.systemPrompt,
-          target: surface.target,
+        items: openSurfaceReadModels.map((readModels) => ({
+          ...readModels,
+          messageCount: readModels.transcript.messages.length,
+          queuedMessageCount: readModels.queuedMessages.queuedMessages.length,
         })),
-        total: openSurfaces.length,
+        total: openSurfaceReadModels.length,
       },
     };
   }

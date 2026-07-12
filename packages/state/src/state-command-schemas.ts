@@ -307,6 +307,15 @@ export const ResetActorExtensionDefaultsCommandInputSchema = Schema.Struct({
 export type ResetActorExtensionDefaultsCommandInput =
   typeof ResetActorExtensionDefaultsCommandInputSchema.Type;
 
+export const SetAgentActorExtensionDefaultsCommandInputSchema = Schema.Struct({
+  actor: Schema.Literals(["orchestrator", "workflow-task"]),
+  extensionUsage: Schema.Record(ExtensionId, ExtensionUsageStateSchema),
+  extensionOrder: Schema.Array(ExtensionId),
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
+});
+export type SetAgentActorExtensionDefaultsCommandInput =
+  typeof SetAgentActorExtensionDefaultsCommandInputSchema.Type;
+
 export const SetExternalInstructionActorUsageCommandInputSchema = Schema.Struct({
   actor: Schema.Literals(["orchestrator", "handler"]),
   profileId: AgentProfileId,
@@ -757,6 +766,24 @@ export const encodeResetActorExtensionDefaultsCommandInputExit = Schema.encodeEx
 );
 export const encodeResetActorExtensionDefaultsCommandInputEffect = Schema.encodeEffect(
   ResetActorExtensionDefaultsCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+
+export const decodeUnknownSetAgentActorExtensionDefaultsCommandInputExit = Schema.decodeUnknownExit(
+  SetAgentActorExtensionDefaultsCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownSetAgentActorExtensionDefaultsCommandInputEffect =
+  Schema.decodeUnknownEffect(
+    SetAgentActorExtensionDefaultsCommandInputSchema,
+    strictBoundaryParseOptions,
+  );
+export const encodeSetAgentActorExtensionDefaultsCommandInputExit = Schema.encodeExit(
+  SetAgentActorExtensionDefaultsCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeSetAgentActorExtensionDefaultsCommandInputEffect = Schema.encodeEffect(
+  SetAgentActorExtensionDefaultsCommandInputSchema,
   strictBoundaryParseOptions,
 );
 

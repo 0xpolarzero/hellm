@@ -59,7 +59,10 @@ export const adoptedEffectRuntimeModuleExports = [
   },
   { module: "effect/ConfigProvider", members: ["fromEnv"] },
   { module: "effect/Context", members: ["Service"] },
-  { module: "effect/DateTime", members: ["formatIso", "now"] },
+  {
+    module: "effect/DateTime",
+    members: ["addDuration", "formatIso", "makeUnsafe", "now"],
+  },
   { module: "effect/Deferred", members: ["await", "fail", "make", "succeed"] },
   { module: "effect/Duration", members: ["millis", "min"] },
   {
@@ -79,6 +82,7 @@ export const adoptedEffectRuntimeModuleExports = [
       "clockWith",
       "die",
       "ensuring",
+      "exit",
       "fail",
       "failCause",
       "flatMap",
@@ -114,10 +118,12 @@ export const adoptedEffectRuntimeModuleExports = [
       "try",
       "tryPromise",
       "uninterruptible",
+      "uninterruptibleMask",
       "void",
     ],
   },
   { module: "effect/Exit", members: ["isFailure", "isSuccess", "match", "succeed", "void"] },
+  { module: "effect/Fiber", members: ["interrupt", "join"] },
   { module: "effect/Crypto", members: ["Crypto"] },
   { module: "effect/FileSystem", members: ["FileSystem"] },
   { module: "effect/Layer", members: ["effect", "mergeAll", "provide", "provideMerge", "succeed"] },
@@ -264,10 +270,34 @@ export const adoptedEffectInstanceMemberPolicies = [
   {
     module: "effect/FileSystem",
     receiver: "FileSystem.FileSystem",
-    members: ["exists", "makeDirectory", "readFileString", "rename", "stat", "writeFileString"],
+    members: [
+      "exists",
+      "link",
+      "makeDirectory",
+      "readFileString",
+      "remove",
+      "rename",
+      "stat",
+      "writeFileString",
+    ],
     allowedSourceGlobs: ["packages/extensions/src/source-edit-sessions.ts"],
     productReason:
-      "Extension source edit sessions use the injected abstract FileSystem service to inspect editable extension source files, read source text, and atomically save source edits under extension-owned source roots without importing host fs modules.",
+      "Extension source edit sessions use the injected abstract FileSystem service to validate specifically referenced user-extension sources, inspect and read editable source files, atomically save edits, and publish new workflow-agent files with a no-clobber hard link under extension-owned source roots without importing host fs modules.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: [
+      "exists",
+      "makeDirectory",
+      "readDirectory",
+      "readFileString",
+      "stat",
+      "writeFileString",
+    ],
+    allowedSourceGlobs: ["packages/extensions/src/workflow-agent-source-records.ts"],
+    productReason:
+      "Extension workflow-agent source discovery and builtin materialization use the injected abstract FileSystem service to enumerate readable app-owned source records, read packaged templates, and create only missing live sources without importing host fs modules.",
   },
   {
     module: "effect/FileSystem",
@@ -335,6 +365,14 @@ export const adoptedEffectInstanceMemberPolicies = [
   {
     module: "effect/Path",
     receiver: "Path.Path",
+    members: ["join", "resolve"],
+    allowedSourceGlobs: ["packages/extensions/src/workflow-agent-source-records.ts"],
+    productReason:
+      "Extension workflow-agent source discovery and builtin materialization resolve only packaged template and app-owned workflow-agent roots through the injected abstract Path service.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
     members: ["basename", "dirname", "join"],
     allowedSourceGlobs: ["packages/extensions/src/generated-package-writer.ts"],
     productReason:
@@ -397,16 +435,41 @@ export const adoptedEffectInstanceMemberPolicies = [
       "Extension source edit sessions hash saved source text into source-version fingerprints and use injected UUID generation for atomic temp filenames without importing host crypto modules.",
   },
   {
+    module: "effect/Crypto",
+    receiver: "Crypto.Crypto",
+    members: ["randomUUIDv4"],
+    allowedSourceGlobs: ["packages/runtime/src/runtime-source-reconcile-recovery-worker.ts"],
+    productReason:
+      "The app-scoped source reconcile recovery worker uses injected UUID generation for a process-unique durable claim owner while retaining explicit owner injection in deterministic lifecycle tests.",
+  },
+  {
+    module: "effect/Crypto",
+    receiver: "Crypto.Crypto",
+    members: ["digest"],
+    allowedSourceGlobs: ["packages/extensions/src/workflow-agent-source-records.ts"],
+    productReason:
+      "Extension workflow-agent source discovery hashes current readable source text into deterministic source-version and fingerprint evidence through the injected Crypto service.",
+  },
+  {
+    module: "effect/Crypto",
+    receiver: "Crypto.Crypto",
+    members: ["digest"],
+    allowedSourceGlobs: ["packages/runtime/src/runtime-workflow-agent-source-index.ts"],
+    productReason:
+      "Runtime hashes sorted admitted workflow-agent observations and diagnostics into the timestamp-independent app-global reconciliation fingerprint committed before startup readiness and generated Workflows builds.",
+  },
+  {
     module: "effect/Semaphore",
     receiver: "Semaphore.Semaphore",
     members: ["withPermit"],
     allowedSourceGlobs: [
       "packages/runtime/src/runtime-event-bus.ts",
+      "packages/runtime/src/runtime-shutdown-admission.ts",
       "packages/runtime/src/runtime-surface-event-publisher.ts",
       "packages/runtime/src/surface-runtime-scope-service.ts",
     ],
     productReason:
-      "The runtime event bus serializes publication through one process-local permit so replay ordering and subscriber fanout remain deterministic, the runtime surface event publisher serializes target-local stream cursor assignment before handing accepted events to the event bus, and retained runtime surface scopes use one prompt permit per live surface so queue dispatch and user cancellation cannot race active pi turns.",
+      "The runtime event bus serializes publication through one process-local permit so replay ordering and subscriber fanout remain deterministic, runtime shutdown admission uses one short permit-protected lane to close admission and track concurrent in-flight public runtime, queue-claim, and non-waiting accepted-tool work before its drain barrier while wait-bearing accepted tools use the same closed-gate check, the runtime surface event publisher serializes target-local stream cursor assignment before handing accepted events to the event bus, and retained runtime surface scopes use one prompt permit per live surface so queue dispatch and user cancellation cannot race active pi turns.",
   },
 ] as const satisfies readonly AdoptedEffectInstanceMemberPolicy[];
 
@@ -444,6 +507,7 @@ export const auditedEffectInstalledExportPolicies = [
     "effect/Exit",
     "effect/Filter",
     "effect/FileSystem",
+    "effect/Fiber",
     "effect/Hash",
     "effect/Layer",
     "effect/LogLevel",
@@ -490,7 +554,6 @@ export const auditedEffectInstalledExportPolicies = [
   ),
   ...[
     "effect/Cache",
-    "effect/Fiber",
     "effect/FiberHandle",
     "effect/FiberMap",
     "effect/FiberSet",
@@ -599,7 +662,7 @@ export const auditedEffectInstalledExportMemberPolicies = [
       "packages/runtime/src/runtime-effect-requests.ts",
     ],
     productReason:
-      "Runtime may probe the optional RuntimeHandlerThreadStartPreparationHost only at the two handler-thread preparation seams named by runtime and Effect package specs.",
+      "Runtime may probe optional accepted-tool composition dependencies only inside RuntimeAcceptedNativeToolExecution and may probe RuntimeHandlerThreadStartPreparationHost at the runtime-effect preparation seam named by runtime and Effect package specs.",
   },
   {
     module: "effect/Queue",
@@ -645,6 +708,25 @@ export const auditedEffectInstalledExportMemberPolicies = [
       "Generated-package promotion uses one short uninterruptible rename/restore critical section so interruption cannot leave the previous ready package outside the canonical live root.",
   },
   {
+    module: "effect/Effect",
+    member: "exit",
+    adoptionState: "adopted-source-gated",
+    allowedSourceGlobs: ["packages/runtime/src/runtime-shutdown-admission.ts"],
+    productReason:
+      "Runtime shutdown admission captures the single shutdown drain outcome, including interruption or defects, so concurrent and repeated callers observe one exact shared receipt outcome.",
+  },
+  {
+    module: "effect/Effect",
+    member: "uninterruptibleMask",
+    adoptionState: "adopted-source-gated",
+    allowedSourceGlobs: [
+      "packages/runtime/src/runtime-shutdown-admission.ts",
+      "packages/runtime/src/runtime-surface-queue-dispatcher-service.ts",
+    ],
+    productReason:
+      "Runtime shutdown admission keeps only admission bookkeeping, marker leadership, the admitted-work completion barrier, admitted-work release, and shared receipt completion uninterruptible while restoring admitted work and the bounded shutdown drain itself to interruptible execution. Runtime prompt dispatch keeps only detached-fiber registration and start-gate release uninterruptible while restoring the prompt fiber itself to interruptible execution.",
+  },
+  {
     module: "effect/Redacted",
     member: "make",
     adoptionState: "adopted-source-gated",
@@ -672,10 +754,14 @@ export const auditedEffectInstalledExportMemberPolicies = [
     (member): AuditedEffectInstalledExportMemberPolicy => ({
       module: "effect/Fiber",
       member,
-      adoptionState: "test-only",
-      allowedSourceGlobs: ["packages/**/*.effect.test.ts"],
+      adoptionState: "adopted-source-gated",
+      allowedSourceGlobs: [
+        "packages/**/*.effect.test.ts",
+        "packages/runtime/src/runtime-surface-queue-dispatcher-service.ts",
+        "packages/runtime/src/surface-runtime-scope-service.ts",
+      ],
       productReason:
-        "Fiber helpers are installed-audited only for tests that observe scoped runtime/facade fibers.",
+        "Runtime surface scopes retain the one actual active prompt fiber so dispatcher joins observe the existing execution exactly once and forced shutdown joins interruption and prompt finalizers before durable recovery. Effect-lane tests may join or interrupt their scoped fixture fibers.",
     }),
   ),
   ...["encodeSync", "toCodecJson"].map(
@@ -817,7 +903,7 @@ export const auditedEffectInstalledExports = [
   },
   {
     module: "effect/DateTime",
-    members: ["formatIso", "now"],
+    members: ["addDuration", "formatIso", "makeUnsafe", "now"],
     scope: "installed-export-audit",
     owner: "docs/specs/package-architecture/effect-v4.spec.md",
     verifiedOn: "2026-06-25",
@@ -845,6 +931,7 @@ export const auditedEffectInstalledExports = [
       "annotateSpans",
       "abortSignal",
       "callback",
+      "exit",
       "fnUntraced",
       "forkChild",
       "forkIn",

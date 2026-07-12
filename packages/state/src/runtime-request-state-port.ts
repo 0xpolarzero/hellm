@@ -6,6 +6,7 @@ import {
   type AnswerRequestInputResult,
   type PromptTarget,
   type CreateRuntimeRequestInputInput,
+  type ExtensionId,
   type RuntimeRequestInputDetailsRecord,
   type RuntimeRequestInputTimeoutRecord,
   type QueueItemId,
@@ -30,6 +31,7 @@ import {
   dedupeInvalidations,
   mutationResult,
   requestInputInvalidation,
+  sessionNavigationInvalidation,
   surfaceInvalidation,
 } from "./state-mutation-result";
 
@@ -61,6 +63,13 @@ function mapRuntimeRequestInputTimeoutRecord(
   return timeout
     ? {
         ...timeout,
+        timerVersion: (() => {
+          assertSafeInteger(timeout.timerVersion, "request input timeout timerVersion");
+          if (timeout.timerVersion <= 0) {
+            throw new RangeError("request input timeout timerVersion must be positive");
+          }
+          return timeout.timerVersion as RuntimeRequestInputTimeoutRecord["timerVersion"];
+        })(),
         durationMs: positiveDurationMs(timeout.durationMs, "request input timeout durationMs"),
         remainingMsWhenPaused:
           timeout.remainingMsWhenPaused === null
@@ -144,11 +153,13 @@ function mapPromptTarget(request: StructuredRequestUserInputRequestRecord): Prom
 function requestInputInvalidations(
   workspaceId: string,
   request: RuntimeRequestInputDetailsRecord | RuntimeRequestInputRecord,
+  options: { readonly includeSessionNavigation?: boolean } = {},
 ): readonly StateInvalidationDescriptor[] {
   return dedupeInvalidations([
     requestInputInvalidation(workspaceId, request.requestId),
     surfaceInvalidation(workspaceId, request.surfacePiSessionId),
     commandInspectorInvalidation(workspaceId, request.commandId),
+    ...(options.includeSessionNavigation ? [sessionNavigationInvalidation(workspaceId)] : []),
   ]);
 }
 
@@ -156,6 +167,31 @@ export function runtimeRequestStatePortFromStructuredSessionState(
   state: StructuredSessionState["Service"],
 ): RuntimeRequestStatePortService {
   return {
+    readRequestInputSettings: () => state.readRequestInputSettings(),
+    setRequestInputVariant: (input) =>
+      state.setRequestInputVariant(input).pipe(
+        Effect.map((settings) =>
+          mutationResult(settings, [
+            { scope: "app", invalidation: { model: "settings" } },
+            {
+              scope: "app",
+              invalidation: {
+                model: "extensions",
+                ids: ["request-user-input" as ExtensionId],
+              },
+            },
+            { scope: "app", invalidation: { model: "agents" } },
+          ]),
+        ),
+      ),
+    setRequestInputBlockingTimeout: (input) =>
+      state
+        .setRequestInputBlockingTimeout(input)
+        .pipe(
+          Effect.map((settings) =>
+            mutationResult(settings, [{ scope: "app", invalidation: { model: "settings" } }]),
+          ),
+        ),
     createRequestInput: (input: CreateRuntimeRequestInputInput) =>
       state
         .createRequestUserInputRequest({
@@ -177,7 +213,12 @@ export function runtimeRequestStatePortFromStructuredSessionState(
         .pipe(
           Effect.map(mapRuntimeRequestInputRecord),
           Effect.map((record) =>
-            mutationResult(record, requestInputInvalidations(state.workspaceId, record)),
+            mutationResult(
+              record,
+              requestInputInvalidations(state.workspaceId, record, {
+                includeSessionNavigation: record.variant === "blocking",
+              }),
+            ),
           ),
         ),
     getRequestInput: (input) =>
@@ -185,25 +226,24 @@ export function runtimeRequestStatePortFromStructuredSessionState(
         .getRequestUserInputRequest(input.requestId)
         .pipe(Effect.map(mapRuntimeRequestInputDetailsRecord)),
     listOpenBlockingRequestInputs: (input) =>
-      state
-        .listSessionStates()
-        .pipe(
-          Effect.map((sessions) =>
-            sessions.flatMap((session) =>
-              session.requestUserInputRequests
-                .filter(
-                  (request) =>
-                    request.variant === "blocking" &&
-                    request.status === "open" &&
-                    (input?.workspaceSessionId == null ||
-                      request.sessionId === input.workspaceSessionId) &&
-                    (input?.surfacePiSessionId == null ||
-                      request.surfacePiSessionId === input.surfacePiSessionId),
-                )
-                .map(mapRuntimeRequestInputDetailsRecord),
-            ),
-          ),
+      state.listSessionStates().pipe(
+        Effect.map((sessions) =>
+          sessions.flatMap((session) => {
+            return session.requestUserInputRequests
+              .filter((request) => {
+                return !(
+                  request.variant !== "blocking" ||
+                  request.status !== "open" ||
+                  (input?.workspaceSessionId != null &&
+                    request.sessionId !== input.workspaceSessionId) ||
+                  (input?.surfacePiSessionId != null &&
+                    request.surfacePiSessionId !== input.surfacePiSessionId)
+                );
+              })
+              .map(mapRuntimeRequestInputDetailsRecord);
+          }),
         ),
+      ),
     answerRequestInput: (input: AnswerRequestInputInput) =>
       Effect.gen(function* () {
         const answered = yield* state.answerRequestUserInput({
@@ -212,12 +252,13 @@ export function runtimeRequestStatePortFromStructuredSessionState(
           questionId: input.questionId,
           answer: input.answer,
           delivery: input.delivery,
+          ...(input.clientSubmission ? { clientSubmission: input.clientSubmission } : {}),
         });
         const queuedItemId = (answered.queuedMessage?.id as QueueItemId | undefined) ?? null;
         const result: AnswerRequestInputResult = {
           requestId: input.requestId,
           questionId: input.questionId,
-          status: "recorded",
+          status: answered.duplicate ? "duplicate" : "recorded",
           delivery:
             answered.request.variant === "blocking"
               ? answered.request.status === "completed"
@@ -232,39 +273,57 @@ export function runtimeRequestStatePortFromStructuredSessionState(
             answer: result,
             target: mapPromptTarget(answered.request),
           },
-          requestInputInvalidations(
-            state.workspaceId,
-            mapRuntimeRequestInputDetailsRecord(answered.request),
-          ),
+          answered.duplicate
+            ? []
+            : requestInputInvalidations(
+                state.workspaceId,
+                mapRuntimeRequestInputDetailsRecord(answered.request),
+                {
+                  includeSessionNavigation:
+                    answered.request.variant === "blocking" && answered.request.status !== "open",
+                },
+              ),
         );
       }),
     defaultOpenRequestInputQuestions: (input) =>
       state.defaultOpenRequestUserInputQuestions(input).pipe(
-        Effect.map(mapRuntimeRequestInputDetailsRecord),
-        Effect.map((record) =>
-          mutationResult(record, requestInputInvalidations(state.workspaceId, record)),
-        ),
+        Effect.map(({ record: structuredRecord, changed }) => {
+          const record = mapRuntimeRequestInputDetailsRecord(structuredRecord);
+          return mutationResult(
+            record,
+            changed
+              ? requestInputInvalidations(state.workspaceId, record, {
+                  includeSessionNavigation: record.variant === "blocking",
+                })
+              : [],
+          );
+        }),
       ),
     cancelRequestInput: (input) =>
       state.cancelRequestUserInputRequest(input).pipe(
-        Effect.map(mapRuntimeRequestInputDetailsRecord),
-        Effect.map((record) =>
-          mutationResult(record, requestInputInvalidations(state.workspaceId, record)),
-        ),
+        Effect.map(({ record: structuredRecord, changed }) => {
+          const record = mapRuntimeRequestInputDetailsRecord(structuredRecord);
+          return mutationResult(
+            record,
+            changed
+              ? requestInputInvalidations(state.workspaceId, record, {
+                  includeSessionNavigation: record.variant === "blocking",
+                })
+              : [],
+          );
+        }),
       ),
     setRequestInputTimerPaused: (input: SetRequestInputTimerPausedInput) =>
       Effect.gen(function* () {
-        const request = yield* state.setRequestUserInputTimerPaused({
+        const { record: structuredRecord, changed } = yield* state.setRequestUserInputTimerPaused({
           surfacePiSessionId: input.surfacePiSessionId,
           requestId: input.requestId,
           paused: input.paused,
         });
+        const request = mapRuntimeRequestInputDetailsRecord(structuredRecord);
         return mutationResult(
-          mapRuntimeRequestInputDetailsRecord(request),
-          requestInputInvalidations(
-            state.workspaceId,
-            mapRuntimeRequestInputDetailsRecord(request),
-          ),
+          request,
+          changed ? requestInputInvalidations(state.workspaceId, request) : [],
         );
       }),
   };

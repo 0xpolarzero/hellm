@@ -10,29 +10,32 @@ import { getNativeToolCommandMetadata, nativeToolCommandMetadata } from "./nativ
 describe("native tool schema catalog", () => {
   it("emits only native-tool extension records in stable extension order", () => {
     const parsed = JSON.parse(
-      buildNativeToolSchemasJson([
-        {
-          id: "thread-handling",
-          title: "Thread Handling",
-          description: "Handler thread tools.",
-          category: "builtin",
-          interface: "native_tool",
-        },
-        {
-          id: "workflows",
-          title: "Workflows",
-          description: "Reusable workflows.",
-          category: "builtin",
-          interface: "svvyx",
-        },
-        {
-          id: "shell",
-          title: "Shell",
-          description: "Run shell commands.",
-          category: "builtin",
-          interface: "native_tool",
-        },
-      ]),
+      buildNativeToolSchemasJson(
+        [
+          {
+            id: "thread-handling",
+            title: "Thread Handling",
+            description: "Handler thread tools.",
+            category: "builtin",
+            interface: "native_tool",
+          },
+          {
+            id: "workflows",
+            title: "Workflows",
+            description: "Reusable workflows.",
+            category: "builtin",
+            interface: "svvyx",
+          },
+          {
+            id: "shell",
+            title: "Shell",
+            description: "Run shell commands.",
+            category: "builtin",
+            interface: "native_tool",
+          },
+        ],
+        "nonblocking",
+      ),
     );
 
     expect(parsed.nativeTools.map((entry: { id: string }) => entry.id)).toEqual([
@@ -47,14 +50,43 @@ describe("native tool schema catalog", () => {
 
   it("fails closed for native-tool extension records without a concrete catalog entry", () => {
     expect(() =>
-      buildNativeToolSchemaJsonForExtension({
-        id: "missing-native-tool",
-        title: "Missing",
-        description: "Missing schema.",
-        category: "test",
-        interface: "native_tool",
-      }),
+      buildNativeToolSchemaJsonForExtension(
+        {
+          id: "missing-native-tool",
+          title: "Missing",
+          description: "Missing schema.",
+          category: "test",
+          interface: "native_tool",
+        },
+        "nonblocking",
+      ),
     ).toThrow("Missing native tool schema definitions for extension: missing-native-tool");
+  });
+
+  it("varies request-user-input tool and questions descriptions only by variant policy", () => {
+    const extension = {
+      id: "request-user-input",
+      title: "Request User Input",
+      description: "Ask the user a bounded question.",
+      category: "builtin",
+      interface: "native_tool",
+    } as const;
+    const nonblockingJson = buildNativeToolSchemaJsonForExtension(extension, "nonblocking");
+    const blockingJson = buildNativeToolSchemaJsonForExtension(extension, "blocking");
+    const nonblocking = JSON.parse(nonblockingJson).tools[0];
+    const blocking = JSON.parse(blockingJson).tools[0];
+
+    expect(nonblocking.description).toContain("Return conservative defaults immediately");
+    expect(nonblocking.parameters.properties.questions.description).toContain(
+      "later user answers are delivered as follow-up messages",
+    );
+    expect(blocking.description).toContain("Wait for the user answers");
+    expect(blocking.parameters.properties.questions.description).toContain(
+      "resolve to their defaults on timeout",
+    );
+    expect(nonblockingJson).not.toBe(blockingJson);
+    expect(nonblockingJson).not.toContain("blockingTimeout");
+    expect(blockingJson).not.toContain("durationMs");
   });
 
   it("owns command projection metadata for native tools", () => {

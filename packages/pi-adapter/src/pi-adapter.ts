@@ -1,5 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -41,6 +42,7 @@ import {
   type ModelInfo,
   type NativeToolResult,
   type OpenPiSessionInput,
+  type PiHistoryEntryRef,
   type PiRuntimeEvent,
   type PiRuntimePathsSnapshot,
   type PiSessionRef,
@@ -372,6 +374,13 @@ function runTurn(
   return Effect.gen(function* () {
     const turnScope = yield* Scope.Scope;
     const runtimeContext = yield* Effect.context<never>();
+    const eventOccurredAt = yield* Effect.clockWith((clock) =>
+      Effect.succeed(
+        clock.currentTimeMillis.pipe(
+          Effect.map((epochMillis) => DateTime.formatIso(DateTime.makeUnsafe(epochMillis))),
+        ),
+      ),
+    );
     const liveEntry = yield* getLiveSession(liveSessions, input.session.surfacePiSessionId);
     if (!liveEntry) {
       return yield* Effect.fail(
@@ -465,6 +474,7 @@ function runTurn(
       input,
       managedSession,
       runtimeContext,
+      eventOccurredAt,
       liveSessions,
       queue,
       runningToolControllers,
@@ -557,6 +567,7 @@ function openTurnStream(
   input: RunPiTurnInput,
   managedSession: CreatePiManagedAgentSessionResult,
   runtimeContext: Context.Context<never>,
+  eventOccurredAt: Effect.Effect<string>,
   liveSessions: Ref.Ref<Map<string, PiLiveSessionEntry>>,
   queue: Queue.Queue<PiRuntimeEvent, PiAdapterError>,
   runningToolControllers: Set<AbortController>,
@@ -566,25 +577,10 @@ function openTurnStream(
     let settled = false;
     let closeStarted = false;
     let terminalQueued = false;
+    let assistantMessageOrdinal = 0;
+    let activeAssistantMessageRef: string | undefined;
     let unsubscribe: (() => void) | undefined;
     let offerChain: Promise<void> = Promise.resolve();
-
-    const queueRuntimeEvents = (
-      events: readonly PiRuntimeEvent[],
-      options: { readonly allowAfterClose?: boolean } = {},
-    ): void => {
-      if (events.length === 0 || (closeStarted && !options.allowAfterClose)) {
-        return;
-      }
-      if (events.some((event) => event.type === "pi.turn.finished")) {
-        terminalQueued = true;
-      }
-      const offerEvents = async () => {
-        await offerPiRuntimeEvents(runtimeContext, queue, events);
-      };
-      offerChain = offerChain.then(offerEvents, offerEvents);
-      void offerChain.catch(() => undefined);
-    };
 
     const closeTurn = (abort: boolean): Effect.Effect<void, PiAdapterError> =>
       Effect.gen(function* () {
@@ -623,7 +619,7 @@ function openTurnStream(
               session: input.session,
               turnId: input.turnId,
               surfacePiSessionId: input.surfacePiSessionId,
-              type: "pi.turn.finished",
+              type: "pi.agent.finished",
               status: "cancelled",
               stopReason: "interrupted",
             });
@@ -651,29 +647,60 @@ function openTurnStream(
     yield* installActiveTurnClose(liveSessions, input, closeTurn);
 
     unsubscribe = managedSession.session.subscribe((event) => {
-      try {
-        const runtimeEvents = normalizePiAgentEventToRuntimeEventsSync({
-          session: input.session,
-          turnId: input.turnId,
-          surfacePiSessionId: input.surfacePiSessionId,
-          event,
-        });
-        queueRuntimeEvents(runtimeEvents);
-      } catch (cause) {
-        void Effect.runPromiseWith(runtimeContext)(
-          Queue.fail(
-            queue,
-            cause instanceof PiAdapterError
-              ? cause
-              : new PiAdapterError({
-                  operation: "pi-adapter.turns.events",
-                  reason: "event-decode-failed",
-                  message: cause instanceof Error ? cause.message : String(cause),
-                  cause,
-                }),
-          ).pipe(Effect.andThen(closeTurn(false))),
-        );
+      if (closeStarted) {
+        return;
       }
+      const eventObject = readUnknownRecord(event);
+      const eventType = typeof eventObject?.type === "string" ? eventObject.type : undefined;
+      const message = readUnknownRecord(eventObject?.message);
+      const messageRole = typeof message?.role === "string" ? message.role : undefined;
+      if (eventType === "message_start" && messageRole === "assistant") {
+        activeAssistantMessageRef = `${input.surfacePiSessionId}:${input.turnId}:assistant:${assistantMessageOrdinal}`;
+        assistantMessageOrdinal += 1;
+      }
+      const assistantMessageRef = activeAssistantMessageRef;
+      if (eventType === "message_end" && messageRole === "assistant") {
+        activeAssistantMessageRef = undefined;
+      }
+      if (eventType === "agent_end") {
+        terminalQueued = true;
+      }
+      const occurredAt = Effect.runPromiseWith(runtimeContext)(eventOccurredAt);
+      const normalizeAndOffer = async () => {
+        try {
+          const piHistoryEntry =
+            eventType === "message_end" &&
+            (messageRole === "user" || messageRole === "assistant" || messageRole === "toolResult")
+              ? await readPersistedPiHistoryEntry(managedSession.session, input.session, message)
+              : null;
+          const runtimeEvents = normalizePiAgentEventToRuntimeEventsSync({
+            session: input.session,
+            turnId: input.turnId,
+            surfacePiSessionId: input.surfacePiSessionId,
+            event,
+            ...(assistantMessageRef ? { assistantMessageRef } : {}),
+            piHistoryEntry,
+            occurredAt: await occurredAt,
+          });
+          await offerPiRuntimeEvents(runtimeContext, queue, runtimeEvents);
+        } catch (cause) {
+          await Effect.runPromiseWith(runtimeContext)(
+            Queue.fail(
+              queue,
+              cause instanceof PiAdapterError
+                ? cause
+                : new PiAdapterError({
+                    operation: "pi-adapter.turns.events",
+                    reason: "event-decode-failed",
+                    message: cause instanceof Error ? cause.message : String(cause),
+                    cause,
+                  }),
+            ),
+          );
+        }
+      };
+      offerChain = offerChain.then(normalizeAndOffer, normalizeAndOffer);
+      void offerChain.catch(() => undefined);
     });
 
     const promptText = runtimeSubmittedMessagePromptText(input.userMessage);
@@ -708,6 +735,28 @@ function openTurnStream(
       closed: Deferred.await(closed),
     };
   });
+}
+
+async function readPersistedPiHistoryEntry(
+  agentSession: AgentSession,
+  session: RunPiTurnInput["session"],
+  message: Record<string, unknown> | null,
+): Promise<PiHistoryEntryRef | null> {
+  await Promise.resolve();
+  const entry = agentSession.sessionManager.getLeafEntry();
+  if (!entry || entry.type !== "message" || !message || (entry.message as unknown) !== message) {
+    return null;
+  }
+  return {
+    session,
+    entryId: entry.id,
+  };
+}
+
+function readUnknownRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 async function offerPiRuntimeEvents(

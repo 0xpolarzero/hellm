@@ -14,6 +14,7 @@ import {
   refreshRuntimeGeneratedPackages,
   type RuntimeGeneratedPackageRefreshHost,
 } from "./generated-package-refresh";
+import { RuntimeWorkflowAgentSourceIndex } from "./runtime-workflow-agent-source-index";
 
 export interface RuntimeGeneratedPackageRefreshHostPortService extends Omit<
   RuntimeGeneratedPackageRefreshHost,
@@ -47,6 +48,7 @@ export const layerRuntimeGeneratedPackageRefreshService = Layer.effect(
     const generatedPackageState = yield* RuntimeGeneratedPackageStatePort;
     const eventBus = yield* RuntimeEventBus;
     const extensions = yield* Extensions;
+    const workflowAgentSources = yield* RuntimeWorkflowAgentSourceIndex;
 
     return RuntimeGeneratedPackageRefreshService.of({
       refresh: (input) =>
@@ -55,6 +57,23 @@ export const layerRuntimeGeneratedPackageRefreshService = Layer.effect(
           buildGeneratedPackages: (buildInput) =>
             Effect.gen(function* () {
               if (buildInput.packages.includes("@svvyx/workflows")) {
+                const reconcile = yield* workflowAgentSources.reconcile;
+                const invalid = reconcile.observations.filter(
+                  (observation) => observation.validationStatus === "invalid",
+                );
+                if (invalid.length > 0) {
+                  return yield* Effect.fail(
+                    new RuntimeContractError({
+                      operation:
+                        "runtime.sourceInvalidation.refreshGeneratedPackages.admitWorkflowAgents",
+                      reason: "invalid-input",
+                      message: `Generated Workflows package build is blocked by invalid workflow-agent sources: ${invalid
+                        .map((observation) => observation.sourceId)
+                        .toSorted()
+                        .join(", ")}.`,
+                    }),
+                  );
+                }
                 yield* generatedPackageRefreshHost.materializeCoreTypeContractPackage();
               }
               return yield* extensions.generatedPackages.refresh(buildInput);

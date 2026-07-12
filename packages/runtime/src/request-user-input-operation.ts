@@ -7,7 +7,6 @@ import {
   type NativeToolResult,
   type PromptExecutionContext,
   type PromptTarget,
-  type PositiveDurationMs,
   type RequestInputRequestId,
   RuntimeRequestStatePort,
   type RuntimeCommandRecord,
@@ -48,13 +47,6 @@ export type RunAcceptedRequestUserInputToolCallInput = {
   actorBinding: ActorExtensionBinding;
   command: RuntimeRequestUserInputCommandContext;
   commandRecord: RuntimeCommandRecord;
-  requestInput: {
-    mode: "nonblocking" | "blocking";
-    blockingTimeout: {
-      enabled: boolean;
-      durationMs: PositiveDurationMs;
-    };
-  };
 };
 
 export type RunAcceptedRequestUserInputToolCallResult = {
@@ -118,6 +110,16 @@ function answeredRequestInputSummary(result: RequestUserInputResult): string {
 export const runAcceptedRequestUserInputToolCall = Effect.fn(
   "@svvy/runtime/request-user-input.runAccepted",
 )(function* (input: RunAcceptedRequestUserInputToolCallInput) {
+  const requestState = yield* RuntimeRequestStatePort;
+  const requestInputSettings = yield* requestState.readRequestInputSettings().pipe(
+    Effect.mapError((cause) =>
+      runtimeError({
+        reason: "stale-state",
+        message: "Failed to read committed request_user_input settings.",
+        cause,
+      }),
+    ),
+  );
   const handlerResult = yield* requestUserInputHandler.invoke(buildHandlerInvocation(input)).pipe(
     Effect.mapError((cause) =>
       runtimeError({
@@ -145,9 +147,11 @@ export const runAcceptedRequestUserInputToolCall = Effect.fn(
             ...operation.request,
             input: {
               ...operation.request.input,
-              mode: input.requestInput.mode,
+              mode: requestInputSettings.mode,
               timeout:
-                input.requestInput.mode === "blocking" ? input.requestInput.blockingTimeout : null,
+                requestInputSettings.mode === "blocking"
+                  ? requestInputSettings.blockingTimeout
+                  : null,
             },
           }
         : operation.request;
@@ -159,6 +163,7 @@ export const runAcceptedRequestUserInputToolCall = Effect.fn(
           toolItemId: input.toolItemId,
         },
         request,
+        requestInputSettings,
       ),
     );
   }
@@ -190,7 +195,7 @@ export const runAcceptedRequestUserInputToolCall = Effect.fn(
         }.`,
         facts: {
           requestId: requestInputEffect.request.requestId as RequestInputRequestId,
-          variant: input.requestInput.mode,
+          variant: requestInputSettings.mode,
           questionCount,
         },
       },
@@ -205,8 +210,7 @@ export const runAcceptedRequestUserInputToolCall = Effect.fn(
       ),
     );
 
-  if (input.requestInput.mode === "blocking") {
-    const requestState = yield* RuntimeRequestStatePort;
+  if (requestInputSettings.mode === "blocking") {
     const requestDetails = yield* requestState
       .getRequestInput({
         requestId: requestInputEffect.request.requestId as RequestInputRequestId,

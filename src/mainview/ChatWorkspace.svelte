@@ -3,9 +3,8 @@
   import { createHotkeys } from "@tanstack/svelte-hotkeys";
   import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
   import PanelLeftDashedIcon from "@lucide/svelte/icons/panel-left-dashed";
-  import type { AssistantMessage, Model } from "@mariozechner/pi-ai";
-  import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-  import type { AppAppearance } from "../shared/agent-settings";
+  import type { RendererTranscriptAssistantEntry } from "../shared/renderer-transcript";
+  import type { AppAppearance, ReasoningEffort as ThinkingLevel } from "../shared/agent-settings";
   import CommandPalette from "./CommandPalette.svelte";
   import DockviewWorkspace from "./DockviewWorkspace.svelte";
   import { formatTimestamp } from "./chat-format";
@@ -60,6 +59,7 @@
     type ChatPaneState,
     type ChatSurfaceController,
     type ComposerPromptSubmission,
+    type RendererSurfaceModel,
   } from "./chat-runtime";
   import {
     createEmptyPaneLayout,
@@ -137,12 +137,12 @@
   }: Props = $props();
   const sidebarToggleShortcut = getShortcutReadable("sidebar.toggle");
 
-  let messages = $state<ChatSurfaceController["agent"]["state"]["messages"]>([]);
-  let streamMessage = $state<AssistantMessage | null>(null);
+  let messages = $state<ChatSurfaceController["view"]["messages"]>([]);
+  let streamMessage = $state<RendererTranscriptAssistantEntry | null>(null);
   let pendingToolCalls = $state(new Set<string>());
   let isStreaming = $state(false);
   let errorMessage = $state<string | undefined>(undefined);
-  let currentModel = $state<Model<any> | null>(null);
+  let currentModel = $state<RendererSurfaceModel | null>(null);
   let currentThinkingLevel = $state<ThinkingLevel>("off");
   let showModelPicker = $state(false);
   let modelChoices = $state<AgentModelChoice[]>([]);
@@ -242,7 +242,7 @@
     binding: WorkspacePaneSurfaceTarget | null | undefined,
     paneController: ChatSurfaceController | null,
   ): SidebarPaneTone {
-    if (paneController?.agent.state.error) {
+    if (paneController?.view.error) {
       return "error";
     }
     if (!binding?.workspaceSessionId) {
@@ -369,8 +369,8 @@
     if (binding && binding.surface !== "orchestrator" && binding.surface !== "handler") {
       return binding.workspaceSessionId;
     }
-    const model = paneController?.agent.state.model;
-    const thinking = paneController?.agent.state.thinkingLevel;
+    const model = paneController?.view.model;
+    const thinking = paneController?.view.thinkingLevel;
     if (!model) return "No agent";
     return `${model.provider}/${model.id} · ${thinking}`;
   }
@@ -392,10 +392,10 @@
     paneController: ChatSurfaceController | null,
     binding?: WorkspacePaneSurfaceTarget | null,
   ): string {
-    if (paneController?.agent.state.isStreaming || paneController?.promptStatus === "streaming") {
+    if (paneController?.view.isStreaming || paneController?.promptStatus === "streaming") {
       return "running";
     }
-    if (paneController?.agent.state.error) {
+    if (paneController?.view.error) {
       return "failed";
     }
     if (binding?.surface && binding.surface !== "orchestrator" && binding.surface !== "handler") {
@@ -406,8 +406,8 @@
   function getPaneContextBudget(paneController: ChatSurfaceController | null): ContextBudget | null {
     if (!paneController) return null;
     return buildSurfaceContextBudget(
-      paneController.agent.state.messages,
-      paneController.agent.state.model,
+      paneController.view.messages,
+      paneController.view.model,
     );
   }
   const summaryMessageCount = $derived(conversationSummary.messageCount);
@@ -626,7 +626,7 @@
   }
 
   function getLatestAssistantFailureMessage(
-    messagesSnapshot: ChatSurfaceController["agent"]["state"]["messages"],
+    messagesSnapshot: ChatSurfaceController["view"]["messages"],
   ): string | undefined {
     const lastMessage = messagesSnapshot[messagesSnapshot.length - 1];
     if (!lastMessage || lastMessage.role !== "assistant") return undefined;
@@ -854,16 +854,7 @@
             runtime,
             prompt,
             panelId,
-            onCreatedTarget: async (target) => {
-              await runtime.storage.promptHistory.append({
-                text: prompt.trim(),
-                sentAt: Date.now(),
-                workspaceId: runtime.workspaceId,
-                sessionId: target.workspaceSessionId,
-              });
-            },
           });
-          promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
         }),
       0,
     );
@@ -1024,7 +1015,6 @@
       }
 
       await surface.sendPrompt(input, panelId);
-      promptHistory = await runtime.storage.promptHistory.list(runtime.workspaceId);
       return true;
     } finally {
       sendingPrompt = false;
@@ -1047,9 +1037,9 @@
     if (copyTranscriptState.status === "copying") return;
 
     const paneController = runtime.getPaneController(panelId);
-    const agent = paneController?.agent;
-    const activeModel = agent?.state.model;
-    if (!paneController || !agent || !activeModel) {
+    const view = paneController?.view;
+    const activeModel = view?.model;
+    if (!paneController || !view || !activeModel) {
       return;
     }
     const session =
@@ -1057,7 +1047,7 @@
       currentSession;
     const exportText = buildSessionTranscriptExport({
       session: {
-        id: session?.id ?? agent.sessionId ?? "unknown-session",
+        id: session?.id ?? view.sessionId ?? "unknown-session",
         title: getSurfaceDisplayTitle(
           paneController.target,
           sessions,
@@ -1071,14 +1061,14 @@
         paneController.target ?? {
           workspaceSessionId: session?.id ?? "unknown-session",
           surface: "orchestrator",
-          surfacePiSessionId: agent.sessionId ?? "unknown-surface",
+          surfacePiSessionId: view.sessionId ?? "unknown-surface",
         },
       provider: activeModel.provider,
       model: activeModel.id,
-      reasoningEffort: agent.state.thinkingLevel,
-      systemPrompt: paneController.resolvedSystemPrompt,
-      messages: agent.state.messages,
-      streamMessage: agent.state.streamMessage?.role === "assistant" ? agent.state.streamMessage : null,
+      reasoningEffort: view.thinkingLevel,
+      systemPrompt: "",
+      messages: view.messages,
+      streamMessage: view.streamMessage,
     });
 
     copyTranscriptState = { panelId, status: "copying" };
@@ -1379,21 +1369,22 @@
       return;
     }
 
-    const nextMessages = [...surface.agent.state.messages];
+    const nextMessages = [...surface.view.messages];
     messages = nextMessages;
     streamMessage =
-      surface.agent.state.streamMessage?.role === "assistant"
-        ? surface.agent.state.streamMessage
+      surface.view.streamMessage?.role === "assistant"
+        ? surface.view.streamMessage
         : null;
-    pendingToolCalls = new Set(surface.agent.state.pendingToolCalls);
-    isStreaming = surface.agent.state.isStreaming || surface.promptStatus === "streaming";
-    errorMessage = surface.agent.state.error ?? getLatestAssistantFailureMessage(nextMessages);
-    currentModel = surface.agent.state.model;
-    currentThinkingLevel = surface.agent.state.thinkingLevel as ThinkingLevel;
+    pendingToolCalls = new Set(surface.view.pendingToolCalls);
+    isStreaming = surface.view.isStreaming || surface.promptStatus === "streaming";
+    errorMessage = surface.view.error ?? getLatestAssistantFailureMessage(nextMessages);
+    currentModel = surface.view.model;
+    currentThinkingLevel = surface.view.thinkingLevel as ThinkingLevel;
   }
 
   function syncRuntimeState() {
     sessions = [...runtime.sessions];
+    promptHistory = [...runtime.promptHistorySnapshot];
     workspaceBranch = runtime.branch;
     sessionNavigation = runtime.sessionNavigation;
     appLogSummary = runtime.appLogSummary;
@@ -1444,14 +1435,6 @@
       .markRendererReady()
       .catch((error) => console.error("Failed to report renderer readiness:", error));
 
-    void runtime.storage.promptHistory
-      .list(runtime.workspaceId)
-      .then((entries) => {
-        promptHistory = entries;
-      })
-      .catch((error) => {
-        console.error("Failed to load prompt history:", error);
-      });
     void runtime
       .listWorkspacePaths()
       .then((paths) => {
@@ -1674,10 +1657,10 @@
     onSelect={(model, choice) => {
       const nextThinkingLevel = clampThinkingLevelForModel(choice);
       currentModel = model;
-      currentSurfaceController?.agent.setModel(model);
+      currentSurfaceController?.setModel(model);
       if (nextThinkingLevel !== currentThinkingLevel) {
         currentThinkingLevel = nextThinkingLevel;
-        currentSurfaceController?.agent.setThinkingLevel(nextThinkingLevel);
+        currentSurfaceController?.setThinkingLevel(nextThinkingLevel);
       }
       showModelPicker = false;
     }}

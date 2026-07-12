@@ -61,6 +61,7 @@ describe("RuntimeCommandStatePort", () => {
           });
           const foundById = yield* port.findCommandById({ commandId: command.value.id });
           const running = yield* port.startCommand({ commandId: command.value.id });
+          const replayedStart = yield* port.startCommand({ commandId: command.value.id });
           const commandEvent = yield* port.recordCommandEvent({
             sessionId: "session-runtime-command-state-port",
             commandId: command.value.id,
@@ -97,6 +98,26 @@ describe("RuntimeCommandStatePort", () => {
             summary: "ok",
             facts: { toolCallId: "tool-call-command-port", exitCode: 0 },
           });
+          const replayedFinish = yield* port.finishCommand({
+            commandId: command.value.id,
+            status: "cancelled",
+            summary: "Late cleanup.",
+          });
+          const lateStart = yield* port.startCommand({ commandId: command.value.id });
+          const lateArguments = yield* port.updateCommandArguments({
+            commandId: command.value.id,
+            arguments: { cmd: "late command" },
+          });
+          const lateStreamingUpdate = yield* port.createOrReuseStreamingCommand({
+            toolCallId: "tool-call-command-port",
+            turnId: turn.id,
+            surfacePiSessionId: "surface-runtime-command-state-port",
+            toolName: "exec_command",
+            executor: "orchestrator",
+            visibility: "surface",
+            title: "Late tool event",
+            summary: "Late tool event",
+          });
 
           expect(command.afterCommit as unknown).toEqual([
             {
@@ -122,6 +143,8 @@ describe("RuntimeCommandStatePort", () => {
           expect(foundById?.id).toBe(command.value.id);
           expect(running.value.status).toBe("running");
           expect(running.afterCommit as unknown).toEqual(command.afterCommit as unknown);
+          expect(replayedStart.value).toEqual(running.value);
+          expect(replayedStart.afterCommit).toEqual([]);
           expect(hasLiveStdout).toBeTrue();
           expect(hasLiveStderr).toBeFalse();
           expect(commandEvent.afterCommit as unknown).toEqual(command.afterCommit as unknown);
@@ -145,6 +168,15 @@ describe("RuntimeCommandStatePort", () => {
             finishedAt: expect.any(String),
           });
           expect(finished.afterCommit as unknown).toEqual(command.afterCommit as unknown);
+          for (const lateMutation of [
+            replayedFinish,
+            lateStart,
+            lateArguments,
+            lateStreamingUpdate,
+          ]) {
+            expect(lateMutation.value).toEqual(finished.value);
+            expect(lateMutation.afterCommit).toEqual([]);
+          }
         }).pipe(
           Effect.provide(
             layerRuntimeCommandStatePort.pipe(

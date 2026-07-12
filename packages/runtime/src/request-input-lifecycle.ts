@@ -5,11 +5,18 @@ import {
   type AnswerRequestInputInput,
   type AnswerRequestInputResult,
   type PromptTarget,
+  type SetRequestInputBlockingTimeoutInput,
+  type SetRequestInputBlockingTimeoutResult,
   type SetRequestInputTimerPausedInput,
   type SetRequestInputTimerPausedResult,
+  type SetRequestInputVariantInput,
+  type SetRequestInputVariantResult,
 } from "@svvy/core";
 import { RuntimeEventBus } from "./runtime-event-bus";
+import type { RuntimeQueueWakeServiceService } from "./runtime-queue-wake-port";
 import { RuntimeRequestInputWaitService } from "./runtime-request-input-wait-service";
+import { RuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
+import { RuntimeWorkspaceScopeService } from "./workspace-runtime-scope-service";
 
 export type RuntimeRequestInputAnswerCommittedInput = {
   readonly surfacePiSessionId: AnswerRequestInputInput["surfacePiSessionId"];
@@ -21,6 +28,84 @@ export type RuntimeRequestInputAnswerCommittedInput = {
 export type RuntimeRequestInputTimerPausedCommittedInput = {
   readonly requestId: SetRequestInputTimerPausedResult["requestId"];
 };
+
+export function setRuntimeRequestInputVariant(
+  input: SetRequestInputVariantInput,
+): Effect.Effect<
+  SetRequestInputVariantResult,
+  RuntimeContractError,
+  | RuntimeEventBus
+  | RuntimeRequestStatePort
+  | RuntimeSourceInvalidationService
+  | RuntimeWorkspaceScopeService
+> {
+  return Effect.gen(function* () {
+    const requestState = yield* RuntimeRequestStatePort;
+    const eventBus = yield* RuntimeEventBus;
+    const sourceInvalidation = yield* RuntimeSourceInvalidationService;
+    const workspaceScopes = yield* RuntimeWorkspaceScopeService;
+    const result = yield* requestState
+      .setRequestInputVariant(input)
+      .pipe(
+        Effect.mapError((cause) => mapRequestStateError("runtime.requestInput.setVariant", cause)),
+      );
+    yield* eventBus.publishStateInvalidations({ afterCommit: result.afterCommit }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new RuntimeContractError({
+            operation: "runtime.requestInput.setVariant",
+            reason: "stale-state",
+            message: "Runtime event bus did not accept request-input variant notifications.",
+            cause,
+          }),
+      ),
+    );
+    const acquired = yield* workspaceScopes.snapshot();
+    yield* Effect.forEach(
+      acquired.toSorted((left, right) => left.workspaceId.localeCompare(right.workspaceId)),
+      ({ workspaceId }) =>
+        sourceInvalidation.refreshGeneratedContext({
+          scope: "workspace",
+          workspaceId,
+          reason: "profile-settings-changed",
+        }),
+      { discard: true },
+    );
+    return result.value;
+  });
+}
+
+export function setRuntimeRequestInputBlockingTimeout(
+  input: SetRequestInputBlockingTimeoutInput,
+): Effect.Effect<
+  SetRequestInputBlockingTimeoutResult,
+  RuntimeContractError,
+  RuntimeEventBus | RuntimeRequestStatePort
+> {
+  return Effect.gen(function* () {
+    const requestState = yield* RuntimeRequestStatePort;
+    const eventBus = yield* RuntimeEventBus;
+    const result = yield* requestState
+      .setRequestInputBlockingTimeout(input)
+      .pipe(
+        Effect.mapError((cause) =>
+          mapRequestStateError("runtime.requestInput.setBlockingTimeout", cause),
+        ),
+      );
+    yield* eventBus.publishStateInvalidations({ afterCommit: result.afterCommit }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new RuntimeContractError({
+            operation: "runtime.requestInput.setBlockingTimeout",
+            reason: "stale-state",
+            message: "Runtime event bus did not accept request-input timeout notifications.",
+            cause,
+          }),
+      ),
+    );
+    return result.value;
+  });
+}
 
 function mapRequestStateError(
   operation: string,
@@ -42,6 +127,7 @@ function mapRequestStateError(
 
 export function answerRuntimeRequestInput(
   input: AnswerRequestInputInput,
+  wakeSurface: RuntimeQueueWakeServiceService["wakeSurface"] = () => Effect.void,
 ): Effect.Effect<
   AnswerRequestInputResult,
   RuntimeContractError,
@@ -66,12 +152,19 @@ export function answerRuntimeRequestInput(
       ),
     );
     const result = answerResult.value.answer;
-    yield* waitService.afterAnswerCommitted({
-      surfacePiSessionId: input.surfacePiSessionId,
-      requestId: input.requestId,
-      delivery: result.delivery,
-      target: answerResult.value.target,
-    });
+    if (
+      result.status !== "duplicate" ||
+      result.delivery.kind === "blocking-resolved" ||
+      result.delivery.kind === "blocking-open"
+    ) {
+      yield* waitService.afterAnswerCommitted({
+        surfacePiSessionId: input.surfacePiSessionId,
+        requestId: input.requestId,
+        delivery: result.delivery,
+        target: answerResult.value.target,
+        wakeSurface,
+      });
+    }
     return result;
   });
 }

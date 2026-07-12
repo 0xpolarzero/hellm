@@ -168,6 +168,8 @@ function approvalState(calls: string[]): RuntimeApprovalStatePortService {
         calls.push(`resolve:${input.requestId}:${input.status}`);
         return mutation(approvalRecord(input.status, input.decisionReason ?? null), [
           approvalInvalidation,
+          commandInvalidation,
+          waitInvalidation,
         ]);
       }),
     listOpenApprovalRequests: () => Effect.die("Unexpected approval listing."),
@@ -217,7 +219,7 @@ function sessionWaitState(calls: string[]): RuntimeSessionWaitStatePortService {
 }
 
 describe("runtime approval lifecycle", () => {
-  it.effect("resolves approved answers through state before publishing and waking waiters", () =>
+  it.effect("publishes the atomic approved state transition before waking waiters", () =>
     Effect.gen(function* () {
       const calls: string[] = [];
 
@@ -238,16 +240,12 @@ describe("runtime approval lifecycle", () => {
         `lookup:${approvalId}`,
         `resolve:${approvalId}:approved`,
         "publish:runtimeApprovals",
-        `start-command:${commandId}`,
-        "publish:commandInspector",
-        `clear-wait:${sessionId}`,
-        "publish:sessionNavigation",
         `wait:${approvalId}:approved`,
       ]);
     }),
   );
 
-  it.effect("resolves denied answers by cancelling the command before waking waiters", () =>
+  it.effect("publishes the atomic denied state transition before waking waiters", () =>
     Effect.gen(function* () {
       const calls: string[] = [];
 
@@ -268,11 +266,6 @@ describe("runtime approval lifecycle", () => {
         `lookup:${approvalId}`,
         `resolve:${approvalId}:denied`,
         "publish:runtimeApprovals",
-        `find-command:${commandId}`,
-        `finish-command:${commandId}:cancelled`,
-        "publish:commandInspector",
-        `clear-wait:${sessionId}`,
-        "publish:sessionNavigation",
         `wait:${approvalId}:Denied by test.`,
       ]);
     }),
@@ -306,10 +299,6 @@ describe("runtime approval lifecycle", () => {
         `lookup:${approvalId}`,
         `resolve:${approvalId}:approved`,
         "publish:runtimeApprovals",
-        `start-command:${commandId}`,
-        "publish:commandInspector",
-        `clear-wait:${sessionId}`,
-        "publish:sessionNavigation",
         `wait:${approvalId}:approved`,
       ]);
     }),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
+import type { RendererTranscriptAssistantEntry } from "../shared/renderer-transcript";
 import {
   buildContextBudgetFromUsage,
   buildSurfaceContextBudget,
@@ -7,7 +7,7 @@ import {
   getContextBudgetTone,
 } from "./context-budget";
 
-function assistantWithInput(input: number): AssistantMessage {
+function assistantWithInput(input: number): RendererTranscriptAssistantEntry {
   return {
     role: "assistant",
     content: [{ type: "text", text: "ok" }],

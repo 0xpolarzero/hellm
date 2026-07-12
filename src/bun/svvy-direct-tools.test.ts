@@ -30,7 +30,10 @@ import {
 import { createSvvyDirectTools } from "./svvy-direct-tools";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
 import type { RuntimeStateWriteLane } from "./ordered-runtime-state-write-lane";
-import { createAgentSettingsStore } from "./agent-settings-store";
+import type {
+  AgentProfileAuthoritySnapshot,
+  AgentProfileMutation,
+} from "./agent-profile-mutation-store";
 import { DEFAULT_ORCHESTRATOR_PROFILE_ID } from "../shared/agent-settings";
 import type {
   AbsolutePath,
@@ -58,6 +61,51 @@ const testSandboxHelperPath = join(
 const testDigest = {
   sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
 };
+
+function createTestAgentProfileSnapshot(): AgentProfileAuthoritySnapshot {
+  const updatedAt = "2026-06-09T00:00:00.000Z";
+  return {
+    configuredProfiles: [
+      {
+        profileId: "thread-handler",
+        actor: "handler",
+        name: "Thread handler",
+        providerId: "openai",
+        modelId: "gpt-5.4-mini",
+        reasoning: { effort: "medium" },
+        followComposer: false,
+        extensionUsage: {},
+        extensionOrder: [],
+        position: 0,
+        updatedAt,
+        builtin: true,
+        locked: true,
+        deletable: false,
+      },
+      {
+        profileId: "default-orchestrator",
+        actor: "orchestrator",
+        name: "Default orchestrator",
+        providerId: "openai",
+        modelId: "gpt-5.4",
+        reasoning: { effort: "medium" },
+        followComposer: false,
+        extensionUsage: {},
+        extensionOrder: [],
+        position: 0,
+        updatedAt,
+        builtin: true,
+        locked: true,
+        deletable: false,
+      },
+    ],
+    workflowAgents: [],
+    actorExtensionDefaults: [
+      { actor: "orchestrator", extensionUsage: {}, extensionOrder: [], updatedAt },
+      { actor: "workflow-task", extensionUsage: {}, extensionOrder: [], updatedAt },
+    ],
+  } as unknown as AgentProfileAuthoritySnapshot;
+}
 
 function createSvvyDirectToolsForTest(
   options: Omit<
@@ -2495,8 +2543,13 @@ describe("svvy direct tools", () => {
         "});",
       ].join("\n"),
     );
+    const appliedAgentProfileMutations: AgentProfileMutation[] = [];
     const execTool = findTool(
       createSvvyDirectToolsForTest({
+        agentProfileSnapshot: createTestAgentProfileSnapshot(),
+        applyAgentProfileMutations: async (mutations) => {
+          appliedAgentProfileMutations.push(...structuredClone(mutations));
+        },
         cwd,
         workflowsGeneratedPackagePath: packageRoot,
         workflowsModelCatalog: () => [
@@ -2533,9 +2586,27 @@ describe("svvy direct tools", () => {
       exportName: "reviewerAgent",
       sourcePath: join(sourceRoot, "agents", "reviewerAgent.agent.json"),
     });
-    expect(
-      JSON.parse(readFileSync(join(sourceRoot, "agents", "reviewerAgent.agent.json"), "utf8")),
-    ).toMatchObject({
+    expect(existsSync(join(sourceRoot, "agents", "reviewerAgent.agent.json"))).toBe(false);
+    expect(existsSync(join(packageRoot, "agents", "reviewerAgent.ts"))).toBe(false);
+    expect(appliedAgentProfileMutations).toHaveLength(1);
+    expect(appliedAgentProfileMutations[0]).toMatchObject({
+      kind: "workflow-agent-source.upsert",
+      sourceId: "reviewerAgent",
+      overwrite: false,
+      draft: {
+        label: "Reviewer",
+        provider: "openai",
+        model: "gpt-5.4",
+        reasoningEffort: "medium",
+        instructions: "Review strictly.",
+        overrides: { shell: "loaded" },
+        extensionOrder: [],
+      },
+    });
+    if (appliedAgentProfileMutations[0]?.kind !== "workflow-agent-source.upsert") {
+      throw new Error("Expected a workflow-agent source upsert mutation.");
+    }
+    expect(JSON.parse(appliedAgentProfileMutations[0].text)).toMatchObject({
       id: "reviewerAgent",
       label: "Reviewer",
       provider: "openai",
@@ -2543,12 +2614,6 @@ describe("svvy direct tools", () => {
       reasoning: { effort: "medium" },
       overrides: { shell: "loaded" },
     });
-    expect(readFileSync(join(packageRoot, "agents", "index.ts"), "utf8")).toContain(
-      "export function defineTaskAgent",
-    );
-    expect(readFileSync(join(packageRoot, "agents", "index.ts"), "utf8")).toContain(
-      'export { reviewerAgent } from "./reviewerAgent";',
-    );
 
     await expect(
       execTool.execute(
@@ -2561,6 +2626,7 @@ describe("svvy direct tools", () => {
       ),
     ).rejects.toThrow("invalid_agent_source");
     expect(existsSync(join(sourceRoot, "agents", "dynamicAgent.agent.json"))).toBe(false);
+    expect(appliedAgentProfileMutations).toHaveLength(1);
   });
 
   it("fails svvyx workflows build with structured diagnostics for invalid agent records", async () => {
@@ -3847,11 +3913,7 @@ if (readFileSync(target, "utf8") !== "before\n") {
   it("replays svvyx extensions runtime-effect transport intents in parent state", async () => {
     const cwd = createTempDir();
     const extensionsRoot = join(cwd, "extensions");
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd,
-      agentDir: join(cwd, ".agent"),
-      workflowsSourceRoot: join(cwd, "workflows"),
-    });
+    const appliedAgentProfileMutations: AgentProfileMutation[] = [];
     const store = createStructuredSessionStateStore({
       digest: testDigest,
       workspace: {
@@ -3907,7 +3969,10 @@ if (readFileSync(target, "utf8") !== "before\n") {
     store.startCommand(command.id);
     const execTool = findTool(
       createSvvyDirectToolsForTest({
-        agentSettingsStore,
+        agentProfileSnapshot: createTestAgentProfileSnapshot(),
+        applyAgentProfileMutations: async (mutations) => {
+          appliedAgentProfileMutations.push(...structuredClone(mutations));
+        },
         cwd,
         extensionsRoot,
         runtime,
@@ -3947,9 +4012,15 @@ if (readFileSync(target, "utf8") !== "before\n") {
     expect(result.details?.commandFacts).toMatchObject({
       affectedAgentContextSurfaces: 1,
     });
-    expect(agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage).toMatchObject({
-      smithers: "loaded",
-    });
+    expect(appliedAgentProfileMutations).toEqual([
+      {
+        kind: "profile-extension-usage.set",
+        actor: "orchestrator",
+        profileId: "default-orchestrator",
+        extensionId: "smithers",
+        usage: "loaded",
+      },
+    ]);
     const progressEvents = store
       .getSessionState("session-extension-impact")
       .events.filter(

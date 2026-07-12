@@ -16,6 +16,7 @@ import {
   type GeneratedPackagesRefreshResult,
   type InsertQueueItemRequest,
   type PromptTarget,
+  type RequestInputSettings,
   type QueueItemId,
   type RuntimeEpisodeRecord,
   type RuntimeSurfaceMessageRecord,
@@ -419,6 +420,7 @@ export const applyRequestInputCreateRuntimeEffectRequest = Effect.fn(
 )(function* (
   context: RuntimeEffectRequestApplicationContext,
   request: RuntimeEffectRequest & { type: "request_input.create" },
+  requestInputSettings?: RequestInputSettings,
 ) {
   if (!promptTargetsEqual(context.target, request.input.target)) {
     return yield* Effect.fail(
@@ -431,14 +433,17 @@ export const applyRequestInputCreateRuntimeEffectRequest = Effect.fn(
   }
   const requestState = yield* RuntimeRequestStatePort;
   const eventBus = yield* RuntimeEventBus;
+  const settings =
+    requestInputSettings ??
+    (yield* requestState.readRequestInputSettings().pipe(Effect.mapError(runtimeEffectStateError)));
   const created = yield* requestState
     .createRequestInput({
       target: request.input.target,
       turnId: context.turnId,
       toolItemId: context.toolItemId,
       sourceCommandId: request.input.sourceCommandId,
-      mode: request.input.mode,
-      timeout: request.input.timeout ?? null,
+      mode: settings.mode,
+      timeout: settings.mode === "blocking" ? settings.blockingTimeout : null,
       questions: materializeRequestInputQuestions(request),
     })
     .pipe(Effect.mapError(runtimeEffectStateError));

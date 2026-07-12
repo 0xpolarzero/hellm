@@ -166,6 +166,8 @@ function createTurnState() {
           finishedAt: "2026-04-18T09:01:00.000Z",
         });
       }),
+    recoverInterruptedTurn: () => Effect.die("Unexpected recoverInterruptedTurn call."),
+    settlePromptTurn: () => Effect.die("Unexpected settlePromptTurn call."),
     queueTopLevelTitleGeneration: ({ sessionId, surfacePiSessionId }) =>
       Effect.sync(() => {
         calls.push(`queueTopLevelTitleGeneration:${sessionId}:${surfacePiSessionId}`);
@@ -195,6 +197,7 @@ function createHost(
   const host: SurfaceQueueDispatchHost<TestTarget, TestSurface, string, string, TestPreparedTurn> =
     {
       isClosed: () => false,
+      withQueueClaimAdmission: (effect) => effect,
       resolveTarget: (target) => target,
       retainSurface: async () => {
         calls.push("retain");

@@ -151,8 +151,6 @@ export function createRequestUserInputHandler(): ExtensionHandler<RequestUserInp
                 input: {
                   target,
                   sourceCommandId: input.command.commandId,
-                  mode: "nonblocking",
-                  timeout: null,
                   questions: normalized.questions,
                 },
               },

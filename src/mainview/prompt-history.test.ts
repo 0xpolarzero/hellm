@@ -9,9 +9,9 @@ import {
 } from "./prompt-history";
 
 const HISTORY: PromptHistoryEntry[] = [
-  { text: "first", sentAt: 1, workspaceId: "repo" },
-  { text: "second\nentry", sentAt: 2, workspaceId: "repo" },
-  { text: "third", sentAt: 3, workspaceId: "repo" },
+  { text: "first" },
+  { text: "second\nentry" },
+  { text: "third" },
 ];
 
 describe("prompt history navigation", () => {

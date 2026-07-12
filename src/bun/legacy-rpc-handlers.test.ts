@@ -40,6 +40,10 @@ const FACADE_BACKED_REQUESTS = [
   "openWorkflowsGeneratedExportInEditor",
   "openSourceEdit",
   "saveSourceEdit",
+  "createWorkflowAgentSource",
+  "duplicateWorkflowAgentSource",
+  "deleteWorkflowAgentSource",
+  "openSourceInEditor",
   "writeCommandStdin",
   "sendPrompt",
   "deleteQueuedSurfaceMessage",
@@ -47,6 +51,8 @@ const FACADE_BACKED_REQUESTS = [
   "answerRequestUserInput",
   "answerRuntimeApprovalRequest",
   "setRequestUserInputTimerPaused",
+  "setRequestInputVariant",
+  "setRequestInputBlockingTimeout",
   "cancelPrompt",
   "listProviderAuths",
   "setProviderApiKey",
@@ -57,12 +63,7 @@ const FACADE_BACKED_REQUESTS = [
 const LEGACY_HANDLER_RETIREMENT_INCREMENT = 10 as const;
 
 const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
-  "getAgentSettings",
   "getGeneratedAgentContextExternalSources",
-  "updateWorkflowAgent",
-  "deleteWorkflowAgent",
-  "openWorkflowAgentSourceInEditor",
-  "setAgentProfileExtensionUsage",
   "getAgentContextPreview",
   "getExtensionsInventory",
   "saveExtensionSnapshot",
@@ -86,7 +87,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "removeExtensionEnvSecret",
   "setExtensionEnvOverride",
   "removeExtensionEnvOverride",
-  "updateRequestUserInputSettings",
   "openWorkspace",
   "getOpenWorkspaces",
   "getDefaultWorkspace",
@@ -164,12 +164,13 @@ describe("legacy RPC handler seam", () => {
       ...LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10,
     ];
 
-    for (const channel of ["sendSurfaceSync", "sendAppMenuAction"] as const) {
+    for (const channel of ["sendAppMenuAction"] as const) {
       expect(classifiedRequests).not.toContain(channel);
       expect(syncSeamSource).toContain(`channel: "${channel}"`);
       expect(syncSeamSource).toContain("retiresInIncrement: 10");
     }
     expect(syncSeamSource).toContain("sendArtifactOpen");
+    expect(syncSeamSource).not.toContain('channel: "sendSurfaceSync"');
     expect(syncSeamSource).not.toContain('channel: "sendWorkspaceSync"');
   });
 });

@@ -1,12 +1,12 @@
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type {
-  AssistantMessage,
-  ImageContent,
-  TextContent,
-  ToolCall,
-  ToolResultMessage,
-  UserMessage,
-} from "@mariozechner/pi-ai";
+  RendererConversationEntry,
+  RendererTranscriptAssistantEntry,
+  RendererTranscriptImageContent,
+  RendererTranscriptTextContent,
+  RendererTranscriptToolCallContent,
+  RendererCommandResultEntry,
+  RendererTranscriptUserEntry,
+} from "../shared/renderer-transcript";
 import type { WorkspaceSessionSummary } from "../shared/workspace-contract";
 import { projectConversation, type ProjectedToolCall } from "./conversation-projection";
 
@@ -22,8 +22,8 @@ export interface SessionTranscriptExportInput {
   model: string;
   reasoningEffort: string;
   systemPrompt?: string;
-  messages: AgentMessage[];
-  streamMessage?: AssistantMessage | null;
+  messages: RendererConversationEntry[];
+  streamMessage?: RendererTranscriptAssistantEntry | null;
 }
 
 export function buildSessionTranscriptExport(input: SessionTranscriptExportInput): string {
@@ -90,10 +90,10 @@ export function buildSessionTranscriptExport(input: SessionTranscriptExportInput
 
 function appendMessage(
   lines: string[],
-  message: AgentMessage,
+  message: RendererConversationEntry,
   index: number,
   toolCallsById: ReadonlyMap<string, ProjectedToolCall>,
-  toolResultsById: ReadonlyMap<string, ToolResultMessage>,
+  toolResultsById: ReadonlyMap<string, RendererCommandResultEntry>,
 ): void {
   if (isUserMessage(message)) {
     appendUserMessage(lines, message, index);
@@ -115,7 +115,11 @@ function appendMessage(
   appendCodeBlock(lines, "json", safeJson(message));
 }
 
-function appendUserMessage(lines: string[], message: UserMessage, index: number): void {
+function appendUserMessage(
+  lines: string[],
+  message: RendererTranscriptUserEntry,
+  index: number,
+): void {
   lines.push("");
   lines.push(`### [${index}] user @ ${formatTimestamp(message.timestamp)}`);
   appendContentBlocks(lines, normalizeUserContent(message.content), "user");
@@ -123,10 +127,10 @@ function appendUserMessage(lines: string[], message: UserMessage, index: number)
 
 function appendAssistantMessage(
   lines: string[],
-  message: AssistantMessage,
+  message: RendererTranscriptAssistantEntry,
   index: number | "streaming",
   toolCallsById: ReadonlyMap<string, ProjectedToolCall> = new Map(),
-  toolResultsById: ReadonlyMap<string, ToolResultMessage> = new Map(),
+  toolResultsById: ReadonlyMap<string, RendererCommandResultEntry> = new Map(),
 ): void {
   const label = index === "streaming" ? "[streaming]" : `[${index}]`;
   lines.push("");
@@ -191,7 +195,11 @@ function appendAssistantMessage(
   }
 }
 
-function appendToolResultMessage(lines: string[], message: ToolResultMessage, index: number): void {
+function appendToolResultMessage(
+  lines: string[],
+  message: RendererCommandResultEntry,
+  index: number,
+): void {
   lines.push("");
   lines.push(`### [${index}] tool result @ ${formatTimestamp(message.timestamp)}`);
   lines.push(`toolName: ${message.toolName}`);
@@ -208,7 +216,7 @@ function appendToolResultMessage(lines: string[], message: ToolResultMessage, in
 
 function appendContentBlocks(
   lines: string[],
-  blocks: Array<TextContent | ImageContent>,
+  blocks: Array<RendererTranscriptTextContent | RendererTranscriptImageContent>,
   label: string,
 ): void {
   if (blocks.length === 0) {
@@ -236,11 +244,16 @@ function appendCodeBlock(lines: string[], language: string, body: string): void 
   lines.push("```");
 }
 
-function normalizeUserContent(content: UserMessage["content"]): Array<TextContent | ImageContent> {
+function normalizeUserContent(
+  content: RendererTranscriptUserEntry["content"],
+): Array<RendererTranscriptTextContent | RendererTranscriptImageContent> {
   return typeof content === "string" ? [{ type: "text", text: content }] : content;
 }
 
-function formatToolCallLabel(block: ToolCall, projectedToolCall?: ProjectedToolCall): string {
+function formatToolCallLabel(
+  block: RendererTranscriptToolCallContent,
+  projectedToolCall?: ProjectedToolCall,
+): string {
   if (!projectedToolCall || projectedToolCall.totalAttempts <= 1) {
     return `${block.name} (${block.id})`;
   }
@@ -248,7 +261,7 @@ function formatToolCallLabel(block: ToolCall, projectedToolCall?: ProjectedToolC
   return `${block.name} (${block.id}) [attempt ${projectedToolCall.attempt}/${projectedToolCall.totalAttempts}]`;
 }
 
-function formatImageSummary(block: ImageContent): string {
+function formatImageSummary(block: RendererTranscriptImageContent): string {
   return `[image ${block.mimeType}, ${block.data.length} bytes base64 omitted]`;
 }
 
@@ -257,21 +270,25 @@ function formatTimestamp(value: number): string {
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
 }
 
-function getTimestamp(message: AgentMessage): number {
+function getTimestamp(message: RendererConversationEntry): number {
   const candidate = (message as { timestamp?: unknown }).timestamp;
   return typeof candidate === "number" ? candidate : Number.NaN;
 }
 
-function isUserMessage(message: AgentMessage): message is UserMessage {
+function isUserMessage(message: RendererConversationEntry): message is RendererTranscriptUserEntry {
   return (message as { role?: unknown }).role === "user";
 }
 
-function isAssistantMessage(message: AgentMessage): message is AssistantMessage {
+function isAssistantMessage(
+  message: RendererConversationEntry,
+): message is RendererTranscriptAssistantEntry {
   return (message as { role?: unknown }).role === "assistant";
 }
 
-function isToolResultMessage(message: AgentMessage): message is ToolResultMessage {
-  return (message as { role?: unknown }).role === "toolResult";
+function isToolResultMessage(
+  message: RendererConversationEntry,
+): message is RendererCommandResultEntry {
+  return (message as { role?: unknown }).role === "command-result";
 }
 
 function safeJson(value: unknown): string {

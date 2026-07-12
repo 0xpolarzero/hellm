@@ -1,9 +1,12 @@
 import { getModels, getProviders, getSupportedThinkingLevels } from "@mariozechner/pi-ai";
+import { decodeUnknownTaskAgentParametersSourceExit } from "@svvy/core";
 import { existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
+import * as Exit from "effect/Exit";
 import type { ReasoningEffort } from "../shared/agent-settings";
 import type { AuthKeyType, WorkspaceWorkflowsGeneratedKind } from "../shared/workspace-contract";
 import type { AgentSettingsStore } from "./agent-settings-store";
+import type { AgentProfileMutationStore } from "./agent-profile-mutation-store";
 import { resolveAuthState } from "./auth-store";
 import type { ExtensionEnvSecretStore } from "./extension-env-secret-store";
 import {
@@ -14,7 +17,6 @@ import {
   getWorkflowSourcePath,
   readWorkflowsGeneratedReadModel,
   WorkflowLibraryError,
-  writeWorkflowSourceItem,
   type WorkflowsBuildDiagnostic,
 } from "./smithers-runtime/workflow-library";
 import type { SvvyxExtensionsCliProbe } from "./svvyx-extensions-command";
@@ -96,6 +98,7 @@ export function assertAgentModelSelection(
 }
 
 export async function runSvvyxWorkflowsCommand(input: {
+  agentProfileStore?: AgentProfileMutationStore;
   agentSettingsStore?: AgentSettingsStore;
   command: string;
   cwd?: string;
@@ -108,6 +111,7 @@ export async function runSvvyxWorkflowsCommand(input: {
   generatedPackagePath?: string;
   readModelCatalog?: SvvyxWorkflowsModelCatalogReader;
   sourceRoot?: string;
+  sourceCommandId?: string;
   workspaceCwd?: string;
 }): Promise<SvvyxWorkflowsCommandResult> {
   const words = splitCommandLine(input.command);
@@ -145,6 +149,7 @@ export async function runSvvyxWorkflowsCommand(input: {
   }
   if (commandId === "save") {
     return await runSaveCommand(words.slice(3), {
+      agentProfileStore: input.agentProfileStore,
       agentSettingsStore: input.agentSettingsStore,
       cwd: input.cwd,
       env: input.env,
@@ -156,6 +161,7 @@ export async function runSvvyxWorkflowsCommand(input: {
       generatedPackagePath: input.generatedPackagePath,
       modelCatalog: (input.readModelCatalog ?? readDefaultModelCatalog)(),
       sourceRoot: input.sourceRoot,
+      sourceCommandId: input.sourceCommandId,
       workspaceCwd: input.workspaceCwd,
     });
   }
@@ -253,6 +259,7 @@ async function runBuildCommand(
 async function runSaveCommand(
   words: string[],
   options: {
+    agentProfileStore?: AgentProfileMutationStore;
     agentSettingsStore?: AgentSettingsStore;
     cwd?: string;
     env?: NodeJS.ProcessEnv;
@@ -264,6 +271,7 @@ async function runSaveCommand(
     generatedPackagePath?: string;
     modelCatalog: readonly SvvyxWorkflowsModelChoice[];
     sourceRoot?: string;
+    sourceCommandId?: string;
     workspaceCwd?: string;
   },
 ): Promise<SvvyxWorkflowsCommandResult> {
@@ -291,24 +299,86 @@ async function runSaveCommand(
     sourceExtension,
     sourceRoot: options.sourceRoot,
   });
-  const previous = existsSync(targetPath) ? readFileSync(targetPath) : null;
 
-  try {
-    if (kind === "agent") {
-      const extracted = extractWorkflowAgentParametersFromSource({
+  if (kind === "agent") {
+    let extracted: ReturnType<typeof extractWorkflowAgentParametersFromSource>;
+    try {
+      extracted = extractWorkflowAgentParametersFromSource({
         exportName: sourceExportName,
         path: fromPath,
         sourceRoot: options.sourceRoot,
       });
-      writeWorkflowSourceItem({
+    } catch (error) {
+      if (error instanceof WorkflowLibraryError) {
+        throw workflowsCommandError(error.code, error.message, [
+          {
+            code: error.code,
+            message: error.message,
+            path: error.path,
+            exportName: error.exportName,
+          },
+        ]);
+      }
+      throw error;
+    }
+    const source: Record<string, unknown> = { ...extracted.parameters, id: exportName };
+    const { extensionOrder: rawExtensionOrder, ...parameters } = source;
+    const decoded = decodeUnknownTaskAgentParametersSourceExit(parameters);
+    if (
+      Exit.isFailure(decoded) ||
+      (rawExtensionOrder !== undefined &&
+        (!Array.isArray(rawExtensionOrder) ||
+          !rawExtensionOrder.every((extensionId) => typeof extensionId === "string")))
+    ) {
+      throw workflowsCommandError(
+        "invalid_agent_source",
+        `Workflow agent ${exportName} must match TaskAgentParametersSource.`,
+      );
+    }
+    const agentProfileStore = options.agentProfileStore;
+    if (!agentProfileStore) {
+      throw workflowsCommandError(
+        "runtime_authority_unavailable",
+        "Workflow-agent saves require the runtime-owned source edit authority.",
+      );
+    }
+    const agent = decoded.value;
+    const sourceText = `${JSON.stringify(source, null, 2)}\n`;
+    agentProfileStore.upsertWorkflowAgentSource({
+      sourceId: exportName,
+      overwrite,
+      draft: {
+        label: agent.label,
+        provider: agent.provider,
+        model: agent.model,
+        reasoningEffort: agent.reasoning.effort,
+        instructions: agent.instructions,
+        overrides: { ...agent.overrides },
+        extensionOrder: (rawExtensionOrder as string[] | undefined) ?? [],
+      },
+      text: sourceText,
+      ...(options.sourceCommandId ? { sourceCommandId: options.sourceCommandId } : {}),
+    });
+    return {
+      output: {
+        ok: true,
+        sourcePath: targetPath,
         exportName,
         kind,
-        overwrite,
-        sourceCode: `${JSON.stringify({ ...extracted.parameters, id: exportName }, null, 2)}\n`,
-        sourceExtension: ".agent.json",
-        sourceRoot: options.sourceRoot,
-      });
-    } else if (sourceExportName && kind === "prompt") {
+      },
+      commandFacts: {
+        workflowSavedExportName: exportName,
+        workflowSavedKind: kind,
+        workflowSourcePath: targetPath,
+        workflowSourceSaveRequested: true,
+      },
+    };
+  }
+
+  const previous = existsSync(targetPath) ? readFileSync(targetPath) : null;
+
+  try {
+    if (sourceExportName && kind === "prompt") {
       throw workflowsCommandError(
         "invalid_argument",
         "Workflows prompt sources are direct MDX and do not support --export.",

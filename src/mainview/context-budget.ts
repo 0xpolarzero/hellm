@@ -1,5 +1,7 @@
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { Model, Usage } from "@mariozechner/pi-ai";
+import type {
+  RendererConversationEntry,
+  RendererTranscriptUsage,
+} from "../shared/renderer-transcript";
 import { createContextBudget, type ContextBudget } from "@svvy/core";
 
 export {
@@ -10,7 +12,10 @@ export {
 } from "@svvy/core";
 
 export function buildContextBudgetFromUsage(
-  usage: Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite"> | null | undefined,
+  usage:
+    | Pick<RendererTranscriptUsage, "input" | "output" | "cacheRead" | "cacheWrite">
+    | null
+    | undefined,
   maxTokens: number | null | undefined,
 ): ContextBudget | null {
   if (!usage) return null;
@@ -21,8 +26,8 @@ export function buildContextBudgetFromUsage(
 }
 
 export function getLatestAssistantUsage(
-  messages: AgentMessage[],
-): Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite"> | null {
+  messages: RendererConversationEntry[],
+): Pick<RendererTranscriptUsage, "input" | "output" | "cacheRead" | "cacheWrite"> | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (!message || message.role !== "assistant") {
@@ -40,8 +45,8 @@ export function getLatestAssistantUsage(
 }
 
 export function buildSurfaceContextBudget(
-  messages: AgentMessage[],
-  model: Pick<Model<any>, "contextWindow"> | null | undefined,
+  messages: RendererConversationEntry[],
+  model: { contextWindow?: number } | null | undefined,
 ): ContextBudget | null {
   const latestUsage = getLatestAssistantUsage(messages);
   return latestUsage ? buildContextBudgetFromUsage(latestUsage, model?.contextWindow) : null;

@@ -48,10 +48,11 @@
 
 	type Props = {
 		agent: WorkflowAgentSettings;
+		builtin: boolean;
 		confirmingDelete: boolean;
+		deletable: boolean;
 		deleting: boolean;
 		expanded: boolean;
-		isDefault: boolean;
 		modelChoices: AgentModelChoice[];
 		preferredExternalEditor?: PreferredExternalEditor | null;
 		saving: boolean;
@@ -81,10 +82,11 @@
 
 	let {
 		agent,
+		builtin,
 		confirmingDelete,
+		deletable,
 		deleting,
 		expanded,
-		isDefault,
 		modelChoices,
 		preferredExternalEditor = null,
 		saving,
@@ -105,6 +107,7 @@
 	let submitError = $state("");
 	let baseSourceVersion = $state<string | undefined>(undefined);
 	let conflictAgent = $state<WorkflowAgentSettings | null>(null);
+	let acceptedExternalSourceVersion = $state<string | undefined>(undefined);
 
 	function modelChoiceValue(choice: Pick<AgentModelChoice, "providerId" | "modelId">): string {
 		return `${choice.providerId}:${choice.modelId}`;
@@ -264,6 +267,15 @@
 
 	$effect(() => {
 		const nextSourceVersion = agent.sourceVersion;
+		if (
+			acceptedExternalSourceVersion &&
+			nextSourceVersion !== acceptedExternalSourceVersion
+		) {
+			return;
+		}
+		if (nextSourceVersion === acceptedExternalSourceVersion) {
+			acceptedExternalSourceVersion = undefined;
+		}
 		if (nextSourceVersion === baseSourceVersion) return;
 		if (formState.current.isDirty) {
 			if (!conflictAgent || conflictAgent.sourceVersion !== nextSourceVersion) {
@@ -325,6 +337,7 @@
 	function resetForm() {
 		submitError = "";
 		conflictAgent = null;
+		acceptedExternalSourceVersion = undefined;
 		baseSourceVersion = agent.sourceVersion;
 		form.reset(valuesFor(agent));
 	}
@@ -332,6 +345,7 @@
 	function discardLocalConflict() {
 		const current = conflictAgent ?? agent;
 		submitError = "";
+		acceptedExternalSourceVersion = current.sourceVersion;
 		baseSourceVersion = current.sourceVersion;
 		conflictAgent = null;
 		form.reset(valuesFor(current));
@@ -358,6 +372,7 @@
 				mode: "overwrite",
 			});
 			baseSourceVersion = saved.sourceVersion;
+			acceptedExternalSourceVersion = undefined;
 			conflictAgent = null;
 			if (formValuesEqual(formState.current.values, value)) {
 				form.reset(valuesFor(saved));
@@ -379,7 +394,7 @@
 
 <div class="agent-profile-main">
 	<span class="agent-drag-placeholder">
-		{#if isDefault}
+		{#if builtin}
 			<LockIcon size={12} aria-hidden="true" />
 		{/if}
 	</span>
@@ -473,12 +488,12 @@
 					</button>
 				</Tooltip>
 			{:else}
-				<Tooltip label={isDefault ? "Default workflow agent cannot be deleted" : "Delete workflow agent"}>
+				<Tooltip label={deletable ? "Delete workflow agent" : "This workflow agent cannot be deleted"}>
 					<button
 						type="button"
 						class="agent-icon-button danger"
 						aria-label={`Delete ${agent.label}`}
-						disabled={isDefault || controlsDisabled}
+						disabled={!deletable || controlsDisabled}
 						onclick={onRequestDelete}
 					>
 						<Trash2Icon size={13} aria-hidden="true" />

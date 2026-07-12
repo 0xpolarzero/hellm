@@ -29,10 +29,10 @@ describe("AppLifecycleCoordinator", () => {
     const first = coordinator.shutdown(
       "app-shutdown",
       async () => {
-        calls.push("close-scopes");
+        calls.push("prepare");
       },
       async () => {
-        calls.push("prepare");
+        calls.push("close-scopes");
       },
       async () => {
         calls.push("dispose");
@@ -41,10 +41,10 @@ describe("AppLifecycleCoordinator", () => {
     const second = coordinator.shutdown(
       "app-shutdown",
       async () => {
-        calls.push("close-scopes-again");
+        calls.push("prepare-again");
       },
       async () => {
-        calls.push("prepare-again");
+        calls.push("close-scopes-again");
       },
       async () => {
         calls.push("dispose-again");
@@ -54,10 +54,10 @@ describe("AppLifecycleCoordinator", () => {
     expect(() => coordinator.assertAccepting("rpc.call")).toThrow(RuntimeContractError);
     await expect(first).resolves.toEqual({ state: "closed", reason: "app-shutdown" });
     await expect(second).resolves.toEqual({ state: "closed", reason: "app-shutdown" });
-    expect(calls).toEqual(["close-scopes", "prepare", "dispose"]);
+    expect(calls).toEqual(["prepare", "close-scopes", "dispose"]);
   });
 
-  it("awaits terminal scope closure before preparation and bootstrap-owned disposal", async () => {
+  it("keeps scopes open through runtime preparation, then closes them before disposal", async () => {
     const coordinator = new AppLifecycleCoordinator();
     const calls: string[] = [];
     const closeStarted = createDeferred<void>();
@@ -67,13 +67,13 @@ describe("AppLifecycleCoordinator", () => {
     const shutdown = coordinator.shutdown(
       "app-shutdown",
       async () => {
+        calls.push("prepare");
+      },
+      async () => {
         calls.push("close-scopes:start");
         closeStarted.resolve();
         await allowClose.promise;
         calls.push("close-scopes:done");
-      },
-      async () => {
-        calls.push("prepare");
       },
       async () => {
         calls.push("dispose");
@@ -81,7 +81,7 @@ describe("AppLifecycleCoordinator", () => {
     );
 
     await closeStarted.promise;
-    expect(calls).toEqual(["close-scopes:start"]);
+    expect(calls).toEqual(["prepare", "close-scopes:start"]);
     expect(() => coordinator.assertAccepting("rpc.during-shutdown")).toThrow(RuntimeContractError);
     try {
       coordinator.assertAccepting("rpc.during-shutdown");
@@ -94,7 +94,7 @@ describe("AppLifecycleCoordinator", () => {
 
     allowClose.resolve();
     await expect(shutdown).resolves.toEqual({ state: "closed", reason: "app-shutdown" });
-    expect(calls).toEqual(["close-scopes:start", "close-scopes:done", "prepare", "dispose"]);
+    expect(calls).toEqual(["prepare", "close-scopes:start", "close-scopes:done", "dispose"]);
   });
 
   it("keeps app-shutdown and runtime-restart terminal receipts distinct and idempotent", async () => {
@@ -106,10 +106,10 @@ describe("AppLifecycleCoordinator", () => {
       const shutdown = () =>
         coordinator.shutdown(
           reason,
+          async () => {},
           async () => {
             scopeClosures += 1;
           },
-          async () => {},
           async () => {},
         );
 
@@ -121,7 +121,7 @@ describe("AppLifecycleCoordinator", () => {
     }
   });
 
-  it("still prepares and disposes when scope closure fails", async () => {
+  it("still closes scopes and disposes when preparation succeeds but scope closure fails", async () => {
     const coordinator = new AppLifecycleCoordinator();
     const calls: string[] = [];
     const closeError = new Error("scope close failed");
@@ -130,11 +130,11 @@ describe("AppLifecycleCoordinator", () => {
     const shutdown = coordinator.shutdown(
       "app-shutdown",
       async () => {
-        calls.push("close-scopes");
-        throw closeError;
+        calls.push("prepare");
       },
       async () => {
-        calls.push("prepare");
+        calls.push("close-scopes");
+        throw closeError;
       },
       async () => {
         calls.push("dispose");
@@ -142,7 +142,7 @@ describe("AppLifecycleCoordinator", () => {
     );
 
     await expect(shutdown).rejects.toBe(closeError);
-    expect(calls).toEqual(["close-scopes", "prepare", "dispose"]);
+    expect(calls).toEqual(["prepare", "close-scopes", "dispose"]);
     expect(coordinator.getState()).toBe("closed");
   });
 });

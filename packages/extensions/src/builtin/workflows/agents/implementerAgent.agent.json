@@ -1,0 +1,12 @@
+{
+  "id": "implementerAgent",
+  "label": "Implementer",
+  "provider": "zai",
+  "model": "glm-5-turbo",
+  "reasoning": {
+    "effort": "medium"
+  },
+  "instructions": "Implement the assigned scoped change, keep edits focused, and return changed files plus verification.",
+  "overrides": {},
+  "extensionOrder": []
+}

@@ -1,9 +1,7 @@
 import * as Effect from "effect/Effect";
 import {
   RuntimeApprovalStatePort,
-  RuntimeCommandStatePort,
   RuntimeContractError,
-  RuntimeSessionWaitStatePort,
   type AnswerRuntimeApprovalInput,
   type AnswerRuntimeApprovalResult,
   type CommandId,
@@ -31,16 +29,6 @@ function mapApprovalStateFailure(operation: string, cause: unknown): RuntimeCont
     ...(stateCause.issues ? { issues: stateCause.issues } : {}),
     cause,
   });
-}
-
-function approvalRequestSummary(request: RuntimeApprovalRecord): string {
-  if (request.toolName === "exec_command" && request.command) {
-    return `Run command: ${request.command}`;
-  }
-  if (request.toolName === "apply_patch") {
-    return "Apply patch";
-  }
-  return "Run TypeScript";
 }
 
 function publishAfterCommit(
@@ -82,8 +70,6 @@ export const answerRuntimeApproval = Effect.fn("@svvy/runtime/approvals.answer")
   input: AnswerRuntimeApprovalInput,
 ) {
   const approvalState = yield* RuntimeApprovalStatePort;
-  const commandState = yield* RuntimeCommandStatePort;
-  const sessionWaitState = yield* RuntimeSessionWaitStatePort;
   const approvalWaitService = yield* RuntimeApprovalWaitService;
 
   const pending = yield* approvalState
@@ -107,51 +93,6 @@ export const answerRuntimeApproval = Effect.fn("@svvy/runtime/approvals.answer")
     );
   const request = resolvedResult.value;
   yield* publishAfterCommit("runtime.approvals.answer", resolvedResult.afterCommit);
-
-  if (input.decision === "approved") {
-    const startResult = yield* commandState
-      .startCommand({ commandId })
-      .pipe(
-        Effect.mapError((cause) =>
-          mapApprovalStateFailure("runtime.approvals.answer.startCommand", cause),
-        ),
-      );
-    yield* publishAfterCommit("runtime.approvals.answer", startResult.afterCommit);
-  } else {
-    const command = yield* commandState
-      .findCommandById({ commandId })
-      .pipe(
-        Effect.mapError((cause) =>
-          mapApprovalStateFailure("runtime.approvals.answer.findCommand", cause),
-        ),
-      );
-    const finishResult = yield* commandState
-      .finishCommand({
-        commandId,
-        status: "cancelled",
-        summary: `Approval denied: ${approvalRequestSummary(request)}`,
-        facts: {
-          ...command?.facts,
-          approval: "denied",
-          approvalRequestId: request.requestId,
-        },
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          mapApprovalStateFailure("runtime.approvals.answer.finishCommand", cause),
-        ),
-      );
-    yield* publishAfterCommit("runtime.approvals.answer", finishResult.afterCommit);
-  }
-
-  const clearWaitResult = yield* sessionWaitState
-    .clearSessionWait({ sessionId: request.sessionId })
-    .pipe(
-      Effect.mapError((cause) =>
-        mapApprovalStateFailure("runtime.approvals.answer.clearWait", cause),
-      ),
-    );
-  yield* publishAfterCommit("runtime.approvals.answer", clearWaitResult.afterCommit);
 
   yield* approvalWaitService.afterApprovalCommitted({
     request,

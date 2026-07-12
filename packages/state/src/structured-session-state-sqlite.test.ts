@@ -16,7 +16,12 @@ import { tmpdir } from "node:os";
 import {
   normalizeExternalInstructionsSettings,
   StateContractError,
+  type AgentProfileId,
+  type ExtensionId,
   type ExternalInstructionsSettings,
+  type ModelId,
+  type PositiveDurationMs,
+  type ProviderId,
   type WorkspaceId,
 } from "@svvy/core";
 import {
@@ -91,6 +96,80 @@ describe("structured session state SQLite persistence", () => {
     return { databasePath, store, workspaceCwd };
   }
 
+  function openExistingSqliteStore(input: {
+    databasePath: string;
+    workspaceCwd: string;
+    nowStart?: string;
+  }): StructuredSessionStateStore {
+    const store = createStructuredSessionStateStore({
+      digest: testDigest,
+      workspace: {
+        id: input.workspaceCwd,
+        label: "svvy",
+        cwd: input.workspaceCwd,
+        artifactDir: join(input.workspaceCwd, "artifact-store"),
+      },
+      databasePath: input.databasePath,
+      now: createDeterministicClock(input.nowStart ?? "2026-04-18T13:00:00.000Z"),
+    });
+    openStores.push(store);
+    return store;
+  }
+
+  function injectBeforeNextTransaction(
+    store: StructuredSessionStateStore,
+    action: () => void,
+  ): void {
+    type TransactionFactory = (
+      callback: (...args: never[]) => unknown,
+    ) => (...args: never[]) => unknown;
+    const db = (store as unknown as { db: Database }).db;
+    const mutableDb = db as unknown as { transaction: TransactionFactory };
+    const originalTransaction = mutableDb.transaction.bind(db);
+    let pending = true;
+    mutableDb.transaction = (callback) => {
+      if (pending) {
+        pending = false;
+        action();
+      }
+      return originalTransaction(callback);
+    };
+  }
+
+  function createBlockingRequest(store: StructuredSessionStateStore, sessionId: string) {
+    seedSession(store, { sessionId, title: "Blocking request CAS" });
+    const turn = store.startTurn({
+      sessionId,
+      surfacePiSessionId: sessionId,
+      requestSummary: "Ask before proceeding",
+    });
+    const command = store.createCommand({
+      turnId: turn.id,
+      surfacePiSessionId: sessionId,
+      toolName: "request_user_input",
+      executor: "orchestrator",
+      visibility: "surface",
+      title: "Ask user",
+      summary: "Clarify the safe path.",
+    });
+    return store.createRequestUserInputRequest({
+      sessionId,
+      surfacePiSessionId: sessionId,
+      turnId: turn.id,
+      commandId: command.id,
+      toolItemId: `tool-call-${sessionId}`,
+      variant: "blocking",
+      timeout: { enabled: true, durationMs: 300_000 },
+      questions: [
+        {
+          title: "Proceed",
+          question: "Should I proceed now?",
+          defaultAnswer: { kind: "custom", text: "Proceed with the safe default." },
+        },
+      ],
+    });
+  }
+
   function closeTrackedStore(store: StructuredSessionStateStore) {
     const index = openStores.indexOf(store);
     if (index >= 0) {
@@ -148,6 +227,41 @@ describe("structured session state SQLite persistence", () => {
     );
   });
 
+  it("adopts the state-preference artifact directory over an existing workspace seed", () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-structured-artifact-authority-"));
+    tempDirs.push(root);
+    const databasePath = join(root, "structured-session-state.sqlite");
+    const oldArtifactDir = join(root, "old-artifacts");
+    const stateOwnedArtifactDir = join(root, "state-owned-artifacts");
+    const first = createStructuredSessionStateStore({
+      digest: testDigest,
+      workspace: {
+        id: root,
+        label: "svvy",
+        cwd: root,
+        artifactDir: oldArtifactDir,
+      },
+      databasePath,
+    });
+    first.close();
+
+    const reopened = createStructuredSessionStateStore({
+      digest: testDigest,
+      workspace: {
+        id: root,
+        label: "svvy",
+        cwd: root,
+        artifactDir: stateOwnedArtifactDir,
+      },
+      workspaceArtifactDirectoryAuthority: "state-preference",
+      databasePath,
+    });
+    openStores.push(reopened);
+
+    expect(reopened.getWorkspaceRecord().artifactDir).toBe(stateOwnedArtifactDir);
+    expect(existsSync(stateOwnedArtifactDir)).toBe(true);
+  });
+
   it("persists exact external-instruction app preferences across restart", () => {
     const first = createSqliteStore();
     const externalInstructions: ExternalInstructionsSettings = {
@@ -188,6 +302,342 @@ describe("structured session state SQLite persistence", () => {
     expect(second.store.readAppPreferences().externalInstructions).toEqual(
       normalizeExternalInstructionsSettings(externalInstructions),
     );
+  });
+
+  it("persists exact workspace prompt history across restart", () => {
+    const first = createSqliteStore();
+    seedSession(first.store, {
+      sessionId: "session-prompt-history-reopen",
+      title: "Prompt history reopen",
+    });
+    const accepted = first.store.acceptSubmittedSurfaceMessage({
+      target: {
+        workspaceSessionId: "session-prompt-history-reopen",
+        surface: "orchestrator",
+        surfacePiSessionId: "session-prompt-history-reopen",
+      },
+      idempotencyKey: "prompt-history-reopen",
+      promptHistoryText: "  Preserve exact whitespace across restart.  ",
+      messageJson: JSON.stringify({ text: "  Preserve exact whitespace across restart.  " }),
+    });
+    closeTrackedStore(first.store);
+
+    const second = createSqliteStore({
+      databasePath: first.databasePath,
+      nowStart: "2026-04-18T12:05:00.000Z",
+    });
+
+    expect(second.store.listPromptHistory({ workspaceId: first.workspaceCwd })).toEqual([
+      {
+        workspaceId: first.workspaceCwd,
+        workspaceSessionId: "session-prompt-history-reopen",
+        surfacePiSessionId: "session-prompt-history-reopen",
+        queueItemId: accepted.queuedMessage.id,
+        text: "  Preserve exact whitespace across restart.  ",
+        sentAt: accepted.queuedMessage.createdAt,
+      },
+    ]);
+  });
+
+  it("defaults and persists request-user-input settings with one revision per write", () => {
+    const first = createSqliteStore();
+
+    expect(first.store.readRequestInputSettings() as unknown).toEqual({
+      mode: "nonblocking",
+      blockingTimeout: { enabled: true, durationMs: 300000 },
+    });
+    expect(first.store.readCurrentStateRevision() as unknown).toBe(0);
+
+    expect(first.store.setRequestInputVariant({ mode: "blocking" }) as unknown).toEqual({
+      mode: "blocking",
+      blockingTimeout: { enabled: true, durationMs: 300000 },
+    });
+    expect(first.store.readCurrentStateRevision() as unknown).toBe(1);
+
+    expect(
+      first.store.setRequestInputBlockingTimeout({
+        enabled: false,
+        durationMs: 120000 as PositiveDurationMs,
+      }) as unknown,
+    ).toEqual({
+      mode: "blocking",
+      blockingTimeout: { enabled: false, durationMs: 120000 },
+    });
+    expect(first.store.readCurrentStateRevision() as unknown).toBe(2);
+    closeTrackedStore(first.store);
+
+    const second = createSqliteStore({
+      databasePath: first.databasePath,
+      nowStart: "2026-04-18T12:05:00.000Z",
+    });
+
+    expect(second.store.readRequestInputSettings() as unknown).toEqual({
+      mode: "blocking",
+      blockingTimeout: { enabled: false, durationMs: 120000 },
+    });
+    expect(second.store.readCurrentStateRevision() as unknown).toBe(2);
+  });
+
+  it("rejects an answer when another connection cancels the request before its transaction", () => {
+    const first = createSqliteStore();
+    const request = createBlockingRequest(first.store, "session-rui-answer-cancel-cas");
+    const second = openExistingSqliteStore(first);
+
+    injectBeforeNextTransaction(first.store, () => {
+      expect(
+        second.cancelRequestUserInputRequest({
+          requestId: request.requestId,
+          reason: "Cancelled concurrently.",
+        }).changed,
+      ).toBe(true);
+    });
+
+    expect(() =>
+      first.store.answerRequestUserInput({
+        surfacePiSessionId: "session-rui-answer-cancel-cas",
+        requestId: request.requestId,
+        questionId: request.questions[0]!.questionId,
+        answer: { kind: "custom", text: "Proceed." },
+        delivery: "queue-only",
+      }),
+    ).toThrow(StateContractError);
+    const finalRequest = first.store.getRequestUserInputRequest(request.requestId);
+    expect(finalRequest).toMatchObject({
+      status: "cancelled",
+      questions: [expect.objectContaining({ status: "cancelled" })],
+    });
+    expect(finalRequest.answers.filter((answer) => answer.answeredBy === "user")).toEqual([]);
+  });
+
+  it("rejects timeout defaults when another connection answers before expiry commits", () => {
+    const first = createSqliteStore();
+    const request = createBlockingRequest(first.store, "session-rui-timeout-answer-cas");
+    const second = openExistingSqliteStore(first);
+    const timeout = request.timeout!;
+
+    injectBeforeNextTransaction(first.store, () => {
+      second.answerRequestUserInput({
+        surfacePiSessionId: "session-rui-timeout-answer-cas",
+        requestId: request.requestId,
+        questionId: request.questions[0]!.questionId,
+        answer: { kind: "custom", text: "The user answered first." },
+        delivery: "queue-only",
+      });
+    });
+
+    expect(() =>
+      first.store.defaultOpenRequestUserInputQuestions({
+        requestId: request.requestId,
+        answeredBy: "timeout_default",
+        expectedTimerVersion: timeout.timerVersion,
+        expectedExpiresAt: timeout.expiresAt!,
+      }),
+    ).toThrow(StateContractError);
+    const finalRequest = first.store.getRequestUserInputRequest(request.requestId);
+    expect(finalRequest.status).toBe("completed");
+    expect(finalRequest.answers.filter((answer) => answer.answeredBy === "user")).toEqual([
+      expect.objectContaining({
+        answeredBy: "user",
+        answer: { kind: "custom", text: "The user answered first." },
+      }),
+    ]);
+    expect(finalRequest.answers.some((answer) => answer.answeredBy === "timeout_default")).toBe(
+      false,
+    );
+  });
+
+  it("does not cancel a request that another connection answered first", () => {
+    const first = createSqliteStore();
+    const request = createBlockingRequest(first.store, "session-rui-cancel-answer-cas");
+    const second = openExistingSqliteStore(first);
+
+    injectBeforeNextTransaction(first.store, () => {
+      second.answerRequestUserInput({
+        surfacePiSessionId: "session-rui-cancel-answer-cas",
+        requestId: request.requestId,
+        questionId: request.questions[0]!.questionId,
+        answer: { kind: "custom", text: "The answer wins." },
+        delivery: "queue-only",
+      });
+    });
+
+    expect(
+      first.store.cancelRequestUserInputRequest({
+        requestId: request.requestId,
+        reason: "Late cancellation.",
+      }).changed,
+    ).toBe(false);
+    const finalRequest = first.store.getRequestUserInputRequest(request.requestId);
+    expect(finalRequest.status).toBe("completed");
+    expect(finalRequest.answers.filter((answer) => answer.answeredBy === "user")).toEqual([
+      expect.objectContaining({ answeredBy: "user" }),
+    ]);
+  });
+
+  it("rejects a timer update when another connection cancels the request first", () => {
+    const first = createSqliteStore();
+    const request = createBlockingRequest(first.store, "session-rui-timer-cancel-cas");
+    const second = openExistingSqliteStore(first);
+    const originalTimerVersion = request.timeout!.timerVersion;
+
+    injectBeforeNextTransaction(first.store, () => {
+      second.cancelRequestUserInputRequest({
+        requestId: request.requestId,
+        reason: "Cancelled before timer update.",
+      });
+    });
+
+    expect(() =>
+      first.store.setRequestUserInputTimerPaused({
+        surfacePiSessionId: "session-rui-timer-cancel-cas",
+        requestId: request.requestId,
+        paused: true,
+      }),
+    ).toThrow(StateContractError);
+    expect(first.store.getRequestUserInputRequest(request.requestId)).toMatchObject({
+      status: "cancelled",
+      timeout: expect.objectContaining({ timerVersion: originalTimerVersion }),
+    });
+  });
+
+  it("initializes canonical DB-backed agent profiles and actor extension defaults", () => {
+    const first = createSqliteStore();
+
+    expect(first.store.listAgentProfiles()).toEqual([
+      {
+        profileId: "thread-handler",
+        actor: "handler",
+        name: "Thread handler",
+        providerId: "zai",
+        modelId: "glm-5-turbo",
+        reasoning: { effort: "medium" },
+        followComposer: false,
+        extensionUsage: {},
+        extensionOrder: [],
+        position: 0,
+        updatedAt: "1970-01-01T00:00:00.000Z",
+      },
+      {
+        profileId: "default-orchestrator",
+        actor: "orchestrator",
+        name: "Default orchestrator",
+        providerId: "zai",
+        modelId: "glm-5-turbo",
+        reasoning: { effort: "medium" },
+        followComposer: false,
+        extensionUsage: {},
+        extensionOrder: [],
+        position: 0,
+        updatedAt: "1970-01-01T00:00:00.000Z",
+      },
+    ]);
+    expect(first.store.listAgentActorExtensionDefaults()).toEqual([
+      {
+        actor: "orchestrator",
+        extensionUsage: {},
+        extensionOrder: [],
+        updatedAt: "1970-01-01T00:00:00.000Z",
+      },
+      {
+        actor: "workflow-task",
+        extensionUsage: {},
+        extensionOrder: [],
+        updatedAt: "1970-01-01T00:00:00.000Z",
+      },
+    ]);
+    expect(first.store.hasAgentProfileRows()).toBe(true);
+    expect(first.store.readCurrentStateRevision() as unknown).toBe(0);
+    expect(() =>
+      first.store.deleteOrchestratorProfile({
+        profileId: "default-orchestrator" as AgentProfileId,
+      }),
+    ).toThrow("locked and cannot be deleted");
+  });
+
+  it("preserves canonical agent-profile edits when the store reopens", () => {
+    const first = createSqliteStore();
+    const orchestrator = first.store.updateOrchestratorProfile({
+      profile: {
+        profileId: "default-orchestrator" as AgentProfileId,
+        name: "Personal orchestrator",
+        providerId: "openai" as ProviderId,
+        modelId: "gpt-5.4" as ModelId,
+        reasoning: { effort: "high" },
+        followComposer: true,
+        extensionUsage: { ["shell" as ExtensionId]: "loaded" },
+        extensionOrder: ["shell" as ExtensionId],
+      },
+    });
+    const handler = first.store.updateThreadHandlerProfile({
+      profile: {
+        profileId: "thread-handler" as AgentProfileId,
+        name: "Personal handler",
+        providerId: "anthropic" as ProviderId,
+        modelId: "claude-sonnet-4" as ModelId,
+        reasoning: { effort: "low" },
+        extensionUsage: { ["smithers" as ExtensionId]: "available" },
+        extensionOrder: ["smithers" as ExtensionId],
+      },
+    });
+    const orchestratorDefaults = first.store.setAgentActorExtensionDefaults({
+      actor: "orchestrator",
+      extensionUsage: { shell: "loaded" },
+      extensionOrder: ["shell"],
+    });
+    const workflowTaskDefaults = first.store.setAgentActorExtensionDefaults({
+      actor: "workflow-task",
+      extensionUsage: { smithers: "available" },
+      extensionOrder: ["smithers"],
+    });
+    closeTrackedStore(first.store);
+
+    const second = createSqliteStore({
+      databasePath: first.databasePath,
+      nowStart: "2026-04-18T12:05:00.000Z",
+    });
+
+    expect(second.store.listAgentProfiles()).toEqual([
+      {
+        profileId: "thread-handler",
+        actor: "handler",
+        name: "Personal handler",
+        providerId: "anthropic",
+        modelId: "claude-sonnet-4",
+        reasoning: { effort: "low" },
+        followComposer: false,
+        extensionUsage: { smithers: "available" },
+        extensionOrder: ["smithers"],
+        position: 0,
+        updatedAt: handler.updatedAt,
+      },
+      {
+        profileId: "default-orchestrator",
+        actor: "orchestrator",
+        name: "Personal orchestrator",
+        providerId: "openai",
+        modelId: "gpt-5.4",
+        reasoning: { effort: "high" },
+        followComposer: true,
+        extensionUsage: { shell: "loaded" },
+        extensionOrder: ["shell"],
+        position: 0,
+        updatedAt: orchestrator.updatedAt,
+      },
+    ]);
+    expect(second.store.listAgentActorExtensionDefaults()).toEqual([
+      {
+        actor: "orchestrator",
+        extensionUsage: { shell: "loaded" },
+        extensionOrder: ["shell"],
+        updatedAt: orchestratorDefaults.updatedAt,
+      },
+      {
+        actor: "workflow-task",
+        extensionUsage: { smithers: "available" },
+        extensionOrder: ["smithers"],
+        updatedAt: workflowTaskDefaults.updatedAt,
+      },
+    ]);
   });
 
   it("persists orchestrator and workflow-task extension defaults independently", () => {
@@ -257,6 +707,185 @@ describe("structured session state SQLite persistence", () => {
         status: "completed",
       },
     ]);
+  });
+
+  it("persists rich transcript provenance, active stream state, and terminal assistant facts", () => {
+    const first = createSqliteStore();
+    const sessionId = "session-rich-transcript";
+    const surfacePiSessionId = "surface-rich-transcript" as never;
+    const generation = "stream-rich-transcript" as never;
+    seedSession(first.store, { sessionId, title: "Rich transcript" });
+    const turn = first.store.startTurn({
+      sessionId,
+      surfacePiSessionId,
+      requestSummary: "Inspect the file",
+    });
+    const user = first.store.commitRuntimeTranscriptUserMessage({
+      workspaceSessionId: sessionId as never,
+      surfacePiSessionId,
+      turnId: turn.id as never,
+      queueItemId: "queue-rich-transcript" as never,
+      message: {
+        text: "Inspect @src/main.ts",
+        attachments: [
+          {
+            kind: "file",
+            path: join(first.workspaceCwd, "src/main.ts") as never,
+            workspaceRelativePath: "src/main.ts" as never,
+          },
+        ],
+        snippetProvenance: [
+          {
+            mentionId: "mention-rich",
+            snippetId: "snippet-rich",
+            source: "svvy",
+            title: "Inspect",
+            contentHash: "sha256:rich",
+            arguments: ["src/main.ts"],
+            resolvedText: "Inspect src/main.ts",
+          },
+        ],
+      },
+      submittedAt: "2026-04-18T12:00:00.000Z" as never,
+      committedAt: "2026-04-18T12:00:01.000Z" as never,
+      streamGenerationId: generation,
+      expectedCursor: null,
+    });
+    first.store.bindRuntimeTranscriptPiHistoryEntry({
+      messageId: user.message.messageId,
+      piHistoryEntry: {
+        session: { surfacePiSessionId },
+        entryId: "pi-user-rich",
+        messageId: user.message.messageId,
+      },
+    });
+    const assistant = first.store.beginRuntimeTranscriptAssistantMessage({
+      workspaceSessionId: sessionId as never,
+      surfacePiSessionId,
+      turnId: turn.id as never,
+      api: null,
+      providerId: "openai" as never,
+      modelId: "gpt-5" as never,
+      startedAt: "2026-04-18T12:00:02.000Z" as never,
+      streamGenerationId: generation,
+      expectedCursor: user.cursor,
+    });
+    const thinking = first.store.appendRuntimeTranscriptAssistantContentDelta({
+      messageId: assistant.message.messageId,
+      surfacePiSessionId,
+      streamGenerationId: generation,
+      expectedCursor: assistant.cursor,
+      contentIndex: 0,
+      kind: "thinking",
+      delta: "Inspect carefully.",
+      redacted: false,
+      thinkingSignature: "thinking-rich",
+    });
+    const tool = first.store.upsertRuntimeTranscriptAssistantToolCall({
+      messageId: assistant.message.messageId,
+      surfacePiSessionId,
+      streamGenerationId: generation,
+      expectedCursor: thinking.cursor,
+      contentIndex: 1,
+      toolCallId: "tool-rich" as never,
+      toolName: "read_file",
+      argumentsJson: '{"path":"src/main.ts"}',
+      argumentsStatus: "accepted",
+      thoughtSignature: "tool-thought-rich",
+    });
+    const linked = first.store.linkRuntimeTranscriptAssistantToolCallCommand({
+      messageId: assistant.message.messageId,
+      surfacePiSessionId,
+      streamGenerationId: generation,
+      expectedCursor: tool.cursor,
+      contentIndex: 1,
+      toolCallId: "tool-rich" as never,
+      commandId: "command-rich" as never,
+    });
+    const text = first.store.appendRuntimeTranscriptAssistantContentDelta({
+      messageId: assistant.message.messageId,
+      surfacePiSessionId,
+      streamGenerationId: generation,
+      expectedCursor: linked.cursor,
+      contentIndex: 2,
+      kind: "text",
+      delta: "The file is valid.",
+    });
+    closeTrackedStore(first.store);
+
+    const second = createSqliteStore({
+      databasePath: first.databasePath,
+      nowStart: "2026-04-18T12:05:00.000Z",
+    });
+    const active = second.store.readRuntimeSurfaceTranscript(surfacePiSessionId);
+    expect(active.messages).toHaveLength(1);
+    expect(active.messages[0]).toMatchObject({
+      role: "user",
+      message: {
+        text: "Inspect @src/main.ts",
+        attachments: [{ kind: "file", workspaceRelativePath: "src/main.ts" }],
+        snippetProvenance: [{ resolvedText: "Inspect src/main.ts" }],
+      },
+      piHistoryEntry: { entryId: "pi-user-rich" },
+    });
+    expect(active.activeAssistantMessage?.content).toEqual(text.message.content);
+    expect(active.streamCursor).toEqual(text.cursor);
+
+    second.store.commitRuntimeTranscriptAssistantMessage({
+      messageId: assistant.message.messageId,
+      surfacePiSessionId,
+      streamGenerationId: generation,
+      expectedCursor: active.streamCursor,
+      content: text.message.content,
+      api: "openai-responses",
+      providerId: "openai" as never,
+      modelId: "gpt-5" as never,
+      responseId: "response-rich",
+      usage: {
+        input: 80,
+        output: 20,
+        cacheRead: 40,
+        cacheWrite: 0,
+        totalTokens: 100,
+        cost: { input: 0.08, output: 0.2, cacheRead: 0.01, cacheWrite: 0, total: 0.29 },
+      },
+      stopReason: "stop",
+      errorMessage: null,
+      piHistoryEntry: {
+        session: { surfacePiSessionId },
+        entryId: "pi-assistant-rich",
+        messageId: assistant.message.messageId,
+      },
+      messageTimestamp: "2026-04-18T12:00:03.000Z" as never,
+      finishedAt: "2026-04-18T12:00:04.000Z" as never,
+    });
+    closeTrackedStore(second.store);
+
+    const third = createSqliteStore({
+      databasePath: first.databasePath,
+      nowStart: "2026-04-18T12:10:00.000Z",
+    });
+    const settled = third.store.readRuntimeSurfaceTranscript(surfacePiSessionId);
+    expect(settled.activeAssistantMessage).toBeNull();
+    expect(settled.messages).toHaveLength(2);
+    expect(settled.messages[1]).toMatchObject({
+      role: "assistant",
+      status: "completed",
+      api: "openai-responses",
+      responseId: "response-rich",
+      usage: { totalTokens: 100 },
+      stopReason: "stop",
+      piHistoryEntry: { entryId: "pi-assistant-rich" },
+      content: [
+        { kind: "thinking", thinkingSignature: "thinking-rich" },
+        {
+          kind: "tool-call",
+          commandId: "command-rich",
+          thoughtSignature: "tool-thought-rich",
+        },
+        { kind: "text", text: "The file is valid." },
+      ],
+    });
   });
 
   it("normalizes managed snippet titles and persists exact snippet metadata", () => {

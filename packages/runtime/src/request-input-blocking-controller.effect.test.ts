@@ -14,15 +14,20 @@ import {
   type RequestInputRequestId,
   type RuntimeCommandRecord,
   type RuntimeCommandStatePortService,
+  RuntimeContractError,
   type RuntimeRequestInputDetailsRecord,
-  type RuntimeRequestStatePortService,
   type RuntimeSessionWaitStatePortService,
+  type StateInvalidationDescriptor,
+  StateContractError,
   type SurfacePiSessionId,
   type ToolItemId,
   type TurnId,
   type WorkspaceSessionId,
 } from "@svvy/core";
-import { makeRuntimeBlockingRequestInputWaitRegistry } from "./request-input-blocking-controller";
+import {
+  makeRuntimeBlockingRequestInputWaitRegistry,
+  type RuntimeBlockingRequestInputEffectState,
+} from "./request-input-blocking-controller";
 
 const sessionId = "session_runtime_blocking_rui" as WorkspaceSessionId;
 const surfacePiSessionId = "pi_runtime_blocking_rui" as SurfacePiSessionId;
@@ -31,8 +36,16 @@ const commandId = "cmd_runtime_blocking_rui" as CommandId;
 const questionId = "ruiq_runtime_blocking_rui" as RequestInputQuestionId;
 const SHORT_TIMEOUT_MS = 500 as PositiveDurationMs;
 
-function stateMutation<T>(value: T) {
-  return { value, afterCommit: [] };
+function stateMutation<T>(value: T, afterCommit: readonly StateInvalidationDescriptor[] = []) {
+  return { value, afterCommit };
+}
+
+function invalidation(marker: string): StateInvalidationDescriptor {
+  return {
+    scope: "workspace",
+    workspaceId: "workspace_runtime_blocking_rui" as never,
+    invalidation: { model: "surface", ids: [marker as never] },
+  };
 }
 
 describe("RuntimeBlockingRequestInputWaitRegistry", () => {
@@ -43,7 +56,8 @@ describe("RuntimeBlockingRequestInputWaitRegistry", () => {
         const command = makeCommand();
         const commandEvents: unknown[] = [];
         const waits: unknown[] = [];
-        const state = makeEffectState({ request, commandEvents, waits });
+        const published: StateInvalidationDescriptor[][] = [];
+        const state = makeEffectState({ request, commandEvents, waits, published });
 
         const registry = yield* makeRuntimeBlockingRequestInputWaitRegistry();
         const resultFiber = yield* registry
@@ -66,19 +80,9 @@ describe("RuntimeBlockingRequestInputWaitRegistry", () => {
             },
           ],
         });
-        assert.deepStrictEqual(commandEventSummaries(commandEvents), [
-          {
-            commandId,
-            status: "waiting",
-            facts: { questionCount: 1, answeredBy: "pending" },
-          },
-          {
-            commandId,
-            status: "succeeded",
-            facts: { questionCount: 1, answeredBy: "timeout_default" },
-          },
-        ]);
-        assert.deepStrictEqual(waitKinds(waits), ["set", "clear"]);
+        assert.deepStrictEqual(commandEventSummaries(commandEvents), []);
+        assert.deepStrictEqual(waitKinds(waits), []);
+        assert.deepStrictEqual(publicationMarkers(published), ["request:default"]);
       }),
     ),
   );
@@ -123,13 +127,37 @@ describe("RuntimeBlockingRequestInputWaitRegistry", () => {
         assert.strictEqual(status, "open");
         assert.deepStrictEqual(defaultCalls, []);
         assert.strictEqual(interruptedRequestId, request.requestId);
-        assert.deepStrictEqual(commandEventSummaries(commandEvents), [
-          {
-            commandId,
-            status: "waiting",
-            facts: { questionCount: 1, answeredBy: "pending" },
-          },
-        ]);
+        assert.deepStrictEqual(commandEventSummaries(commandEvents), []);
+      }),
+    ),
+  );
+
+  it.effect("leaves a newer open wait intact when timeout compare-and-set loses", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const request = makeOpenRequest();
+        const defaultCalls: unknown[] = [];
+        const cancelCalls: unknown[] = [];
+        const state = makeEffectState({
+          request,
+          commandEvents: [],
+          waits: [],
+          defaultCalls,
+          cancelCalls,
+          failDefaultWithStaleState: true,
+        });
+        const registry = yield* makeRuntimeBlockingRequestInputWaitRegistry();
+        const waitFiber = yield* registry
+          .waitForBlockingRequest({ state, request, command: makeCommand() })
+          .pipe(Effect.forkScoped);
+
+        yield* TestClock.adjust(1500);
+        yield* Effect.yieldNow;
+
+        assert.deepStrictEqual(defaultCalls, [{ requestId }]);
+        assert.deepStrictEqual(cancelCalls, []);
+        yield* registry.close();
+        yield* Fiber.await(waitFiber).pipe(Effect.ignore);
       }),
     ),
   );
@@ -162,17 +190,11 @@ describe("RuntimeBlockingRequestInputWaitRegistry", () => {
       if (Exit.isFailure(exit)) {
         assert.match(Cause.pretty(exit.cause), /Request user input wait registry closed/);
       }
-      assert.deepStrictEqual(commandEventSummaries(commandEvents), [
-        {
-          commandId,
-          status: "waiting",
-          facts: { questionCount: 1, answeredBy: "pending" },
-        },
-      ]);
+      assert.deepStrictEqual(commandEventSummaries(commandEvents), []);
     }),
   );
 
-  it.effect("restores open blocking requests into command/session wait state", () =>
+  it.effect("restores open blocking waiters without rewriting durable command/session facts", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const request = { ...makeOpenRequest(), timeout: null };
@@ -189,14 +211,120 @@ describe("RuntimeBlockingRequestInputWaitRegistry", () => {
         yield* registry.restoreOpenBlockingRequests(state);
         yield* registry.close();
 
-        assert.deepStrictEqual(commandEventSummaries(commandEvents), [
-          {
-            commandId,
-            status: "waiting",
-            facts: { questionCount: 1, answeredBy: "pending" },
-          },
-        ]);
-        assert.deepStrictEqual(waitKinds(waits), ["set"]);
+        assert.deepStrictEqual(commandEventSummaries(commandEvents), []);
+        assert.deepStrictEqual(waitKinds(waits), []);
+      }),
+    ),
+  );
+
+  it.effect("does not rewrite state when no open blocking request remains", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const request = makeCompletedRequest();
+        const commandEvents: unknown[] = [];
+        const waits: unknown[] = [];
+        const published: StateInvalidationDescriptor[][] = [];
+        const state = makeEffectState({
+          request,
+          commandEvents,
+          waits,
+          openRequests: [],
+          published,
+        });
+
+        const registry = yield* makeRuntimeBlockingRequestInputWaitRegistry();
+        yield* registry.restoreOpenBlockingRequests(state);
+
+        assert.deepStrictEqual(commandEventSummaries(commandEvents), []);
+        assert.deepStrictEqual(waitKinds(waits), []);
+        assert.deepStrictEqual(publicationMarkers(published), []);
+      }),
+    ),
+  );
+
+  it.effect("recovers a timeout default when post-commit publication is interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const request = makeOpenRequest();
+        const commandEvents: unknown[] = [];
+        const waits: unknown[] = [];
+        const published: StateInvalidationDescriptor[][] = [];
+        const state = makeEffectState({
+          request,
+          commandEvents,
+          waits,
+          recoverCurrentRequest: true,
+          failPublicationMarkerOnce: "request:default",
+          published,
+        });
+
+        const registry = yield* makeRuntimeBlockingRequestInputWaitRegistry();
+        const resultFiber = yield* registry
+          .waitForBlockingRequest({ state, request, command: makeCommand() })
+          .pipe(Effect.forkScoped);
+        yield* TestClock.adjust(1500);
+        yield* registry.restoreOpenBlockingRequests(state);
+        const result = yield* Fiber.join(resultFiber);
+
+        assert.strictEqual(result.answers[0]?.answeredBy, "timeout_default");
+        assert.deepStrictEqual(commandEventSummaries(commandEvents), []);
+        assert.deepStrictEqual(waitKinds(waits), []);
+      }),
+    ),
+  );
+
+  it.effect("resolves a terminal request repeatedly without rewriting command state", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const request = makeCompletedRequest();
+        const command = makeCommand();
+        const commandEvents: unknown[] = [];
+        const waits: unknown[] = [];
+        const state = makeEffectState({
+          request,
+          commandEvents,
+          waits,
+        });
+        const registry = yield* makeRuntimeBlockingRequestInputWaitRegistry();
+        const waitFiber = yield* registry
+          .waitForBlockingRequest({ state, request, command })
+          .pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+
+        const first = yield* registry.resolveBlockingRequest(state, request.requestId);
+        const replayed = yield* registry.resolveBlockingRequest(state, request.requestId);
+        const waited = yield* Fiber.join(waitFiber);
+        assert.deepStrictEqual(first, waited);
+        assert.deepStrictEqual(replayed, waited);
+        assert.deepStrictEqual(commandEventSummaries(commandEvents), []);
+      }),
+    ),
+  );
+
+  it.effect("rechecks a blocking answer committed before waiter registration", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const openRequest = makeOpenRequest();
+        const answeredRequest = makeCompletedRequest();
+        const state = makeEffectState({
+          request: answeredRequest,
+          commandEvents: [],
+          waits: [],
+        });
+        const registry = yield* makeRuntimeBlockingRequestInputWaitRegistry();
+
+        const committedBeforeRegistration = yield* registry.resolveBlockingRequest(
+          state,
+          answeredRequest.requestId,
+        );
+        const waited = yield* registry.waitForBlockingRequest({
+          state,
+          request: openRequest,
+          command: makeCommand(),
+        });
+
+        assert.deepStrictEqual(waited, committedBeforeRegistration);
+        assert.strictEqual(waited.answers[0]?.answeredBy, "user");
       }),
     ),
   );
@@ -257,18 +385,32 @@ function makeEffectState(input: {
   commandEvents: unknown[];
   waits: unknown[];
   openRequests?: RuntimeRequestInputDetailsRecord[];
+  recoverCurrentRequest?: boolean;
   defaultCalls?: unknown[];
+  cancelCalls?: unknown[];
+  failDefaultWithStaleState?: boolean;
+  failSucceededFinishOnce?: boolean;
+  failPublicationMarkerOnce?: string;
+  published?: StateInvalidationDescriptor[][];
 }) {
   let currentRequest = input.request;
+  let failSucceededFinish = input.failSucceededFinishOnce === true;
+  let failPublicationMarker = input.failPublicationMarkerOnce;
   const requestState = {
     createRequestInput: () => Effect.die("Unexpected createRequestInput call."),
     getRequestInput: () => Effect.succeed(currentRequest),
     listOpenBlockingRequestInputs: () =>
-      input.openRequests
-        ? Effect.succeed(input.openRequests)
-        : Effect.die("Unexpected listOpenBlockingRequestInputs."),
+      input.recoverCurrentRequest
+        ? Effect.succeed([currentRequest])
+        : input.openRequests
+          ? Effect.succeed(input.openRequests)
+          : Effect.die("Unexpected listOpenBlockingRequestInputs."),
     answerRequestInput: () => Effect.die("Unexpected answerRequestInput call."),
-    setRequestInputTimerPaused: (pauseInput) =>
+    setRequestInputTimerPaused: (
+      pauseInput: Parameters<
+        RuntimeBlockingRequestInputEffectState["requestState"]["setRequestInputTimerPaused"]
+      >[0],
+    ) =>
       Effect.sync(() => {
         currentRequest = {
           ...currentRequest,
@@ -279,11 +421,20 @@ function makeEffectState(input: {
               }
             : null,
         };
-        return stateMutation(currentRequest);
+        return stateMutation(currentRequest, [invalidation("request:timer")]);
       }),
     defaultOpenRequestInputQuestions: () =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         input.defaultCalls?.push({ requestId });
+        if (input.failDefaultWithStaleState) {
+          return Effect.fail(
+            new StateContractError({
+              operation: "test.defaultOpenRequestInputQuestions",
+              reason: "stale-state",
+              message: "A newer timer generation owns the request.",
+            }),
+          );
+        }
         currentRequest = {
           ...currentRequest,
           status: "completed",
@@ -305,23 +456,50 @@ function makeEffectState(input: {
             },
           ],
         };
-        return stateMutation(currentRequest);
+        return Effect.succeed(stateMutation(currentRequest, [invalidation("request:default")]));
       }),
-    cancelRequestInput: () => Effect.die("Unexpected cancelRequestInput call."),
-  } satisfies RuntimeRequestStatePortService;
-  const commandState = {
-    finishCommand: (finishInput) =>
+    cancelRequestInput: () =>
       Effect.sync(() => {
-        input.commandEvents.push(finishInput);
-        return stateMutation({
-          ...makeCommand(),
-          status: finishInput.status,
-          summary: finishInput.summary ?? "CI scope",
-          facts: finishInput.facts ?? null,
-          error: finishInput.error ?? null,
-          finishedAt: finishInput.status === "waiting" ? null : "2026-06-21T00:00:01.500Z",
-        });
+        input.cancelCalls?.push({ requestId });
+        currentRequest = {
+          ...currentRequest,
+          status: "cancelled",
+          completedAt: "2026-06-21T00:00:01.500Z",
+          questions: currentRequest.questions.map((question) => ({
+            ...question,
+            status: question.status === "open" ? ("cancelled" as const) : question.status,
+          })),
+        };
+        return stateMutation(currentRequest, [invalidation("request:cancel")]);
       }),
+  };
+  const commandState = {
+    finishCommand: (finishInput) => {
+      if (finishInput.status === "succeeded" && failSucceededFinish) {
+        failSucceededFinish = false;
+        return Effect.fail(
+          new StateContractError({
+            operation: "test.finishCommand",
+            reason: "transaction-failed",
+            message: "Terminal command write failed once.",
+          }),
+        );
+      }
+      return Effect.sync(() => {
+        input.commandEvents.push(finishInput);
+        return stateMutation(
+          {
+            ...makeCommand(),
+            status: finishInput.status,
+            summary: finishInput.summary ?? "CI scope",
+            facts: finishInput.facts ?? null,
+            error: finishInput.error ?? null,
+            finishedAt: finishInput.status === "waiting" ? null : "2026-06-21T00:00:01.500Z",
+          },
+          [invalidation(`command:${finishInput.status}`)],
+        );
+      });
+    },
     createCommand: () => Effect.die("Unexpected createCommand call."),
     createOrReuseStreamingCommand: () =>
       Effect.die("Unexpected createOrReuseStreamingCommand call."),
@@ -338,12 +516,12 @@ function makeEffectState(input: {
     setUserWait: (waitInput) =>
       Effect.sync(() => {
         input.waits.push({ kind: "set", input: waitInput });
-        return stateMutation(undefined);
+        return stateMutation(undefined, [invalidation("wait:set")]);
       }),
     clearSessionWait: (waitInput) =>
       Effect.sync(() => {
         input.waits.push({ kind: "clear", input: waitInput });
-        return stateMutation(undefined);
+        return stateMutation(undefined, [invalidation("wait:clear")]);
       }),
   } satisfies RuntimeSessionWaitStatePortService;
 
@@ -351,7 +529,35 @@ function makeEffectState(input: {
     commandState,
     requestState,
     sessionWaitState,
+    publishStateInvalidations: (afterCommit: readonly StateInvalidationDescriptor[]) => {
+      const markers = publicationMarkers([[...afterCommit]]);
+      if (failPublicationMarker && markers.includes(failPublicationMarker)) {
+        failPublicationMarker = undefined;
+        return Effect.fail(
+          new RuntimeContractError({
+            operation: "test.publishStateInvalidations",
+            reason: "dependency-not-ready",
+            message: "Post-commit publication was interrupted once.",
+          }),
+        );
+      }
+      return Effect.sync(() => {
+        if (afterCommit.length > 0) {
+          input.published?.push([...afterCommit]);
+        }
+      });
+    },
   };
+}
+
+function publicationMarkers(publications: readonly StateInvalidationDescriptor[][]): string[] {
+  return publications.flatMap((batch) =>
+    batch.flatMap((descriptor) =>
+      descriptor.invalidation.model === "surface"
+        ? descriptor.invalidation.ids.map((id) => id as string)
+        : [],
+    ),
+  );
 }
 
 function makeOpenRequest(): RuntimeRequestInputDetailsRecord {
@@ -369,6 +575,7 @@ function makeOpenRequest(): RuntimeRequestInputDetailsRecord {
     createdAt: "2026-06-21T00:00:01.000Z",
     completedAt: null,
     timeout: {
+      timerVersion: 1,
       enabled: true,
       durationMs: SHORT_TIMEOUT_MS,
       startedAt: "2026-06-21T00:00:01.000Z",
@@ -389,5 +596,28 @@ function makeOpenRequest(): RuntimeRequestInputDetailsRecord {
       },
     ],
     answers: [],
+  };
+}
+
+function makeCompletedRequest(): RuntimeRequestInputDetailsRecord {
+  const request = makeOpenRequest();
+  return {
+    ...request,
+    status: "completed",
+    completedAt: "2026-06-21T00:00:01.250Z",
+    timeout: null,
+    questions: request.questions.map((question) => ({ ...question, status: "answered" as const })),
+    answers: [
+      {
+        answerId: "ruia_runtime_blocking_retry" as RequestInputAnswerId,
+        requestId,
+        questionId,
+        answer: { kind: "custom", text: "Run the focused unit checks." },
+        answeredBy: "user",
+        delivery: null,
+        queuedItemId: null,
+        createdAt: "2026-06-21T00:00:01.250Z",
+      },
+    ],
   };
 }

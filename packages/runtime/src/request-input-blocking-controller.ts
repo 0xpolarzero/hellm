@@ -5,9 +5,9 @@ import {
   type RuntimeRequestInputDetailsRecord,
   type RuntimeRequestStatePortService,
   type RuntimeSessionWaitStatePortService,
+  type StateInvalidationDescriptor,
   RuntimeContractError,
   type SurfacePiSessionId,
-  type WorkspaceSessionId,
 } from "@svvy/core";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -19,9 +19,19 @@ import type { RequestUserInputResult } from "@svvy/extensions";
 type RuntimeBlockingRequestInputWaitError = RuntimeContractError;
 
 export type RuntimeBlockingRequestInputEffectState = {
-  commandState: RuntimeCommandStatePortService;
-  requestState: RuntimeRequestStatePortService;
-  sessionWaitState: RuntimeSessionWaitStatePortService;
+  commandState: Pick<RuntimeCommandStatePortService, "finishCommand">;
+  requestState: Pick<
+    RuntimeRequestStatePortService,
+    | "cancelRequestInput"
+    | "defaultOpenRequestInputQuestions"
+    | "getRequestInput"
+    | "listOpenBlockingRequestInputs"
+    | "setRequestInputTimerPaused"
+  >;
+  sessionWaitState: Pick<RuntimeSessionWaitStatePortService, "clearSessionWait" | "setUserWait">;
+  publishStateInvalidations: (
+    afterCommit: readonly StateInvalidationDescriptor[],
+  ) => Effect.Effect<void, RuntimeContractError>;
 };
 
 type PendingBlockingRequestEffect = {
@@ -71,6 +81,16 @@ export type RuntimeBlockingRequestInputWaitRegistry = {
   ): Effect.Effect<void, RuntimeBlockingRequestInputWaitError>;
   close(): Effect.Effect<void>;
 };
+
+function publishCommittedInvalidations(
+  state: RuntimeBlockingRequestInputEffectState,
+  operation: string,
+  afterCommit: readonly StateInvalidationDescriptor[],
+): Effect.Effect<void, RuntimeBlockingRequestInputWaitError> {
+  return state
+    .publishStateInvalidations(afterCommit)
+    .pipe(Effect.mapError((cause) => requestInputWaitError(operation, cause)));
+}
 
 export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
   "@svvy/runtime/request-input.makeBlockingWaitRegistry",
@@ -181,40 +201,24 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
     },
   );
 
-  const finishResolvedRequest = Effect.fn(
-    "@svvy/runtime/request-input.finishResolvedBlockingRequest",
-  )(function* (
-    state: RuntimeBlockingRequestInputEffectState,
-    request: RuntimeRequestInputDetailsRecord,
-    pendingRequest: PendingBlockingRequestEffect | undefined,
-  ): Effect.fn.Return<RequestUserInputResult, RuntimeBlockingRequestInputWaitError> {
-    yield* state.sessionWaitState
-      .clearSessionWait({
-        sessionId: (pendingRequest?.sessionId ?? request.sessionId) as WorkspaceSessionId,
-      })
-      .pipe(mapRequestInputWaitStateError("runtime.requestInput.finishResolvedBlockingRequest"));
-    const result = buildResultFromRequest(request);
-    const answeredBy = summarizeRequestUserInputResult(result);
-    yield* state.commandState
-      .finishCommand({
-        commandId: pendingRequest?.commandId ?? request.commandId,
-        status: "succeeded",
-        summary:
-          request.questions.length === 1
-            ? `Answered ${request.questions[0]!.title}.`
-            : `Answered ${request.questions.length} clarification questions.`,
-        facts: {
-          questionCount: request.questions.length,
-          answeredBy,
-          result,
-        },
-      })
-      .pipe(mapRequestInputWaitStateError("runtime.requestInput.finishResolvedBlockingRequest"));
-    if (pendingRequest) {
-      yield* Deferred.succeed(pendingRequest.deferred, result).pipe(Effect.asVoid);
-    }
-    return result;
-  });
+  const removePendingRequest = Effect.fn("@svvy/runtime/request-input.removePendingRequest")(
+    function* (
+      requestId: string,
+      expected: PendingBlockingRequestEffect | undefined,
+    ): Effect.fn.Return<PendingBlockingRequestEffect | undefined> {
+      if (!expected) {
+        return undefined;
+      }
+      return yield* Ref.modify(pending, (current) => {
+        if (current.get(requestId)?.deferred !== expected.deferred) {
+          return [undefined, current] as const;
+        }
+        const next = new Map(current);
+        next.delete(requestId);
+        return [expected, next] as const;
+      });
+    },
+  );
 
   const resolveBlockingRequest = Effect.fn("@svvy/runtime/request-input.resolveBlockingRequest")(
     function* (
@@ -228,14 +232,16 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
       if (request.questions.some((question) => question.status === "open")) {
         return null;
       }
-      const pendingRequest = yield* Ref.modify(pending, (current) => {
-        const next = new Map(current);
-        const entry = next.get(requestId);
-        next.delete(requestId);
-        return [entry, next] as const;
-      });
-      yield* closePendingTimer(pendingRequest);
-      return yield* finishResolvedRequest(state, request, pendingRequest);
+      const pendingRequest = yield* Ref.get(pending).pipe(
+        Effect.map((current) => current.get(requestId)),
+      );
+      const result = buildResultFromRequest(request);
+      const removed = yield* removePendingRequest(requestId, pendingRequest);
+      yield* closePendingTimer(removed);
+      if (removed) {
+        yield* Deferred.succeed(removed.deferred, result).pipe(Effect.asVoid);
+      }
+      return result;
     },
   );
 
@@ -245,32 +251,48 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
       requestId: string,
       error: RuntimeContractError,
     ): Effect.fn.Return<void, RuntimeBlockingRequestInputWaitError> {
-      const pendingRequest = yield* Ref.modify(pending, (current) => {
-        const next = new Map(current);
-        const entry = next.get(requestId);
-        next.delete(requestId);
-        return [entry, next] as const;
-      });
+      const pendingRequest = yield* Ref.get(pending).pipe(
+        Effect.map((current) => current.get(requestId)),
+      );
       if (!pendingRequest) {
         return;
       }
-      yield* closePendingTimer(pendingRequest);
-      yield* state.sessionWaitState
-        .clearSessionWait({
-          sessionId: pendingRequest.sessionId as WorkspaceSessionId,
-        })
+      const cancelled = yield* state.requestState
+        .cancelRequestInput({ requestId: requestId as RequestInputRequestId })
         .pipe(mapRequestInputWaitStateError("runtime.requestInput.rejectBlockingRequest"));
-      yield* state.commandState
-        .finishCommand({
-          commandId: pendingRequest.commandId,
-          status: "failed",
-          error: error.message,
-          summary: "Request user input failed.",
-        })
-        .pipe(mapRequestInputWaitStateError("runtime.requestInput.rejectBlockingRequest"));
-      yield* Deferred.fail(pendingRequest.deferred, error).pipe(Effect.asVoid);
+      yield* publishCommittedInvalidations(
+        state,
+        "runtime.requestInput.rejectBlockingRequest.cancelRequest.afterCommit",
+        cancelled.afterCommit,
+      );
+      const removed = yield* removePendingRequest(requestId, pendingRequest);
+      yield* closePendingTimer(removed);
+      if (removed) {
+        yield* Deferred.fail(removed.deferred, error).pipe(Effect.asVoid);
+      }
     },
   );
+
+  const finishCancelledRequest = Effect.fn(
+    "@svvy/runtime/request-input.finishCancelledBlockingRequest",
+  )(function* (
+    _state: RuntimeBlockingRequestInputEffectState,
+    request: RuntimeRequestInputDetailsRecord,
+    pendingRequest: PendingBlockingRequestEffect | undefined,
+    reason: string,
+  ): Effect.fn.Return<void, RuntimeBlockingRequestInputWaitError> {
+    const removed = yield* removePendingRequest(request.requestId, pendingRequest);
+    yield* closePendingTimer(removed);
+    if (removed) {
+      yield* Deferred.fail(
+        removed.deferred,
+        requestInputWaitError("runtime.requestInput.finishCancelledBlockingRequest", {
+          reason: "runtime-shutdown",
+          message: reason,
+        }),
+      ).pipe(Effect.asVoid);
+    }
+  });
 
   const scheduleBlockingTimeout = Effect.fn("@svvy/runtime/request-input.scheduleBlockingTimeout")(
     function* (
@@ -294,8 +316,10 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
       ) {
         return;
       }
+      const expectedTimerVersion = timeout.timerVersion;
+      const expectedExpiresAt = timeout.expiresAt;
       const now = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
-      const durationMs = Math.max(0, Date.parse(timeout.expiresAt) - now);
+      const durationMs = Math.max(0, Date.parse(expectedExpiresAt) - now);
       const requestTimerScope = yield* Scope.fork(timerScope, "sequential");
       const timerCompleted = yield* Ref.make(false);
       const installed = yield* installBlockingTimerScope(
@@ -336,7 +360,8 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
               latest.status !== "open" ||
               latestTimeout?.enabled !== true ||
               latestTimeout.pausedAt ||
-              !latestTimeout.expiresAt
+              latestTimeout.timerVersion !== expectedTimerVersion ||
+              latestTimeout.expiresAt !== expectedExpiresAt
             ) {
               return;
             }
@@ -344,8 +369,15 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
               .defaultOpenRequestInputQuestions({
                 requestId: requestInputId,
                 answeredBy: "timeout_default",
+                expectedTimerVersion,
+                expectedExpiresAt,
               })
               .pipe(mapRequestInputWaitStateError("runtime.requestInput.fireBlockingTimeout"));
+            yield* publishCommittedInvalidations(
+              state,
+              "runtime.requestInput.fireBlockingTimeout.defaultQuestions.afterCommit",
+              expired.afterCommit,
+            );
             yield* resolveBlockingRequest(state, expired.value.requestId);
             if (options.onRequestUpdated) {
               yield* options.onRequestUpdated();
@@ -353,47 +385,39 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
           }),
         ),
         Effect.catch((cause) =>
-          rejectBlockingRequest(
-            state,
-            requestId,
-            requestInputWaitError("runtime.requestInput.fireBlockingTimeout", cause),
-          ),
+          cause instanceof RuntimeContractError && cause.reason === "stale-state"
+            ? Effect.void
+            : state.requestState.getRequestInput({ requestId: requestInputId }).pipe(
+                mapRequestInputWaitStateError("runtime.requestInput.fireBlockingTimeout.recover"),
+                Effect.flatMap((latest) =>
+                  latest.status === "open"
+                    ? rejectBlockingRequest(
+                        state,
+                        requestId,
+                        requestInputWaitError("runtime.requestInput.fireBlockingTimeout", cause),
+                      )
+                    : latest.status === "cancelled"
+                      ? Ref.get(pending).pipe(
+                          Effect.map((current) => current.get(requestId)),
+                          Effect.flatMap((pendingRequest) =>
+                            finishCancelledRequest(
+                              state,
+                              latest,
+                              pendingRequest,
+                              "Request user input was cancelled while publishing its terminal state.",
+                            ),
+                          ),
+                        )
+                      : resolveBlockingRequest(state, requestId).pipe(Effect.asVoid),
+                ),
+                Effect.catch(() => Effect.void),
+              ),
         ),
         Effect.forkIn(requestTimerScope),
         Effect.asVoid,
       );
     },
   );
-
-  const enterBlockingWait = Effect.fn("@svvy/runtime/request-input.enterBlockingWait")(function* (
-    state: RuntimeBlockingRequestInputEffectState,
-    request: RuntimeRequestInputDetailsRecord,
-  ): Effect.fn.Return<void, RuntimeContractError> {
-    yield* state.commandState
-      .finishCommand({
-        commandId: request.commandId,
-        status: "waiting",
-        summary: `Waiting for user answer: ${request.questions.map((question) => question.title).join("; ")}`,
-        facts: {
-          questionCount: request.questions.length,
-          answeredBy: "pending",
-        },
-      })
-      .pipe(mapRequestInputWaitStateError("runtime.requestInput.enterBlockingWait"));
-    yield* state.sessionWaitState
-      .setUserWait({
-        sessionId: request.sessionId,
-        owner: request.threadId
-          ? { kind: "thread", threadId: request.threadId }
-          : { kind: "orchestrator" },
-        reason:
-          request.questions.length === 1
-            ? request.questions[0]!.title
-            : `Waiting for ${request.questions.length} clarification answers.`,
-        resumeWhen: "Resume when the user answers the clarification request.",
-      })
-      .pipe(Effect.catch(() => Effect.void));
-  });
 
   const waitForBlockingRequest = Effect.fn("@svvy/runtime/request-input.waitForBlockingRequest")(
     function* (input: {
@@ -424,9 +448,11 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
           }),
         );
       }
-      yield* enterBlockingWait(input.state, input.request);
-      yield* scheduleBlockingTimeout(input.state, input.request.requestId);
-      return yield* Deferred.await(deferred).pipe(
+      return yield* Effect.gen(function* () {
+        yield* resolveBlockingRequest(input.state, input.request.requestId);
+        yield* scheduleBlockingTimeout(input.state, input.request.requestId);
+        return yield* Deferred.await(deferred);
+      }).pipe(
         Effect.ensuring(
           Effect.gen(function* () {
             const entry = yield* Ref.modify(pending, (current) => {
@@ -469,7 +495,6 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
       if (!inserted) {
         continue;
       }
-      yield* enterBlockingWait(state, request);
       yield* scheduleBlockingTimeout(state, request.requestId);
     }
   });
@@ -491,6 +516,11 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
           paused,
         })
         .pipe(mapRequestInputWaitStateError("runtime.requestInput.setBlockingTimerPaused"));
+      yield* publishCommittedInvalidations(
+        state,
+        "runtime.requestInput.setBlockingTimerPaused.afterCommit",
+        result.afterCommit,
+      );
       yield* scheduleBlockingTimeout(state, requestId);
       return result.value;
     },
@@ -509,42 +539,20 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
       })
       .pipe(mapRequestInputWaitStateError("runtime.requestInput.cancelBlockingRequestsForSurface"));
     for (const request of requests) {
-      const pendingRequest = yield* Ref.modify(pending, (current) => {
-        const next = new Map(current);
-        const entry = next.get(request.requestId);
-        next.delete(request.requestId);
-        return [entry, next] as const;
-      });
-      yield* closePendingTimer(pendingRequest);
-      yield* state.requestState
+      const pendingRequest = yield* Ref.get(pending).pipe(
+        Effect.map((current) => current.get(request.requestId)),
+      );
+      const cancelled = yield* state.requestState
         .cancelRequestInput({ requestId: request.requestId })
         .pipe(
           mapRequestInputWaitStateError("runtime.requestInput.cancelBlockingRequestsForSurface"),
         );
-      yield* state.sessionWaitState
-        .clearSessionWait({ sessionId: request.sessionId })
-        .pipe(
-          mapRequestInputWaitStateError("runtime.requestInput.cancelBlockingRequestsForSurface"),
-        );
-      yield* state.commandState
-        .finishCommand({
-          commandId: request.commandId,
-          status: "cancelled",
-          error: reason,
-          summary: "Request user input cancelled.",
-        })
-        .pipe(
-          mapRequestInputWaitStateError("runtime.requestInput.cancelBlockingRequestsForSurface"),
-        );
-      if (pendingRequest) {
-        yield* Deferred.fail(
-          pendingRequest.deferred,
-          requestInputWaitError("runtime.requestInput.cancelBlockingRequestsForSurface", {
-            reason: "runtime-shutdown",
-            message: reason,
-          }),
-        ).pipe(Effect.asVoid);
-      }
+      yield* publishCommittedInvalidations(
+        state,
+        "runtime.requestInput.cancelBlockingRequestsForSurface.cancelRequest.afterCommit",
+        cancelled.afterCommit,
+      );
+      yield* finishCancelledRequest(state, cancelled.value, pendingRequest, reason);
     }
   });
 
@@ -558,16 +566,6 @@ export const makeRuntimeBlockingRequestInputWaitRegistry = Effect.fn(
     close: () => Scope.close(timerScope, Exit.void).pipe(Effect.ignore),
   };
 });
-
-function summarizeRequestUserInputResult(
-  result: RequestUserInputResult,
-): "user" | "default" | "timeout_default" | "mixed" {
-  const values = new Set(result.answers.map((answer) => answer.answeredBy));
-  if (values.size === 1) {
-    return result.answers[0]?.answeredBy ?? "default";
-  }
-  return "mixed";
-}
 
 function buildResultFromRequest(request: RuntimeRequestInputDetailsRecord): RequestUserInputResult {
   return {

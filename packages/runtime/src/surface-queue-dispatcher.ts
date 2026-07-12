@@ -39,6 +39,9 @@ export interface SurfaceQueueDispatchHost<
   TPrepared = undefined,
 > {
   isClosed(): boolean;
+  withQueueClaimAdmission<A>(
+    effect: Effect.Effect<A, RuntimeContractError>,
+  ): Effect.Effect<A, RuntimeContractError>;
   resolveTarget(target: TTarget): SurfaceQueueHostResult<TTarget>;
   retainSurface(target: TTarget): SurfaceQueueHostResult<TSurface>;
   releaseSurface(input: { target: TTarget; surface: TSurface }): SurfaceQueueHostResult<void>;
@@ -221,17 +224,19 @@ export function createSurfaceQueueDispatcher<
           return false;
         }
 
-        const queuedResult = yield* queue
-          .claimNextQueuedSurfaceMessage({
-            surfacePiSessionId,
-            claimOwnerId,
-            leaseDurationMs,
-          })
-          .pipe(
-            Effect.mapError((cause) =>
-              runtimeQueueStateError("runtime.queue.dispatch.claimNext", cause),
+        const queuedResult = yield* host.withQueueClaimAdmission(
+          queue
+            .claimNextQueuedSurfaceMessage({
+              surfacePiSessionId,
+              claimOwnerId,
+              leaseDurationMs,
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                runtimeQueueStateError("runtime.queue.dispatch.claimNext", cause),
+              ),
             ),
-          );
+        );
         const queued = queuedResult.value;
         if (!queued) {
           return false;

@@ -4,21 +4,233 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import {
   type AbsolutePath,
+  type CreateWorkflowAgentSourceInput,
+  decodeUnknownCreateWorkflowAgentSourceInputEffect,
+  decodeUnknownDeleteWorkflowAgentSourceInputEffect,
+  decodeUnknownDuplicateWorkflowAgentSourceInputEffect,
+  type DeleteWorkflowAgentSourceInput,
+  type DuplicateWorkflowAgentSourceInput,
   ExtensionError as CoreExtensionError,
   type ExtensionError,
   type OpenExtensionSourceEditInput,
   type SaveExtensionSourceEditInput,
   type SourceEditSaveResult,
   type SourceEditSession,
+  type TaskAgentParametersSource,
+  type WorkflowAgentSourceDeleteResult,
+  type WorkflowAgentSourceExportName,
+  type WorkflowAgentSourceLifecycleResult,
 } from "@svvy/core";
 import { getExtensionRecord } from "./extension-records";
 import { ExtensionSourceRootsPort } from "./extension-source-roots-port";
+import {
+  decodeWorkflowAgentSourceText,
+  isDefaultWorkflowAgentSourceId,
+  validateWorkflowAgentExtensionReferences,
+  workflowAgentExtensionReferences,
+} from "./workflow-agent-source-records";
 
 export type ExtensionSourceEditServices =
   | FileSystem.FileSystem
   | Path.Path
   | Crypto.Crypto
   | ExtensionSourceRootsPort;
+
+export function createWorkflowAgentSource(
+  input: CreateWorkflowAgentSourceInput,
+): Effect.Effect<WorkflowAgentSourceLifecycleResult, ExtensionError, ExtensionSourceEditServices> {
+  const operation = "extensions.sources.create-workflow-agent";
+  return Effect.gen(function* () {
+    const decoded = yield* decodeWorkflowAgentLifecycleInput(
+      operation,
+      decodeUnknownCreateWorkflowAgentSourceInputEffect(input),
+    );
+    yield* rejectDefaultWorkflowAgentSourceId(operation, decoded.draft.exportName);
+    const displayName = yield* normalizeWorkflowAgentDisplayName({
+      operation,
+      sourceId: decoded.draft.exportName,
+      displayName: decoded.draft.displayName,
+    });
+    yield* validateWorkflowAgentExtensionReferences({
+      operation,
+      sourceId: decoded.draft.exportName,
+      extensionIds: [
+        ...(decoded.draft.extensionUsageOverrides?.map((entry) => entry.extensionId) ?? []),
+        ...(decoded.draft.extensionOrder ?? []),
+      ],
+    });
+    const parameters = {
+      id: decoded.draft.exportName,
+      label: displayName,
+      provider: decoded.draft.provider,
+      model: decoded.draft.model,
+      reasoning: decoded.draft.reasoning,
+      instructions: decoded.draft.instructionText ?? "",
+      ...(decoded.draft.extensionUsageOverrides?.length
+        ? {
+            overrides: Object.fromEntries(
+              decoded.draft.extensionUsageOverrides.map((entry) => [
+                entry.extensionId,
+                entry.usage,
+              ]),
+            ),
+          }
+        : {}),
+    } satisfies TaskAgentParametersSource;
+    const sourceText = `${JSON.stringify(
+      {
+        ...parameters,
+        ...(decoded.draft.extensionOrder?.length
+          ? { extensionOrder: decoded.draft.extensionOrder }
+          : {}),
+      },
+      null,
+      2,
+    )}\n`;
+    const sourcePath = yield* workflowAgentSourcePath(operation, decoded.draft.exportName);
+    yield* createWorkflowAgentSourceFile({
+      operation,
+      sourceId: decoded.draft.exportName,
+      sourcePath,
+      sourceText,
+    });
+    const session = yield* readSourceEditSession(
+      { sourceKind: "workflow-agent", sourceId: decoded.draft.exportName },
+      { path: sourcePath, fallbackText: "" },
+    );
+    return {
+      status: "created",
+      session: session as WorkflowAgentSourceLifecycleResult["session"],
+      fileWriteReceipt: {
+        path: sourcePath,
+        previousExists: false,
+        bytes: new TextEncoder().encode(sourceText).byteLength,
+      },
+      reconcileRequired: true,
+    };
+  });
+}
+
+export function duplicateWorkflowAgentSource(
+  input: DuplicateWorkflowAgentSourceInput,
+): Effect.Effect<WorkflowAgentSourceLifecycleResult, ExtensionError, ExtensionSourceEditServices> {
+  const operation = "extensions.sources.duplicate-workflow-agent";
+  return Effect.gen(function* () {
+    const decoded = yield* decodeWorkflowAgentLifecycleInput(
+      operation,
+      decodeUnknownDuplicateWorkflowAgentSourceInputEffect(input),
+    );
+    yield* rejectDefaultWorkflowAgentSourceId(operation, decoded.draftPatch.exportName);
+    const source = yield* openExtensionSourceEditSession({
+      sourceKind: "workflow-agent",
+      sourceId: decoded.sourceId,
+    });
+    const parsed = yield* decodeWorkflowAgentSourceText({
+      operation,
+      sourceId: decoded.sourceId,
+      sourceText: source.text,
+    });
+    yield* validateWorkflowAgentExtensionReferences({
+      operation,
+      sourceId: decoded.sourceId,
+      extensionIds: workflowAgentExtensionReferences(parsed),
+    });
+    const displayName = decoded.draftPatch.displayName
+      ? yield* normalizeWorkflowAgentDisplayName({
+          operation,
+          sourceId: decoded.draftPatch.exportName,
+          displayName: decoded.draftPatch.displayName,
+        })
+      : parsed.agent.label;
+    const duplicateText = `${JSON.stringify(
+      {
+        ...parsed.raw,
+        id: decoded.draftPatch.exportName,
+        label: displayName,
+        instructions: decoded.draftPatch.instructionText ?? parsed.agent.instructions,
+      },
+      null,
+      2,
+    )}\n`;
+    const duplicatePath = yield* workflowAgentSourcePath(operation, decoded.draftPatch.exportName);
+    yield* createWorkflowAgentSourceFile({
+      operation,
+      sourceId: decoded.draftPatch.exportName,
+      sourcePath: duplicatePath,
+      sourceText: duplicateText,
+    });
+    const session = yield* readSourceEditSession(
+      { sourceKind: "workflow-agent", sourceId: decoded.draftPatch.exportName },
+      { path: duplicatePath, fallbackText: "" },
+    );
+    return {
+      status: "duplicated",
+      session: session as WorkflowAgentSourceLifecycleResult["session"],
+      fileWriteReceipt: {
+        path: duplicatePath,
+        previousExists: false,
+        bytes: new TextEncoder().encode(duplicateText).byteLength,
+      },
+      reconcileRequired: true,
+    };
+  });
+}
+
+export function deleteWorkflowAgentSource(
+  input: DeleteWorkflowAgentSourceInput,
+): Effect.Effect<WorkflowAgentSourceDeleteResult, ExtensionError, ExtensionSourceEditServices> {
+  const operation = "extensions.sources.delete-workflow-agent";
+  return Effect.gen(function* () {
+    const decoded = yield* decodeWorkflowAgentLifecycleInput(
+      operation,
+      decodeUnknownDeleteWorkflowAgentSourceInputEffect(input),
+    );
+    if (isDefaultWorkflowAgentSourceId(decoded.sourceId)) {
+      return yield* Effect.fail(
+        extensionSourceEditError({
+          operation,
+          reason: "invalid-input",
+          sourceId: decoded.sourceId,
+          message: `Default workflow-agent source cannot be deleted: ${decoded.sourceId}`,
+        }),
+      );
+    }
+    const session = yield* openExtensionSourceEditSession({
+      sourceKind: "workflow-agent",
+      sourceId: decoded.sourceId,
+    });
+    if (session.sourceVersion !== decoded.expectedSourceVersion) {
+      return yield* Effect.fail(
+        extensionSourceEditError({
+          operation,
+          reason: "invalid-input",
+          sourceId: decoded.sourceId,
+          message: `Workflow-agent source ${decoded.sourceId} changed before deletion.`,
+        }),
+      );
+    }
+    yield* (yield* FileSystem.FileSystem).remove(session.path).pipe(
+      Effect.mapError((cause) =>
+        extensionSourceEditError({
+          operation,
+          reason: "execution-failed",
+          sourceId: decoded.sourceId,
+          message: `Failed to delete workflow-agent source ${decoded.sourceId}.`,
+          cause,
+        }),
+      ),
+    );
+    return {
+      status: "deleted",
+      sourceKind: "workflow-agent",
+      sourceId: decoded.sourceId,
+      deletedPath: session.path,
+      previousSourceVersion: session.sourceVersion,
+      fileWriteReceipt: { path: session.path, deleted: true },
+      reconcileRequired: true,
+    };
+  });
+}
 
 export function openExtensionSourceEditSession(
   input: OpenExtensionSourceEditInput,
@@ -56,6 +268,19 @@ export function saveExtensionSourceEditSession(
       return { status: "stale" as const, current };
     }
 
+    if (input.sourceKind === "workflow-agent") {
+      const parsed = yield* decodeWorkflowAgentSourceText({
+        operation: "extensions.sources.save-edit-session",
+        sourceId: input.sourceId,
+        sourceText: input.text,
+      });
+      yield* validateWorkflowAgentExtensionReferences({
+        operation: "extensions.sources.save-edit-session",
+        sourceId: input.sourceId,
+        extensionIds: workflowAgentExtensionReferences(parsed),
+      });
+    }
+
     yield* writeTextFileAtomically(editableSource.path, input.text).pipe(
       Effect.mapError((cause) =>
         extensionSourceEditError({
@@ -76,6 +301,145 @@ export function saveExtensionSourceEditSession(
       reconcileRequired: true,
     };
   });
+}
+
+function decodeWorkflowAgentLifecycleInput<A>(
+  operation: string,
+  effect: Effect.Effect<A, unknown>,
+): Effect.Effect<A, ExtensionError> {
+  return effect.pipe(
+    Effect.mapError((cause) =>
+      extensionSourceEditError({
+        operation,
+        reason: "invalid-input",
+        message: "Workflow-agent source lifecycle input is invalid.",
+        cause,
+      }),
+    ),
+  );
+}
+
+function rejectDefaultWorkflowAgentSourceId(
+  operation: string,
+  sourceId: WorkflowAgentSourceExportName,
+): Effect.Effect<void, ExtensionError> {
+  return isDefaultWorkflowAgentSourceId(sourceId)
+    ? Effect.fail(
+        extensionSourceEditError({
+          operation,
+          reason: "invalid-input",
+          sourceId,
+          message: `Default workflow-agent source id is reserved: ${sourceId}`,
+        }),
+      )
+    : Effect.void;
+}
+
+function workflowAgentSourcePath(
+  operation: string,
+  sourceId: WorkflowAgentSourceExportName,
+): Effect.Effect<AbsolutePath, ExtensionError, Path.Path | ExtensionSourceRootsPort> {
+  return Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const roots = yield* (yield* ExtensionSourceRootsPort).roots();
+    const sourceRoot = path.resolve(roots.workflowsSourceRoot, "agents");
+    return yield* containedPath({
+      operation,
+      sourceId,
+      root: sourceRoot,
+      candidate: path.join(sourceRoot, `${sourceId}.agent.json`),
+    });
+  });
+}
+
+function createWorkflowAgentSourceFile(input: {
+  readonly operation: string;
+  readonly sourceId: WorkflowAgentSourceExportName;
+  readonly sourcePath: AbsolutePath;
+  readonly sourceText: string;
+}): Effect.Effect<void, ExtensionError, FileSystem.FileSystem | Path.Path | Crypto.Crypto> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const exists = yield* fs.exists(input.sourcePath).pipe(
+      Effect.mapError((cause) =>
+        extensionSourceEditError({
+          operation: input.operation,
+          reason: "execution-failed",
+          sourceId: input.sourceId,
+          message: `Failed to inspect workflow-agent source ${input.sourceId}.`,
+          cause,
+        }),
+      ),
+    );
+    if (exists) {
+      return yield* Effect.fail(
+        extensionSourceEditError({
+          operation: input.operation,
+          reason: "invalid-input",
+          sourceId: input.sourceId,
+          message: `Workflow-agent source already exists: ${input.sourceId}`,
+        }),
+      );
+    }
+    const directory = path.dirname(input.sourcePath);
+    const uuid = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) =>
+        extensionSourceEditError({
+          operation: input.operation,
+          reason: "execution-failed",
+          sourceId: input.sourceId,
+          message: `Failed to allocate workflow-agent source temp path ${input.sourceId}.`,
+          cause,
+        }),
+      ),
+    );
+    const tempPath = path.join(directory, `.${uuid}.tmp`);
+    yield* fs.makeDirectory(directory, { recursive: true }).pipe(
+      Effect.andThen(fs.writeFileString(tempPath, input.sourceText, { flag: "wx" })),
+      Effect.mapError((cause) =>
+        extensionSourceEditError({
+          operation: input.operation,
+          reason: "execution-failed",
+          sourceId: input.sourceId,
+          message: `Failed to create workflow-agent source ${input.sourceId}.`,
+          cause,
+        }),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      yield* fs.link(tempPath, input.sourcePath).pipe(
+        Effect.mapError((cause) =>
+          extensionSourceEditError({
+            operation: input.operation,
+            reason: "invalid-input",
+            sourceId: input.sourceId,
+            message: `Workflow-agent source already exists or could not be published: ${input.sourceId}`,
+            cause,
+          }),
+        ),
+      );
+    }).pipe(Effect.ensuring(fs.remove(tempPath, { force: true }).pipe(Effect.ignore)));
+  });
+}
+
+function normalizeWorkflowAgentDisplayName(input: {
+  readonly operation: string;
+  readonly sourceId: string;
+  readonly displayName: string;
+}): Effect.Effect<string, ExtensionError> {
+  const displayName = input.displayName.trim();
+  return displayName.length > 0
+    ? Effect.succeed(displayName)
+    : Effect.fail(
+        extensionSourceEditError({
+          operation: input.operation,
+          reason: "invalid-input",
+          sourceId: input.sourceId,
+          message: `Workflow-agent source ${input.sourceId} requires a non-blank display name.`,
+        }),
+      );
 }
 
 interface EditableMinimalInstructionSource {

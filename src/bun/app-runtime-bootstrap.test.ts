@@ -11,7 +11,6 @@ import {
   type AppLogEntryId,
   type CommandId,
   type CreateOrchestratorSurfaceInput,
-  type ExtensionId,
   type IsoDateTimeString,
   type PromptTarget,
   type ProviderId,
@@ -50,7 +49,6 @@ import { createTestSandboxHostSupport } from "./sandbox-host-support.test-suppor
 import {
   DEFAULT_AGENT_SETTINGS_STATE,
   normalizeExternalInstructionsSettings,
-  type AgentSettingsState,
   type AppPreferences,
 } from "../shared/agent-settings";
 
@@ -120,6 +118,17 @@ describe("app runtime bootstrap", () => {
 
     try {
       expect(bootstrap.readiness.status).toBe("ready");
+      expect(bootstrap.readiness.completedPhases).toContain("app-source-reconcile");
+      expect(
+        harness.appGlobal.store
+          .listCurrentWorkflowAgentSources()
+          .map((source) => ({ sourceId: source.sourceId, status: source.validationStatus })),
+      ).toEqual([
+        { sourceId: "defaultAgent", status: "valid" },
+        { sourceId: "explorerAgent", status: "valid" },
+        { sourceId: "implementerAgent", status: "valid" },
+        { sourceId: "reviewerAgent", status: "valid" },
+      ]);
 
       const surfaceA = await bootstrap.facade.surfaces.createOrchestrator({
         workspaceId: harness.workspaceAId,
@@ -178,11 +187,18 @@ describe("app runtime bootstrap", () => {
         reason: "test cancel active",
       });
 
+      const approvalOwner = createPendingApprovalCommand(
+        harness.workspaceB.store,
+        surfaceB.workspaceSessionId,
+        surfaceB.surfacePiSessionId,
+      );
       pendingApproval = bootstrap.internal.acceptedNativeTools.requestDirectToolApproval({
         approvalMode: "user",
         cwd: harness.workspaceB.cwd,
         sessionId: surfaceB.workspaceSessionId,
         surfacePiSessionId: surfaceB.surfacePiSessionId,
+        turnId: approvalOwner.turnId,
+        commandId: approvalOwner.commandId,
         toolCallId: "tool_app_bootstrap_pending_approval" as ToolItemId,
         toolName: "exec_command",
         command: "echo pending",
@@ -348,7 +364,10 @@ describe("app runtime bootstrap", () => {
       const eventReader = (async () => {
         for await (const event of subscription) {
           events.push(event);
-          if (event.type === "app_read_model.changed") {
+          if (
+            event.type === "app_read_model.changed" &&
+            event.invalidation.model === "appPreferences"
+          ) {
             return event;
           }
         }
@@ -375,7 +394,14 @@ describe("app runtime bootstrap", () => {
         throw new Error("Expected app_read_model.changed event.");
       }
       expect(event.invalidation).toEqual({ model: "appPreferences" });
-      expect(events).toHaveLength(1);
+      expect(events.at(-1)).toEqual(event);
+      expect(
+        events.some(
+          (candidate) =>
+            candidate.type === "app_read_model.changed" &&
+            candidate.invalidation.model === "agents",
+        ),
+      ).toBe(true);
     } finally {
       await subscription.close();
       await bootstrap.dispose();
@@ -524,58 +550,6 @@ describe("app runtime bootstrap", () => {
     }
   });
 
-  it("seeds exact profile reasoning and independent actor extension defaults", async () => {
-    const harness = createBootstrapHarness();
-    const settings = structuredClone(DEFAULT_AGENT_SETTINGS_STATE) as AgentSettingsState;
-    settings.agents.orchestrators[0]!.reasoningEffort = "high";
-    settings.agents.special.threadHandler.reasoningEffort = "low";
-    settings.extensionDefaults = {
-      order: ["alpha"],
-      usage: {
-        orchestrator: { alpha: "loaded" },
-        "workflow-task": { alpha: "available" },
-      },
-    };
-    const bootstrap = await createAppRuntimeBootstrap({
-      ...harness.input,
-      agentSettingsSeed: {
-        hasAgentProfileRows: () => false,
-        hasExtensionEnvRows: () => true,
-        read: () => settings,
-      },
-    });
-
-    try {
-      const result = await bootstrap.rendererState.readModels.fetch({ kind: "agents" });
-      expect(result.kind).toBe("agents");
-      if (result.kind !== "agents") throw new Error("Expected agents read model.");
-      expect(
-        Object.fromEntries(
-          result.value.configuredProfiles.map(({ profileId, reasoning }) => [profileId, reasoning]),
-        ),
-      ).toEqual({
-        "default-orchestrator": { effort: "high" },
-        "thread-handler": { effort: "low" },
-      });
-      expect(result.value.actorExtensionDefaults).toEqual([
-        {
-          actor: "orchestrator",
-          extensionUsage: { alpha: "loaded" },
-          extensionOrder: ["alpha" as ExtensionId],
-          updatedAt: expect.any(String),
-        },
-        {
-          actor: "workflow-task",
-          extensionUsage: { alpha: "available" },
-          extensionOrder: ["alpha" as ExtensionId],
-          updatedAt: expect.any(String),
-        },
-      ]);
-    } finally {
-      await bootstrap.dispose();
-    }
-  });
-
   it("prepares startup-failure shutdown before disposing the acquired runtime", async () => {
     const harness = createBootstrapHarness();
     const listSessionStates = harness.appGlobal.store.listSessionStates.bind(
@@ -592,6 +566,22 @@ describe("app runtime bootstrap", () => {
     } finally {
       harness.appGlobal.store.listSessionStates = listSessionStates;
     }
+  });
+
+  it("fails startup with typed app-source readiness when packaged agent templates are missing", async () => {
+    const harness = createBootstrapHarness();
+    const missingTemplatesRoot = mkdtempTracked("missing-workflow-agent-templates") as AbsolutePath;
+
+    await expect(
+      createAppRuntimeBootstrap({
+        ...harness.input,
+        packagedExtensionTemplatesRoot: missingTemplatesRoot,
+      }),
+    ).rejects.toMatchObject({
+      _tag: "RuntimeStartupError",
+      phase: "app-source-reconcile",
+      reason: "required-startup-check-failed",
+    });
   });
 
   it("rejects public and bootstrap-internal calls as soon as app shutdown starts", async () => {
@@ -614,7 +604,7 @@ describe("app runtime bootstrap", () => {
     }
     await expect(bootstrap.facade.events()).rejects.toMatchObject({
       type: "runtime-facade-error",
-      reason: "disposed",
+      reason: "typed-failure",
     });
     await expect(
       bootstrap.modelMetadata.list({
@@ -631,7 +621,7 @@ describe("app runtime bootstrap", () => {
     ]);
   });
 
-  it("closes facades before runtime preparation and bootstrap-owned ManagedRuntime disposal", () => {
+  it("keeps facades open through runtime preparation, then closes them before disposal", () => {
     const source = readFileSync(new URL("./app-runtime-bootstrap.ts", import.meta.url), "utf8");
     const start = source.indexOf('dispose: (reason = "app-shutdown")');
     const end = source.indexOf("          .then(() => undefined)", start);
@@ -645,8 +635,8 @@ describe("app runtime bootstrap", () => {
     expect(end).toBeGreaterThan(start);
     expect(closeSubscriptions).toBeGreaterThanOrEqual(0);
     expect(closeRuntimeFacade).toBeGreaterThan(closeSubscriptions);
-    expect(prepareRuntime).toBeGreaterThan(closeRuntimeFacade);
-    expect(disposeRuntime).toBeGreaterThan(prepareRuntime);
+    expect(prepareRuntime).toBeLessThan(closeSubscriptions);
+    expect(disposeRuntime).toBeGreaterThan(closeRuntimeFacade);
     expect(shutdownSource.match(/disposeManagedRuntime\(managedRuntime\)/g)).toHaveLength(1);
   });
 
@@ -657,11 +647,18 @@ describe("app runtime bootstrap", () => {
       workspaceId: harness.workspaceAId,
       title: "Startup failure cleanup",
     } satisfies CreateOrchestratorSurfaceInput);
+    const approvalOwner = createPendingApprovalCommand(
+      harness.workspaceA.store,
+      surface.workspaceSessionId,
+      surface.surfacePiSessionId,
+    );
     const pendingApproval = bootstrap.internal.acceptedNativeTools.requestDirectToolApproval({
       approvalMode: "user",
       cwd: harness.workspaceA.cwd,
       sessionId: surface.workspaceSessionId,
       surfacePiSessionId: surface.surfacePiSessionId,
+      turnId: approvalOwner.turnId,
+      commandId: approvalOwner.commandId,
       toolCallId: "tool_app_bootstrap_startup_failure" as ToolItemId,
       toolName: "exec_command",
       command: "echo pending",
@@ -730,6 +727,15 @@ function createBootstrapHarness() {
       { store: workspaceB.store },
     ],
     sourceRoots,
+    packagedExtensionTemplatesRoot: join(
+      import.meta.dir,
+      "..",
+      "..",
+      "packages",
+      "extensions",
+      "src",
+      "builtin",
+    ) as AbsolutePath,
     generatedPackageRoots,
     extensionStatePort: {
       records: {
@@ -826,6 +832,31 @@ async function waitForOpenApproval(
     await Promise.resolve();
   }
   expect(store.listOpenRuntimeApprovalRequests()).toHaveLength(count);
+}
+
+function createPendingApprovalCommand(
+  store: StructuredSessionStateStore,
+  sessionId: WorkspaceSessionId,
+  surfacePiSessionId: SurfacePiSessionId,
+): { readonly turnId: TurnId; readonly commandId: CommandId } {
+  const turn = store.startTurn({
+    sessionId,
+    surfacePiSessionId,
+    requestSummary: "Exercise a pending runtime approval.",
+  });
+  const command = store.createCommand({
+    turnId: turn.id,
+    surfacePiSessionId,
+    toolName: "exec_command",
+    executor: "orchestrator",
+    visibility: "surface",
+    title: "Pending approved command",
+    summary: "Wait for runtime approval.",
+  });
+  return {
+    turnId: turn.id as TurnId,
+    commandId: command.id as CommandId,
+  };
 }
 
 function mkdtempTracked(label: string): string {

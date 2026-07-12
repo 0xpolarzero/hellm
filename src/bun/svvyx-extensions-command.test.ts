@@ -15,6 +15,12 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createAgentSettingsStore } from "./agent-settings-store";
 import {
+  createAgentProfileMutationStore,
+  type AgentProfileAuthoritySnapshot,
+  type AgentProfileMutation,
+  type AgentProfileMutationStore,
+} from "./agent-profile-mutation-store";
+import {
   ExtensionDependencyApprovalStore,
   extensionDependencyApprovalIdentityKey,
   type ExtensionDependencyApprovalIdentity,
@@ -30,10 +36,10 @@ import {
   assertExtensionEnvWriteValue,
   formatSvvyxExtensionsError,
   probeCliRequirement,
-  readBuiltinExtensionsInventory,
+  readBuiltinExtensionsInventory as readBuiltinExtensionsInventoryWithoutTestAuthority,
   readExtensionChangeCards,
   rejectExtensionDependencyRequest,
-  runSvvyxExtensionsCommand,
+  runSvvyxExtensionsCommand as runSvvyxExtensionsCommandWithoutTestAuthority,
   setExtensionUsage,
   writeExtensionInstructionFile,
   type ExtensionDependencyCommittedApprovalState,
@@ -46,11 +52,158 @@ import {
   runSvvyxRuntimeCommand,
   runSvvyxRuntimeGeneratedClientCommand,
 } from "./svvyx-runtime-command";
-import type { AgentProfileId, NativeToolResult } from "@svvy/core";
+import type { AgentProfileId, ExtensionUsageState, NativeToolResult } from "@svvy/core";
 import type { ExtensionCliRequirement } from "@svvy/extensions";
 
 const tempDirs: string[] = [];
 const TEST_ORCHESTRATOR_AGENT_PROFILE_ID = "default-orchestrator" as AgentProfileId;
+const TEST_PROFILE_TIMESTAMP = "2026-06-09T00:00:00.000Z";
+
+type TestAgentProfileFixtureInput = {
+  actorDefaults?: Partial<
+    Record<
+      "orchestrator" | "workflow-task",
+      {
+        extensionUsage?: Record<string, ExtensionUsageState>;
+        extensionOrder?: string[];
+      }
+    >
+  >;
+  additionalOrchestrators?: Array<{
+    id: string;
+    name: string;
+    extensionUsage?: Record<string, ExtensionUsageState>;
+  }>;
+  orchestratorExtensionUsage?: Record<string, ExtensionUsageState>;
+  threadHandlerExtensionUsage?: Record<string, ExtensionUsageState>;
+  workflowOverrides?: Record<string, Record<string, ExtensionUsageState>>;
+};
+
+function createTestAgentProfileSnapshot(
+  input: TestAgentProfileFixtureInput = {},
+): AgentProfileAuthoritySnapshot {
+  const configuredProfiles = [
+    {
+      profileId: "thread-handler",
+      actor: "handler" as const,
+      name: "Thread handler",
+      providerId: "openai",
+      modelId: "gpt-5.4-mini",
+      reasoning: { effort: "medium" },
+      followComposer: false,
+      extensionUsage: input.threadHandlerExtensionUsage ?? {},
+      extensionOrder: [],
+      position: 0,
+      updatedAt: TEST_PROFILE_TIMESTAMP,
+      builtin: true,
+      locked: true,
+      deletable: false,
+    },
+    {
+      profileId: "default-orchestrator",
+      actor: "orchestrator" as const,
+      name: "Default orchestrator",
+      providerId: "openai",
+      modelId: "gpt-5.4",
+      reasoning: { effort: "medium" },
+      followComposer: false,
+      extensionUsage: input.orchestratorExtensionUsage ?? {},
+      extensionOrder: [],
+      position: 0,
+      updatedAt: TEST_PROFILE_TIMESTAMP,
+      builtin: true,
+      locked: true,
+      deletable: false,
+    },
+    ...(input.additionalOrchestrators ?? []).map((profile, position) => ({
+      profileId: profile.id,
+      actor: "orchestrator" as const,
+      name: profile.name,
+      providerId: "openai",
+      modelId: "gpt-5.4",
+      reasoning: { effort: "medium" },
+      followComposer: false,
+      extensionUsage: profile.extensionUsage ?? {},
+      extensionOrder: [],
+      position: position + 1,
+      updatedAt: TEST_PROFILE_TIMESTAMP,
+      builtin: false,
+      locked: false,
+      deletable: true,
+    })),
+  ];
+  const workflowAgents = ["explorer", "implementer", "reviewer"].map((sourceId) => ({
+    sourceId,
+    path: `/test/workflows/agents/${sourceId}.agent.json`,
+    sourceVersion: `sha256:${sourceId}:v1`,
+    fingerprint: `sha256:${sourceId}:v1`,
+    validationStatus: "valid" as const,
+    diagnostics: [],
+    parameters: {
+      id: sourceId,
+      label: sourceId[0]!.toUpperCase() + sourceId.slice(1),
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      reasoning: { effort: "medium" },
+      instructions: `Act as the ${sourceId}.`,
+      overrides: input.workflowOverrides?.[sourceId] ?? {},
+    },
+    extensionOrder: [],
+    observedAt: TEST_PROFILE_TIMESTAMP,
+    updatedAt: TEST_PROFILE_TIMESTAMP,
+    builtin: true,
+    deletable: false,
+  }));
+  return {
+    configuredProfiles,
+    workflowAgents,
+    actorExtensionDefaults: (["orchestrator", "workflow-task"] as const).map((actor) => ({
+      actor,
+      extensionUsage: input.actorDefaults?.[actor]?.extensionUsage ?? {},
+      extensionOrder: input.actorDefaults?.[actor]?.extensionOrder ?? [],
+      updatedAt: TEST_PROFILE_TIMESTAMP,
+    })),
+  } as unknown as AgentProfileAuthoritySnapshot;
+}
+
+function createTestAgentProfileStore(
+  input: TestAgentProfileFixtureInput = {},
+): AgentProfileMutationStore {
+  return createAgentProfileMutationStore({
+    snapshot: createTestAgentProfileSnapshot(input),
+    networkAccess: true,
+  });
+}
+
+function mutationsOfKind<Kind extends AgentProfileMutation["kind"]>(
+  store: AgentProfileMutationStore,
+  kind: Kind,
+): Extract<AgentProfileMutation, { kind: Kind }>[] {
+  return store
+    .takeMutations()
+    .filter(
+      (mutation): mutation is Extract<AgentProfileMutation, { kind: Kind }> =>
+        mutation.kind === kind,
+    );
+}
+
+function runSvvyxExtensionsCommand(
+  input: Parameters<typeof runSvvyxExtensionsCommandWithoutTestAuthority>[0],
+): ReturnType<typeof runSvvyxExtensionsCommandWithoutTestAuthority> {
+  return runSvvyxExtensionsCommandWithoutTestAuthority({
+    ...input,
+    agentProfileStore: input.agentProfileStore ?? createTestAgentProfileStore(),
+  });
+}
+
+function readBuiltinExtensionsInventory(
+  input: NonNullable<Parameters<typeof readBuiltinExtensionsInventoryWithoutTestAuthority>[0]> = {},
+): ReturnType<typeof readBuiltinExtensionsInventoryWithoutTestAuthority> {
+  return readBuiltinExtensionsInventoryWithoutTestAuthority({
+    ...input,
+    agentProfileStore: input.agentProfileStore ?? createTestAgentProfileStore(),
+  });
+}
 
 function createSvvyDirectToolsForTest(
   options: Parameters<typeof createSvvyDirectTools>[0],
@@ -115,7 +268,9 @@ afterEach(() => {
 describe("svvyx extensions command", () => {
   it("creates a svvyx user extension skeleton in app-owned extension storage", async () => {
     const extensionsRoot = createTempDir();
+    const agentProfileStore = createTestAgentProfileStore();
     const result = await runSvvyxExtensionsCommand({
+      agentProfileStore,
       command:
         'svvyx extensions create --id linear --title "Linear" --description "Linear issue and project workflow support." --interface svvyx --typescript-api true --json',
       extensionsRoot,
@@ -1131,19 +1286,11 @@ describe("svvyx extensions command", () => {
       command: "svvyx extensions build linear --json",
       extensionsRoot,
     });
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd: agentRoot,
-      agentDir: join(agentRoot, ".agent"),
-      workflowsSourceRoot: join(agentRoot, "workflows"),
-    });
-    agentSettingsStore.setAgentProfile({
-      ...agentSettingsStore.getState().agents.orchestrators[0]!,
-      extensionUsage: {
-        linear: "unavailable",
-      },
+    const agentProfileSnapshot = createTestAgentProfileSnapshot({
+      orchestratorExtensionUsage: { linear: "unavailable" },
     });
     const tools = createSvvyDirectToolsForTest({
-      agentSettingsStore,
+      agentProfileSnapshot,
       cwd: agentRoot,
       extensionsRoot,
     }).codingTools;
@@ -1213,9 +1360,7 @@ describe("svvyx extensions command", () => {
       extensionsRoot,
     });
     const agentSettingsStore = createAgentSettingsStore({
-      cwd: agentRoot,
       agentDir: join(agentRoot, ".agent"),
-      workflowsSourceRoot: join(agentRoot, "workflows"),
     });
     agentSettingsStore.setExtensionEnv({
       nonSecretOverrides: {
@@ -4471,10 +4616,12 @@ describe("svvyx extensions command", () => {
       join(packagedFullDir, "010-tinyfish-cli.generated.md"),
       "packaged tinyfish instructions\n",
     );
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd: agentRoot,
-      agentDir: join(agentRoot, ".agent"),
-      workflowsSourceRoot: join(agentRoot, "workflows"),
+    const agentProfileStore = createTestAgentProfileStore({
+      orchestratorExtensionUsage: {
+        linear: "unavailable",
+        notes: "loaded",
+        web: "unavailable",
+      },
     });
     await createNotesExtension(extensionsRoot);
     await createLinearExtension(extensionsRoot);
@@ -4483,24 +4630,14 @@ describe("svvyx extensions command", () => {
       cwd,
       extensionsRoot,
     });
-    const profile = agentSettingsStore.getState().agents.orchestrators[0]!;
-    agentSettingsStore.setAgentProfile({
-      ...profile,
-      extensionUsage: {
-        ...profile.extensionUsage,
-        linear: "unavailable",
-        notes: "loaded",
-        web: "unavailable",
-      },
-    });
     await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         "svvyx extensions defaults set-usage --actor orchestrator --extension smithers --state loaded --json",
       extensionsRoot,
     });
     await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         "svvyx extensions defaults reorder --extension notes --extension smithers --extension web --json",
       extensionsRoot,
@@ -4510,11 +4647,12 @@ describe("svvyx extensions command", () => {
     writeFileSync(join(extensionsRoot, "package", "bun.lock"), "lockfile\n");
 
     const saved = await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command: 'svvyx extensions snapshots save --name "Restore point" --json',
       extensionsRoot,
     });
     const snapshotId = (saved.output as any).snapshot.id as string;
+    const savedAuthorityState = agentProfileStore.getState();
 
     const notesRoot = join(extensionsRoot, "sources", "user", "notes");
     updateUserManifest(notesRoot, {
@@ -4524,13 +4662,13 @@ describe("svvyx extensions command", () => {
     rmSync(join(extensionsRoot, "sources", "user", "linear"), { force: true, recursive: true });
     await createNotesExtensionAtId(extensionsRoot, "scratch");
     await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         "svvyx extensions defaults set-usage --actor orchestrator --extension smithers --state unavailable --json",
       extensionsRoot,
     });
     await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         "svvyx extensions defaults reorder --extension web --extension notes --extension smithers --json",
       extensionsRoot,
@@ -4595,19 +4733,22 @@ describe("svvyx extensions command", () => {
     );
     writeFileSync(join(extensionsRoot, "package", "bun.lock"), "changed\n");
     mkdirSync(join(extensionsRoot, "package", "node_modules", "left-pad"), { recursive: true });
-    const changedProfile = agentSettingsStore.getState().agents.orchestrators[0]!;
-    agentSettingsStore.setAgentProfile({
-      ...changedProfile,
-      extensionUsage: {
-        ...changedProfile.extensionUsage,
-        linear: "available",
-        notes: "unavailable",
-        web: "loaded",
-      },
-    });
+    for (const [extensionId, usage] of Object.entries({
+      linear: "available",
+      notes: "unavailable",
+      web: "loaded",
+    }) as [string, ExtensionUsageState][]) {
+      agentProfileStore.setProfileExtensionUsage({
+        actor: "orchestrator",
+        profileId: "default-orchestrator",
+        extensionId,
+        usage,
+        explicit: true,
+      });
+    }
 
     const loaded = await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command: `svvyx extensions snapshots load ${snapshotId} --json`,
       cliProbe: (requirement) => cliStatus(requirement, { status: "available" }),
       cwd,
@@ -4664,19 +4805,29 @@ describe("svvyx extensions command", () => {
       },
     });
     expect((loaded.output as any).restored.usageStates).toBeGreaterThan(0);
-    expect(agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage).toMatchObject({
+    expect(agentProfileStore.getState().agents.orchestrators[0]?.extensionUsage).toMatchObject({
       linear: "unavailable",
       notes: "loaded",
       web: "unavailable",
     });
-    expect(agentSettingsStore.getState().extensionDefaults.usage.orchestrator).toMatchObject({
+    expect(agentProfileStore.getState().extensionDefaults.usage.orchestrator).toMatchObject({
       smithers: "loaded",
     });
-    expect(agentSettingsStore.getState().extensionDefaults.order.slice(0, 3)).toEqual([
+    expect(agentProfileStore.getState().extensionDefaults.order.slice(0, 3)).toEqual([
       "notes",
       "smithers",
       "web",
     ]);
+    expect(mutationsOfKind(agentProfileStore, "actor-extension-defaults.set")).toEqual(
+      expect.arrayContaining(
+        (["orchestrator", "workflow-task"] as const).map((actor) => ({
+          kind: "actor-extension-defaults.set",
+          actor,
+          extensionUsage: savedAuthorityState.actorExtensionDefaults[actor].extensionUsage,
+          extensionOrder: savedAuthorityState.actorExtensionDefaults[actor].extensionOrder,
+        })),
+      ),
+    );
     expect(loaded.commandFacts).toMatchObject({
       extensionSnapshotLoaded: true,
       snapshotId,
@@ -5510,9 +5661,7 @@ describe("svvyx extensions command", () => {
       ],
     });
     const agentSettingsStore = createAgentSettingsStore({
-      cwd: extensionsRoot,
       agentDir: join(extensionsRoot, "settings"),
-      workflowsSourceRoot: join(extensionsRoot, "workflows"),
     });
     agentSettingsStore.setExtensionEnv({
       nonSecretOverrides: {
@@ -5608,9 +5757,7 @@ describe("svvyx extensions command", () => {
       ].join("\n"),
     );
     const plaintextSettingsStore = createAgentSettingsStore({
-      cwd: agentRoot,
       agentDir: join(agentRoot, ".agent"),
-      workflowsSourceRoot: join(agentRoot, "workflows"),
     });
     plaintextSettingsStore.setExtensionEnv({
       nonSecretOverrides: {
@@ -7532,11 +7679,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
   it("sets profile extension usage, records a reversible change, and queues affected surfaces", async () => {
     const extensionsRoot = createTempDir();
     const agentRoot = createTempDir();
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd: agentRoot,
-      agentDir: join(agentRoot, ".agent"),
-      workflowsSourceRoot: join(agentRoot, "workflows"),
-    });
+    const agentProfileStore = createTestAgentProfileStore();
     const structuredSessionStore = createStructuredSessionStateStore({
       workspace: {
         id: agentRoot,
@@ -7558,7 +7701,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     });
 
     const result = await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         "svvyx extensions set-usage --extension smithers --agent-profile default-orchestrator --state loaded --json",
       extensionsRoot,
@@ -7586,9 +7729,18 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         ],
       },
     });
-    expect(agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage).toMatchObject({
+    expect(agentProfileStore.getState().agents.orchestrators[0]?.extensionUsage).toMatchObject({
       smithers: "loaded",
     });
+    expect(agentProfileStore.takeMutations()).toEqual([
+      {
+        kind: "profile-extension-usage.set",
+        actor: "orchestrator",
+        profileId: "default-orchestrator",
+        extensionId: "smithers",
+        usage: "loaded",
+      },
+    ]);
     expect(
       structuredSessionStore
         .listQueuedSurfaceMessages({ surfacePiSessionId: "session-set-usage" })
@@ -7596,7 +7748,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     ).toEqual([]);
 
     const reverted = await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command: `svvyx extensions revert ${output.changeId} --json`,
       extensionsRoot,
       extensionContextImpactState:
@@ -7609,19 +7761,28 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       after: { state: "available" },
     });
     expect(
-      agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage.smithers,
+      agentProfileStore.getState().agents.orchestrators[0]?.extensionUsage.smithers,
     ).toBeUndefined();
+    expect(agentProfileStore.takeMutations()).toEqual([
+      expect.objectContaining({
+        kind: "profile-extension-usage.set",
+        usage: "loaded",
+      }),
+      {
+        kind: "profile-extension-usage.set",
+        actor: "orchestrator",
+        profileId: "default-orchestrator",
+        extensionId: "smithers",
+        usage: "available",
+      },
+    ]);
     structuredSessionStore.close();
   });
 
   it("shares set-usage semantics with the app API helper", () => {
     const extensionsRoot = createTempDir();
     const agentRoot = createTempDir();
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd: agentRoot,
-      agentDir: join(agentRoot, ".agent"),
-      workflowsSourceRoot: join(agentRoot, "workflows"),
-    });
+    const agentProfileStore = createTestAgentProfileStore();
     const structuredSessionStore = createStructuredSessionStateStore({
       workspace: {
         id: agentRoot,
@@ -7644,7 +7805,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
 
     expect(() =>
       setExtensionUsage({
-        agentSettingsStore,
+        agentProfileStore,
         extensionContextImpactState:
           runtimeExtensionContextImpactStateFacadeFromStore(structuredSessionStore),
         extensionsRoot,
@@ -7655,7 +7816,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     ).toThrow("Extension Loading is fixed loaded");
 
     const result = setExtensionUsage({
-      agentSettingsStore,
+      agentProfileStore,
       extensionContextImpactState:
         runtimeExtensionContextImpactStateFacadeFromStore(structuredSessionStore),
       extensionsRoot,
@@ -7675,7 +7836,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         after: { state: "loaded" },
       },
     });
-    expect(agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage).toMatchObject({
+    expect(agentProfileStore.getState().agents.orchestrators[0]?.extensionUsage).toMatchObject({
       smithers: "loaded",
     });
     expect(
@@ -7685,7 +7846,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     ).toEqual([]);
 
     const restored = setExtensionUsage({
-      agentSettingsStore,
+      agentProfileStore,
       extensionContextImpactState:
         runtimeExtensionContextImpactStateFacadeFromStore(structuredSessionStore),
       extensionsRoot,
@@ -7706,41 +7867,52 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       },
     });
     expect(
-      agentSettingsStore.getState().agents.orchestrators[0]?.extensionUsage.smithers,
+      agentProfileStore.getState().agents.orchestrators[0]?.extensionUsage.smithers,
     ).toBeUndefined();
+    expect(agentProfileStore.takeMutations()).toEqual([
+      {
+        kind: "profile-extension-usage.set",
+        actor: "orchestrator",
+        profileId: "default-orchestrator",
+        extensionId: "smithers",
+        usage: "loaded",
+      },
+      {
+        kind: "profile-extension-usage.set",
+        actor: "orchestrator",
+        profileId: "default-orchestrator",
+        extensionId: "smithers",
+        usage: "available",
+      },
+    ]);
     structuredSessionStore.close();
   });
 
   it("sets future extension defaults without mutating existing profile overrides", async () => {
     const extensionsRoot = createTempDir();
-    const agentRoot = createTempDir();
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd: agentRoot,
-      agentDir: join(agentRoot, ".agent"),
-      workflowsSourceRoot: join(agentRoot, "workflows"),
-    });
-    const beforeProfile = agentSettingsStore.getState().agents.orchestrators[0]!;
+    const agentProfileStore = createTestAgentProfileStore();
+    const beforeProfile = agentProfileStore.getState().agents.orchestrators[0]!;
 
     await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         "svvyx extensions defaults set-usage --actor orchestrator --extension smithers --state loaded --json",
       extensionsRoot,
     });
     await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         "svvyx extensions defaults set-usage --actor workflow-task --extension github --state loaded --json",
       extensionsRoot,
     });
     await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         "svvyx extensions defaults reorder --extension github --extension smithers --extension shell --json",
       extensionsRoot,
     });
 
-    const settings = agentSettingsStore.getState();
+    const settings = agentProfileStore.getState();
     expect(settings.agents.orchestrators[0]?.extensionUsage).toEqual(beforeProfile.extensionUsage);
     expect(settings.extensionDefaults.usage.orchestrator).toMatchObject({
       smithers: "loaded",
@@ -7751,7 +7923,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     expect(settings.extensionDefaults.order.slice(0, 3)).toEqual(["github", "smithers", "shell"]);
 
     const inventory = await readBuiltinExtensionsInventory({
-      agentSettingsStore,
+      agentProfileStore,
       extensionsRoot,
       includeUserExtensions: true,
     });
@@ -7763,29 +7935,51 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       }),
     );
     expect(inventory.defaults?.order.slice(0, 3)).toEqual(["github", "smithers", "shell"]);
+    const fullOrder = settings.actorExtensionDefaults.orchestrator.extensionOrder;
+    expect(agentProfileStore.takeMutations()).toEqual([
+      {
+        kind: "actor-extension-defaults.set",
+        actor: "orchestrator",
+        extensionUsage: { smithers: "loaded" },
+        extensionOrder: [],
+      },
+      {
+        kind: "actor-extension-defaults.set",
+        actor: "workflow-task",
+        extensionUsage: { github: "loaded" },
+        extensionOrder: [],
+      },
+      {
+        kind: "actor-extension-defaults.set",
+        actor: "orchestrator",
+        extensionUsage: { smithers: "loaded" },
+        extensionOrder: fullOrder,
+      },
+      {
+        kind: "actor-extension-defaults.set",
+        actor: "workflow-task",
+        extensionUsage: { github: "loaded" },
+        extensionOrder: fullOrder,
+      },
+    ]);
   });
 
   it("creates user prompt extensions loaded by default for future actors", async () => {
     const extensionsRoot = createTempDir();
-    const agentRoot = createTempDir();
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd: agentRoot,
-      agentDir: join(agentRoot, ".agent"),
-      workflowsSourceRoot: join(agentRoot, "workflows"),
-    });
+    const agentProfileStore = createTestAgentProfileStore();
 
     await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         'svvyx extensions create --id notes --title "Notes" --description "Project notes." --interface instructions --json',
       extensionsRoot,
     });
 
-    const defaults = agentSettingsStore.getState().extensionDefaults.usage;
+    const defaults = agentProfileStore.getState().extensionDefaults.usage;
     expect(defaults.orchestrator?.notes).toBe("loaded");
     expect(defaults["workflow-task"]?.notes).toBe("loaded");
     const inventory = await readBuiltinExtensionsInventory({
-      agentSettingsStore,
+      agentProfileStore,
       extensionsRoot,
       includeUserExtensions: true,
     });
@@ -7793,20 +7987,28 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       expect.objectContaining({ actorKind: "orchestrator", state: "loaded" }),
       expect.objectContaining({ actorKind: "workflow-task", state: "loaded" }),
     ]);
+    expect(agentProfileStore.takeMutations()).toEqual([
+      {
+        kind: "actor-extension-defaults.set",
+        actor: "orchestrator",
+        extensionUsage: { notes: "loaded" },
+        extensionOrder: [],
+      },
+      {
+        kind: "actor-extension-defaults.set",
+        actor: "workflow-task",
+        extensionUsage: { notes: "loaded" },
+        extensionOrder: [],
+      },
+    ]);
   });
 
   it("sets workflow-agent extension usage in source records and reverts exactly", async () => {
     const extensionsRoot = createTempDir();
-    const agentRoot = createTempDir();
-    const workflowsSourceRoot = join(agentRoot, "workflows");
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd: agentRoot,
-      agentDir: join(agentRoot, ".agent"),
-      workflowsSourceRoot,
-    });
+    const agentProfileStore = createTestAgentProfileStore();
 
     const result = await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         "svvyx extensions set-usage --extension github --agent-profile reviewer --state loaded --json",
       extensionsRoot,
@@ -7825,21 +8027,25 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
         affectedSurfaces: [],
       },
     });
-    expect(agentSettingsStore.getState().workflowAgents.reviewer).toMatchObject({
+    expect(agentProfileStore.getState().workflowAgents.reviewer).toMatchObject({
       overrides: {
         github: "loaded",
       },
     });
-    expect(
-      JSON.parse(readFileSync(join(workflowsSourceRoot, "agents", "reviewer.agent.json"), "utf8")),
-    ).toMatchObject({
+    const [savedMutation] = mutationsOfKind(agentProfileStore, "workflow-agent-source.save");
+    expect(savedMutation).toMatchObject({
+      kind: "workflow-agent-source.save",
+      sourceId: "reviewer",
+      expectedSourceVersion: "sha256:reviewer:v1",
+    });
+    expect(JSON.parse(savedMutation!.text)).toMatchObject({
       overrides: {
         github: "loaded",
       },
     });
 
     const reverted = await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command: `svvyx extensions revert ${output.changeId} --json`,
       extensionsRoot,
     });
@@ -7850,46 +8056,31 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       agentProfile: "reviewer",
       after: { state: "available" },
     });
-    expect(
-      agentSettingsStore.getState().workflowAgents.reviewer?.overrides?.github,
-    ).toBeUndefined();
-    expect(
-      JSON.parse(readFileSync(join(workflowsSourceRoot, "agents", "reviewer.agent.json"), "utf8")),
-    ).toMatchObject({ overrides: {} });
-    expect(
-      JSON.parse(readFileSync(join(workflowsSourceRoot, "agents", "reviewer.agent.json"), "utf8"))
-        .overrides.github,
-    ).toBeUndefined();
+    expect(agentProfileStore.getState().workflowAgents.reviewer?.overrides?.github).toBeUndefined();
+    const workflowMutations = mutationsOfKind(agentProfileStore, "workflow-agent-source.save");
+    expect(workflowMutations).toHaveLength(1);
+    expect(workflowMutations[0]).toMatchObject({
+      sourceId: "reviewer",
+      expectedSourceVersion: "sha256:reviewer:v1",
+    });
+    expect(JSON.parse(workflowMutations[0]!.text)).toMatchObject({ overrides: {} });
   });
 
   it("reports usage for all profiles and fixed Extension Loading metadata through inspect", async () => {
     const extensionsRoot = createTempDir();
-    const agentRoot = createTempDir();
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd: agentRoot,
-      agentDir: join(agentRoot, ".agent"),
-      workflowsSourceRoot: join(agentRoot, "workflows"),
-    });
-    agentSettingsStore.setAgentProfile({
-      ...agentSettingsStore.getState().agents.orchestrators[0]!,
-      id: "docs-orchestrator",
-      kind: "orchestrator",
-      name: "Docs orchestrator",
-      extensionUsage: {
-        smithers: "loaded",
-      },
-      builtin: false,
-      locked: false,
-    });
-    agentSettingsStore.setWorkflowAgent("reviewer", {
-      ...agentSettingsStore.getState().workflowAgents.reviewer!,
-      overrides: {
-        github: "loaded",
-      },
+    const agentProfileStore = createTestAgentProfileStore({
+      additionalOrchestrators: [
+        {
+          id: "docs-orchestrator",
+          name: "Docs orchestrator",
+          extensionUsage: { smithers: "loaded" },
+        },
+      ],
+      workflowOverrides: { reviewer: { github: "loaded" } },
     });
 
     const inspectedSmithers = await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command: "svvyx extensions inspect smithers --json",
       extensionsRoot,
     });
@@ -7924,7 +8115,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     );
 
     const inspectedGithub = await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command: "svvyx extensions inspect github --json",
       extensionsRoot,
     });
@@ -7937,7 +8128,7 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     );
 
     const inspectedLoading = await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command: "svvyx extensions inspect extension-loading --json",
       extensionsRoot,
     });
@@ -7949,16 +8140,11 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
   });
 
   it("rejects set-usage for fixed Extension Loading", async () => {
-    const agentRoot = createTempDir();
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd: agentRoot,
-      agentDir: join(agentRoot, ".agent"),
-      workflowsSourceRoot: join(agentRoot, "workflows"),
-    });
+    const agentProfileStore = createTestAgentProfileStore();
 
     await expect(
       runSvvyxExtensionsCommand({
-        agentSettingsStore,
+        agentProfileStore,
         command:
           "svvyx extensions set-usage --extension extension-loading --agent-profile default-orchestrator --state unavailable --json",
       }),
@@ -7967,16 +8153,11 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
 
   it("rejects undocumented profile aliases and accepts actor-default-unavailable overrides", async () => {
     const extensionsRoot = createTempDir();
-    const agentRoot = createTempDir();
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd: agentRoot,
-      agentDir: join(agentRoot, ".agent"),
-      workflowsSourceRoot: join(agentRoot, "workflows"),
-    });
+    const agentProfileStore = createTestAgentProfileStore();
 
     await expect(
       runSvvyxExtensionsCommand({
-        agentSettingsStore,
+        agentProfileStore,
         command:
           "svvyx extensions set-usage --extension smithers --agent-profile default --state available --json",
         extensionsRoot,
@@ -7984,13 +8165,13 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
     ).rejects.toThrow("Agent profile not found: default");
 
     const handlerOverride = await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         "svvyx extensions set-usage --extension thread-orchestration --agent-profile threadHandler --state loaded --json",
       extensionsRoot,
     });
     const workflowOverride = await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         "svvyx extensions set-usage --extension workflows --agent-profile reviewer --state loaded --json",
       extensionsRoot,
@@ -8008,32 +8189,43 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       agentProfile: "reviewer",
       after: { state: "loaded" },
     });
-    expect(agentSettingsStore.getState().agents.special.threadHandler.extensionUsage).toMatchObject(
-      {
-        "thread-orchestration": "loaded",
-      },
-    );
-    expect(agentSettingsStore.getState().workflowAgents.reviewer?.overrides).toMatchObject({
+    expect(agentProfileStore.getState().agents.special.threadHandler.extensionUsage).toMatchObject({
+      "thread-orchestration": "loaded",
+    });
+    expect(agentProfileStore.getState().workflowAgents.reviewer?.overrides).toMatchObject({
       workflows: "loaded",
+    });
+    expect(agentProfileStore.takeMutations()).toEqual([
+      {
+        kind: "profile-extension-usage.set",
+        actor: "handler",
+        profileId: "thread-handler",
+        extensionId: "thread-orchestration",
+        usage: "loaded",
+      },
+      expect.objectContaining({
+        kind: "workflow-agent-source.save",
+        sourceId: "reviewer",
+        expectedSourceVersion: "sha256:reviewer:v1",
+      }),
+    ]);
+    const workflowMutation = mutationsOfKind(agentProfileStore, "workflow-agent-source.save")[0]!;
+    expect(JSON.parse(workflowMutation.text)).toMatchObject({
+      overrides: { workflows: "loaded" },
     });
   });
 
   it("conflicts when reverting usage after later profile changes", async () => {
     const extensionsRoot = createTempDir();
-    const agentRoot = createTempDir();
-    const agentSettingsStore = createAgentSettingsStore({
-      cwd: agentRoot,
-      agentDir: join(agentRoot, ".agent"),
-      workflowsSourceRoot: join(agentRoot, "workflows"),
-    });
+    const agentProfileStore = createTestAgentProfileStore();
     const first = await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         "svvyx extensions set-usage --extension smithers --agent-profile default-orchestrator --state loaded --json",
       extensionsRoot,
     });
     await runSvvyxExtensionsCommand({
-      agentSettingsStore,
+      agentProfileStore,
       command:
         "svvyx extensions set-usage --extension smithers --agent-profile default-orchestrator --state unavailable --json",
       extensionsRoot,
@@ -8041,11 +8233,23 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
 
     await expect(
       runSvvyxExtensionsCommand({
-        agentSettingsStore,
+        agentProfileStore,
         command: `svvyx extensions revert ${(first.output as any).changeId} --json`,
         extensionsRoot,
       }),
     ).rejects.toThrow("cannot be reverted because usage changed after it was recorded");
+    expect(agentProfileStore.takeMutations()).toEqual([
+      expect.objectContaining({
+        kind: "profile-extension-usage.set",
+        extensionId: "smithers",
+        usage: "loaded",
+      }),
+      expect.objectContaining({
+        kind: "profile-extension-usage.set",
+        extensionId: "smithers",
+        usage: "unavailable",
+      }),
+    ]);
   });
 
   it("reports updateable TinyFish versions through inspect without blocking readiness", async () => {
@@ -8329,6 +8533,33 @@ printf '%s\\n' '{"name":"esbuild","version":"0.25.4"}' > "$cwd/node_modules/esbu
       updateCommand: null,
       path: join(bin, "tinyfish"),
     });
+  });
+
+  it("does not execute package runners during passive CLI readiness probes", () => {
+    const bin = createTempDir();
+    const marker = join(bin, "package-runner-executed");
+    writeExecutable(join(bin, "bunx"), `#!/bin/sh\ntouch ${marker}\necho 0.22.0\n`);
+
+    expect(
+      probeCliRequirement(
+        {
+          id: "smithers-orchestrator",
+          package: "smithers-orchestrator",
+          binary: "bunx",
+          required: true,
+          version: "0.22.0",
+          versionCommand: "bunx smithers-orchestrator --version",
+        },
+        { PATH: bin },
+      ),
+    ).toMatchObject({
+      status: "available",
+      currentVersion: null,
+      detectedVersion: null,
+      defaultVersion: "0.22.0",
+      path: join(bin, "bunx"),
+    });
+    expect(existsSync(marker)).toBe(false);
   });
 
   it("routes Extension Managing through exec_command without adding Web native tools", async () => {

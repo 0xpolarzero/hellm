@@ -14,6 +14,7 @@ import {
   CommandFactsPayloadSchema,
   CommandEventPayloadSchema,
   PromptTargetSchema,
+  RuntimeSubmittedMessageSchema,
   RuntimeSurfaceTargetSchema,
   WorkflowTaskRuntimeSurfaceTargetSchema,
   RequestUserInputResolvedAnswerSchema,
@@ -52,6 +53,7 @@ import {
   type SetRequestInputTimerPausedInput,
   SourceDomainSchema,
   SourceInvalidationScopeSchema,
+  SourceReconcileRequestSchema,
   SmithersTaskAttemptIdentitySchema,
   SmithersTaskContextSnapshotSchema,
   ValidatedTaskAgentParametersSchema,
@@ -65,7 +67,13 @@ export {
   encodeStateCommandPostCommitNotificationErrorExit,
 } from "./runtime-contracts";
 export type { StateCommandPostCommitNotificationError } from "./runtime-contracts";
-import { ExtensionSourceKindSchema, SourceDiagnosticSchema } from "./runtime-source-edit-contracts";
+import {
+  ExtensionSourceKindSchema,
+  SourceDiagnosticSchema,
+  WorkflowAgentSourceObservationSchema,
+  type ExtensionSourceKind,
+  type WorkflowAgentSourceObservation,
+} from "./runtime-source-edit-contracts";
 import {
   AbsolutePath,
   ArtifactId,
@@ -76,9 +84,11 @@ import {
   GeneratedPackageBuildId,
   IsoDateTimeStringSchema,
   MessageId,
+  ModelId,
   NonNegativeSafeIntegerSchema,
   FiniteDurationMsSchema,
   PositiveDurationMsSchema,
+  ProviderId,
   RequestInputRequestId,
   RequestInputAnswerId,
   RequestInputOptionId,
@@ -86,10 +96,12 @@ import {
   RuntimeApprovalId,
   RuntimeOwnerId,
   SurfacePiSessionId,
+  SurfaceStreamGenerationId,
   TitleJobId,
   ThreadId,
   ThreadGroupId,
   ToolItemId,
+  ToolCallId,
   TurnId,
   QueueItemId,
   RecoveryWorkId,
@@ -102,6 +114,18 @@ import {
   PositiveSafeIntegerSchema,
   type IsoDateTimeString,
 } from "./ids";
+import { PiHistoryEntryRefSchema } from "./pi-adapter-contracts";
+import {
+  RuntimeTranscriptAssistantContentSchema,
+  RuntimeTranscriptAssistantMessageSchema,
+  RuntimeTranscriptAssistantStopReasonSchema,
+  RuntimeTranscriptStreamCursorSchema,
+  RuntimeTranscriptUsageSchema,
+  RuntimeTranscriptUserMessageSchema,
+  type RuntimeSurfaceTranscriptSnapshot,
+  type RuntimeTranscriptMessage,
+  type RuntimeTranscriptStreamCursor,
+} from "./transcript-contracts";
 import {
   GeneratedPackageDependencyEvidenceSchema,
   GeneratedPackageNameSchema,
@@ -115,8 +139,19 @@ import {
 } from "./generated-package-contracts";
 import { StateInvalidationDescriptorSchema } from "./runtime-invalidation-contracts";
 import type { RecordExtensionDependencyApprovalInput } from "./extension-state-ports";
+import {
+  RequestInputVariantSchema,
+  type RequestInputSettings,
+  type SetRequestInputBlockingTimeoutInput,
+  type SetRequestInputBlockingTimeoutResult,
+  type SetRequestInputVariantInput,
+  type SetRequestInputVariantResult,
+} from "./request-input-settings-contracts";
 
 export interface RuntimeWorkspaceStatePortService {
+  resolvePromptTargetWorkspaceId(input: {
+    readonly target: PromptTarget;
+  }): Effect.Effect<WorkspaceId, StateContractError>;
   acquireWorkspace(
     input: AcquireWorkspaceInput,
   ): Effect.Effect<StateMutationResult<AcquireWorkspaceResult>, StateContractError>;
@@ -228,7 +263,9 @@ export const RecordRuntimeSourceDeleteInputSchema = Schema.Struct({
   scope: SourceInvalidationScopeSchema,
   sourceKind: ExtensionSourceKindSchema,
   sourceId: Schema.String,
-  expectedSourceVersion: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  path: AbsolutePath,
+  previousSourceVersion: Schema.String,
+  previousFingerprint: Schema.String,
   sourceCommandId: Schema.optionalKey(Schema.NullOr(CommandId)),
   deletedAt: IsoDateTimeStringSchema,
 });
@@ -277,6 +314,109 @@ export const RecordRuntimeSourceScanInputSchema = Schema.Struct({
   scannedAt: IsoDateTimeStringSchema,
 }).pipe(Schema.check(SourceScopeDomainInvariant));
 export type RecordRuntimeSourceScanInput = typeof RecordRuntimeSourceScanInputSchema.Type;
+
+type RecordRuntimeWorkflowAgentSourceSaveInputShape = {
+  readonly source: typeof RecordRuntimeSourceSaveInputSchema.Type;
+  readonly observation: WorkflowAgentSourceObservation;
+};
+
+const RecordRuntimeWorkflowAgentSourceSaveInputInvariant = Schema.makeFilter(
+  (input: RecordRuntimeWorkflowAgentSourceSaveInputShape) => {
+    if (input.source.scope.kind !== "app-global") {
+      return {
+        path: ["source", "scope"],
+        issue: "workflow-agent source saves must be app-global",
+      };
+    }
+    if (input.source.sourceKind !== "workflow-agent") {
+      return {
+        path: ["source", "sourceKind"],
+        issue: "workflow-agent source saves must use the workflow-agent source kind",
+      };
+    }
+    const observation = input.observation;
+    if (
+      input.source.sourceId !== observation.sourceId ||
+      input.source.path !== observation.path ||
+      input.source.sourceVersion !== observation.sourceVersion ||
+      input.source.fingerprint !== observation.fingerprint ||
+      input.source.savedAt !== observation.observedAt ||
+      JSON.stringify(input.source.diagnostics) !== JSON.stringify(observation.diagnostics)
+    ) {
+      return {
+        path: ["observation"],
+        issue: "workflow-agent source save observation must exactly match its source fact",
+      };
+    }
+    return true;
+  },
+  { expected: "an atomic app-global workflow-agent source save" },
+);
+
+export const RecordRuntimeWorkflowAgentSourceSaveInputSchema = Schema.Struct({
+  source: RecordRuntimeSourceSaveInputSchema,
+  observation: WorkflowAgentSourceObservationSchema,
+}).pipe(Schema.check(RecordRuntimeWorkflowAgentSourceSaveInputInvariant));
+export type RecordRuntimeWorkflowAgentSourceSaveInput =
+  typeof RecordRuntimeWorkflowAgentSourceSaveInputSchema.Type;
+
+type RecordRuntimeWorkflowAgentSourceDeleteInputShape = {
+  readonly source: typeof RecordRuntimeSourceDeleteInputSchema.Type;
+};
+
+const RecordRuntimeWorkflowAgentSourceDeleteInputInvariant = Schema.makeFilter(
+  (input: RecordRuntimeWorkflowAgentSourceDeleteInputShape) =>
+    input.source.scope.kind === "app-global" && input.source.sourceKind === "workflow-agent",
+  { expected: "an atomic app-global workflow-agent source delete" },
+);
+
+export const RecordRuntimeWorkflowAgentSourceDeleteInputSchema = Schema.Struct({
+  source: RecordRuntimeSourceDeleteInputSchema,
+}).pipe(Schema.check(RecordRuntimeWorkflowAgentSourceDeleteInputInvariant));
+export type RecordRuntimeWorkflowAgentSourceDeleteInput =
+  typeof RecordRuntimeWorkflowAgentSourceDeleteInputSchema.Type;
+
+type ReconcileRuntimeWorkflowAgentSourcesInputShape = {
+  readonly observations: ReadonlyArray<WorkflowAgentSourceObservation>;
+  readonly scannedAt: string;
+};
+
+const ReconcileRuntimeWorkflowAgentSourcesInputInvariant = Schema.makeFilter(
+  (input: ReconcileRuntimeWorkflowAgentSourcesInputShape) => {
+    const sourceIds = input.observations.map((observation) => observation.sourceId);
+    if (new Set(sourceIds).size !== sourceIds.length) {
+      return {
+        path: ["observations"],
+        issue: "workflow-agent source reconciliation observations must have unique source ids",
+      };
+    }
+    const paths = input.observations.map((observation) => observation.path);
+    if (new Set(paths).size !== paths.length) {
+      return {
+        path: ["observations"],
+        issue: "workflow-agent source reconciliation observations must have unique paths",
+      };
+    }
+    if (input.observations.some((observation) => observation.observedAt !== input.scannedAt)) {
+      return {
+        path: ["observations"],
+        issue: "workflow-agent source observations must share the reconciliation scan timestamp",
+      };
+    }
+    return true;
+  },
+  { expected: "one deterministic workflow-agent source reconciliation batch" },
+);
+
+export const ReconcileRuntimeWorkflowAgentSourcesInputSchema = Schema.Struct({
+  sourceFingerprint: Schema.String.check(Schema.isNonEmpty()),
+  sourceRoots: Schema.optionalKey(Schema.Array(RuntimeSourceRootFingerprintInputSchema)),
+  observations: Schema.Array(WorkflowAgentSourceObservationSchema),
+  diagnostics: Schema.Array(SourceDiagnosticSchema),
+  scannedAt: IsoDateTimeStringSchema,
+}).pipe(Schema.check(ReconcileRuntimeWorkflowAgentSourcesInputInvariant));
+export type ReconcileRuntimeWorkflowAgentSourcesInput =
+  typeof ReconcileRuntimeWorkflowAgentSourcesInputSchema.Type;
 
 export const DiscoveredHostSnippetIdentitySchema = Schema.Struct({
   source: DiscoveredSnippetSourceSchema,
@@ -343,6 +483,15 @@ export interface RuntimeSourceStatePortService {
   recordSourceDelete(
     input: RecordRuntimeSourceDeleteInput,
   ): Effect.Effect<StateMutationResult<RuntimeSourceFactRecord>, StateContractError>;
+  recordWorkflowAgentSourceSave(
+    input: RecordRuntimeWorkflowAgentSourceSaveInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceFactRecord>, StateContractError>;
+  recordWorkflowAgentSourceDelete(
+    input: RecordRuntimeWorkflowAgentSourceDeleteInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceFactRecord>, StateContractError>;
+  reconcileWorkflowAgentSources(
+    input: ReconcileRuntimeWorkflowAgentSourcesInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceScanFactRecord>, StateContractError>;
   recordSourceScan(
     input: RecordRuntimeSourceScanInput,
   ): Effect.Effect<StateMutationResult<RuntimeSourceScanFactRecord>, StateContractError>;
@@ -550,6 +699,7 @@ export type EnqueueRuntimeSurfaceMessageInput = typeof EnqueueRuntimeSurfaceMess
 export const AcceptSubmittedRuntimeSurfaceMessageInputSchema = Schema.Struct({
   target: PromptTargetSchema,
   idempotencyKey: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  promptHistoryText: Schema.NullOr(Schema.String),
   sourceCommandId: Schema.optionalKey(Schema.NullOr(Schema.String)),
   maxAttempts: Schema.optionalKey(Schema.Number),
   nextAttemptAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -663,14 +813,20 @@ export const RuntimeQueueStatePort = Context.Service<
   RuntimeQueueStatePortService
 >("@svvy/core/RuntimeQueueStatePort");
 
-export type RuntimeTurnStatus = "running" | "waiting" | "completed" | "failed";
+export type RuntimeTurnStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
 export const RuntimeTurnStatusSchema = Schema.Literals([
   "running",
   "waiting",
   "completed",
   "failed",
+  "cancelled",
 ]);
-export const FinishRuntimeTurnStatusSchema = Schema.Literals(["waiting", "completed", "failed"]);
+export const FinishRuntimeTurnStatusSchema = Schema.Literals([
+  "waiting",
+  "completed",
+  "failed",
+  "cancelled",
+]);
 
 export const RuntimeTurnRecordSchema = Schema.Struct({
   id: Schema.String,
@@ -720,6 +876,49 @@ export const FinishRuntimeTurnInputSchema = Schema.Struct({
 });
 export type FinishRuntimeTurnInput = typeof FinishRuntimeTurnInputSchema.Type;
 
+export const RecoverInterruptedRuntimeTurnInputSchema = Schema.Struct({
+  turnId: TurnId,
+  terminalStatus: Schema.Literals(["failed", "cancelled"]),
+  reason: Schema.String,
+});
+export type RecoverInterruptedRuntimeTurnInput =
+  typeof RecoverInterruptedRuntimeTurnInputSchema.Type;
+
+export const RuntimeInterruptedTurnRecoveryResultSchema = Schema.Struct({
+  changed: Schema.Boolean,
+  turn: RuntimeTurnRecordSchema,
+  terminalizedAssistantMessageId: Schema.NullOr(MessageId),
+  terminalizedCommandIds: Schema.Array(CommandId),
+  settledQueueItemId: Schema.NullOr(QueueItemId),
+  cancelledRequestInputIds: Schema.Array(RequestInputRequestId),
+  cancelledApprovalIds: Schema.Array(RuntimeApprovalId),
+  sessionWaitCleared: Schema.Boolean,
+});
+export type RuntimeInterruptedTurnRecoveryResult =
+  typeof RuntimeInterruptedTurnRecoveryResultSchema.Type;
+
+export const SettleRuntimePromptTurnInputSchema = Schema.Struct({
+  turnId: TurnId,
+  queueItemId: QueueItemId,
+  status: Schema.Literals(["completed", "failed", "cancelled"]),
+  assistantMessageId: Schema.optionalKey(MessageId),
+  assistantText: Schema.optionalKey(Schema.String),
+  terminalCommandIds: Schema.Array(CommandId),
+  terminalCommandSummary: Schema.String,
+  terminalCommandError: Schema.String,
+  claimOwnerId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  leaseVersion: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+});
+export type SettleRuntimePromptTurnInput = typeof SettleRuntimePromptTurnInputSchema.Type;
+
+export const RuntimePromptTurnSettlementResultSchema = Schema.Struct({
+  changed: Schema.Boolean,
+  turn: RuntimeTurnRecordSchema,
+  queuedMessage: RuntimeSurfaceMessageRecordSchema,
+  terminalizedCommandIds: Schema.Array(CommandId),
+});
+export type RuntimePromptTurnSettlementResult = typeof RuntimePromptTurnSettlementResultSchema.Type;
+
 export interface RuntimeTurnStatePortService {
   startTurn(
     input: StartRuntimeTurnInput,
@@ -734,6 +933,12 @@ export interface RuntimeTurnStatePortService {
   finishTurn(
     input: FinishRuntimeTurnInput,
   ): Effect.Effect<StateMutationResult<RuntimeTurnRecord>, StateContractError>;
+  recoverInterruptedTurn(
+    input: RecoverInterruptedRuntimeTurnInput,
+  ): Effect.Effect<StateMutationResult<RuntimeInterruptedTurnRecoveryResult>, StateContractError>;
+  settlePromptTurn(
+    input: SettleRuntimePromptTurnInput,
+  ): Effect.Effect<StateMutationResult<RuntimePromptTurnSettlementResult>, StateContractError>;
 }
 
 export interface RuntimeTurnStatePort {
@@ -744,6 +949,173 @@ export const RuntimeTurnStatePort = Context.Service<
   RuntimeTurnStatePort,
   RuntimeTurnStatePortService
 >("@svvy/core/RuntimeTurnStatePort");
+
+const RuntimeTranscriptStreamMutationBaseSchema = {
+  surfacePiSessionId: SurfacePiSessionId,
+  streamGenerationId: SurfaceStreamGenerationId,
+  expectedCursor: Schema.NullOr(RuntimeTranscriptStreamCursorSchema),
+} as const;
+
+export const CommitRuntimeTranscriptUserMessageInputSchema = Schema.Struct({
+  ...RuntimeTranscriptStreamMutationBaseSchema,
+  workspaceSessionId: WorkspaceSessionId,
+  turnId: TurnId,
+  queueItemId: QueueItemId,
+  message: RuntimeSubmittedMessageSchema,
+  submittedAt: IsoDateTimeStringSchema,
+  committedAt: IsoDateTimeStringSchema,
+});
+export type CommitRuntimeTranscriptUserMessageInput =
+  typeof CommitRuntimeTranscriptUserMessageInputSchema.Type;
+
+export const BeginRuntimeTranscriptAssistantMessageInputSchema = Schema.Struct({
+  ...RuntimeTranscriptStreamMutationBaseSchema,
+  workspaceSessionId: WorkspaceSessionId,
+  turnId: TurnId,
+  api: Schema.NullOr(Schema.String),
+  providerId: ProviderId,
+  modelId: ModelId,
+  startedAt: IsoDateTimeStringSchema,
+});
+export type BeginRuntimeTranscriptAssistantMessageInput =
+  typeof BeginRuntimeTranscriptAssistantMessageInputSchema.Type;
+
+export const AppendRuntimeTranscriptAssistantContentDeltaInputSchema = Schema.Struct({
+  ...RuntimeTranscriptStreamMutationBaseSchema,
+  messageId: MessageId,
+  contentIndex: NonNegativeSafeIntegerSchema,
+  kind: Schema.Literals(["text", "thinking"]),
+  delta: Schema.String,
+  redacted: Schema.optionalKey(Schema.Boolean),
+  thinkingSignature: Schema.optionalKey(Schema.String),
+});
+export type AppendRuntimeTranscriptAssistantContentDeltaInput =
+  typeof AppendRuntimeTranscriptAssistantContentDeltaInputSchema.Type;
+
+export const UpsertRuntimeTranscriptAssistantToolCallInputSchema = Schema.Struct({
+  ...RuntimeTranscriptStreamMutationBaseSchema,
+  messageId: MessageId,
+  contentIndex: NonNegativeSafeIntegerSchema,
+  toolCallId: ToolCallId,
+  toolName: Schema.String,
+  argumentsJson: Schema.String,
+  argumentsStatus: Schema.Literals(["streaming", "accepted"]),
+  thoughtSignature: Schema.optionalKey(Schema.String),
+});
+export type UpsertRuntimeTranscriptAssistantToolCallInput =
+  typeof UpsertRuntimeTranscriptAssistantToolCallInputSchema.Type;
+
+export const LinkRuntimeTranscriptAssistantToolCallCommandInputSchema = Schema.Struct({
+  ...RuntimeTranscriptStreamMutationBaseSchema,
+  messageId: MessageId,
+  contentIndex: NonNegativeSafeIntegerSchema,
+  toolCallId: ToolCallId,
+  commandId: CommandId,
+});
+export type LinkRuntimeTranscriptAssistantToolCallCommandInput =
+  typeof LinkRuntimeTranscriptAssistantToolCallCommandInputSchema.Type;
+
+const RuntimeTranscriptAssistantTerminalInputBaseSchema = {
+  ...RuntimeTranscriptStreamMutationBaseSchema,
+  messageId: MessageId,
+  api: Schema.NullOr(Schema.String),
+  providerId: ProviderId,
+  modelId: ModelId,
+  responseId: Schema.NullOr(Schema.String),
+  usage: Schema.NullOr(RuntimeTranscriptUsageSchema),
+  stopReason: Schema.NullOr(RuntimeTranscriptAssistantStopReasonSchema),
+  errorMessage: Schema.NullOr(Schema.String),
+  piHistoryEntry: Schema.NullOr(PiHistoryEntryRefSchema),
+  messageTimestamp: Schema.NullOr(IsoDateTimeStringSchema),
+  finishedAt: IsoDateTimeStringSchema,
+} as const;
+
+export const CommitRuntimeTranscriptAssistantMessageInputSchema = Schema.Struct({
+  ...RuntimeTranscriptAssistantTerminalInputBaseSchema,
+  content: RuntimeTranscriptAssistantContentSchema,
+});
+export type CommitRuntimeTranscriptAssistantMessageInput =
+  typeof CommitRuntimeTranscriptAssistantMessageInputSchema.Type;
+
+export const FailRuntimeTranscriptAssistantMessageInputSchema = Schema.Struct({
+  ...RuntimeTranscriptAssistantTerminalInputBaseSchema,
+  status: Schema.Literals(["failed", "cancelled"]),
+});
+export type FailRuntimeTranscriptAssistantMessageInput =
+  typeof FailRuntimeTranscriptAssistantMessageInputSchema.Type;
+
+export const BindRuntimeTranscriptPiHistoryEntryInputSchema = Schema.Struct({
+  messageId: MessageId,
+  piHistoryEntry: PiHistoryEntryRefSchema,
+});
+export type BindRuntimeTranscriptPiHistoryEntryInput =
+  typeof BindRuntimeTranscriptPiHistoryEntryInputSchema.Type;
+
+export const AdvanceRuntimeTranscriptStreamCursorInputSchema = Schema.Struct({
+  ...RuntimeTranscriptStreamMutationBaseSchema,
+});
+export type AdvanceRuntimeTranscriptStreamCursorInput =
+  typeof AdvanceRuntimeTranscriptStreamCursorInputSchema.Type;
+
+export const ReadRuntimeSurfaceTranscriptInputSchema = Schema.Struct({
+  surfacePiSessionId: SurfacePiSessionId,
+});
+export type ReadRuntimeSurfaceTranscriptInput = typeof ReadRuntimeSurfaceTranscriptInputSchema.Type;
+
+export const RuntimeTranscriptUserMutationSchema = Schema.Struct({
+  message: RuntimeTranscriptUserMessageSchema,
+  cursor: RuntimeTranscriptStreamCursorSchema,
+});
+export type RuntimeTranscriptUserMutation = typeof RuntimeTranscriptUserMutationSchema.Type;
+
+export const RuntimeTranscriptAssistantMutationSchema = Schema.Struct({
+  message: RuntimeTranscriptAssistantMessageSchema,
+  cursor: RuntimeTranscriptStreamCursorSchema,
+});
+export type RuntimeTranscriptAssistantMutation =
+  typeof RuntimeTranscriptAssistantMutationSchema.Type;
+
+export interface RuntimeTranscriptStatePortService {
+  commitUserMessage(
+    input: CommitRuntimeTranscriptUserMessageInput,
+  ): Effect.Effect<StateMutationResult<RuntimeTranscriptUserMutation>, StateContractError>;
+  beginAssistantMessage(
+    input: BeginRuntimeTranscriptAssistantMessageInput,
+  ): Effect.Effect<StateMutationResult<RuntimeTranscriptAssistantMutation>, StateContractError>;
+  appendAssistantContentDelta(
+    input: AppendRuntimeTranscriptAssistantContentDeltaInput,
+  ): Effect.Effect<StateMutationResult<RuntimeTranscriptAssistantMutation>, StateContractError>;
+  upsertAssistantToolCall(
+    input: UpsertRuntimeTranscriptAssistantToolCallInput,
+  ): Effect.Effect<StateMutationResult<RuntimeTranscriptAssistantMutation>, StateContractError>;
+  linkAssistantToolCallCommand(
+    input: LinkRuntimeTranscriptAssistantToolCallCommandInput,
+  ): Effect.Effect<StateMutationResult<RuntimeTranscriptAssistantMutation>, StateContractError>;
+  commitAssistantMessage(
+    input: CommitRuntimeTranscriptAssistantMessageInput,
+  ): Effect.Effect<StateMutationResult<RuntimeTranscriptAssistantMutation>, StateContractError>;
+  failAssistantMessage(
+    input: FailRuntimeTranscriptAssistantMessageInput,
+  ): Effect.Effect<StateMutationResult<RuntimeTranscriptAssistantMutation>, StateContractError>;
+  bindPiHistoryEntry(
+    input: BindRuntimeTranscriptPiHistoryEntryInput,
+  ): Effect.Effect<StateMutationResult<RuntimeTranscriptMessage>, StateContractError>;
+  advanceStreamCursor(
+    input: AdvanceRuntimeTranscriptStreamCursorInput,
+  ): Effect.Effect<StateMutationResult<RuntimeTranscriptStreamCursor>, StateContractError>;
+  readSurfaceTranscript(
+    input: ReadRuntimeSurfaceTranscriptInput,
+  ): Effect.Effect<RuntimeSurfaceTranscriptSnapshot, StateContractError>;
+}
+
+export interface RuntimeTranscriptStatePort {
+  readonly _tag: "RuntimeTranscriptStatePort";
+}
+
+export const RuntimeTranscriptStatePort = Context.Service<
+  RuntimeTranscriptStatePort,
+  RuntimeTranscriptStatePortService
+>("@svvy/core/RuntimeTranscriptStatePort");
 
 export type RuntimeCommandExecutor =
   | "orchestrator"
@@ -1270,14 +1642,12 @@ export const RuntimeRequestInputTimeoutInputSchema = Schema.NullOr(
   }),
 );
 
-export const RuntimeRequestInputModeSchema = Schema.Literals(["nonblocking", "blocking"]);
-
 export const CreateRuntimeRequestInputInputSchema = Schema.Struct({
   target: PromptTargetSchema,
   turnId: TurnId,
   toolItemId: ToolItemId,
   sourceCommandId: CommandId,
-  mode: RuntimeRequestInputModeSchema,
+  mode: RequestInputVariantSchema,
   timeout: Schema.optionalKey(RuntimeRequestInputTimeoutInputSchema),
   questions: Schema.Array(RuntimeRequestInputQuestionInputSchema),
 });
@@ -1297,7 +1667,7 @@ export const RuntimeRequestInputRecordSchema = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
   turnId: TurnId,
   commandId: CommandId,
-  variant: RuntimeRequestInputModeSchema,
+  variant: RequestInputVariantSchema,
   status: RuntimeRequestInputStatusSchema,
   questionCount: Schema.Number,
 });
@@ -1353,6 +1723,7 @@ export const RuntimeRequestInputAnswerRecordSchema = Schema.Struct({
 export type RuntimeRequestInputAnswerRecord = typeof RuntimeRequestInputAnswerRecordSchema.Type;
 
 export const RuntimeRequestInputTimeoutRecordSchema = Schema.Struct({
+  timerVersion: PositiveSafeIntegerSchema,
   enabled: Schema.Boolean,
   durationMs: PositiveDurationMsSchema,
   startedAt: Schema.String,
@@ -1369,7 +1740,7 @@ export const RuntimeRequestInputDetailsRecordSchema = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
   turnId: TurnId,
   commandId: CommandId,
-  variant: RuntimeRequestInputModeSchema,
+  variant: RequestInputVariantSchema,
   status: RuntimeRequestInputStatusSchema,
   questionCount: Schema.Number,
   toolItemId: ToolItemId,
@@ -1396,6 +1767,8 @@ export type ListOpenBlockingRuntimeRequestInputsInput =
 export const DefaultOpenRuntimeRequestInputQuestionsInputSchema = Schema.Struct({
   requestId: RequestInputRequestId,
   answeredBy: Schema.Literal("timeout_default"),
+  expectedTimerVersion: PositiveSafeIntegerSchema,
+  expectedExpiresAt: Schema.String,
 });
 export type DefaultOpenRuntimeRequestInputQuestionsInput =
   typeof DefaultOpenRuntimeRequestInputQuestionsInputSchema.Type;
@@ -1406,6 +1779,13 @@ export const CancelRuntimeRequestInputInputSchema = Schema.Struct({
 export type CancelRuntimeRequestInputInput = typeof CancelRuntimeRequestInputInputSchema.Type;
 
 export interface RuntimeRequestStatePortService {
+  readRequestInputSettings(): Effect.Effect<RequestInputSettings, StateContractError>;
+  setRequestInputVariant(
+    input: SetRequestInputVariantInput,
+  ): Effect.Effect<StateMutationResult<SetRequestInputVariantResult>, StateContractError>;
+  setRequestInputBlockingTimeout(
+    input: SetRequestInputBlockingTimeoutInput,
+  ): Effect.Effect<StateMutationResult<SetRequestInputBlockingTimeoutResult>, StateContractError>;
   createRequestInput(
     input: CreateRuntimeRequestInputInput,
   ): Effect.Effect<StateMutationResult<RuntimeRequestInputRecord>, StateContractError>;
@@ -1990,6 +2370,82 @@ export const RuntimeRecoveryWorkKindSchema = Schema.Literals([
   "command_process_reconciliation",
 ]);
 
+type SourceReconcileRecoveryPayloadShape = {
+  readonly request: typeof SourceReconcileRequestSchema.Type;
+  readonly retry:
+    | {
+        readonly operation: "record-save";
+        readonly record: typeof RecordRuntimeSourceSaveInputSchema.Type;
+      }
+    | {
+        readonly operation: "record-delete";
+        readonly record: typeof RecordRuntimeSourceDeleteInputSchema.Type;
+      };
+};
+
+const SourceReconcileRecoveryPayloadInvariant = Schema.makeFilter(
+  (input: SourceReconcileRecoveryPayloadShape) => {
+    const requestScope = input.request.scope;
+    const recordScope = input.retry.record.scope;
+    if (requestScope.kind !== "app-global" || recordScope.kind !== "app-global") {
+      return {
+        path: ["request", "scope"],
+        issue: "source reconcile recovery requests and source records must be app-global",
+      };
+    }
+    if (input.request.reason !== "recovery") {
+      return {
+        path: ["request", "reason"],
+        issue: "source reconcile recovery requests must use the recovery reason",
+      };
+    }
+    const expectedDomain = input.retry.record.sourceKind.startsWith("workflow-")
+      ? "workflows"
+      : "extensions";
+    if (input.request.domains?.length !== 1 || input.request.domains[0] !== expectedDomain) {
+      return {
+        path: ["request", "domains"],
+        issue: `source reconcile recovery for ${input.retry.record.sourceKind} must target only ${expectedDomain}`,
+      };
+    }
+    return true;
+  },
+  { expected: "a source reconcile recovery payload matching its source record" },
+);
+
+export const SourceReconcileRecoveryPayloadSchema = Schema.Struct({
+  request: SourceReconcileRequestSchema,
+  retry: Schema.Union([
+    Schema.Struct({
+      operation: Schema.Literal("record-save"),
+      record: RecordRuntimeSourceSaveInputSchema,
+    }),
+    Schema.Struct({
+      operation: Schema.Literal("record-delete"),
+      record: RecordRuntimeSourceDeleteInputSchema,
+    }),
+  ]),
+}).pipe(Schema.check(SourceReconcileRecoveryPayloadInvariant));
+
+export type SourceReconcileRecoveryPayload = typeof SourceReconcileRecoveryPayloadSchema.Type;
+
+export const decodeUnknownSourceReconcileRecoveryPayloadExit = Schema.decodeUnknownExit(
+  SourceReconcileRecoveryPayloadSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownSourceReconcileRecoveryPayloadEffect = Schema.decodeUnknownEffect(
+  SourceReconcileRecoveryPayloadSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeSourceReconcileRecoveryPayloadExit = Schema.encodeExit(
+  SourceReconcileRecoveryPayloadSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeSourceReconcileRecoveryPayloadEffect = Schema.encodeEffect(
+  SourceReconcileRecoveryPayloadSchema,
+  strictBoundaryParseOptions,
+);
+
 export type RuntimeRecoveryWorkStatus =
   | "pending"
   | "claimed"
@@ -2008,6 +2464,7 @@ export const RuntimeRecoveryWorkStatusSchema = Schema.Literals([
 
 export type RuntimeRecoveryWorkOwnerScope =
   | { kind: "workspace" }
+  | { kind: "source"; sourceKind: ExtensionSourceKind; sourceId: string }
   | { kind: "workspace_session"; workspaceSessionId: WorkspaceSessionId }
   | {
       kind: "surface";
@@ -2025,6 +2482,11 @@ export type RuntimeRecoveryWorkOwnerScope =
   | { kind: "title_job"; titleJobId: TitleJobId };
 export const RuntimeRecoveryWorkOwnerScopeSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("workspace") }),
+  Schema.Struct({
+    kind: Schema.Literal("source"),
+    sourceKind: ExtensionSourceKindSchema,
+    sourceId: Schema.String,
+  }),
   Schema.Struct({
     kind: Schema.Literal("workspace_session"),
     workspaceSessionId: WorkspaceSessionId,
@@ -2064,6 +2526,7 @@ export const RuntimeRecoveryWorkScopeSchema = Schema.Union([
 type RuntimeRecoveryWorkScopedKindShape = {
   readonly scope: RuntimeRecoveryWorkScope;
   readonly kind: RuntimeRecoveryWorkKind;
+  readonly ownerScope: RuntimeRecoveryWorkOwnerScope;
 };
 
 const RuntimeRecoveryWorkScopedKindInvariant = Schema.makeFilter(
@@ -2081,6 +2544,24 @@ const RuntimeRecoveryWorkScopedKindInvariant = Schema.makeFilter(
       return {
         path: ["scope"],
         issue: "workspace_generated_package_link_repair recovery work must be workspace-scoped",
+      };
+    }
+    if (input.kind === "source_reconcile" && input.scope.kind !== "app") {
+      return {
+        path: ["scope"],
+        issue: "source_reconcile recovery work must be app-scoped",
+      };
+    }
+    if (input.kind === "source_reconcile" && input.ownerScope.kind !== "source") {
+      return {
+        path: ["ownerScope"],
+        issue: "source_reconcile recovery work must be owned by a source",
+      };
+    }
+    if (input.ownerScope.kind === "source" && input.kind !== "source_reconcile") {
+      return {
+        path: ["ownerScope"],
+        issue: "source recovery ownership is reserved for source_reconcile work",
       };
     }
     return true;
@@ -2113,7 +2594,12 @@ export const RuntimeRecoveryWorkRecordSchema = Schema.Struct({
 }).pipe(Schema.check(RuntimeRecoveryWorkScopedKindInvariant));
 export type RuntimeRecoveryWorkRecord = typeof RuntimeRecoveryWorkRecordSchema.Type;
 
-export type RuntimeRecoveryStartupTurnStatus = "running" | "waiting" | "completed" | "failed";
+export type RuntimeRecoveryStartupTurnStatus =
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "cancelled";
 export const RuntimeRecoveryStartupTurnStatusSchema = RuntimeTurnStatusSchema;
 
 export type RuntimeRecoveryStartupQueueStatus =
@@ -2228,6 +2714,7 @@ export const FailOrRetryRuntimeRecoveryWorkInputSchema = Schema.Struct({
   error: Schema.String,
   claimedBy: Schema.optionalKey(Schema.NullOr(RuntimeOwnerId)),
   leaseVersion: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  retryAvailableAt: Schema.optionalKey(IsoDateTimeStringSchema),
 });
 export type FailOrRetryRuntimeRecoveryWorkInput =
   typeof FailOrRetryRuntimeRecoveryWorkInputSchema.Type;

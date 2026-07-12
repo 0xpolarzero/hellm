@@ -55,8 +55,8 @@ export class AppLifecycleCoordinator {
 
   shutdown(
     reason: AppLifecycleShutdownReason,
-    closeScopes: () => Promise<void>,
     prepare: () => Promise<void>,
+    closeScopes: () => Promise<void>,
     dispose: () => Promise<void>,
   ): Promise<AppLifecycleShutdownReceipt> {
     if (this.shutdownPromise) return this.shutdownPromise;
@@ -64,12 +64,12 @@ export class AppLifecycleCoordinator {
     this.shutdownPromise = (async () => {
       const errors: unknown[] = [];
       try {
-        await closeScopes();
+        await prepare();
       } catch (error) {
         errors.push(error);
       }
       try {
-        await prepare();
+        await closeScopes();
       } catch (error) {
         errors.push(error);
       }

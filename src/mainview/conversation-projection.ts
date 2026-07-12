@@ -1,35 +1,46 @@
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, ToolCall, ToolResultMessage, Usage } from "@mariozechner/pi-ai";
+import type {
+  RendererConversationEntry,
+  RendererTranscriptAssistantEntry,
+  RendererTranscriptToolCallContent,
+  RendererCommandResultEntry,
+  RendererTranscriptUsage,
+} from "../shared/renderer-transcript";
 import { getLatestAssistantUsage } from "./context-budget";
 
 export interface ProjectedToolCall {
   id: string;
   name: string;
-  argumentsValue: ToolCall["arguments"];
+  argumentsValue: RendererTranscriptToolCallContent["arguments"];
   attempt: number;
   totalAttempts: number;
 }
 
 export interface ConversationProjection {
-  visibleMessages: AgentMessage[];
+  visibleMessages: RendererConversationEntry[];
   toolCallsById: Map<string, ProjectedToolCall>;
-  toolResultsById: Map<string, ToolResultMessage>;
-  usage: Usage;
-  latestContextUsage: Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite"> | null;
+  toolResultsById: Map<string, RendererCommandResultEntry>;
+  usage: RendererTranscriptUsage;
+  latestContextUsage: Pick<
+    RendererTranscriptUsage,
+    "input" | "output" | "cacheRead" | "cacheWrite"
+  > | null;
   messageCount: number;
   toolCallCount: number;
   lastActivity: number | null;
 }
 
 export interface ConversationSummary {
-  usage: Usage;
-  latestContextUsage: Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite"> | null;
+  usage: RendererTranscriptUsage;
+  latestContextUsage: Pick<
+    RendererTranscriptUsage,
+    "input" | "output" | "cacheRead" | "cacheWrite"
+  > | null;
   messageCount: number;
   toolCallCount: number;
   lastActivity: number | null;
 }
 
-function createUsage(): Usage {
+function createUsage(): RendererTranscriptUsage {
   return {
     input: 0,
     output: 0,
@@ -46,7 +57,7 @@ function createUsage(): Usage {
   };
 }
 
-function addUsage(total: Usage, usage: Usage): void {
+function addUsage(total: RendererTranscriptUsage, usage: RendererTranscriptUsage): void {
   total.input += usage.input;
   total.output += usage.output;
   total.cacheRead += usage.cacheRead;
@@ -59,19 +70,19 @@ function addUsage(total: Usage, usage: Usage): void {
   total.cost.total += usage.cost.total;
 }
 
-function countToolCalls(message: AssistantMessage | null | undefined): number {
+function countToolCalls(message: RendererTranscriptAssistantEntry | null | undefined): number {
   if (!message) return 0;
-  return message.content.filter((block) => block.type === "toolCall").length;
+  return message.content.filter((block) => block.type === "tool-call").length;
 }
 
 function retryKey(chainId: number, toolName: string): string {
   return `${chainId}:${toolName}`;
 }
 
-export function projectConversation(messages: AgentMessage[]): ConversationProjection {
-  const visibleMessages: AgentMessage[] = [];
+export function projectConversation(messages: RendererConversationEntry[]): ConversationProjection {
+  const visibleMessages: RendererConversationEntry[] = [];
   const toolCallsById = new Map<string, ProjectedToolCall>();
-  const toolResultsById = new Map<string, ToolResultMessage>();
+  const toolResultsById = new Map<string, RendererCommandResultEntry>();
   const usage = createUsage();
   const retryAttemptByKey = new Map<string, number>();
   const retryKeyByToolCallId = new Map<string, string>();
@@ -104,7 +115,7 @@ export function projectConversation(messages: AgentMessage[]): ConversationProje
       addUsage(usage, message.usage);
 
       const toolCalls = message.content.filter(
-        (block): block is ToolCall => block.type === "toolCall",
+        (block): block is RendererTranscriptToolCallContent => block.type === "tool-call",
       );
       const toolNamesSeenInMessage = new Set<string>();
 
@@ -134,7 +145,7 @@ export function projectConversation(messages: AgentMessage[]): ConversationProje
       continue;
     }
 
-    if (message.role === "toolResult") {
+    if (message.role === "command-result") {
       if (!toolCallsById.has(message.toolCallId)) {
         visibleMessages.push(message);
       }
@@ -163,7 +174,7 @@ export function projectConversation(messages: AgentMessage[]): ConversationProje
 
 export function projectConversationSummary(
   committed: ConversationProjection,
-  streamMessage?: AssistantMessage | null,
+  streamMessage?: RendererTranscriptAssistantEntry | null,
 ): ConversationSummary {
   return {
     usage: committed.usage,

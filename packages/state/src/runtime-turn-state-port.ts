@@ -1,12 +1,24 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { RuntimeTurnStatePort, type RuntimeTurnStatePortService } from "@svvy/core";
+import {
+  RuntimeTurnStatePort,
+  type RuntimeInterruptedTurnRecoveryResult,
+  type RuntimePromptTurnSettlementResult,
+  type RuntimeTurnStatePortService,
+} from "@svvy/core";
 import {
   StructuredSessionState,
   structuredSessionStateFromStore,
   type StructuredSessionStateStore,
 } from "./structured-session-state";
-import { mutationResult, surfaceAndSessionNavigationInvalidations } from "./state-mutation-result";
+import {
+  commandInspectorInvalidation,
+  dedupeInvalidations,
+  mutationResult,
+  requestInputInvalidation,
+  runtimeApprovalInvalidation,
+  surfaceAndSessionNavigationInvalidations,
+} from "./state-mutation-result";
 
 export function runtimeTurnStatePortFromStructuredSessionState(
   state: StructuredSessionState["Service"],
@@ -52,6 +64,48 @@ export function runtimeTurnStatePortFromStructuredSessionState(
           surfaceAndSessionNavigationInvalidations(state.workspaceId, record.surfacePiSessionId),
         ),
       ),
+    recoverInterruptedTurn: (input) =>
+      Effect.map(state.recoverInterruptedTurn(input), (structured) => {
+        const result = structured as unknown as RuntimeInterruptedTurnRecoveryResult;
+        return mutationResult(
+          result,
+          result.changed
+            ? dedupeInvalidations([
+                ...surfaceAndSessionNavigationInvalidations(
+                  state.workspaceId,
+                  result.turn.surfacePiSessionId,
+                ),
+                ...result.terminalizedCommandIds.map((commandId) =>
+                  commandInspectorInvalidation(state.workspaceId, commandId),
+                ),
+                ...result.cancelledRequestInputIds.map((requestId) =>
+                  requestInputInvalidation(state.workspaceId, requestId),
+                ),
+                ...result.cancelledApprovalIds.map((requestId) =>
+                  runtimeApprovalInvalidation(state.workspaceId, requestId),
+                ),
+              ])
+            : [],
+        );
+      }),
+    settlePromptTurn: (input) =>
+      Effect.map(state.settlePromptTurn(input), (structured) => {
+        const result = structured as unknown as RuntimePromptTurnSettlementResult;
+        return mutationResult(
+          result,
+          result.changed
+            ? dedupeInvalidations([
+                ...surfaceAndSessionNavigationInvalidations(
+                  state.workspaceId,
+                  result.turn.surfacePiSessionId,
+                ),
+                ...result.terminalizedCommandIds.map((commandId) =>
+                  commandInspectorInvalidation(state.workspaceId, commandId),
+                ),
+              ])
+            : [],
+        );
+      }),
   };
 }
 

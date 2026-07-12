@@ -1,13 +1,9 @@
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, Message, UserMessage } from "@mariozechner/pi-ai";
+import type { RendererTranscriptUserEntry } from "./renderer-transcript";
 import type {
   AgentProfileId,
-  AgentSettingsState,
   AppPreferences,
-  RequestUserInputSettings,
   ReasoningEffort,
   WorkflowAgentKey,
-  WorkflowAgentSettings,
 } from "./agent-settings";
 import type { FileBackedSaveMode } from "./file-backed-edit";
 import type {
@@ -57,12 +53,25 @@ import type {
   RuntimeEventGenerationId,
   RuntimeEventSequence,
   RuntimeMessageDelivery,
+  RequestInputSettings,
+  SetRequestInputBlockingTimeoutInput,
+  SetRequestInputBlockingTimeoutResult,
+  SetRequestInputVariantInput,
+  SetRequestInputVariantResult,
   OpenExtensionSourceEditInput,
+  RuntimeCreateWorkflowAgentSourceInput,
+  RuntimeDeleteWorkflowAgentSourceInput,
+  RuntimeDuplicateWorkflowAgentSourceInput,
   RuntimeSurfaceTarget,
-  SaveExtensionSourceEditInput,
+  RuntimeSaveExtensionSourceEditInput,
   SourceEditSaveResult,
   SourceEditSession,
+  WorkflowAgentSourceDeleteResult,
+  WorkflowAgentSourceLifecycleResult,
   RuntimeSubmittedAttachment,
+  RuntimeTranscriptAssistantMessage,
+  RuntimeTranscriptMessage,
+  RuntimeTranscriptStreamCursor,
   RuntimeClientSubmissionMetadata,
   StateInvalidationDescriptor,
   SetRequestInputTimerPausedResult,
@@ -95,6 +104,9 @@ import type {
   MarkAppLogReadCommandInput,
   MarkSessionReadCommandInput,
   MarkSessionUnreadCommandInput,
+  PromptHistoryReadModel as StatePromptHistoryReadModel,
+  PromptHistoryReadModelEntry as StatePromptHistoryReadModelEntry,
+  PromptHistoryReadModelRequest as StatePromptHistoryReadModelRequest,
   PromoteProfileExtensionDefaultCommandInput,
   ReorderOrchestratorProfilesCommandInput,
   ResetActorExtensionDefaultsCommandInput,
@@ -150,6 +162,7 @@ export interface AppPreferencesReadModel {
 
 export interface SettingsReadModel {
   preferences: AppPreferencesReadModel;
+  requestInput: RequestInputSettings;
 }
 
 export interface AppPreferencesReadModelRequest {
@@ -170,6 +183,10 @@ export interface SessionNavigationReadModelRequest {
   kind: "sessionNavigation";
   workspaceId?: WorkspaceId;
 }
+
+export type PromptHistoryReadModelRequest = StatePromptHistoryReadModelRequest;
+export type PromptHistoryReadModel = StatePromptHistoryReadModel;
+export type PromptHistoryReadModelEntry = StatePromptHistoryReadModelEntry;
 
 export interface SurfaceTranscriptReadModelRequest {
   kind: "surfaceTranscript";
@@ -262,14 +279,9 @@ export interface SurfaceTranscriptReadModel {
   surfaceStatus: "idle" | "running" | "waiting" | "error";
   promptLock: { activeTurnId: TurnId | null; queuedCount: number };
   composerDraft: { text: string; attachmentIds: readonly string[] };
-  messages: readonly {
-    messageId: MessageId;
-    role: "user" | "assistant";
-    turnId?: TurnId;
-    text?: string;
-    commandIds?: readonly CommandId[];
-    createdAt: string;
-  }[];
+  messages: readonly RuntimeTranscriptMessage[];
+  activeAssistantMessage: RuntimeTranscriptAssistantMessage | null;
+  streamCursor: RuntimeTranscriptStreamCursor | null;
 }
 
 export interface SurfaceSummaryReadModel {
@@ -453,6 +465,7 @@ export type StateReadModelRequest =
   | AppPreferencesReadModelRequest
   | ProviderAuthReadModelRequest
   | SessionNavigationReadModelRequest
+  | PromptHistoryReadModelRequest
   | SurfaceTranscriptReadModelRequest
   | SurfaceSummaryReadModelRequest
   | SurfaceComposerReadModelRequest
@@ -476,6 +489,7 @@ export type StateReadModelResult =
   | { kind: "settings"; value: SettingsReadModel }
   | { kind: "providerAuth"; value: ProviderAuthReadModel }
   | { kind: "sessionNavigation"; value: SessionNavigationReadModel }
+  | { kind: "promptHistory"; value: PromptHistoryReadModel }
   | { kind: "surfaceTranscript"; value: SurfaceTranscriptReadModel }
   | { kind: "surfaceSummary"; value: SurfaceSummaryReadModel }
   | { kind: "surfaceComposer"; value: SurfaceComposerReadModel }
@@ -900,7 +914,6 @@ export interface SendPromptResponse {
 
 export interface EditCommittedUserMessageResponse {
   target: PromptTarget;
-  snapshot?: ConversationSurfaceSnapshot;
 }
 
 export type QueuedSurfaceMessageStatus = "queued" | "steering" | "dispatching" | "failed";
@@ -939,7 +952,7 @@ export interface SvvyUserMessageMetadata {
   snippetProvenance?: SentSnippetProvenance[];
 }
 
-export type SvvyUserMessage = UserMessage & {
+export type SvvyUserMessage = RendererTranscriptUserEntry & {
   svvyMetadata?: SvvyUserMessageMetadata;
 };
 
@@ -960,13 +973,12 @@ export interface ReorderQueuedSurfaceMessageRequest extends QueuedSurfaceMessage
 export interface EditCommittedUserMessageRequest {
   target: PromptTarget;
   messageTimestamp: string | number;
-  message: Message;
+  message: RendererTranscriptUserEntry;
 }
 
 export interface EditQueuedSurfaceMessageResponse {
   ok: boolean;
   text?: string;
-  snapshot?: ConversationSurfaceSnapshot;
 }
 
 export interface CloseSurfaceRequest {
@@ -1371,6 +1383,8 @@ export interface OpenSnippetSourceInEditorRequest {
   snippetId: SnippetId;
 }
 
+export type OpenSourceInEditorRequest = WorkspaceScoped<OpenExtensionSourceEditInput>;
+
 export interface OpenWorkspaceSourceInEditorResponse {
   opened: boolean;
   editor: string;
@@ -1524,6 +1538,7 @@ export interface WorkspaceRequestUserInputQuestion {
 }
 
 export interface WorkspaceRequestUserInputTimeout {
+  timerVersion: number;
   enabled: boolean;
   durationMs: number;
   startedAt: string;
@@ -1605,40 +1620,6 @@ export interface WorkspaceArtifactPreview {
   content: string;
 }
 
-export interface ConversationSurfaceSnapshot {
-  target: PromptTarget;
-  messages: AgentMessage[];
-  pendingUserMessage?: AgentMessage | null;
-  queuedMessages: QueuedSurfaceMessage[];
-  composerDraft: ComposerDraft;
-  streamMessage?: AssistantMessage | null;
-  streamSequence: number;
-  provider: string;
-  model: string;
-  reasoningEffort: ReasoningEffort;
-  agentProfileId: AgentProfileId;
-  loadedExtensionIds: string[];
-  availableExtensionIds: string[];
-  systemPrompt: string;
-  resolvedSystemPrompt: string;
-  externalContextSources: GeneratedAgentContextExternalSource[];
-  promptBinding?: {
-    currentRevision: number;
-    boundSystemPrompt: string;
-    currentSystemPrompt: string;
-    boundFingerprint: string | null;
-    currentFingerprint: string;
-    boundExternalSourceHashes: string[];
-    currentExternalSourceHashes: string[];
-    updateExtensionContextBeforeNextTurn: boolean;
-    stale: boolean;
-  };
-  promptStatus: "idle" | "streaming";
-  activeTurnId: string | null;
-  activeTurnStartedAt: string | null;
-  turnTimings: ConversationTurnTiming[];
-}
-
 export interface ConversationTurnTiming {
   turnId: string;
   assistantMessageTimestamp: string | number;
@@ -1646,92 +1627,10 @@ export interface ConversationTurnTiming {
   finishedAt: string;
 }
 
-export type SurfaceStreamPatchInput =
-  | {
-      type: "start";
-      message: AssistantMessage;
-    }
-  | {
-      type: "text_start" | "thinking_start";
-      contentIndex: number;
-    }
-  | {
-      type: "text_delta" | "thinking_delta";
-      contentIndex: number;
-      delta: string;
-    }
-  | {
-      type: "text_end" | "thinking_end";
-      contentIndex: number;
-      content: string;
-    }
-  | {
-      type: "toolcall_start" | "toolcall_delta" | "toolcall_end";
-      contentIndex: number;
-      toolCall: Extract<AssistantMessage["content"][number], { type: "toolCall" }>;
-    }
-  | {
-      type: "clear";
-      reason: "done" | "error";
-    };
-
-export type SurfaceStreamPatch = SurfaceStreamPatchInput & {
-  sequence: number;
-};
-
-export interface SurfaceSyncMessage {
-  workspaceId: string;
-  reason:
-    | "surface.updated"
-    | "prompt.settled"
-    | "background.started"
-    | "surface.closed"
-    | "stream.patch";
-  target: PromptTarget;
-  snapshot?: ConversationSurfaceSnapshot;
-  streamPatch?: SurfaceStreamPatch;
-}
-
 export interface CreateSessionRequest {
   title?: string;
   parentSessionId?: string;
   agentProfileId?: AgentProfileId;
-}
-
-export interface UpdateWorkflowAgentRequest {
-  key: WorkflowAgentKey;
-  settings: WorkflowAgentSettings;
-  baseSourceVersion?: string;
-  mode?: FileBackedSaveMode;
-}
-
-export type UpdateWorkflowAgentResponse =
-  | {
-      ok: true;
-      state: AgentSettingsState;
-      agent: WorkflowAgentSettings;
-    }
-  | {
-      ok: false;
-      code: "file_backed_edit_conflict";
-      state: AgentSettingsState;
-      current: WorkflowAgentSettings;
-      currentVersion: string;
-      baseVersion: string;
-    };
-
-export interface DeleteWorkflowAgentRequest {
-  key: WorkflowAgentKey;
-}
-
-export interface OpenWorkflowAgentSourceInEditorRequest {
-  key: WorkflowAgentKey;
-}
-
-export interface SetAgentProfileExtensionUsageRequest {
-  agentProfile: AgentProfileId | WorkflowAgentKey | "threadHandler";
-  extensionId: string;
-  state: ExtensionUsageState;
 }
 
 export interface AgentContextPreviewRequest {
@@ -1805,7 +1704,10 @@ export interface WriteClipboardTextRequest {
 export interface SurfaceMutationResponse {
   ok: boolean;
   target: PromptTarget;
-  snapshot?: ConversationSurfaceSnapshot;
+}
+
+export interface SurfaceOpenResponse {
+  target: PromptTarget;
 }
 
 export interface ChatRPCSchema {
@@ -1814,10 +1716,6 @@ export interface ChatRPCSchema {
       rendererReady: {
         params: undefined;
         response: { ok: true };
-      };
-      getAgentSettings: {
-        params: WorkspaceScopedRequest;
-        response: AgentSettingsState;
       };
       fetchStateReadModel: {
         params: StateReadModelRequest;
@@ -1904,24 +1802,24 @@ export interface ChatRPCSchema {
         response: SourceEditSession;
       };
       saveSourceEdit: {
-        params: SaveExtensionSourceEditInput;
+        params: RuntimeSaveExtensionSourceEditInput;
         response: SourceEditSaveResult;
       };
-      updateWorkflowAgent: {
-        params: WorkspaceScoped<UpdateWorkflowAgentRequest>;
-        response: UpdateWorkflowAgentResponse;
+      createWorkflowAgentSource: {
+        params: RuntimeCreateWorkflowAgentSourceInput;
+        response: WorkflowAgentSourceLifecycleResult;
       };
-      deleteWorkflowAgent: {
-        params: WorkspaceScoped<DeleteWorkflowAgentRequest>;
-        response: AgentSettingsState;
+      duplicateWorkflowAgentSource: {
+        params: RuntimeDuplicateWorkflowAgentSourceInput;
+        response: WorkflowAgentSourceLifecycleResult;
       };
-      openWorkflowAgentSourceInEditor: {
-        params: WorkspaceScoped<OpenWorkflowAgentSourceInEditorRequest>;
+      deleteWorkflowAgentSource: {
+        params: RuntimeDeleteWorkflowAgentSourceInput;
+        response: WorkflowAgentSourceDeleteResult;
+      };
+      openSourceInEditor: {
+        params: OpenSourceInEditorRequest;
         response: OpenWorkspaceSourceInEditorResponse;
-      };
-      setAgentProfileExtensionUsage: {
-        params: WorkspaceScoped<SetAgentProfileExtensionUsageRequest>;
-        response: AgentSettingsState;
       };
       getAgentContextPreview: {
         params: WorkspaceScoped<AgentContextPreviewRequest>;
@@ -2019,9 +1917,13 @@ export interface ChatRPCSchema {
         params: RemoveExtensionEnvOverrideRequest;
         response: ExtensionsInventoryReadModel;
       };
-      updateRequestUserInputSettings: {
-        params: WorkspaceScoped<RequestUserInputSettings>;
-        response: AgentSettingsState;
+      setRequestInputVariant: {
+        params: SetRequestInputVariantInput;
+        response: SetRequestInputVariantResult;
+      };
+      setRequestInputBlockingTimeout: {
+        params: SetRequestInputBlockingTimeoutInput;
+        response: SetRequestInputBlockingTimeoutResult;
       };
       openWorkspace: {
         params: OpenWorkspaceRequest;
@@ -2089,15 +1991,15 @@ export interface ChatRPCSchema {
       };
       createSession: {
         params: WorkspaceScoped<CreateSessionRequest>;
-        response: ConversationSurfaceSnapshot;
+        response: SurfaceOpenResponse;
       };
       openSession: {
         params: WorkspaceScoped<OpenSessionRequest>;
-        response: ConversationSurfaceSnapshot;
+        response: SurfaceOpenResponse;
       };
       openSurface: {
         params: WorkspaceScoped<OpenSurfaceRequest>;
-        response: ConversationSurfaceSnapshot;
+        response: SurfaceOpenResponse;
       };
       closeSurface: {
         params: WorkspaceScoped<CloseSurfaceRequest>;
@@ -2109,7 +2011,7 @@ export interface ChatRPCSchema {
       };
       forkSession: {
         params: WorkspaceScoped<ForkSessionRequest>;
-        response: ConversationSurfaceSnapshot;
+        response: SurfaceOpenResponse;
       };
       deleteSession: {
         params: WorkspaceScoped<{ sessionId: string }>;
@@ -2238,7 +2140,6 @@ export interface ChatRPCSchema {
     requests: Record<string, never>;
     messages: {
       sendArtifactOpen: ArtifactOpenMessage;
-      sendSurfaceSync: SurfaceSyncMessage;
       sendDesktopNotification: DesktopRendererNotification;
       sendAppMenuAction: { action: AppMenuAction };
     };

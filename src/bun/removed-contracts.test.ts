@@ -51,9 +51,7 @@ describe("retired desktop integration RPC paths", () => {
     const sharedContractSource = await Bun.file(
       `${import.meta.dir}/../shared/workspace-contract.ts`,
     ).text();
-    const chatStorageSource = await Bun.file(
-      `${import.meta.dir}/../mainview/chat-storage.ts`,
-    ).text();
+    const chatStoragePath = `${import.meta.dir}/../mainview/chat-storage.ts`;
     const chatWorkspaceSource = await Bun.file(
       `${import.meta.dir}/../mainview/ChatWorkspace.svelte`,
     ).text();
@@ -79,8 +77,7 @@ describe("retired desktop integration RPC paths", () => {
     expect(sharedContractSource).not.toContain("getProviderAuthState: {");
     expect(chatRuntimeSource).not.toContain("rpcClient.request.getProviderAuthState");
     expect(chatRuntimeSource).not.toContain("requireProviderAccess");
-    expect(chatStorageSource).not.toContain("ProviderKeysStore");
-    expect(chatStorageSource).not.toContain("provider-keys");
+    expect(existsSync(chatStoragePath)).toBe(false);
     expect(chatWorkspaceSource).not.toContain("requireProviderAccess");
     expect(indexSource).toContain(
       "const fallbacks = await listProviderAuthSummaries({ refreshOAuth: false });",
@@ -117,15 +114,9 @@ describe("retired desktop integration RPC paths", () => {
     );
   });
 
-  it("keeps production code from calling the file-backed appPreferences setter", () => {
+  it("keeps file-backed app preferences read-only", () => {
     const root = join(import.meta.dir, "..");
-    const allowed = new Set([
-      "bun/agent-settings-store.ts",
-      "bun/agent-settings-store.test.ts",
-      "bun/session-catalog.test.ts",
-    ]);
     const violations = listSourceFiles(root)
-      .filter((file) => !allowed.has(relative(root, file)))
       .filter((file) => !file.endsWith(".test.ts"))
       .flatMap((file) => {
         const source = readFileSync(file, "utf8");
@@ -135,6 +126,58 @@ describe("retired desktop integration RPC paths", () => {
       });
 
     expect(violations).toEqual([]);
+    expect(readFileSync(join(root, "bun/agent-settings-store.ts"), "utf8")).not.toContain(
+      "setAppPreferences",
+    );
+  });
+
+  it("keeps production off retired catalog surface snapshots and direct request-input mutations", () => {
+    const root = join(import.meta.dir, "..");
+    const retiredSurfaceSymbols = [
+      "ConversationSurfaceSnapshot",
+      "SurfaceSyncMessage",
+      "buildSurfaceSnapshot",
+      "setSurfaceSyncListener",
+      "listOpenSurfaceSnapshots",
+    ] as const;
+    const violations = listSourceFiles(root)
+      .filter((file) => !file.endsWith(".test.ts"))
+      .flatMap((file) => {
+        const source = readFileSync(file, "utf8");
+        return retiredSurfaceSymbols
+          .filter((symbol) => source.includes(symbol))
+          .map((symbol) => `${relative(root, file)} retains ${symbol}`);
+      });
+    const catalogSource = readFileSync(join(import.meta.dir, "session-catalog.ts"), "utf8");
+    for (const retiredCatalogMethod of [
+      "answerRequestUserInput",
+      "afterRequestInputAnswered",
+      "setRequestUserInputTimerPaused",
+    ]) {
+      if (catalogSource.includes(retiredCatalogMethod)) {
+        violations.push(`bun/session-catalog.ts retains ${retiredCatalogMethod}`);
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps live pi session metadata out of structured-session write authority", async () => {
+    const catalogSource = await Bun.file(`${import.meta.dir}/session-catalog.ts`).text();
+    const catalogMutationsSource = await Bun.file(
+      `${import.meta.dir}/../../packages/state/src/structured-session-catalog-mutations.ts`,
+    ).text();
+
+    expect(catalogSource).not.toContain("syncStructuredPiSessionFromOrchestratorSession");
+    expect(catalogSource).not.toContain("syncGeneratedAgentContextBindingForTarget");
+    expect(catalogSource).not.toContain("commitSurfaceMetadata");
+    expect(catalogSource.match(/catalogStateMutations\.upsertPiSession/g) ?? []).toHaveLength(1);
+    expect(catalogSource).toContain("resolveStateBackedPromptDefaults");
+    expect(catalogSource).toContain("updateOrchestratorPromptDefaults");
+    expect(catalogSource).toContain("setOrchestratorGeneratedAgentContextFingerprint");
+    expect(catalogMutationsSource).toContain(
+      "const current = store.getSessionState(input.sessionId).pi",
+    );
   });
 
   it("keeps snippets on state read and command facades with identity-only source opens", async () => {
@@ -248,6 +291,8 @@ describe("retired desktop integration RPC paths", () => {
       "stateAgentProfilesSetExternalInstructionUsage",
       "openSourceEdit",
       "saveSourceEdit",
+      "setRequestInputVariant",
+      "setRequestInputBlockingTimeout",
     ]) {
       expect(sharedContractSource).toContain(`${channel}: {`);
       expect(backendSource).toContain(`${channel}:`);
@@ -258,6 +303,8 @@ describe("retired desktop integration RPC paths", () => {
     expect(backendSource).toContain("facades.commands.state.agentProfiles.reorderOrchestrators");
     expect(backendSource).toContain("facades.runtime.sourceEdits.open(input)");
     expect(backendSource).toContain("facades.runtime.sourceEdits.save(input)");
+    expect(backendSource).toContain("facades.runtime.requestInput.setVariant(input)");
+    expect(backendSource).toContain("facades.runtime.requestInput.setBlockingTimeout(input)");
   });
 
   it("pins increment-6 legacy renderer RPC channels until pane migration retires them", async () => {
@@ -270,8 +317,6 @@ describe("retired desktop integration RPC paths", () => {
     ).text();
     const sessionCatalogSource = await Bun.file(`${import.meta.dir}/session-catalog.ts`).text();
     const legacyChannels = [
-      { channel: "getAgentSettings", retirementIncrement: "Increment 8" },
-      { channel: "setAgentProfileExtensionUsage", retirementIncrement: "Increment 10" },
       { channel: "setExtensionEnvSecret", retirementIncrement: "Increment 10" },
       { channel: "removeExtensionEnvSecret", retirementIncrement: "Increment 10" },
       { channel: "setExtensionEnvOverride", retirementIncrement: "Increment 10" },
@@ -307,9 +352,14 @@ describe("retired desktop integration RPC paths", () => {
       "updateAgentProfile",
       "deleteAgentProfile",
       "reorderOrchestratorAgents",
+      "updateWorkflowAgent",
+      "deleteWorkflowAgent",
+      "openWorkflowAgentSourceInEditor",
+      "setAgentProfileExtensionUsage",
+      "updateRequestUserInputSettings",
     ]) {
       expect(sharedContractSource).not.toContain(`${channel}: {`);
-      expect(chatRuntimeSource).not.toContain(`rpcClient.request.${channel}`);
+      expect(chatRuntimeSource).not.toContain(`rpcClient.request.${channel}(`);
       expect(backendSource).not.toContain(`${channel}:`);
     }
 

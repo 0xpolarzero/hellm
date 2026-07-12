@@ -57,7 +57,7 @@ describe("assistant Markdown renderer source contract", () => {
     expect(transcriptSource).toContain("formatTurnDuration(");
     expect(transcriptSource).toContain("formatTurnDurationTooltip(");
     expect(runtimeTestSource).toContain(
-      "applies ordered stream patches without replacing the surface snapshot",
+      "applies ordered native stream patches across a surface read-model refresh",
     );
     expect(timerTestSource).toContain(
       "formats completed assistant turn durations from persisted timestamps",

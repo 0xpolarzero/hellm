@@ -124,10 +124,27 @@ On workspace runtime scope acquisition:
 2. load state-owned session, queue, app-log, generated fact, and surface records
 3. hydrate process-local live surface registry shells
 4. restore queue state and reconstruct process-local prompt locks from durable active work
-5. schedule workspace generated package link repair for `.smithers/node_modules/@svvyx/*` after
+5. seed and settle `active_turn_recovery` before any `queue_delivery` replay for the same surface
+6. after the workspace store is registered, normalize stale recovery/queue claims and seed the
+   remaining workspace recovery rows
+7. acquire the runtime workspace scope, restoring surviving blocking request-input waiters and
+   timeout schedules from durable request state before queue replay can activate
+8. schedule workspace generated package link repair for `.smithers/node_modules/@svvyx/*` after
    app-global generated package facts are current
-6. resume recoverable runtime recovery rows through transactional claims
-7. record recovery app-log facts through state ports after committed recovery transitions
+9. after the workspace state is registered and acquired, resume recoverable rows through
+   transactional claims; claimed `queue_delivery` work calls the runtime-owned queue wake service
+   with `startup-recovery` and never owns queue dispatch itself
+10. record recovery app-log facts through state ports after committed recovery transitions
+
+Before workspace registration, the coordinator restricts claims to `active_turn_recovery` so queue
+replay cannot start early. After registration, it claims the complete workspace scope rather than
+filtering only its supported kinds: state ordering fences include every nonterminal row, so omitting
+an earlier unsupported kind from the claim could permanently strand later ordered work. Any
+unexpected workspace-scoped kind or malformed owner payload fails or retries through the fenced
+recovery-row transition; it is never marked completed by falling through a switch or an empty
+callback. App-scoped rows remain outside this coordinator's claim scope; in particular,
+`source_reconcile` remains owned by the app-scoped source recovery worker. `approval_wait` remains
+owned by the approval lifecycle and is not silently completed by the workspace coordinator.
 
 Renderer layout restore is a consumer of state-backed read models. It must not drain queues or repair
 product work directly.

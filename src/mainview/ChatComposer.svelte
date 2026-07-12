@@ -10,8 +10,7 @@
 	import SquareIcon from "@lucide/svelte/icons/square";
 	import XIcon from "@lucide/svelte/icons/x";
 	import { onMount, tick } from "svelte";
-	import type { Model } from "@mariozechner/pi-ai";
-	import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+	import type { ReasoningEffort as ThinkingLevel } from "../shared/agent-settings";
 	import type { ContextBudget } from "./context-budget";
 	import {
 		createPromptHistoryNavigationState,
@@ -44,7 +43,7 @@
 	import CompactCombobox, { type CompactComboboxOption } from "./ui/CompactCombobox.svelte";
 	import { formatWorkingElapsed, formatWorkingElapsedTooltip } from "./working-timer";
 	import QueuedMessagesStrip from "./QueuedMessagesStrip.svelte";
-	import type { QueuedPrompt } from "./chat-runtime";
+	import type { QueuedPrompt, RendererSurfaceModel } from "./chat-runtime";
 	import type { AgentContextActor, ExtensionUsageControlItem } from "./agents-pane-extension-usage";
 	import type { ExtensionUsageState } from "@svvy/core";
 	import type {
@@ -94,12 +93,12 @@
 	};
 
 	export type ComposerModelOption = CompactComboboxOption & {
-		model: Model<any>;
+		model: RendererSurfaceModel;
 		supportedThinkingLevels: ThinkingLevel[];
 	};
 
 	type Props = {
-		currentModel: Model<any> | null;
+		currentModel: RendererSurfaceModel | null;
 		thinkingLevel: ThinkingLevel;
 		isStreaming: boolean;
 		activeTurnStartedAt: string | null;
@@ -115,7 +114,7 @@
 		worktreeLabel?: string;
 		onOpenModelPicker: () => void;
 		onListModels: () => Promise<ComposerModelOption[]>;
-		onModelChange: (model: Model<any>) => void;
+		onModelChange: (model: RendererSurfaceModel) => void;
 		onSend: (input: ComposerSubmit) => Promise<boolean> | boolean;
 		onStop: () => Promise<void> | void;
 		onTelemetry?: (event: ComposerSubmitTelemetryEvent) => void;

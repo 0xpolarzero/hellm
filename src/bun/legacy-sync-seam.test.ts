@@ -2,11 +2,6 @@ import { describe, expect, it } from "bun:test";
 
 const REMAINING_LEGACY_SYNC_CHANNELS = [
   {
-    channel: "sendSurfaceSync",
-    retiresInIncrement: 10,
-    reason: "surface/transcript panes still consume stream and snapshot sync until increment 10",
-  },
-  {
     channel: "sendAppMenuAction",
     retiresInIncrement: 10,
     reason: "legacy workspace, session, sidebar, and surface menu routes retire in increment 10",
@@ -23,6 +18,7 @@ describe("legacy sync seam", () => {
 
     for (const source of [contractSource, indexSource, runtimeSource]) {
       expect(source).toContain("sendArtifactOpen");
+      expect(source).not.toContain("sendSurfaceSync");
       expect(source).not.toContain("sendWorkspaceSync");
     }
 

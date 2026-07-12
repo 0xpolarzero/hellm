@@ -409,13 +409,14 @@ export * from "./runtime-submit";
 export * from "./sandbox-policy-contracts";
 export * from "./secret-store-ports";
 export * from "./session-navigation-contracts";
+export * from "./transcript-contracts";
 export * from "./workflow-task-agent-bridge-contracts";
 ```
 
 The package entrypoint exports the approved public contract modules for app logs, errors, ids,
 native-tool contracts, prompt execution context, runtime contracts, runtime submission, runtime
 effect requests, runtime source edit contracts, runtime source invalidation, composer contracts,
-context-budget contracts, session-navigation contracts, artifact contracts, extension contracts,
+context-budget contracts, session-navigation contracts, transcript contracts, artifact contracts, extension contracts,
 generated-package contracts,
 state-backed port contracts, sandbox policy contracts, provider-auth contracts, pi-adapter
 contracts, secret-store contracts, and workflow task-agent bridge contracts.
@@ -424,7 +425,12 @@ module. Shared strict boundary parse options belong to `boundary-parse-options`,
 state port contracts belong to `extension-state-ports`.
 `runtime-state-ports` owns the source-state DTOs and port tag used by runtime and state. Editable
 source facts are keyed by `(SourceInvalidationScope, sourceKind, sourceId)` for compare-and-swap
-source edits. Runtime source scan facts are keyed by `(SourceInvalidationScope, SourceDomain)` for
+source edits. The same module owns the atomic app-global workflow-agent save, delete, and reconcile
+inputs. Those inputs reuse `WorkflowAgentSourceObservation` from `runtime-source-edit-contracts`,
+require exact source-fact/observation identity for direct saves, keep invalid filename-derived
+`sourceId` values as plain strings, and carry parsed parameters and diagnostics but never source
+text or generated-export fallbacks. Runtime source scan facts are keyed by
+`(SourceInvalidationScope, SourceDomain)` for
 deterministic source reconciliation and include committed fingerprint, diagnostics, last observed
 deletion path, observation kind, and observation timestamp. Core owns the schemas and port method contracts;
 `ReconcileDiscoveredHostSnippetsInputSchema` carries one workspace scan's exact-schema Claude/pi
@@ -434,6 +440,16 @@ managed `svvy` is not a valid discovered source.
 `@svvy/state` owns SQLite persistence and descriptor derivation, while `@svvy/runtime` owns file
 watching, scans, generated-package refresh, generated-context refresh, recovery scheduling, and
 runtime event publication.
+
+`transcript-contracts` owns the pi-free durable message/read-model vocabulary shared by runtime,
+state, and renderer edges. `RuntimeTranscriptUserMessage` preserves the exact submitted text,
+attachments, and snippet provenance. `RuntimeTranscriptAssistantMessage` preserves ordered text,
+thinking, and tool-call blocks, including optional reasoning redaction/signatures, tool thought
+signatures, command linkage, provider/model/API, usage/cost, stop/error, timestamps, and optional
+`PiHistoryEntryRef`. `MessageId` is Svvy-owned; provider response ids and pi history entry ids are
+separate fields and never substitute for it. `RuntimeSurfaceTranscriptSnapshot` carries committed
+messages, at most one active assistant message, and the durable surface-local stream cursor used for
+authoritative mid-stream rebaseline.
 
 The app-log contract is a public core contract. It includes:
 
@@ -1711,6 +1727,7 @@ type SurfaceStreamPatchInput =
 
 type WorkspaceReadModelInvalidation =
   | { model: "sessionNavigation" }
+  | { model: "promptHistory" }
   | { model: "workspaceLayout"; ids: readonly WorkspaceLayoutSlotId[] }
   | { model: "surface"; ids: readonly SurfacePiSessionId[] }
   | { model: "commandInspector"; ids: readonly CommandId[] }
@@ -1724,12 +1741,12 @@ type WorkspaceReadModelInvalidation =
 `surface` is the workspace-scoped invalidation for the complete addressed surface bundle. A
 consumer that receives `{ model: "surface", ids: [...] }` refetches every open read-model slice for
 that `surfacePiSessionId`: `surface`, `surfaceTranscript`, composer state, queued-message state,
-prompt-history state, prompt status, and surface-local chrome. The schema deliberately does not add
-separate `surfaceTranscript`, `composer`, `queue`, or `promptHistory` invalidation models because
-those slices are keyed by the same surface, are commonly refreshed together after prompt/queue/turn
-changes, and would otherwise create overlapping invalidation paths. State read facades may expose
-separate fetch kinds for efficient reads, but the post-commit invalidation vocabulary stays
-surface-keyed.
+prompt status, and surface-local chrome. The schema deliberately does not add separate
+`surfaceTranscript`, `composer`, or `queue` invalidation models because those slices are keyed by the
+same surface, are commonly refreshed together after prompt/queue/turn changes, and would otherwise
+create overlapping invalidation paths. Prompt history is workspace-scoped instead: a committed
+history append publishes `{ model: "promptHistory" }` so every composer in that workspace refetches
+the shared chronological history independently of the addressed surface bundle.
 
 `command.changed` is the live command transport notification. It carries the command id and change
 kind only; stdout/stderr chunks, progress details, diagnostics, patch snapshots, child-command
@@ -2799,20 +2816,35 @@ type RecordEpisodeRequest = {
   notifyOrchestrator?: boolean;
 };
 
+type RequestInputVariant = "nonblocking" | "blocking";
+
+type RequestInputBlockingTimeoutSettings = {
+  enabled: boolean;
+  durationMs: PositiveDurationMs;
+};
+
+type RequestInputSettings = {
+  mode: RequestInputVariant;
+  blockingTimeout: RequestInputBlockingTimeoutSettings;
+};
+
+type SetRequestInputVariantInput = { mode: RequestInputVariant };
+type SetRequestInputVariantResult = RequestInputSettings;
+type SetRequestInputBlockingTimeoutInput = RequestInputBlockingTimeoutSettings;
+type SetRequestInputBlockingTimeoutResult = RequestInputSettings;
+
 type CreateRequestInputRequest = {
   target: PromptTarget;
   sourceCommandId: CommandId;
-  mode: "nonblocking" | "blocking";
-  timeout?: null | {
-    enabled: boolean;
-    durationMs: PositiveDurationMs;
-  };
   questions: readonly RequestInputQuestionRequest[];
 };
 
-`CreateRequestInputRequest.timeout.durationMs` is decoded by `PositiveDurationMsSchema`. Disabled
-timeout uses `timeout: null` or `{ enabled: false }`; it never uses `0`, `NaN`, `Infinity`, a
-fractional value, or an omitted duration on an enabled timeout.
+`RequestInputSettings`, both settings mutation inputs, and both named settings mutation results have
+strict public decode/encode helpers. Their schemas reject unknown or explicitly `undefined` fields,
+unsupported variants, and timeout durations that are missing, nonpositive, fractional, or
+nonfinite. `RuntimeRequestInputApiEffect` exposes `setVariant(...)` and
+`setBlockingTimeout(...)` with these named inputs/results alongside answer and timer control. The
+extension-produced `CreateRequestInputRequest` carries no mode or timeout policy.
 
 type RequestInputQuestionRequest =
   | RequestInputChoiceQuestionRequest
@@ -3295,8 +3327,10 @@ Request-input runtime effect rules:
   no `defaultAnswer`.
 - Freeform questions are identified structurally by `defaultAnswer`. Each freeform question contains
   no `options`.
-- Runtime-only mode and timeout state live on `CreateRequestInputRequest`, not on the model-facing
-  `request_user_input` tool input. The model-facing tool input remains `{ questions }`.
+- Runtime-only mode and timeout state live on `CreateRuntimeRequestInputInput`, not on the
+  extension-produced `CreateRequestInputRequest` or model-facing `request_user_input` tool input.
+  Runtime reads the durable app-global `RequestInputSettings`, applies the blocking timeout policy,
+  and supplies the resulting mode/timeout when it calls the request-input state port.
 - Request-level titles are not stored. Each question has an agent-authored `title`; command cards,
   side-panel rows, and summaries derive compact labels from those per-question titles.
 - The model-facing tool input does not accept generated ids, queue ids, mode, timeout, or timer

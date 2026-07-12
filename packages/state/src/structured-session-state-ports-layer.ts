@@ -21,6 +21,7 @@ import {
   RuntimeSourceStatePort,
   RuntimeSurfaceLifecycleStatePort,
   RuntimeThreadStatePort,
+  RuntimeTranscriptStatePort,
   RuntimeTurnStatePort,
   RuntimeWorkspaceStatePort,
   SandboxPolicySource,
@@ -47,6 +48,7 @@ import { layerRuntimeSessionWaitStatePort } from "./runtime-session-wait-state-p
 import { layerRuntimeSourceStatePort } from "./runtime-source-state-port";
 import { layerRuntimeSurfaceLifecycleStatePort } from "./runtime-surface-lifecycle-state-port";
 import { layerRuntimeThreadStatePort } from "./runtime-thread-state-port";
+import { layerRuntimeTranscriptStatePort } from "./runtime-transcript-state-port";
 import { layerRuntimeTurnStatePort } from "./runtime-turn-state-port";
 import { layerRuntimeWorkspaceStatePort } from "./runtime-workspace-state-port";
 import {
@@ -78,6 +80,7 @@ export type StructuredSessionStatePorts =
   | RuntimeSessionWaitStatePort
   | RuntimeSourceStatePort
   | RuntimeThreadStatePort
+  | RuntimeTranscriptStatePort
   | ProviderAuthStatusStatePort
   | SandboxPolicySource
   | PiSessionReferencePort;
@@ -104,6 +107,7 @@ export const structuredSessionStatePortsLayer = Layer.mergeAll(
   layerRuntimeSessionWaitStatePort,
   layerRuntimeSourceStatePort,
   layerRuntimeThreadStatePort,
+  layerRuntimeTranscriptStatePort,
   layerProviderAuthStatusStatePort,
   layerSandboxPolicySource,
   layerPiSessionReferencePort,
@@ -134,6 +138,7 @@ export function structuredSessionStatePortsLayerWithSandboxPolicyConfig(
     layerRuntimeSessionWaitStatePort,
     layerRuntimeSourceStatePort,
     layerRuntimeThreadStatePort,
+    layerRuntimeTranscriptStatePort,
     layerProviderAuthStatusStatePort,
     layerSandboxPolicySourceWithConfig(config),
     layerPiSessionReferencePort,

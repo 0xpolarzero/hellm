@@ -23,6 +23,7 @@ import type {
   SourceInvalidationEvent,
   SourceInvalidationHintClassification,
 } from "./source-invalidation-coordinator";
+import { RuntimeShutdownAdmission } from "./runtime-shutdown-admission";
 
 export interface RuntimeSourceInvalidationScanPortService {
   classifyHint(
@@ -72,6 +73,13 @@ export const layerRuntimeSourceInvalidationService = Layer.effect(
     const generatedPackageRefresh = yield* RuntimeGeneratedPackageRefreshService;
     const sourceScanner = yield* RuntimeSourceInvalidationScanPort;
     const eventBus = yield* RuntimeEventBus;
+    const shutdownAdmission = yield* RuntimeShutdownAdmission;
+
+    const admit = <A>(
+      operation: string,
+      effect: Effect.Effect<A, RuntimeContractError>,
+    ): Effect.Effect<A, RuntimeContractError> =>
+      shutdownAdmission.assertAccepting(operation).pipe(Effect.andThen(effect));
 
     const reactToScan = (input: RuntimeSourceInvalidationReactionInput) =>
       reactToRuntimeSourceInvalidationEvent(input, {
@@ -127,24 +135,37 @@ export const layerRuntimeSourceInvalidationService = Layer.effect(
 
     return RuntimeSourceInvalidationService.of({
       hint: (input) =>
-        Effect.gen(function* () {
-          const classification = yield* sourceScanner.classifyHint(input);
-          if (classification === "ignore") {
-            return;
-          }
-          yield* sourceScanner.requestScan({
-            scope: input.scope,
-            domains: [input.domain],
-            reason:
-              classification === "scan-parent-domain"
-                ? "ignored-path-parent-domain-scan"
-                : "watcher-debounce",
-          });
-        }),
-      reconcile: reconcileSourceInputs,
-      applyCommittedScanEvent,
-      refreshGeneratedContext: (input) => generatedContextRefresh.refresh(input),
-      refreshGeneratedPackages: (input) => generatedPackageRefresh.refresh(input),
+        admit(
+          "runtime.sourceInvalidation.hint",
+          Effect.gen(function* () {
+            const classification = yield* sourceScanner.classifyHint(input);
+            if (classification === "ignore") {
+              return;
+            }
+            yield* sourceScanner.requestScan({
+              scope: input.scope,
+              domains: [input.domain],
+              reason:
+                classification === "scan-parent-domain"
+                  ? "ignored-path-parent-domain-scan"
+                  : "watcher-debounce",
+            });
+          }),
+        ),
+      reconcile: (input) =>
+        admit("runtime.sourceInvalidation.reconcile", reconcileSourceInputs(input)),
+      applyCommittedScanEvent: (input) =>
+        admit("runtime.sourceInvalidation.applyCommittedScanEvent", applyCommittedScanEvent(input)),
+      refreshGeneratedContext: (input) =>
+        admit(
+          "runtime.sourceInvalidation.refreshGeneratedContext",
+          generatedContextRefresh.refresh(input),
+        ),
+      refreshGeneratedPackages: (input) =>
+        admit(
+          "runtime.sourceInvalidation.refreshGeneratedPackages",
+          generatedPackageRefresh.refresh(input),
+        ),
     });
   }),
 );

@@ -39,7 +39,7 @@ import { WorkspaceSessionCatalog } from "./session-catalog";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import type { LiveCommandStdinRegistry } from "./live-command-stdin-registry";
 import type { RunAcceptedLoadExtension } from "./extension-tools";
-import type { RunAcceptedRequestUserInput } from "./request-user-input-tool";
+import type { PromptTarget } from "../shared/workspace-contract";
 
 export type RuntimeProviderAuthDependencies = {
   ensureUsableProviderAuth(provider: string): Promise<string | undefined>;
@@ -78,6 +78,7 @@ export function createRuntimeBackedWorkspaceSessionCatalog(
   _namerSessionDir?: string,
   workspaceId?: string,
   recoveryOptions?: {
+    artifactDirectory?: string;
     workflowsExtensionsGeneratedPackagePath?: string;
     workflowsGeneratedPackagePath?: string;
     workflowsSourceRoot?: string;
@@ -98,8 +99,9 @@ export function createRuntimeBackedWorkspaceSessionCatalog(
     refreshGeneratedPackages?: (
       input: InternalRefreshGeneratedPackagesRequest,
     ) => Promise<GeneratedPackagesRefreshResult>;
+    runtimeStartupOwnsRecovery?: boolean;
+    wakeSurfaceQueue?: (target: PromptTarget) => Promise<void>;
     runAcceptedLoadExtension?: RunAcceptedLoadExtension;
-    runAcceptedRequestUserInput?: RunAcceptedRequestUserInput;
     runTaskAgent?: (input: AuthenticatedRunTaskAgentInput) => Promise<RunTaskAgentResult>;
     requestDirectToolApproval?: RuntimeApprovalBoundary;
   },

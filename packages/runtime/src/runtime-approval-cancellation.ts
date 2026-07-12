@@ -1,9 +1,7 @@
 import * as Effect from "effect/Effect";
 import {
   RuntimeApprovalStatePort,
-  RuntimeCommandStatePort,
   RuntimeContractError,
-  RuntimeSessionWaitStatePort,
   type RuntimeApprovalRecord,
   type StateInvalidationDescriptor,
   type SurfacePiSessionId,
@@ -34,16 +32,6 @@ function mapApprovalCancelFailure(operation: string, cause: unknown): RuntimeCon
   });
 }
 
-function approvalRequestSummary(request: RuntimeApprovalRecord): string {
-  if (request.toolName === "exec_command" && request.command) {
-    return `Run command: ${request.command}`;
-  }
-  if (request.toolName === "apply_patch") {
-    return "Apply patch";
-  }
-  return "Run TypeScript";
-}
-
 function publishAfterCommit(
   operation: string,
   afterCommit: readonly StateInvalidationDescriptor[],
@@ -69,8 +57,6 @@ const cancelApprovalRequest = Effect.fn("@svvy/runtime/approvals.cancelRequest")
   reason: string,
 ) {
   const approvalState = yield* RuntimeApprovalStatePort;
-  const commandState = yield* RuntimeCommandStatePort;
-  const sessionWaitState = yield* RuntimeSessionWaitStatePort;
   const approvalWaitService = yield* RuntimeApprovalWaitService;
   const resolved = yield* approvalState
     .resolveApprovalRequest({
@@ -86,40 +72,6 @@ const cancelApprovalRequest = Effect.fn("@svvy/runtime/approvals.cancelRequest")
     );
   yield* publishAfterCommit("runtime.approvals.cancel.resolve", resolved.afterCommit);
   const cancelled = resolved.value;
-  if (cancelled.commandId) {
-    const command = yield* commandState
-      .findCommandById({ commandId: cancelled.commandId })
-      .pipe(
-        Effect.mapError((cause) =>
-          mapApprovalCancelFailure("runtime.approvals.cancel.findCommand", cause),
-        ),
-      );
-    const finished = yield* commandState
-      .finishCommand({
-        commandId: cancelled.commandId,
-        status: "cancelled",
-        summary: `Approval cancelled: ${approvalRequestSummary(cancelled)}`,
-        facts: {
-          ...command?.facts,
-          approval: "cancelled",
-          approvalRequestId: cancelled.requestId,
-        },
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          mapApprovalCancelFailure("runtime.approvals.cancel.finishCommand", cause),
-        ),
-      );
-    yield* publishAfterCommit("runtime.approvals.cancel.finishCommand", finished.afterCommit);
-  }
-  const cleared = yield* sessionWaitState
-    .clearSessionWait({ sessionId: cancelled.sessionId })
-    .pipe(
-      Effect.mapError((cause) =>
-        mapApprovalCancelFailure("runtime.approvals.cancel.clearWait", cause),
-      ),
-    );
-  yield* publishAfterCommit("runtime.approvals.cancel.clearWait", cleared.afterCommit);
   yield* approvalWaitService
     .cancelApprovalWait({ request: cancelled, reason })
     .pipe(

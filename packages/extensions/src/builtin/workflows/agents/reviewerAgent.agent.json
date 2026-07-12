@@ -1,0 +1,12 @@
+{
+  "id": "reviewerAgent",
+  "label": "Reviewer",
+  "provider": "zai",
+  "model": "glm-5-turbo",
+  "reasoning": {
+    "effort": "medium"
+  },
+  "instructions": "Review the assigned result for correctness, regressions, edge cases, and missing tests. Lead with findings.",
+  "overrides": {},
+  "extensionOrder": []
+}

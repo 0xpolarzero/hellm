@@ -22,10 +22,8 @@ import {
   type RuntimeBlockingRequestInputEffectState,
   type RuntimeBlockingRequestInputWaitRegistry,
 } from "./request-input-blocking-controller";
-import {
-  RuntimeQueueWakeService,
-  type RuntimeQueueWakeServiceService,
-} from "./runtime-queue-wake-service";
+import { RuntimeEventBus, type RuntimeEventBusService } from "./runtime-event-bus";
+import type { RuntimeQueueWakeServiceService } from "./runtime-queue-wake-port";
 
 export interface RuntimeRequestInputWaitServiceService {
   waitForBlockingRequest(input: {
@@ -37,6 +35,7 @@ export interface RuntimeRequestInputWaitServiceService {
     readonly requestId: RequestInputRequestId;
     readonly delivery: AnswerRequestInputResult["delivery"];
     readonly target: PromptTarget;
+    readonly wakeSurface: RuntimeQueueWakeServiceService["wakeSurface"];
   }): Effect.Effect<void, RuntimeContractError>;
   afterTimerPausedCommitted(input: {
     readonly requestId: string;
@@ -69,11 +68,21 @@ function makeState(input: {
   readonly commandState: RuntimeCommandStatePortService;
   readonly requestState: RuntimeRequestStatePortService;
   readonly sessionWaitState: RuntimeSessionWaitStatePortService;
+  readonly eventBus: RuntimeEventBusService;
 }): RuntimeBlockingRequestInputEffectState {
   return {
     commandState: input.commandState,
     requestState: input.requestState,
     sessionWaitState: input.sessionWaitState,
+    publishStateInvalidations: (afterCommit) =>
+      afterCommit.length === 0
+        ? Effect.void
+        : input.eventBus.publishStateInvalidations({ afterCommit }).pipe(
+            Effect.asVoid,
+            Effect.mapError((cause) =>
+              mapWaitServiceError("runtime.requestInput.publishStateInvalidations", cause),
+            ),
+          ),
   };
 }
 
@@ -82,7 +91,7 @@ function makeRuntimeRequestInputWaitService(input: {
   readonly commandState: RuntimeCommandStatePortService;
   readonly requestState: RuntimeRequestStatePortService;
   readonly sessionWaitState: RuntimeSessionWaitStatePortService;
-  readonly queueWake: RuntimeQueueWakeServiceService;
+  readonly eventBus: RuntimeEventBusService;
 }): RuntimeRequestInputWaitServiceService {
   const state = makeState(input);
   return RuntimeRequestInputWaitService.of({
@@ -98,21 +107,19 @@ function makeRuntimeRequestInputWaitService(input: {
             mapWaitServiceError("runtime.requestInput.waitForBlockingRequest", cause),
           ),
         ),
-    afterAnswerCommitted: ({ requestId, delivery, target }) => {
+    afterAnswerCommitted: ({ requestId, delivery, target, wakeSurface }) => {
       if (delivery.kind !== "blocking-resolved") {
         if (delivery.kind !== "nonblocking-queued") {
           return Effect.void;
         }
-        return input.queueWake
-          .wakeSurface({
-            target,
-            reason: "request-input-answer-queued",
-          })
-          .pipe(
-            Effect.mapError((cause) =>
-              mapWaitServiceError("runtime.requestInput.answer.afterCommit", cause),
-            ),
-          );
+        return wakeSurface({
+          target,
+          reason: "request-input-answer-queued",
+        }).pipe(
+          Effect.mapError((cause) =>
+            mapWaitServiceError("runtime.requestInput.answer.afterCommit", cause),
+          ),
+        );
       }
       return input.registry.resolveBlockingRequest(state, requestId).pipe(
         Effect.asVoid,
@@ -154,14 +161,14 @@ export const layerRuntimeRequestInputWaitService = Layer.effect(
     const commandState = yield* RuntimeCommandStatePort;
     const requestState = yield* RuntimeRequestStatePort;
     const sessionWaitState = yield* RuntimeSessionWaitStatePort;
-    const queueWake = yield* RuntimeQueueWakeService;
+    const eventBus = yield* RuntimeEventBus;
     const registry = yield* makeRuntimeBlockingRequestInputWaitRegistry();
     return makeRuntimeRequestInputWaitService({
       registry,
       commandState,
       requestState,
       sessionWaitState,
-      queueWake,
+      eventBus,
     });
   }),
 );

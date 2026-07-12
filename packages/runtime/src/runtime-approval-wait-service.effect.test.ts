@@ -43,13 +43,19 @@ function approvalRecord(id: RuntimeApprovalId = requestId): RuntimeApprovalRecor
   };
 }
 
+function pendingRecheck(request: RuntimeApprovalRecord) {
+  return Effect.succeed(request);
+}
+
 describe("RuntimeApprovalWaitService", () => {
   it.effect("resolves approved waits after the committed approval transition", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const service = yield* makeRuntimeApprovalWaitService();
         const request = approvalRecord();
-        const fiber = yield* service.waitForApproval({ request }).pipe(Effect.forkScoped);
+        const fiber = yield* service
+          .waitForApproval({ request, recheck: pendingRecheck(request) })
+          .pipe(Effect.forkScoped);
         yield* Effect.yieldNow;
 
         yield* service.afterApprovalCommitted({ request, approved: true, reason: null });
@@ -66,7 +72,10 @@ describe("RuntimeApprovalWaitService", () => {
         const service = yield* makeRuntimeApprovalWaitService();
         const explicitRequest = approvalRecord();
         const explicitFiber = yield* service
-          .waitForApproval({ request: explicitRequest })
+          .waitForApproval({
+            request: explicitRequest,
+            recheck: pendingRecheck(explicitRequest),
+          })
           .pipe(Effect.forkScoped);
         yield* Effect.yieldNow;
 
@@ -82,7 +91,10 @@ describe("RuntimeApprovalWaitService", () => {
 
         const defaultRequest = approvalRecord("approval_wait_service_02" as RuntimeApprovalId);
         const defaultFiber = yield* service
-          .waitForApproval({ request: defaultRequest })
+          .waitForApproval({
+            request: defaultRequest,
+            recheck: pendingRecheck(defaultRequest),
+          })
           .pipe(Effect.forkScoped);
         yield* Effect.yieldNow;
 
@@ -104,7 +116,9 @@ describe("RuntimeApprovalWaitService", () => {
       Effect.gen(function* () {
         const service = yield* makeRuntimeApprovalWaitService();
         const request = approvalRecord();
-        const fiber = yield* service.waitForApproval({ request }).pipe(Effect.forkScoped);
+        const fiber = yield* service
+          .waitForApproval({ request, recheck: pendingRecheck(request) })
+          .pipe(Effect.forkScoped);
         yield* Effect.yieldNow;
 
         yield* service.cancelApprovalWait({ request, reason: "Surface closed." });
@@ -122,10 +136,10 @@ describe("RuntimeApprovalWaitService", () => {
         const first = approvalRecord("approval_wait_service_all_01" as RuntimeApprovalId);
         const second = approvalRecord("approval_wait_service_all_02" as RuntimeApprovalId);
         const firstFiber = yield* service
-          .waitForApproval({ request: first })
+          .waitForApproval({ request: first, recheck: pendingRecheck(first) })
           .pipe(Effect.forkScoped);
         const secondFiber = yield* service
-          .waitForApproval({ request: second })
+          .waitForApproval({ request: second, recheck: pendingRecheck(second) })
           .pipe(Effect.forkScoped);
         yield* Effect.yieldNow;
 
@@ -146,13 +160,17 @@ describe("RuntimeApprovalWaitService", () => {
       Effect.gen(function* () {
         const service = yield* makeRuntimeApprovalWaitService();
         const request = approvalRecord();
-        const firstFiber = yield* service.waitForApproval({ request }).pipe(Effect.forkScoped);
+        const firstFiber = yield* service
+          .waitForApproval({ request, recheck: pendingRecheck(request) })
+          .pipe(Effect.forkScoped);
         yield* Effect.yieldNow;
 
         yield* service.afterApprovalCommitted({ request, approved: true, reason: null });
         assert.deepStrictEqual(yield* Fiber.join(firstFiber), { approved: true });
 
-        const secondFiber = yield* service.waitForApproval({ request }).pipe(Effect.forkScoped);
+        const secondFiber = yield* service
+          .waitForApproval({ request, recheck: pendingRecheck(request) })
+          .pipe(Effect.forkScoped);
         yield* Effect.yieldNow;
         yield* service.cancelApprovalWait({ request, reason: "Cancelled later." });
         assert.deepStrictEqual(yield* Fiber.join(secondFiber), {
@@ -175,15 +193,44 @@ describe("RuntimeApprovalWaitService", () => {
     }),
   );
 
+  it.effect("rechecks a terminal approval answered before waiter registration", () =>
+    Effect.gen(function* () {
+      const service = yield* makeRuntimeApprovalWaitService();
+      const request = approvalRecord();
+      const answered = {
+        ...request,
+        status: "approved" as const,
+        reviewer: "user" as const,
+        completedAt: "2026-04-18T09:00:01.000Z",
+      };
+
+      yield* service.afterApprovalCommitted({
+        request: answered,
+        approved: true,
+        reason: null,
+      });
+      const result = yield* service.waitForApproval({
+        request,
+        recheck: Effect.succeed(answered),
+      });
+
+      assert.deepStrictEqual(result, { approved: true });
+    }),
+  );
+
   it.effect("rejects duplicate waits without removing the original waiter", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const service = yield* makeRuntimeApprovalWaitService();
         const request = approvalRecord();
-        const firstFiber = yield* service.waitForApproval({ request }).pipe(Effect.forkScoped);
+        const firstFiber = yield* service
+          .waitForApproval({ request, recheck: pendingRecheck(request) })
+          .pipe(Effect.forkScoped);
         yield* Effect.yieldNow;
 
-        const duplicateError = yield* service.waitForApproval({ request }).pipe(Effect.flip);
+        const duplicateError = yield* service
+          .waitForApproval({ request, recheck: pendingRecheck(request) })
+          .pipe(Effect.flip);
 
         assert.ok(duplicateError instanceof RuntimeContractError);
         assert.strictEqual(duplicateError.reason, "state-conflict");
@@ -200,11 +247,15 @@ describe("RuntimeApprovalWaitService", () => {
       Effect.gen(function* () {
         const service = yield* makeRuntimeApprovalWaitService();
         const request = approvalRecord();
-        const firstFiber = yield* service.waitForApproval({ request }).pipe(Effect.forkScoped);
+        const firstFiber = yield* service
+          .waitForApproval({ request, recheck: pendingRecheck(request) })
+          .pipe(Effect.forkScoped);
         yield* Effect.yieldNow;
         yield* Fiber.interrupt(firstFiber);
 
-        const secondFiber = yield* service.waitForApproval({ request }).pipe(Effect.forkScoped);
+        const secondFiber = yield* service
+          .waitForApproval({ request, recheck: pendingRecheck(request) })
+          .pipe(Effect.forkScoped);
         yield* Effect.yieldNow;
         yield* service.cancelApprovalWait({ request, reason: "Registered again." });
 
@@ -222,7 +273,10 @@ describe("RuntimeApprovalWaitService", () => {
         const service = yield* makeRuntimeApprovalWaitService();
         const commitFirst = approvalRecord("approval_wait_service_order_01" as RuntimeApprovalId);
         const commitFirstFiber = yield* service
-          .waitForApproval({ request: commitFirst })
+          .waitForApproval({
+            request: commitFirst,
+            recheck: pendingRecheck(commitFirst),
+          })
           .pipe(Effect.forkScoped);
         yield* Effect.yieldNow;
         yield* service.afterApprovalCommitted({
@@ -235,7 +289,10 @@ describe("RuntimeApprovalWaitService", () => {
 
         const cancelFirst = approvalRecord("approval_wait_service_order_02" as RuntimeApprovalId);
         const cancelFirstFiber = yield* service
-          .waitForApproval({ request: cancelFirst })
+          .waitForApproval({
+            request: cancelFirst,
+            recheck: pendingRecheck(cancelFirst),
+          })
           .pipe(Effect.forkScoped);
         yield* Effect.yieldNow;
         yield* service.cancelApprovalWait({ request: cancelFirst, reason: "Cancelled first." });

@@ -1,8 +1,5 @@
 export interface PromptHistoryEntry {
-  text: string;
-  sentAt: number;
-  workspaceId: string;
-  sessionId?: string;
+  readonly text: string;
 }
 
 export interface PromptHistoryNavigationState {

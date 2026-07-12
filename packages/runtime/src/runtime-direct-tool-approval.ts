@@ -3,10 +3,8 @@ import {
   RuntimeApprovalStatePort,
   RuntimeCommandStatePort,
   RuntimeContractError,
-  RuntimeSessionWaitStatePort,
   type CommandId,
   type CreateRuntimeApprovalRequestInput,
-  type RuntimeApprovalRecord,
   type RuntimeCommandRecord,
   type StateInvalidationDescriptor,
   type SurfacePiSessionId,
@@ -83,16 +81,6 @@ function publishAfterCommit(
       ),
     );
   });
-}
-
-function approvalRequestSummary(request: RuntimeApprovalRecord): string {
-  if (request.toolName === "exec_command" && request.command) {
-    return `Run command: ${request.command}`;
-  }
-  if (request.toolName === "apply_patch") {
-    return "Apply patch";
-  }
-  return "Run TypeScript";
 }
 
 function reviewRuntimeApprovalRequest(input: RuntimeDirectToolApprovalAdmissionInput):
@@ -202,38 +190,6 @@ function findCommand(
   });
 }
 
-function finishDeniedAutoReviewCommand(input: {
-  readonly command: RuntimeCommandRecord;
-  readonly request: RuntimeApprovalRecord;
-}): Effect.Effect<void, RuntimeContractError, RuntimeCommandStatePort | RuntimeEventBus> {
-  return Effect.gen(function* () {
-    const commandState = yield* RuntimeCommandStatePort;
-    const finished = yield* commandState
-      .finishCommand({
-        commandId: input.command.id,
-        status: "cancelled",
-        summary: `Approval denied: ${approvalRequestSummary(input.request)}`,
-        facts: {
-          ...input.command.facts,
-          approval: "denied",
-          approvalRequestId: input.request.requestId,
-        },
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          mapApprovalAdmissionFailure(
-            "runtime.acceptedNativeTool.approval.finishDeniedCommand",
-            cause,
-          ),
-        ),
-      );
-    yield* publishAfterCommit(
-      "runtime.acceptedNativeTool.approval.finishDeniedCommand",
-      finished.afterCommit,
-    );
-  });
-}
-
 export const requestRuntimeDirectToolApproval = Effect.fn(
   "@svvy/runtime/acceptedNativeToolExecution.requestDirectToolApproval",
 )(function* (
@@ -241,14 +197,9 @@ export const requestRuntimeDirectToolApproval = Effect.fn(
 ): Effect.fn.Return<
   RuntimeDirectToolApprovalDecision,
   RuntimeContractError,
-  | RuntimeApprovalStatePort
-  | RuntimeCommandStatePort
-  | RuntimeSessionWaitStatePort
-  | RuntimeEventBus
-  | RuntimeApprovalWaitService
+  RuntimeApprovalStatePort | RuntimeCommandStatePort | RuntimeEventBus | RuntimeApprovalWaitService
 > {
   const approvalState = yield* RuntimeApprovalStatePort;
-  const sessionWaitState = yield* RuntimeSessionWaitStatePort;
   const approvalWaitService = yield* RuntimeApprovalWaitService;
   const command = yield* findCommand(input);
   const sessionId = command?.sessionId ?? input.sessionId ?? null;
@@ -306,53 +257,17 @@ export const requestRuntimeDirectToolApproval = Effect.fn(
       "runtime.acceptedNativeTool.approval.autoReview",
       resolved.afterCommit,
     );
-    if (!decision.approved && command) {
-      yield* finishDeniedAutoReviewCommand({ command, request: resolved.value });
-    }
     return decision.approved ? { approved: true } : { approved: false, reason: decision.reason };
   }
 
-  if (command) {
-    const commandState = yield* RuntimeCommandStatePort;
-    const waiting = yield* commandState
-      .finishCommand({
-        commandId: command.id,
-        status: "waiting",
-        summary: `Waiting for approval: ${approvalRequestSummary(request)}`,
-        facts: {
-          ...command.facts,
-          approval: "pending",
-          approvalRequestId: request.requestId,
-        },
-      })
+  return yield* approvalWaitService.waitForApproval({
+    request,
+    recheck: approvalState
+      .getApprovalRequest({ requestId: request.requestId })
       .pipe(
         Effect.mapError((cause) =>
-          mapApprovalAdmissionFailure("runtime.acceptedNativeTool.approval.markWaiting", cause),
+          mapApprovalAdmissionFailure("runtime.acceptedNativeTool.approval.recheck", cause),
         ),
-      );
-    yield* publishAfterCommit(
-      "runtime.acceptedNativeTool.approval.markWaiting",
-      waiting.afterCommit,
-    );
-    const sessionWait = yield* sessionWaitState
-      .setApprovalWait({
-        sessionId: sessionId as WorkspaceSessionId,
-        owner: command.threadId
-          ? { kind: "thread", threadId: command.threadId as ThreadId }
-          : { kind: "orchestrator" },
-        reason: approvalRequestSummary(request),
-        resumeWhen: "Resume when the user approves or denies the runtime action.",
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          mapApprovalAdmissionFailure("runtime.acceptedNativeTool.approval.setWait", cause),
-        ),
-      );
-    yield* publishAfterCommit(
-      "runtime.acceptedNativeTool.approval.setWait",
-      sessionWait.afterCommit,
-    );
-  }
-
-  return yield* approvalWaitService.waitForApproval({ request });
+      ),
+  });
 });

@@ -1,5 +1,7 @@
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import {
   RuntimeActorExtensionBindingStatePort,
@@ -52,6 +54,11 @@ import {
   type RuntimeSurfaceRuntimeServiceService,
 } from "./surface-runtime-scope-service";
 import { RuntimeEventBus } from "./runtime-event-bus";
+import {
+  RuntimeAcceptedNativeToolExecution,
+  type RuntimeAcceptedNativeToolExecutionService,
+} from "./accepted-native-tool-execution-service";
+import { RuntimeShutdownAdmission } from "./runtime-shutdown-admission";
 
 export interface RuntimeSurfaceQueueDispatcherServiceService {
   acceptWakeHint(input: {
@@ -86,6 +93,73 @@ type PreparedRuntimePrompt = {
   readonly actorBinding: ReturnType<typeof actorBindingFromRuntimePromptBinding>;
 };
 
+type RuntimeQueueDrainState = {
+  rerunRequested: boolean;
+};
+
+export function createRuntimeQueueDrainWakeCoordinator<TInput>(input: {
+  readonly key: (request: TInput) => string;
+  readonly isClosed: () => boolean;
+  readonly drain: (request: TInput) => Effect.Effect<boolean, RuntimeContractError>;
+}): {
+  readonly acceptWakeHint: (request: TInput) => Effect.Effect<void>;
+} {
+  const runningDrains = new Map<string, RuntimeQueueDrainState>();
+
+  return {
+    acceptWakeHint: (request) =>
+      Effect.gen(function* () {
+        const key = input.key(request);
+        const state = yield* Effect.sync(() => {
+          const running = runningDrains.get(key);
+          if (running) {
+            running.rerunRequested = true;
+            return null;
+          }
+          const started: RuntimeQueueDrainState = { rerunRequested: false };
+          runningDrains.set(key, started);
+          return started;
+        });
+        if (!state) {
+          return;
+        }
+
+        yield* Effect.gen(function* () {
+          while (!input.isClosed()) {
+            state.rerunRequested = false;
+            let keepGoing = true;
+            while (keepGoing && !input.isClosed()) {
+              keepGoing = yield* input
+                .drain(request)
+                .pipe(Effect.catch(() => Effect.succeed(false)));
+            }
+            const shouldRerun = yield* Effect.sync(() => {
+              if (state.rerunRequested && !input.isClosed()) {
+                return true;
+              }
+              if (runningDrains.get(key) === state) {
+                runningDrains.delete(key);
+              }
+              return false;
+            });
+            if (!shouldRerun) {
+              return;
+            }
+          }
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (runningDrains.get(key) === state) {
+                runningDrains.delete(key);
+              }
+            }),
+          ),
+          Effect.forkDetach,
+        );
+      }),
+  };
+}
+
 export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
   RuntimeSurfaceQueueDispatcherService,
   Effect.gen(function* () {
@@ -104,8 +178,10 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
     const commandState = yield* RuntimeCommandStatePort;
     const eventBus = yield* RuntimeEventBus;
     const sourceInvalidation = yield* RuntimeSourceInvalidationService;
-    const runningDrains = new Map<string, unknown>();
+    const acceptedNativeTools = yield* RuntimeAcceptedNativeToolExecution;
+    const shutdownAdmission = yield* RuntimeShutdownAdmission;
     const completedPromptResults = new Map<string, RuntimePromptExecutionResult>();
+    const requestedPromptResults = new Set<string>();
 
     const dispatcherForWorkspace = (workspaceId: WorkspaceId) =>
       createRuntimeSurfaceQueueDispatcher<
@@ -118,7 +194,9 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
         workspaceId,
         queueClaimLeaseMs: config.queueClaimLeaseMs,
         host: {
-          isClosed: () => false,
+          isClosed: shutdownAdmission.isShutdownStarted,
+          withQueueClaimAdmission: (effect) =>
+            shutdownAdmission.withAdmission("runtime.queue.dispatch.claimNext", effect),
           resolveTarget: (target) => target,
           retainSurface: (target) =>
             surfaceScopes.retainOpen({
@@ -152,6 +230,7 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
               promptDefaults,
               actorBindingState,
               extensions,
+              requestState,
             }),
           startPrompt: ({ target, surface, queued, turn, prepared }) =>
             startRuntimePrompt({
@@ -172,7 +251,9 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
               turnState,
               eventBus,
               sourceInvalidation,
+              acceptedNativeTools,
               completedPromptResults,
+              requestedPromptResults,
             }),
           notifyQueueUpdated: () => undefined,
         },
@@ -183,46 +264,66 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
       readonly target: RuntimeSurfaceTarget;
       readonly awaitPrompt?: boolean;
     }) =>
-      dispatcherForWorkspace(input.workspaceId)
-        .drainNextQueuedSurfaceMessage(input.target, { awaitPrompt: input.awaitPrompt ?? false })
-        .pipe(
-          Effect.provideService(RuntimeQueueStatePort, queueState),
-          Effect.provideService(RuntimeTurnStatePort, turnState),
-        );
+      shutdownAdmission.assertAccepting("runtime.queue.dispatch.drain").pipe(
+        Effect.andThen(
+          dispatcherForWorkspace(input.workspaceId)
+            .drainNextQueuedSurfaceMessage(input.target, {
+              awaitPrompt: input.awaitPrompt ?? false,
+            })
+            .pipe(
+              Effect.provideService(RuntimeQueueStatePort, queueState),
+              Effect.provideService(RuntimeTurnStatePort, turnState),
+            ),
+        ),
+      );
+
+    const wakeCoordinator = createRuntimeQueueDrainWakeCoordinator<{
+      readonly workspaceId: WorkspaceId;
+      readonly target: PromptTarget;
+      readonly reason: string;
+    }>({
+      key: (input) => `${input.workspaceId}:${input.target.surfacePiSessionId}`,
+      isClosed: shutdownAdmission.isShutdownStarted,
+      drain: (input) => drain({ ...input, awaitPrompt: true }),
+    });
 
     return RuntimeSurfaceQueueDispatcherService.of({
       acceptWakeHint: (input) =>
-        Effect.gen(function* () {
-          const key = `${input.workspaceId}:${input.target.surfacePiSessionId}`;
-          if (runningDrains.has(key)) return;
-          const fiber = yield* Effect.gen(function* () {
-            let keepGoing = true;
-            while (keepGoing) {
-              keepGoing = yield* drain({ ...input, awaitPrompt: true });
-            }
-          }).pipe(
-            Effect.ensuring(Effect.sync(() => runningDrains.delete(key))),
-            Effect.catch(() => Effect.void),
-            Effect.forkDetach,
-          );
-          runningDrains.set(key, fiber);
-        }),
+        shutdownAdmission
+          .assertAccepting("runtime.queue.dispatch.acceptWakeHint")
+          .pipe(Effect.andThen(wakeCoordinator.acceptWakeHint(input))),
       drain,
       drainForQueueItem: (input) =>
-        Effect.gen(function* () {
-          yield* drain({ workspaceId: input.workspaceId, target: input.target, awaitPrompt: true });
-          const result = completedPromptResults.get(input.queueItemId);
-          if (!result) {
-            return yield* Effect.fail(
-              new RuntimeContractError({
-                operation: "runtime.queue.dispatch.drainForQueueItem",
-                reason: "target-not-ready",
-                message: `Queued prompt ${input.queueItemId} did not produce a prompt result.`,
-              }),
-            );
-          }
-          return result;
-        }),
+        Effect.sync(() => {
+          requestedPromptResults.add(input.queueItemId);
+        }).pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              yield* drain({
+                workspaceId: input.workspaceId,
+                target: input.target,
+                awaitPrompt: true,
+              });
+              const result = completedPromptResults.get(input.queueItemId);
+              if (!result) {
+                return yield* Effect.fail(
+                  new RuntimeContractError({
+                    operation: "runtime.queue.dispatch.drainForQueueItem",
+                    reason: "target-not-ready",
+                    message: `Queued prompt ${input.queueItemId} did not produce a prompt result.`,
+                  }),
+                );
+              }
+              return result;
+            }),
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              requestedPromptResults.delete(input.queueItemId);
+              completedPromptResults.delete(input.queueItemId);
+            }),
+          ),
+        ),
     });
   }),
 );
@@ -267,6 +368,7 @@ function prepareRuntimePromptTurn(input: {
   readonly promptDefaults: RuntimePromptDefaultsService["Service"];
   readonly actorBindingState: RuntimeActorExtensionBindingStatePortService;
   readonly extensions: Extensions["Service"];
+  readonly requestState: RuntimeRequestStatePortService;
 }): Effect.Effect<SurfaceQueuePreparedTurn<PreparedRuntimePrompt>, RuntimeContractError> {
   return Effect.gen(function* () {
     const binding =
@@ -286,10 +388,22 @@ function prepareRuntimePromptTurn(input: {
         ));
     const defaults = yield* input.promptDefaults.resolve({ target: input.target as PromptTarget });
     const actorBinding = actorBindingFromRuntimePromptBinding(input.target, binding);
+    const requestInputSettings = yield* input.requestState.readRequestInputSettings().pipe(
+      Effect.mapError(
+        (cause) =>
+          new RuntimeContractError({
+            operation: "runtime.queue.dispatch.readRequestInputSettings",
+            reason: "state-conflict",
+            message: cause.message,
+            cause,
+          }),
+      ),
+    );
     const tools = yield* input.extensions.nativeTools
       .declarations({
         actorKind: actorKindForRuntimeSurfaceTarget(input.target),
         actorBinding,
+        requestInputVariant: requestInputSettings.mode,
       })
       .pipe(
         Effect.mapError(
@@ -341,7 +455,12 @@ function startRuntimePrompt(input: {
   readonly turnState: RuntimeTurnStatePortService;
   readonly eventBus: RuntimeEventBus["Service"];
   readonly sourceInvalidation: RuntimeSourceInvalidationService["Service"];
+  readonly acceptedNativeTools: Pick<
+    RuntimeAcceptedNativeToolExecutionService,
+    "runRequestUserInput"
+  >;
   readonly completedPromptResults: Map<string, RuntimePromptExecutionResult>;
+  readonly requestedPromptResults: Set<string>;
 }): Effect.Effect<SurfaceQueueStartedPrompt, RuntimeContractError> {
   return Effect.gen(function* () {
     const promptContext = buildRuntimePromptExecutionContext({
@@ -392,6 +511,7 @@ function startRuntimePrompt(input: {
       reasoningEffort: input.prepared.reasoningEffort,
       tools: input.prepared.tools,
       toolExecutor: buildRuntimeToolExecutor({
+        acceptedNativeTools: input.acceptedNativeTools,
         extensions: input.extensions,
         target: input.target,
         actorBinding: input.prepared.actorBinding,
@@ -406,7 +526,7 @@ function startRuntimePrompt(input: {
         sourceInvalidation: input.sourceInvalidation,
       }),
     });
-    const done = input.surface
+    const execute = input.surface
       .withPromptLock(
         input.promptExecution
           .executeClaimedPrompt({
@@ -420,16 +540,29 @@ function startRuntimePrompt(input: {
           .pipe(
             Effect.tap((result) =>
               Effect.sync(() => {
-                input.completedPromptResults.set(input.queued.id, result);
+                if (input.requestedPromptResults.has(input.queued.id)) {
+                  input.completedPromptResults.set(input.queued.id, result);
+                }
               }),
             ),
           )
           .pipe(Effect.provideService(RuntimeSurfaceRuntimeService, input.surface)),
       )
+      .pipe(Effect.asVoid)
       .pipe(Effect.ensuring(input.surface.clearActivePrompt({ turnId: input.turn.id })));
-    yield* input.surface.installActivePrompt({ turnId: input.turn.id, done });
+    const startGate = yield* Deferred.make<void>();
+    const fiber = yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const started = yield* restore(
+          Deferred.await(startGate).pipe(Effect.andThen(execute)),
+        ).pipe(Effect.forkDetach);
+        yield* input.surface.installActivePrompt({ turnId: input.turn.id, fiber: started });
+        yield* Deferred.succeed(startGate, undefined);
+        return started;
+      }),
+    );
     return {
-      promptDone: done,
+      promptDone: Fiber.join(fiber),
       continueAfterPrompt: () => true,
     };
   });

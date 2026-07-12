@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import {
   RuntimeActorExtensionBindingStatePort,
@@ -13,6 +14,7 @@ import {
   type CommandId,
   type ExtensionId,
   type GeneratedContextFingerprint,
+  type RequestInputVariant,
   type RuntimeCommandRecord,
   type RuntimePromptBindingRecord,
   type RuntimeSurfaceMessageRecord,
@@ -27,6 +29,7 @@ import {
 import { Extensions, type ExtensionsService } from "@svvy/extensions";
 import type { ExtensionInvocation } from "@svvy/extensions";
 import { RuntimeEventBus } from "./runtime-event-bus";
+import { RuntimeAcceptedNativeToolExecution } from "./accepted-native-tool-execution-service";
 import { createRuntimeLayerConfigLayer, defaultRuntimeLayerConfig } from "./runtime-layer-config";
 import { RuntimeGeneratedContextRefreshService } from "./runtime-generated-context-refresh-service";
 import { RuntimePromptDefaultsService } from "./runtime-prompt-defaults-service";
@@ -37,6 +40,10 @@ import {
   RuntimeSurfaceQueueDispatcherService,
 } from "./runtime-surface-queue-dispatcher-service";
 import { RuntimeSurfaceScopeService } from "./surface-runtime-scope-service";
+import {
+  RuntimeShutdownAdmission,
+  layerRuntimeShutdownAdmission,
+} from "./runtime-shutdown-admission";
 
 const workspaceId = "workspace_runtime_queue_dispatcher" as WorkspaceId;
 const workspaceSessionId = "wsess_runtime_queue_dispatcher" as WorkspaceSessionId;
@@ -121,8 +128,11 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
     () => {
       const calls: string[] = [];
       const handlerTurnIds: TurnId[] = [];
+      const declarationVariants: string[] = [];
       const titlePublications: Array<readonly StateInvalidationDescriptor[]> = [];
       let claimed = false;
+      let promptExecutions = 0;
+      let installedPromptDone: Effect.Effect<void, RuntimeContractError> | null = null;
       const binding = {
         target,
         generatedAgentContextBindingId: "binding_runtime_queue_dispatcher",
@@ -138,10 +148,14 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
 
       return Effect.gen(function* () {
         const dispatcher = yield* RuntimeSurfaceQueueDispatcherService;
+        const shutdown = yield* RuntimeShutdownAdmission;
 
         yield* dispatcher.drain({ workspaceId, target, awaitPrompt: true });
+        yield* installedPromptDone!;
 
         assert.deepStrictEqual(handlerTurnIds, [turnId]);
+        assert.strictEqual(promptExecutions, 1);
+        assert.deepStrictEqual(declarationVariants, ["blocking"]);
         assert.deepStrictEqual(titlePublications, [[titleInvalidation]]);
         assert.deepStrictEqual(calls, [
           "claim",
@@ -150,8 +164,26 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
           "publishTitle:1",
           `toolHandler:${turnId}`,
         ]);
+
+        yield* shutdown.runShutdown(
+          Effect.succeed({
+            status: "drained",
+            interruptedTurns: 0,
+            interruptedCommands: 0,
+            releasedQueueClaims: 0,
+            recoveryRowsScheduled: 0,
+          }),
+        );
+        const rejected = yield* dispatcher
+          .acceptWakeHint({ workspaceId, target, reason: "late-wake" })
+          .pipe(Effect.flip);
+        assert.strictEqual(rejected.reason, "runtime-shutdown");
       }).pipe(
-        Effect.provide(layerRuntimeSurfaceQueueDispatcherService),
+        Effect.provide(
+          layerRuntimeSurfaceQueueDispatcherService.pipe(
+            Layer.provideMerge(layerRuntimeShutdownAdmission),
+          ),
+        ),
         Effect.provide(
           Layer.mergeAll(
             createRuntimeLayerConfigLayer(defaultRuntimeLayerConfig),
@@ -164,8 +196,11 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
                   runPiTurn: () => Effect.die("unused"),
                   interruptActivePrompt: () => Effect.void,
                   isPromptActive: () => false,
-                  activePromptDone: () => null,
-                  installActivePrompt: () => Effect.void,
+                  activePromptDone: () => installedPromptDone,
+                  installActivePrompt: (input) =>
+                    Effect.sync(() => {
+                      installedPromptDone = Fiber.join(input.fiber);
+                    }),
                   clearActivePrompt: () => Effect.void,
                 }),
               create: () => Effect.die("unused"),
@@ -184,33 +219,36 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
             }),
             Layer.succeed(RuntimePromptExecutionService, {
               executeClaimedPrompt: (input) =>
-                input.piTurnInput
-                  .toolExecutor({
-                    turnId: input.piTurnInput.turnId,
-                    surfacePiSessionId,
-                    piToolCallId: toolCallId,
-                    toolName: "test_tool",
-                    argumentsJson: "{}",
-                    emit: () => Effect.void,
-                  })
-                  .pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new RuntimeContractError({
-                          operation: "runtime.queue.dispatcher.test.toolExecutor",
-                          reason: "target-not-ready",
-                          message: cause.message,
-                          cause,
-                        }),
-                    ),
-                    Effect.as({
-                      queueItemId: input.claimedMessage.id,
-                      turnId: input.turn.id as TurnId,
-                      status: "completed" as const,
-                      assistantText: "done",
-                      commandReceipts: [],
+                Effect.sync(() => {
+                  promptExecutions += 1;
+                }).pipe(
+                  Effect.andThen(
+                    input.piTurnInput.toolExecutor({
+                      turnId: input.piTurnInput.turnId,
+                      surfacePiSessionId,
+                      piToolCallId: toolCallId,
+                      toolName: "test_tool",
+                      argumentsJson: "{}",
+                      emit: () => Effect.void,
                     }),
                   ),
+                  Effect.mapError(
+                    (cause) =>
+                      new RuntimeContractError({
+                        operation: "runtime.queue.dispatcher.test.toolExecutor",
+                        reason: "target-not-ready",
+                        message: cause.message,
+                        cause,
+                      }),
+                  ),
+                  Effect.as({
+                    queueItemId: input.claimedMessage.id,
+                    turnId: input.turn.id as TurnId,
+                    status: "completed" as const,
+                    assistantText: "done",
+                    commandReceipts: [],
+                  }),
+                ),
             }),
             Layer.succeed(RuntimeActorExtensionBindingStatePort, {
               readRuntimePromptBinding: () => Effect.succeed(binding),
@@ -220,9 +258,16 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
             Layer.succeed(RuntimeGeneratedContextRefreshService, {
               refresh: () => Effect.void,
             }),
+            Layer.succeed(RuntimeAcceptedNativeToolExecution, {
+              runRequestUserInput: () => Effect.die("Unexpected request input execution."),
+            } as never),
             Layer.succeed(Extensions, {
               nativeTools: {
-                declarations: () => Effect.succeed([]),
+                declarations: (input: { readonly requestInputVariant: RequestInputVariant }) =>
+                  Effect.sync(() => {
+                    declarationVariants.push(input.requestInputVariant);
+                    return [];
+                  }),
                 handler: () =>
                   Effect.succeed({
                     invoke: (input: ExtensionInvocation) =>
@@ -316,6 +361,8 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
                   };
                 }),
               setTurnDecision: () => Effect.die("unused"),
+              recoverInterruptedTurn: () => Effect.die("unused"),
+              settlePromptTurn: () => Effect.die("unused"),
             }),
             Layer.succeed(RuntimeCommandStatePort, {
               createOrReuseStreamingCommand: () =>
@@ -332,7 +379,13 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
               recordStdinWrite: () => Effect.die("unused"),
               hasCommandOutputEvent: () => Effect.die("unused"),
             }),
-            Layer.succeed(RuntimeRequestStatePort, {} as never),
+            Layer.succeed(RuntimeRequestStatePort, {
+              readRequestInputSettings: () =>
+                Effect.succeed({
+                  mode: "blocking",
+                  blockingTimeout: { enabled: true, durationMs: 300_000 as never },
+                }),
+            } as never),
             Layer.succeed(RuntimeEpisodeStatePort, {} as never),
             Layer.succeed(RuntimeThreadStatePort, {} as never),
             Layer.succeed(RuntimeEventBus, {

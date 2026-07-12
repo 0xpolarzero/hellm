@@ -222,6 +222,40 @@ describe("svvyx workflows build", () => {
   });
 });
 
+describe("svvyx workflows save", () => {
+  it("fails closed before writing workflow-agent source without runtime authority", async () => {
+    const cwd = createTempDir();
+    const sourceRoot = join(cwd, "workflow-source");
+    const authoringRoot = join(cwd, ".smithers", "workflows");
+    const fromPath = join(authoringRoot, "reviewer.ts");
+    mkdirSync(authoringRoot, { recursive: true });
+    writeFileSync(
+      fromPath,
+      [
+        "export const reviewer = Agents.defineTaskAgent({",
+        '  id: "sourceReviewer",',
+        '  label: "Reviewer",',
+        '  provider: "openai",',
+        '  model: "gpt-5.4",',
+        '  reasoning: { effort: "medium" },',
+        '  instructions: "Review strictly.",',
+        '  overrides: { shell: "loaded" },',
+        "});",
+      ].join("\n"),
+    );
+
+    await expect(
+      runSvvyxWorkflowsCommand({
+        command:
+          "svvyx workflows save --from .smithers/workflows/reviewer.ts --kind agent --export reviewer --as reviewerAgent --json",
+        cwd,
+        sourceRoot,
+      }),
+    ).rejects.toThrow("runtime-owned source edit authority");
+    expect(existsSync(join(sourceRoot, "agents", "reviewerAgent.agent.json"))).toBe(false);
+  });
+});
+
 describe("svvyx workflows unsupported runner and control verbs", () => {
   const unsupportedCommands = [
     "svvyx workflows run --json",

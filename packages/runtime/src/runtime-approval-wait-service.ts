@@ -17,6 +17,7 @@ type PendingRuntimeApproval = {
 export interface RuntimeApprovalWaitServiceService {
   waitForApproval(input: {
     readonly request: RuntimeApprovalRecord;
+    readonly recheck: Effect.Effect<RuntimeApprovalRecord, RuntimeContractError>;
   }): Effect.Effect<RuntimeApprovalDecision, RuntimeContractError>;
   afterApprovalCommitted(input: {
     readonly approved: boolean;
@@ -52,8 +53,18 @@ export function createRuntimeApprovalWaitService(): RuntimeApprovalWaitServiceSe
       return waiter;
     });
 
+  const completePending = (
+    request: RuntimeApprovalRecord,
+    decision: RuntimeApprovalDecision,
+  ): Effect.Effect<void, RuntimeContractError> =>
+    takePending(request.requestId).pipe(
+      Effect.flatMap((waiter) =>
+        waiter ? Deferred.succeed(waiter.deferred, decision).pipe(Effect.asVoid) : Effect.void,
+      ),
+    );
+
   return RuntimeApprovalWaitService.of({
-    waitForApproval: ({ request }) =>
+    waitForApproval: ({ request, recheck }) =>
       Effect.gen(function* () {
         const deferred = yield* Deferred.make<RuntimeApprovalDecision, RuntimeContractError>();
         const inserted = yield* Effect.sync(() => {
@@ -71,23 +82,33 @@ export function createRuntimeApprovalWaitService(): RuntimeApprovalWaitServiceSe
             }),
           );
         }
-        return yield* Deferred.await(deferred).pipe(
-          Effect.ensuring(removePending(request.requestId)),
-        );
+        return yield* Effect.gen(function* () {
+          const latest = yield* recheck;
+          if (latest.status !== "pending") {
+            yield* completePending(
+              latest,
+              latest.status === "approved"
+                ? { approved: true }
+                : {
+                    approved: false,
+                    reason:
+                      latest.decisionReason ??
+                      (latest.status === "cancelled"
+                        ? "Runtime approval request was cancelled."
+                        : "Runtime action was not approved."),
+                  },
+            );
+          }
+          return yield* Deferred.await(deferred);
+        }).pipe(Effect.ensuring(removePending(request.requestId)));
       }),
     afterApprovalCommitted: ({ request, approved, reason }) =>
-      takePending(request.requestId).pipe(
-        Effect.flatMap((waiter) => {
-          if (!waiter) {
-            return Effect.void;
-          }
-          return Deferred.succeed(
-            waiter.deferred,
-            approved
-              ? { approved: true }
-              : { approved: false, reason: reason ?? "Runtime action was not approved." },
-          ).pipe(Effect.asVoid);
-        }),
+      completePending(
+        request,
+        approved
+          ? { approved: true }
+          : { approved: false, reason: reason ?? "Runtime action was not approved." },
+      ).pipe(
         Effect.mapError((cause: unknown) =>
           waitServiceError("runtime.approvals.afterApprovalCommitted", cause),
         ),

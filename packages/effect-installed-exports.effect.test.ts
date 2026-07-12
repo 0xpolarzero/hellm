@@ -95,6 +95,7 @@ describe("Effect installed export audit", () => {
         "effect/Duration": Duration,
         "effect/Effect": Effect,
         "effect/Exit": Exit,
+        "effect/Fiber": Fiber,
         "effect/FileSystem": FileSystem,
         "effect/Layer": Layer,
         "effect/ManagedRuntime": ManagedRuntime,
@@ -289,8 +290,8 @@ describe("Effect installed export audit", () => {
       assert.deepStrictEqual(
         countAuditPoliciesByState(auditedEffectInstalledExportPolicies),
         {
-          "adoptable-member-gated": 39,
-          conditional: 22,
+          "adoptable-member-gated": 40,
+          conditional: 21,
           "scoped-adoptable-member-gated": 8,
           "test-only": 3,
         },

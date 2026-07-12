@@ -12,6 +12,7 @@ import {
   RuntimeRequestStatePort,
   RuntimeToolExecutionError,
   RuntimeThreadStatePort,
+  RuntimeTranscriptStatePort,
   RuntimeTurnStatePort,
   type ActorBinding,
   type ActorKind,
@@ -32,6 +33,8 @@ import {
   type RuntimeSurfaceTarget,
   type RuntimeThreadStatePortService,
   type RuntimeSubmittedMessage,
+  type RuntimeTranscriptStatePortService,
+  type RuntimeTranscriptStreamCursor,
   type RuntimeTurnRecord,
   type RuntimeTurnStatePortService,
   type RunPiTurnInput,
@@ -39,14 +42,17 @@ import {
   type StateMutationResult,
   type SurfaceStreamGenerationId,
   type ToolCallId,
+  type ToolItemId,
   type TurnId,
   type WorkspaceId,
 } from "@svvy/core";
 import {
+  decodeRequestUserInputInputEffect,
   Extensions,
   type CommandInvocationContext,
   type ExtensionInvocation,
 } from "@svvy/extensions";
+import type { RuntimeAcceptedNativeToolExecutionService } from "./accepted-native-tool-execution-service";
 import { RuntimeEventBus } from "./runtime-event-bus";
 import { createPromptExecutionContext } from "./prompt-execution-context";
 import { RuntimeSurfaceEventPublisher } from "./runtime-surface-event-publisher";
@@ -99,8 +105,8 @@ export const layerRuntimePromptExecutionService = Layer.effect(
   RuntimePromptExecutionService,
   Effect.gen(function* () {
     const surfaceEvents = yield* RuntimeSurfaceEventPublisher;
-    const queueState = yield* RuntimeQueueStatePort;
     const turnState = yield* RuntimeTurnStatePort;
+    const transcriptState = yield* RuntimeTranscriptStatePort;
     const commandState = yield* RuntimeCommandStatePort;
     const eventBus = yield* RuntimeEventBus;
 
@@ -109,25 +115,25 @@ export const layerRuntimePromptExecutionService = Layer.effect(
         Effect.gen(function* () {
           const surface = yield* RuntimeSurfaceRuntimeService;
           const streamGenerationId = streamGenerationIdForTurn(input.turn.id);
-          const assistantMessageId = `${input.turn.id}:assistant` as never;
-          const startedAt = DateTime.formatIso(yield* DateTime.now) as never;
-          yield* publishPatch({
-            surfaceEvents,
-            workspaceId: input.workspaceId,
-            target: input.target,
+          const transcript = yield* transcriptState
+            .readSurfaceTranscript({
+              surfacePiSessionId: input.target.surfacePiSessionId,
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                runtimeStateError("runtime.prompt.readSurfaceTranscript", cause),
+              ),
+            );
+          let state = initialPromptExecutionState(
+            input,
             streamGenerationId,
-            patch: {
-              type: "assistant_message_started",
-              messageId: assistantMessageId,
-              turnId: input.turn.id as TurnId,
-              createdAt: startedAt,
-            },
-          });
-          yield* publishPatch({
+            transcript.streamCursor,
+          );
+          state = yield* advanceTranscriptCursorAndPublishPatch({
+            state,
+            transcriptState,
             surfaceEvents,
-            workspaceId: input.workspaceId,
-            target: input.target,
-            streamGenerationId,
+            eventBus,
             patch: {
               type: "prompt_status",
               turnId: input.turn.id as TurnId,
@@ -136,15 +142,14 @@ export const layerRuntimePromptExecutionService = Layer.effect(
           });
 
           const turnStream = yield* surface.runPiTurn(input.piTurnInput);
-          let state = initialPromptExecutionState(input, streamGenerationId);
           const result = yield* turnStream.stream.pipe(
             Stream.runForEach((event) =>
               handlePiRuntimeEvent({
                 state,
                 event,
                 surfaceEvents,
-                queueState,
                 turnState,
+                transcriptState,
                 commandState,
                 eventBus,
               }).pipe(
@@ -161,8 +166,9 @@ export const layerRuntimePromptExecutionService = Layer.effect(
                 : settlePromptTurn({
                     state,
                     status: "completed",
-                    queueState,
                     turnState,
+                    transcriptState,
+                    commandState,
                     eventBus,
                     surfaceEvents,
                   }),
@@ -170,12 +176,12 @@ export const layerRuntimePromptExecutionService = Layer.effect(
             Effect.ensuring(turnStream.close().pipe(Effect.ignore)),
             Effect.catch((cause: unknown) =>
               settlePromptFailure({
-                input,
-                queueState,
+                state,
                 turnState,
+                transcriptState,
+                commandState,
                 eventBus,
                 surfaceEvents,
-                streamGenerationId,
                 error: cause,
               }),
             ),
@@ -306,6 +312,10 @@ export function actorBindingFromRuntimePromptBinding(
 }
 
 export function buildRuntimeToolExecutor(input: {
+  readonly acceptedNativeTools: Pick<
+    RuntimeAcceptedNativeToolExecutionService,
+    "runRequestUserInput"
+  >;
   readonly extensions: Extensions["Service"];
   readonly target: RuntimeSurfaceTarget;
   readonly actorBinding: ActorBinding;
@@ -340,7 +350,7 @@ export function buildRuntimeToolExecutor(input: {
         acceptedAt: command.startedAt as never,
       });
 
-      yield* publishCommandMutation(
+      const startedCommand = yield* publishCommandMutation(
         "runtime.prompt.tool.startCommand",
         input.commandState.startCommand({ commandId: command.id }),
         input.eventBus,
@@ -350,6 +360,57 @@ export function buildRuntimeToolExecutor(input: {
         ),
       );
 
+      const args = parseToolArguments(toolInput.argumentsJson);
+      if (toolInput.toolName === "request_user_input") {
+        if (input.target.surface === "workflow-task") {
+          return yield* Effect.fail(
+            runtimeToolExecutionError(
+              toolInput,
+              "extension-failed",
+              "request_user_input is unavailable on workflow task surfaces.",
+            ),
+          );
+        }
+        const commandContext = {
+          commandId: command.id as CommandId,
+          target: input.target,
+          turnId: toolInput.turnId,
+          approvalMode: "auto-review" as const,
+          sandbox: { snapshot: {} },
+          cwd: "",
+          baseEnv: {},
+        };
+        const requestArguments = yield* decodeRequestUserInputInputEffect(args).pipe(
+          Effect.mapError((cause) =>
+            runtimeToolExecutionError(toolInput, "invalid-arguments", cause.message, cause),
+          ),
+        );
+        const executed = yield* input.acceptedNativeTools
+          .runRequestUserInput({
+            toolCallId: toolInput.piToolCallId,
+            toolItemId: toolInput.piToolCallId as unknown as ToolItemId,
+            arguments: requestArguments,
+            context: input.promptContext,
+            actorBinding: input.actorBinding,
+            command: commandContext,
+            commandRecord: startedCommand,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              runtimeToolExecutionError(toolInput, "runtime-effect-failed", cause.message, cause),
+            ),
+          );
+        return executed.toolResult;
+      }
+      const commandContext: CommandInvocationContext = {
+        commandId: command.id as CommandId,
+        target: input.target,
+        turnId: toolInput.turnId,
+        approvalMode: "auto-review",
+        sandbox: { snapshot: {} },
+        cwd: "",
+        baseEnv: {},
+      };
       const handler = yield* input.extensions.nativeTools
         .handler({
           toolName: toolInput.toolName,
@@ -363,17 +424,6 @@ export function buildRuntimeToolExecutor(input: {
             runtimeToolExecutionError(toolInput, "extension-failed", cause.message, cause),
           ),
         );
-
-      const args = parseToolArguments(toolInput.argumentsJson);
-      const commandContext: CommandInvocationContext = {
-        commandId: command.id as CommandId,
-        target: input.target,
-        turnId: toolInput.turnId,
-        approvalMode: "auto-review",
-        sandbox: { snapshot: {} },
-        cwd: "",
-        baseEnv: {},
-      };
       const result: ExtensionHandlerResult = yield* handler
         .invoke({
           toolCallId: toolInput.piToolCallId,
@@ -455,24 +505,33 @@ export function buildRuntimeToolExecutor(input: {
 type PromptExecutionState = {
   readonly input: RuntimePromptExecutionInput;
   readonly streamGenerationId: SurfaceStreamGenerationId;
-  readonly assistantMessageId: string;
+  readonly cursor: RuntimeTranscriptStreamCursor | null;
+  readonly assistantMessageId: MessageId | null;
+  readonly activeAssistantMessageId: MessageId | null;
+  readonly assistantMessageIds: Readonly<Record<string, MessageId>>;
   readonly assistantText: string;
   readonly commandReceipts: readonly RuntimePromptCommandReceipt[];
   readonly toolCommandIds: Readonly<Record<string, CommandId>>;
+  readonly toolArgumentsJson: Readonly<Record<string, string>>;
   readonly result: RuntimePromptExecutionResult | null;
 };
 
 function initialPromptExecutionState(
   input: RuntimePromptExecutionInput,
   streamGenerationId: SurfaceStreamGenerationId,
+  cursor: RuntimeTranscriptStreamCursor | null,
 ): PromptExecutionState {
   return {
     input,
     streamGenerationId,
-    assistantMessageId: `${input.turn.id}:assistant`,
+    cursor,
+    assistantMessageId: null,
+    activeAssistantMessageId: null,
+    assistantMessageIds: {},
     assistantText: "",
     commandReceipts: [],
     toolCommandIds: {},
+    toolArgumentsJson: {},
     result: null,
   };
 }
@@ -481,8 +540,8 @@ function handlePiRuntimeEvent(input: {
   readonly state: PromptExecutionState;
   readonly event: PiRuntimeEvent;
   readonly surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
-  readonly queueState: RuntimeQueueStatePortService;
   readonly turnState: RuntimeTurnStatePortService;
+  readonly transcriptState: RuntimeTranscriptStatePortService;
   readonly commandState: RuntimeCommandStatePortService;
   readonly eventBus: RuntimeEventBus["Service"];
 }): Effect.Effect<PromptExecutionState, RuntimeContractError> {
@@ -492,173 +551,485 @@ function handlePiRuntimeEvent(input: {
   }
   switch (event.type) {
     case "pi.user_message.committed":
-      return publishPatch({
-        ...input,
-        workspaceId: state.input.workspaceId,
-        target: state.input.target,
-        streamGenerationId: state.streamGenerationId,
-        patch: {
-          type: "user_message_committed",
-          messageId: (event.messageId ?? event.piMessageRef) as never,
-          queueItemId: state.input.claimedMessage.id as never,
-          text: state.input.piTurnInput.userMessage.text,
-          submittedAt: state.input.claimedMessage.createdAt as never,
-        },
-      }).pipe(Effect.as(state));
-    case "pi.assistant.text.delta":
-      return publishPatch({
-        ...input,
-        workspaceId: state.input.workspaceId,
-        target: state.input.target,
-        streamGenerationId: state.streamGenerationId,
-        patch: {
-          type: "assistant_text_delta",
-          messageId: event.piMessageRef as never,
-          contentIndex: event.contentIndex,
-          delta: event.delta,
-        },
-      }).pipe(
-        Effect.as({
-          ...state,
-          assistantMessageId: event.piMessageRef,
-          assistantText: state.assistantText + event.delta,
-        }),
-      );
-    case "pi.assistant.thinking.delta":
-      return publishPatch({
-        ...input,
-        workspaceId: state.input.workspaceId,
-        target: state.input.target,
-        streamGenerationId: state.streamGenerationId,
-        patch: {
-          type: "assistant_thinking_delta",
-          messageId: event.piMessageRef as never,
-          contentIndex: event.contentIndex,
-          delta: event.delta,
-        },
-      }).pipe(Effect.as({ ...state, assistantMessageId: event.piMessageRef }));
-    case "pi.tool_call.started":
-      return createOrReuseToolCommand({
-        target: state.input.target,
-        commandState: input.commandState,
-        eventBus: input.eventBus,
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        turnId: event.turnId,
-      }).pipe(
-        Effect.andThen((command) =>
-          publishPatch({
-            ...input,
-            workspaceId: state.input.workspaceId,
-            target: state.input.target,
+      return Effect.gen(function* () {
+        const committed = yield* input.transcriptState
+          .commitUserMessage({
+            workspaceSessionId: state.input.target.workspaceSessionId,
+            surfacePiSessionId: state.input.target.surfacePiSessionId,
+            turnId: state.input.turn.id as TurnId,
+            queueItemId: state.input.claimedMessage.id as never,
+            message: state.input.piTurnInput.userMessage,
+            submittedAt: state.input.claimedMessage.createdAt as never,
+            committedAt: event.committedAt,
             streamGenerationId: state.streamGenerationId,
-            patch: {
-              type: "active_command",
-              messageId: event.piMessageRef as never,
-              toolCallId: event.toolCallId,
-              commandId: command.id as CommandId,
-              status: "accepted",
-            },
-          }).pipe(
-            Effect.as({
-              ...state,
-              assistantMessageId: event.piMessageRef,
-              toolCommandIds: {
-                ...state.toolCommandIds,
-                [event.toolCallId]: command.id as CommandId,
-              },
-            }),
-          ),
-        ),
-      );
-    case "pi.tool_call.arguments.delta":
-      return createOrReuseToolCommand({
-        target: state.input.target,
-        commandState: input.commandState,
-        eventBus: input.eventBus,
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        turnId: event.turnId,
-      }).pipe(
-        Effect.andThen((command) =>
-          publishCommandMutation(
-            "runtime.prompt.tool.argumentsDelta",
-            input.commandState.recordCommandEvent({
-              sessionId: state.input.target.workspaceSessionId,
-              commandId: command.id,
-              kind: "command.arg_snapshot",
-              data: {
-                source: "pi-tool-call",
-                arguments: {
-                  toolCallId: event.toolCallId,
-                  delta: event.delta,
-                  contentIndex: event.contentIndex,
-                },
-              },
-            }),
-            input.eventBus,
-          ).pipe(
-            Effect.andThen(() =>
-              publishPatch({
-                ...input,
-                workspaceId: state.input.workspaceId,
-                target: state.input.target,
-                streamGenerationId: state.streamGenerationId,
-                patch: {
-                  type: "tool_arguments_snapshot",
-                  messageId: event.piMessageRef as never,
-                  toolCallId: event.toolCallId,
-                  commandId: command.id as CommandId,
-                  snapshotRef: event.toolCallId as never,
-                },
-              }),
+            expectedCursor: state.cursor,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              runtimeStateError("runtime.prompt.transcript.commitUserMessage", cause),
             ),
-            Effect.as({
-              ...state,
-              assistantMessageId: event.piMessageRef,
-              toolCommandIds: {
-                ...state.toolCommandIds,
-                [event.toolCallId]: command.id as CommandId,
+          );
+        if (event.piHistoryEntry) {
+          yield* input.transcriptState
+            .bindPiHistoryEntry({
+              messageId: committed.value.message.messageId,
+              piHistoryEntry: {
+                ...event.piHistoryEntry,
+                messageId: committed.value.message.messageId,
               },
-            }),
-          ),
-        ),
-      );
-    case "pi.tool_call.accepted":
-      return createOrReuseToolCommand({
-        target: state.input.target,
-        commandState: input.commandState,
-        eventBus: input.eventBus,
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        turnId: event.turnId,
-        arguments: event.argumentsJson ? parseToolArguments(event.argumentsJson) : undefined,
-      }).pipe(
-        Effect.andThen((command) =>
-          publishPatch({
-            ...input,
-            workspaceId: state.input.workspaceId,
-            target: state.input.target,
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                runtimeStateError("runtime.prompt.transcript.bindUserPiHistory", cause),
+              ),
+            );
+        }
+        yield* publishCommittedTranscriptPatch({
+          state,
+          mutation: committed,
+          surfaceEvents: input.surfaceEvents,
+          eventBus: input.eventBus,
+          patch: {
+            type: "user_message_committed",
+            messageId: committed.value.message.messageId,
+            queueItemId: state.input.claimedMessage.id as never,
+            message: state.input.piTurnInput.userMessage,
+            submittedAt: state.input.claimedMessage.createdAt as never,
+          },
+        });
+        return { ...state, cursor: committed.value.cursor };
+      });
+    case "pi.assistant_message.started":
+      return Effect.gen(function* () {
+        const begun = yield* input.transcriptState
+          .beginAssistantMessage({
+            workspaceSessionId: state.input.target.workspaceSessionId,
+            surfacePiSessionId: state.input.target.surfacePiSessionId,
+            turnId: state.input.turn.id as TurnId,
+            api: event.api,
+            providerId: event.providerId,
+            modelId: event.modelId,
+            startedAt: event.startedAt,
             streamGenerationId: state.streamGenerationId,
-            patch: {
-              type: "active_command",
-              messageId: event.piMessageRef as never,
+            expectedCursor: state.cursor,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              runtimeStateError("runtime.prompt.transcript.beginAssistantMessage", cause),
+            ),
+          );
+        const messageId = begun.value.message.messageId;
+        yield* publishCommittedTranscriptPatch({
+          state,
+          mutation: begun,
+          surfaceEvents: input.surfaceEvents,
+          eventBus: input.eventBus,
+          patch: {
+            type: "assistant_message_started",
+            messageId,
+            turnId: state.input.turn.id as TurnId,
+            createdAt: event.startedAt,
+          },
+        });
+        return {
+          ...state,
+          cursor: begun.value.cursor,
+          assistantMessageId: messageId,
+          activeAssistantMessageId: messageId,
+          assistantMessageIds: {
+            ...state.assistantMessageIds,
+            [event.piMessageRef]: messageId,
+          },
+        };
+      });
+    case "pi.assistant_message.committed":
+      return Effect.gen(function* () {
+        const messageId = yield* assistantMessageIdForPiRef(state, event.piMessageRef);
+        const piHistoryEntry = event.piHistoryEntry ? { ...event.piHistoryEntry, messageId } : null;
+        const terminalInput = {
+          messageId,
+          surfacePiSessionId: state.input.target.surfacePiSessionId,
+          streamGenerationId: state.streamGenerationId,
+          expectedCursor: state.cursor,
+          api: event.api,
+          providerId: event.providerId,
+          modelId: event.modelId,
+          responseId: event.responseId,
+          usage: event.usage,
+          stopReason: event.stopReason,
+          errorMessage: event.errorMessage,
+          piHistoryEntry,
+          messageTimestamp: event.messageTimestamp,
+          finishedAt: event.finishedAt,
+        } as const;
+        const committed = yield* (
+          event.stopReason === "error" || event.stopReason === "aborted"
+            ? input.transcriptState.failAssistantMessage({
+                ...terminalInput,
+                status: event.stopReason === "aborted" ? "cancelled" : "failed",
+              })
+            : input.transcriptState.commitAssistantMessage({
+                ...terminalInput,
+                content: event.content,
+              })
+        ).pipe(
+          Effect.mapError((cause) =>
+            runtimeStateError("runtime.prompt.transcript.commitAssistantMessage", cause),
+          ),
+        );
+        const status = committed.value.message.status;
+        yield* publishCommittedTranscriptPatch({
+          state,
+          mutation: committed,
+          surfaceEvents: input.surfaceEvents,
+          eventBus: input.eventBus,
+          patch: {
+            type: "assistant_message_finished",
+            messageId,
+            status:
+              status === "completed"
+                ? "completed"
+                : status === "cancelled"
+                  ? "cancelled"
+                  : "failed",
+            finishedAt: event.finishedAt,
+          },
+        });
+        return {
+          ...state,
+          cursor: committed.value.cursor,
+          assistantMessageId: messageId,
+          activeAssistantMessageId: null,
+          assistantText: event.content
+            .filter((block) => block.kind === "text")
+            .map((block) => block.text)
+            .join(""),
+        };
+      });
+    case "pi.assistant.text.delta":
+      return Effect.gen(function* () {
+        const messageId = yield* assistantMessageIdForPiRef(state, event.piMessageRef);
+        const appended = yield* input.transcriptState
+          .appendAssistantContentDelta({
+            messageId,
+            surfacePiSessionId: state.input.target.surfacePiSessionId,
+            streamGenerationId: state.streamGenerationId,
+            expectedCursor: state.cursor,
+            contentIndex: event.contentIndex,
+            kind: "text",
+            delta: event.delta,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              runtimeStateError("runtime.prompt.transcript.appendAssistantText", cause),
+            ),
+          );
+        yield* publishCommittedTranscriptPatch({
+          state,
+          mutation: appended,
+          surfaceEvents: input.surfaceEvents,
+          eventBus: input.eventBus,
+          patch: {
+            type: "assistant_text_delta",
+            messageId,
+            contentIndex: event.contentIndex,
+            delta: event.delta,
+          },
+        });
+        return {
+          ...state,
+          cursor: appended.value.cursor,
+          assistantMessageId: messageId,
+          assistantText: state.assistantText + event.delta,
+        };
+      });
+    case "pi.assistant.thinking.delta":
+      return Effect.gen(function* () {
+        const messageId = yield* assistantMessageIdForPiRef(state, event.piMessageRef);
+        const appended = yield* input.transcriptState
+          .appendAssistantContentDelta({
+            messageId,
+            surfacePiSessionId: state.input.target.surfacePiSessionId,
+            streamGenerationId: state.streamGenerationId,
+            expectedCursor: state.cursor,
+            contentIndex: event.contentIndex,
+            kind: "thinking",
+            delta: event.delta,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              runtimeStateError("runtime.prompt.transcript.appendAssistantThinking", cause),
+            ),
+          );
+        yield* publishCommittedTranscriptPatch({
+          state,
+          mutation: appended,
+          surfaceEvents: input.surfaceEvents,
+          eventBus: input.eventBus,
+          patch: {
+            type: "assistant_thinking_delta",
+            messageId,
+            contentIndex: event.contentIndex,
+            delta: event.delta,
+          },
+        });
+        return {
+          ...state,
+          cursor: appended.value.cursor,
+          assistantMessageId: messageId,
+        };
+      });
+    case "pi.tool_call.started":
+      return Effect.gen(function* () {
+        const messageId = yield* assistantMessageIdForPiRef(state, event.piMessageRef);
+        const command = yield* createOrReuseToolCommand({
+          target: state.input.target,
+          commandState: input.commandState,
+          eventBus: input.eventBus,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          turnId: event.turnId,
+        });
+        const upserted = yield* input.transcriptState
+          .upsertAssistantToolCall({
+            messageId,
+            surfacePiSessionId: state.input.target.surfacePiSessionId,
+            streamGenerationId: state.streamGenerationId,
+            expectedCursor: state.cursor,
+            contentIndex: event.contentIndex,
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            argumentsJson: "",
+            argumentsStatus: "streaming",
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              runtimeStateError("runtime.prompt.transcript.startToolCall", cause),
+            ),
+          );
+        yield* publishCommittedTranscriptPatch({
+          state,
+          mutation: upserted,
+          surfaceEvents: input.surfaceEvents,
+          eventBus: input.eventBus,
+          patch: {
+            type: "tool_arguments_snapshot",
+            messageId,
+            toolCallId: event.toolCallId,
+            commandId: command.id as CommandId,
+            contentIndex: event.contentIndex,
+            snapshotRef: event.toolCallId as never,
+          },
+        });
+        const linked = yield* input.transcriptState
+          .linkAssistantToolCallCommand({
+            messageId,
+            surfacePiSessionId: state.input.target.surfacePiSessionId,
+            streamGenerationId: state.streamGenerationId,
+            expectedCursor: upserted.value.cursor,
+            contentIndex: event.contentIndex,
+            toolCallId: event.toolCallId,
+            commandId: command.id as CommandId,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              runtimeStateError("runtime.prompt.transcript.linkToolCommand", cause),
+            ),
+          );
+        yield* publishCommittedTranscriptPatch({
+          state: { ...state, cursor: upserted.value.cursor },
+          mutation: linked,
+          surfaceEvents: input.surfaceEvents,
+          eventBus: input.eventBus,
+          patch: {
+            type: "active_command",
+            messageId,
+            toolCallId: event.toolCallId,
+            commandId: command.id as CommandId,
+            contentIndex: event.contentIndex,
+            status: "accepted",
+          },
+        });
+        return {
+          ...state,
+          cursor: linked.value.cursor,
+          assistantMessageId: messageId,
+          toolCommandIds: {
+            ...state.toolCommandIds,
+            [event.toolCallId]: command.id as CommandId,
+          },
+          toolArgumentsJson: {
+            ...state.toolArgumentsJson,
+            [event.toolCallId]: "",
+          },
+        };
+      });
+    case "pi.tool_call.arguments.delta":
+      return Effect.gen(function* () {
+        const messageId = yield* assistantMessageIdForPiRef(state, event.piMessageRef);
+        const command = yield* createOrReuseToolCommand({
+          target: state.input.target,
+          commandState: input.commandState,
+          eventBus: input.eventBus,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          turnId: event.turnId,
+        });
+        const argumentsJson = (state.toolArgumentsJson[event.toolCallId] ?? "") + event.delta;
+        yield* publishCommandMutation(
+          "runtime.prompt.tool.argumentsDelta",
+          input.commandState.recordCommandEvent({
+            sessionId: state.input.target.workspaceSessionId,
+            commandId: command.id,
+            kind: "command.arg_snapshot",
+            data: {
+              source: "pi-tool-call",
+              arguments: {
+                toolCallId: event.toolCallId,
+                argumentsJson,
+                contentIndex: event.contentIndex,
+              },
+            },
+          }),
+          input.eventBus,
+        );
+        const upserted = yield* input.transcriptState
+          .upsertAssistantToolCall({
+            messageId,
+            surfacePiSessionId: state.input.target.surfacePiSessionId,
+            streamGenerationId: state.streamGenerationId,
+            expectedCursor: state.cursor,
+            contentIndex: event.contentIndex,
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            argumentsJson,
+            argumentsStatus: "streaming",
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              runtimeStateError("runtime.prompt.transcript.updateToolArguments", cause),
+            ),
+          );
+        yield* publishCommittedTranscriptPatch({
+          state,
+          mutation: upserted,
+          surfaceEvents: input.surfaceEvents,
+          eventBus: input.eventBus,
+          patch: {
+            type: "tool_arguments_snapshot",
+            messageId,
+            toolCallId: event.toolCallId,
+            commandId: command.id as CommandId,
+            contentIndex: event.contentIndex,
+            snapshotRef: event.toolCallId as never,
+          },
+        });
+        return {
+          ...state,
+          cursor: upserted.value.cursor,
+          assistantMessageId: messageId,
+          toolCommandIds: {
+            ...state.toolCommandIds,
+            [event.toolCallId]: command.id as CommandId,
+          },
+          toolArgumentsJson: {
+            ...state.toolArgumentsJson,
+            [event.toolCallId]: argumentsJson,
+          },
+        };
+      });
+    case "pi.tool_call.accepted":
+      return Effect.gen(function* () {
+        const messageId = yield* assistantMessageIdForPiRef(state, event.piMessageRef);
+        const argumentsJson =
+          event.argumentsJson ?? state.toolArgumentsJson[event.toolCallId] ?? "{}";
+        const command = yield* createOrReuseToolCommand({
+          target: state.input.target,
+          commandState: input.commandState,
+          eventBus: input.eventBus,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          turnId: event.turnId,
+          arguments: parseToolArguments(argumentsJson),
+        });
+        const upserted = yield* input.transcriptState
+          .upsertAssistantToolCall({
+            messageId,
+            surfacePiSessionId: state.input.target.surfacePiSessionId,
+            streamGenerationId: state.streamGenerationId,
+            expectedCursor: state.cursor,
+            contentIndex: event.contentIndex,
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            argumentsJson,
+            argumentsStatus: "accepted",
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              runtimeStateError("runtime.prompt.transcript.acceptToolArguments", cause),
+            ),
+          );
+        yield* publishCommittedTranscriptPatch({
+          state,
+          mutation: upserted,
+          surfaceEvents: input.surfaceEvents,
+          eventBus: input.eventBus,
+          patch: {
+            type: "tool_arguments_snapshot",
+            messageId,
+            toolCallId: event.toolCallId,
+            commandId: command.id as CommandId,
+            contentIndex: event.contentIndex,
+            snapshotRef: event.toolCallId as never,
+          },
+        });
+        let cursor = upserted.value.cursor;
+        if (!state.toolCommandIds[event.toolCallId]) {
+          const linked = yield* input.transcriptState
+            .linkAssistantToolCallCommand({
+              messageId,
+              surfacePiSessionId: state.input.target.surfacePiSessionId,
+              streamGenerationId: state.streamGenerationId,
+              expectedCursor: cursor,
+              contentIndex: event.contentIndex,
               toolCallId: event.toolCallId,
               commandId: command.id as CommandId,
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                runtimeStateError("runtime.prompt.transcript.linkAcceptedToolCommand", cause),
+              ),
+            );
+          yield* publishCommittedTranscriptPatch({
+            state: { ...state, cursor },
+            mutation: linked,
+            surfaceEvents: input.surfaceEvents,
+            eventBus: input.eventBus,
+            patch: {
+              type: "active_command",
+              messageId,
+              toolCallId: event.toolCallId,
+              commandId: command.id as CommandId,
+              contentIndex: event.contentIndex,
               status: "accepted",
             },
-          }).pipe(
-            Effect.as({
-              ...state,
-              assistantMessageId: event.piMessageRef,
-              toolCommandIds: {
-                ...state.toolCommandIds,
-                [event.toolCallId]: command.id as CommandId,
-              },
-            }),
-          ),
-        ),
-      );
+          });
+          cursor = linked.value.cursor;
+        }
+        return {
+          ...state,
+          cursor,
+          assistantMessageId: messageId,
+          toolCommandIds: {
+            ...state.toolCommandIds,
+            [event.toolCallId]: command.id as CommandId,
+          },
+          toolArgumentsJson: {
+            ...state.toolArgumentsJson,
+            [event.toolCallId]: argumentsJson,
+          },
+        };
+      });
     case "pi.tool_execution.started":
       return resolveToolCommandId(state, input.commandState, event.toolCallId).pipe(
         Effect.andThen((commandId) =>
@@ -730,11 +1101,14 @@ function handlePiRuntimeEvent(input: {
         ),
       );
     case "pi.turn.finished":
+      return Effect.succeed(state);
+    case "pi.agent.finished":
       return settlePromptTurn({
         state,
         status: event.status,
-        queueState: input.queueState,
         turnState: input.turnState,
+        transcriptState: input.transcriptState,
+        commandState: input.commandState,
         eventBus: input.eventBus,
         surfaceEvents: input.surfaceEvents,
       });
@@ -744,74 +1118,120 @@ function handlePiRuntimeEvent(input: {
 function settlePromptTurn(input: {
   readonly state: PromptExecutionState;
   readonly status: "completed" | "failed" | "cancelled";
-  readonly queueState: RuntimeQueueStatePortService;
   readonly turnState: RuntimeTurnStatePortService;
+  readonly transcriptState: RuntimeTranscriptStatePortService;
+  readonly commandState: RuntimeCommandStatePortService;
   readonly eventBus: RuntimeEventBus["Service"];
   readonly surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
+  readonly errorMessage?: string;
 }): Effect.Effect<PromptExecutionState, RuntimeContractError> {
-  const { state } = input;
-  const turnStatus = input.status === "completed" ? "completed" : "failed";
   return Effect.gen(function* () {
-    const finishedTurn = yield* input.turnState
-      .finishTurn({
-        turnId: state.input.turn.id,
-        status: turnStatus,
-        assistantMessageId: state.assistantMessageId as MessageId,
+    let state = input.state;
+    let status = input.status;
+    const settledCommandIds = new Set(state.commandReceipts.map((receipt) => receipt.commandId));
+    const danglingCommandReceipts: RuntimePromptCommandReceipt[] = [];
+    const danglingCommandIds: CommandId[] = [];
+    for (const commandId of new Set(Object.values(state.toolCommandIds))) {
+      if (settledCommandIds.has(commandId)) continue;
+      const command = yield* input.commandState
+        .findCommandById({ commandId })
+        .pipe(
+          Effect.mapError((cause) =>
+            runtimeStateError("runtime.prompt.findDanglingCommand", cause),
+          ),
+        );
+      if (!command || ["succeeded", "failed", "cancelled"].includes(command.status)) continue;
+      const commandStatus = input.status === "cancelled" ? "cancelled" : "failed";
+      danglingCommandIds.push(commandId);
+      danglingCommandReceipts.push({ commandId, status: commandStatus });
+    }
+    if (danglingCommandReceipts.length > 0) {
+      state = {
+        ...state,
+        commandReceipts: [...state.commandReceipts, ...danglingCommandReceipts],
+      };
+      if (status === "completed") status = "failed";
+    }
+    if (state.activeAssistantMessageId) {
+      const finishedAt = DateTime.formatIso(yield* DateTime.now) as never;
+      const failed = yield* input.transcriptState
+        .failAssistantMessage({
+          messageId: state.activeAssistantMessageId,
+          surfacePiSessionId: state.input.target.surfacePiSessionId,
+          streamGenerationId: state.streamGenerationId,
+          expectedCursor: state.cursor,
+          api: null,
+          providerId: state.input.piTurnInput.model.providerId,
+          modelId: state.input.piTurnInput.model.modelId,
+          responseId: null,
+          usage: null,
+          stopReason: input.status === "cancelled" ? "aborted" : "error",
+          errorMessage:
+            input.errorMessage ?? "Assistant stream ended without a committed terminal message.",
+          piHistoryEntry: null,
+          messageTimestamp: null,
+          finishedAt,
+          status: input.status === "cancelled" ? "cancelled" : "failed",
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            runtimeStateError("runtime.prompt.transcript.failActiveAssistant", cause),
+          ),
+        );
+      yield* publishCommittedTranscriptPatch({
+        state,
+        mutation: failed,
+        surfaceEvents: input.surfaceEvents,
+        eventBus: input.eventBus,
+        patch: {
+          type: "assistant_message_finished",
+          messageId: state.activeAssistantMessageId,
+          status: input.status === "cancelled" ? "cancelled" : "failed",
+          finishedAt,
+        },
+      });
+      state = {
+        ...state,
+        cursor: failed.value.cursor,
+        activeAssistantMessageId: null,
+      };
+      if (status === "completed") {
+        status = "failed";
+      }
+    }
+    const settlement = yield* input.turnState
+      .settlePromptTurn({
+        turnId: state.input.turn.id as TurnId,
+        queueItemId: state.input.claimedMessage.id as never,
+        status,
+        ...(state.assistantMessageId ? { assistantMessageId: state.assistantMessageId } : {}),
         assistantText: state.assistantText,
+        terminalCommandIds: danglingCommandIds,
+        terminalCommandSummary: "Prompt execution ended before the tool run finished.",
+        terminalCommandError: "Prompt execution ended before the tool run finished.",
+        claimOwnerId: state.input.claimedMessage.claimOwnerId,
+        leaseVersion: state.input.claimedMessage.leaseVersion,
       })
-      .pipe(Effect.mapError((cause) => runtimeStateError("runtime.prompt.finishTurn", cause)));
+      .pipe(Effect.mapError((cause) => runtimeStateError("runtime.prompt.settleTurn", cause)));
     yield* input.eventBus
-      .publishStateInvalidations({ afterCommit: finishedTurn.afterCommit })
-      .pipe(Effect.mapError((cause) => runtimeAdapterError("runtime.prompt.finishTurn", cause)));
+      .publishStateInvalidations({ afterCommit: settlement.afterCommit })
+      .pipe(Effect.mapError((cause) => runtimeAdapterError("runtime.prompt.settleTurn", cause)));
 
-    const queueMutation =
-      input.status === "completed"
-        ? input.queueState.markSurfaceMessageDelivered({
-            id: state.input.claimedMessage.id,
-            claimOwnerId: state.input.claimedMessage.claimOwnerId,
-            leaseVersion: state.input.claimedMessage.leaseVersion,
-          })
-        : input.queueState.markSurfaceMessageFailed({
-            id: state.input.claimedMessage.id,
-            failureError: `Prompt ${input.status}.`,
-            claimOwnerId: state.input.claimedMessage.claimOwnerId,
-            leaseVersion: state.input.claimedMessage.leaseVersion,
-          });
-    const queued = yield* queueMutation.pipe(
-      Effect.mapError((cause) => runtimeStateError("runtime.prompt.settleQueue", cause)),
-    );
-    yield* input.eventBus
-      .publishStateInvalidations({ afterCommit: queued.afterCommit })
-      .pipe(Effect.mapError((cause) => runtimeAdapterError("runtime.prompt.settleQueue", cause)));
-
-    const finishedAt = DateTime.formatIso(yield* DateTime.now) as never;
-    yield* publishPatch({
+    state = yield* advanceTranscriptCursorAndPublishPatch({
+      state,
+      transcriptState: input.transcriptState,
       surfaceEvents: input.surfaceEvents,
-      workspaceId: state.input.workspaceId,
-      target: state.input.target,
-      streamGenerationId: state.streamGenerationId,
-      patch: {
-        type: "assistant_message_finished",
-        messageId: state.assistantMessageId as never,
-        status: input.status,
-        finishedAt,
-      },
-    });
-    yield* publishPatch({
-      surfaceEvents: input.surfaceEvents,
-      workspaceId: state.input.workspaceId,
-      target: state.input.target,
-      streamGenerationId: state.streamGenerationId,
+      eventBus: input.eventBus,
       patch: {
         type: "prompt_status",
         turnId: state.input.turn.id as TurnId,
-        status: input.status,
+        status,
       },
     });
     const result: RuntimePromptExecutionResult = {
       queueItemId: state.input.claimedMessage.id,
       turnId: state.input.turn.id as TurnId,
-      status: input.status,
+      status,
       assistantText: state.assistantText,
       commandReceipts: state.commandReceipts,
     };
@@ -820,22 +1240,104 @@ function settlePromptTurn(input: {
 }
 
 function settlePromptFailure(input: {
-  readonly input: RuntimePromptExecutionInput;
-  readonly queueState: RuntimeQueueStatePortService;
+  readonly state: PromptExecutionState;
   readonly turnState: RuntimeTurnStatePortService;
+  readonly transcriptState: RuntimeTranscriptStatePortService;
+  readonly commandState: RuntimeCommandStatePortService;
   readonly eventBus: RuntimeEventBus["Service"];
   readonly surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
-  readonly streamGenerationId: SurfaceStreamGenerationId;
   readonly error: unknown;
 }): Effect.Effect<PromptExecutionState, RuntimeContractError> {
-  const state = initialPromptExecutionState(input.input, input.streamGenerationId);
   return settlePromptTurn({
-    state,
+    state: input.state,
     status: "failed",
-    queueState: input.queueState,
     turnState: input.turnState,
+    transcriptState: input.transcriptState,
+    commandState: input.commandState,
     eventBus: input.eventBus,
     surfaceEvents: input.surfaceEvents,
+    errorMessage: input.error instanceof Error ? input.error.message : String(input.error),
+  });
+}
+
+function assistantMessageIdForPiRef(
+  state: PromptExecutionState,
+  piMessageRef: string,
+): Effect.Effect<MessageId, RuntimeContractError> {
+  const messageId = state.assistantMessageIds[piMessageRef];
+  return messageId
+    ? Effect.succeed(messageId)
+    : Effect.fail(
+        new RuntimeContractError({
+          operation: "runtime.prompt.transcript.resolveAssistantMessage",
+          reason: "stream-failed",
+          message: `Pi assistant message ${piMessageRef} emitted content before its durable start.`,
+        }),
+      );
+}
+
+function publishCommittedTranscriptPatch(input: {
+  readonly state: PromptExecutionState;
+  readonly mutation: StateMutationResult<{
+    readonly cursor: RuntimeTranscriptStreamCursor;
+  }>;
+  readonly surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
+  readonly eventBus: RuntimeEventBus["Service"];
+  readonly patch: Parameters<
+    RuntimeSurfaceEventPublisher["Service"]["publishStreamPatch"]
+  >[0]["patch"];
+}): Effect.Effect<void, RuntimeContractError> {
+  return Effect.gen(function* () {
+    // Transcript state is authoritative once committed. A later contiguous patch or surface
+    // reopen exposes the gap and forces consumers to rebaseline from the durable read model.
+    yield* input.eventBus
+      .publishStateInvalidations({ afterCommit: input.mutation.afterCommit })
+      .pipe(Effect.catch(() => Effect.void));
+    yield* publishPatch({
+      surfaceEvents: input.surfaceEvents,
+      workspaceId: input.state.input.workspaceId,
+      target: input.state.input.target,
+      streamGenerationId: input.state.streamGenerationId,
+      streamSequence: input.mutation.value.cursor.streamSequence,
+      patch: input.patch,
+    }).pipe(Effect.catch(() => Effect.void));
+  });
+}
+
+function advanceTranscriptCursorAndPublishPatch(input: {
+  readonly state: PromptExecutionState;
+  readonly transcriptState: RuntimeTranscriptStatePortService;
+  readonly surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
+  readonly eventBus: RuntimeEventBus["Service"];
+  readonly patch: Parameters<
+    RuntimeSurfaceEventPublisher["Service"]["publishStreamPatch"]
+  >[0]["patch"];
+}): Effect.Effect<PromptExecutionState, RuntimeContractError> {
+  return Effect.gen(function* () {
+    const advanced = yield* input.transcriptState
+      .advanceStreamCursor({
+        surfacePiSessionId: input.state.input.target.surfacePiSessionId,
+        streamGenerationId: input.state.streamGenerationId,
+        expectedCursor: input.state.cursor,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          runtimeStateError("runtime.prompt.transcript.advanceStreamCursor", cause),
+        ),
+      );
+    // Cursor advancement is durable even when the renderer notification lane is unavailable.
+    yield* input.eventBus
+      .publishStateInvalidations({ afterCommit: advanced.afterCommit })
+      .pipe(Effect.catch(() => Effect.void));
+    yield* publishPatch({
+      surfaceEvents: input.surfaceEvents,
+      workspaceId: input.state.input.workspaceId,
+      target: input.state.input.target,
+      streamGenerationId: input.state.streamGenerationId,
+      streamSequence: advanced.value.streamSequence,
+      patch: input.patch,
+    }).pipe(Effect.catch(() => Effect.void));
+    return { ...input.state, cursor: advanced.value };
   });
 }
 
@@ -849,6 +1351,7 @@ function publishPatch(
       workspaceId: input.workspaceId,
       target: input.target,
       streamGenerationId: input.streamGenerationId,
+      ...(input.streamSequence === undefined ? {} : { streamSequence: input.streamSequence }),
       patch: input.patch,
     })
     .pipe(

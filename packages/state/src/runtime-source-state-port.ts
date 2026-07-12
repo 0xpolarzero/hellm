@@ -57,6 +57,11 @@ function sourceScanInvalidations(
   }
 }
 
+const workflowAgentSourceInvalidations = dedupeInvalidations([
+  { scope: "app", invalidation: { model: "agents" } },
+  { scope: "app", invalidation: { model: "workflowsGenerated" } },
+] satisfies readonly StateInvalidationDescriptor[]);
+
 function sourceDomainFallbackFingerprint(domain: SourceDomain): string {
   return `unresolved:${domain}`;
 }
@@ -74,6 +79,18 @@ export function runtimeSourceStatePortFromStructuredSessionState(
       state
         .recordRuntimeSourceDelete(input)
         .pipe(Effect.map((record) => mutationResult(record, sourceInvalidations(record)))),
+    recordWorkflowAgentSourceSave: (input) =>
+      state
+        .recordRuntimeWorkflowAgentSourceSave(input)
+        .pipe(Effect.map((record) => mutationResult(record, workflowAgentSourceInvalidations))),
+    recordWorkflowAgentSourceDelete: (input) =>
+      state
+        .recordRuntimeWorkflowAgentSourceDelete(input)
+        .pipe(Effect.map((record) => mutationResult(record, workflowAgentSourceInvalidations))),
+    reconcileWorkflowAgentSources: (input) =>
+      state
+        .reconcileRuntimeWorkflowAgentSources(input)
+        .pipe(Effect.map((record) => mutationResult(record, workflowAgentSourceInvalidations))),
     recordSourceScan: (input) =>
       state
         .recordRuntimeSourceScan(input)

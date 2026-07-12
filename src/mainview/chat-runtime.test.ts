@@ -1,13 +1,11 @@
 import { describe, expect, it, mock } from "bun:test";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import {
-  getModel,
-  type AssistantMessage,
-  type ImageContent,
-  type Message,
-  type TextContent,
-} from "@mariozechner/pi-ai";
-import type { ChatStorage, CustomProvider } from "./chat-storage";
+import type {
+  RendererTranscriptAssistantEntry,
+  RendererTranscriptImageContent,
+  RendererTranscriptEntry,
+  RendererTranscriptTextContent,
+  RendererTranscriptUserEntry,
+} from "../shared/renderer-transcript";
 import type { RuntimeSubmittedMessage } from "@svvy/core";
 import {
   composerAttachmentPromptText,
@@ -21,17 +19,24 @@ import {
   type AppLogReadModel,
   type AppLogSummary,
   type AppLogUpdateMessage,
-  type ConversationSurfaceSnapshot,
+  type ComposerDraft,
+  type ConversationTurnTiming,
   type ConfiguredAgentProfileReadModelRecord,
   type DesktopRendererNotification,
+  type PromptHistoryReadModel,
   type PromptTarget,
   type RendererTelemetryRequest,
   type RequestUserInputAnswerRequest,
   type SendPromptRequest,
   type SetRequestUserInputTimerPausedRequest,
   type StateReadModelBaseline,
+  type StateReadModelResult,
   type StateSnippetsReadModel,
-  type SurfaceSyncMessage,
+  type SurfaceComposerReadModel,
+  type SurfaceQueuedMessagesReadModel,
+  type SurfaceSummaryReadModel,
+  type SurfaceTranscriptReadModel,
+  type QueuedSurfaceMessage,
   type WriteCommandStdinRequest,
   type WriteCommandStdinResponse,
   type WorkspaceHandlerThreadInspector,
@@ -47,13 +52,14 @@ import {
   type WorkspaceTabInfo,
 } from "../shared/workspace-contract";
 import type { ComposerSnippetMention, SentSnippetProvenance } from "../shared/snippets";
-import type { PromptHistoryEntry } from "./prompt-history";
 import type { ChatRuntimeOptions, ChatRuntimeRpcClient } from "./chat-runtime";
 import type { WorkspaceDockviewLayoutState, WorkspaceLayoutSlotId } from "./pane-layout";
 import {
   DEFAULT_AGENT_SETTINGS_STATE,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
+  type AgentProfileId,
   type AppPreferences,
+  type ReasoningEffort,
 } from "../shared/agent-settings";
 import type {
   AbsolutePath,
@@ -65,10 +71,12 @@ import type {
   ModelId,
   ProviderId,
   QueueItemId,
+  RequestInputSettings,
   RequestInputQuestionId,
   RequestInputRequestId,
   RuntimeApprovalId,
   RuntimeClientRequestId,
+  SurfaceStreamPatchInput,
   SnippetId,
   StateRevision,
   ThreadId,
@@ -100,7 +108,6 @@ mock.module("electrobun/view", () => {
   };
 });
 
-type ReasoningEffort = ConversationSurfaceSnapshot["reasoningEffort"];
 const TEST_WORKSPACE_INFO: WorkspaceTabInfo = {
   workspaceTabId: "workspace-tab-1",
   workspaceId: "/tmp/svvy#runtime-1",
@@ -114,9 +121,7 @@ const TEST_WORKSPACE_INFO: WorkspaceTabInfo = {
 
 type PromptHandlerResult = {
   assistantText: string;
-  extraMessages?: AgentMessage[];
-  reason?: Extract<SurfaceSyncMessage["reason"], "prompt.settled" | "surface.updated">;
-  emitSurfaceSyncBeforeStreamDone?: boolean;
+  extraMessages?: RendererTranscriptEntry[];
 };
 
 type PromptHandler = (
@@ -128,8 +133,35 @@ type NormalizedPromptRequest = SendPromptRequest & {
   message: RuntimeSubmittedMessage;
 };
 
+type SurfaceFixture = {
+  transcript: SurfaceTranscriptReadModel;
+  summary: SurfaceSummaryReadModel;
+  composer: SurfaceComposerReadModel;
+  queuedMessages: SurfaceQueuedMessagesReadModel;
+};
+
+type RendererSurfaceSeed = {
+  target: PromptTarget;
+  messages: RendererTranscriptEntry[];
+  pendingUserMessage: RendererTranscriptEntry | null;
+  queuedMessages: QueuedSurfaceMessage[];
+  composerDraft: ComposerDraft;
+  streamMessage: RendererTranscriptAssistantEntry | null;
+  streamSequence: number;
+  provider: string;
+  model: string;
+  reasoningEffort: ReasoningEffort;
+  agentProfileId: AgentProfileId;
+  loadedExtensionIds: string[];
+  availableExtensionIds: string[];
+  promptStatus: "idle" | "streaming";
+  activeTurnId: string | null;
+  activeTurnStartedAt: string | null;
+  assistantTimings: ConversationTurnTiming[];
+};
+
 type SurfaceRecord = {
-  snapshot: ConversationSurfaceSnapshot;
+  fixture: SurfaceFixture;
   retainCount: number;
 };
 
@@ -151,6 +183,7 @@ type FakeRpcHarness = {
   thoughtLevelUpdates: Array<{ target: PromptTarget; level: ReasoningEffort }>;
   cancelRequests: PromptTarget[];
   requestCounts: {
+    agents: number;
     sessionNavigation: number;
     listProviderAuths: number;
     fetchProviderAuth: number;
@@ -193,6 +226,24 @@ type FakeRpcHarness = {
   >;
   sourceEditOpenRequests: Array<Parameters<ChatRuntimeRpcClient["request"]["openSourceEdit"]>[0]>;
   sourceEditSaveRequests: Array<Parameters<ChatRuntimeRpcClient["request"]["saveSourceEdit"]>[0]>;
+  workflowAgentCreateRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["createWorkflowAgentSource"]>[0]
+  >;
+  workflowAgentDuplicateRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["duplicateWorkflowAgentSource"]>[0]
+  >;
+  workflowAgentDeleteRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["deleteWorkflowAgentSource"]>[0]
+  >;
+  sourceEditorOpenRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["openSourceInEditor"]>[0]
+  >;
+  requestInputVariantRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["setRequestInputVariant"]>[0]
+  >;
+  requestInputBlockingTimeoutRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["setRequestInputBlockingTimeout"]>[0]
+  >;
   openWorkflowsGeneratedExportRequests: Array<
     Parameters<ChatRuntimeRpcClient["request"]["openWorkflowsGeneratedExportInEditor"]>[0]
   >;
@@ -225,11 +276,14 @@ type FakeRpcHarness = {
   updateSummary: (sessionId: string, updater: (summary: MutableSessionSummary) => void) => void;
   emitSessionNavigationInvalidation: (workspaceId?: string) => void;
   emitArtifactOpen: (payload: ArtifactOpenMessage) => void;
-  emitSurfaceSync: (
-    payload: Omit<SurfaceSyncMessage, "workspaceId"> & { workspaceId?: string },
+  emitSurfaceChanged: (fixture: SurfaceFixture, workspaceId?: string) => void;
+  emitSurfaceStreamPatch: (
+    target: PromptTarget,
+    patch: SurfaceStreamPatchInput,
+    workspaceId?: string,
   ) => void;
   getRetainCount: (surfacePiSessionId: string) => number;
-  getSurfaceSnapshot: (surfacePiSessionId: string) => ConversationSurfaceSnapshot;
+  getSurfaceFixture: (surfacePiSessionId: string) => SurfaceFixture;
   getRendererLayoutFixture: (workspaceId: string) => RendererLayoutFixtureState | null;
   setRendererLayoutFixture: (workspaceId: string, state: RendererLayoutFixtureState) => void;
 };
@@ -250,7 +304,7 @@ const defaultPromptHandler: PromptHandler = async (request) => ({
   assistantText: `Reply for ${request.target.surfacePiSessionId}`,
 });
 
-function userMessage(text: string): AgentMessage {
+function userMessage(text: string): RendererTranscriptEntry {
   return {
     role: "user",
     timestamp: Date.now(),
@@ -258,8 +312,8 @@ function userMessage(text: string): AgentMessage {
   };
 }
 
-function submittedUserMessage(message: RuntimeSubmittedMessage): Message {
-  const content: Array<TextContent | ImageContent> = [];
+function submittedUserMessage(message: RuntimeSubmittedMessage): RendererTranscriptUserEntry {
+  const content: Array<RendererTranscriptTextContent | RendererTranscriptImageContent> = [];
   const text = message.text.trim();
   if (text) {
     content.push({ type: "text", text });
@@ -304,7 +358,7 @@ function submittedUserMessage(message: RuntimeSubmittedMessage): Message {
   };
 }
 
-function submittedMessageFromAgentMessage(message: Message): { text: string } {
+function submittedMessageFromRendererEntry(message: RendererTranscriptUserEntry): { text: string } {
   const text =
     typeof message.content === "string"
       ? message.content
@@ -323,7 +377,7 @@ function assistantMessage(
     provider?: string;
     model?: string;
   } = {},
-): AssistantMessage {
+): RendererTranscriptAssistantEntry {
   return {
     role: "assistant",
     timestamp: Date.now(),
@@ -386,7 +440,7 @@ function createThreadTarget(
   };
 }
 
-function hasUserText(messages: AgentMessage[], text: string): boolean {
+function hasUserText(messages: RendererTranscriptEntry[], text: string): boolean {
   return messages.some((message) => {
     if (message.role !== "user" || !Array.isArray(message.content)) {
       return false;
@@ -439,31 +493,26 @@ function createSummary(
   };
 }
 
-function createSurfaceSnapshot(input: {
+function createSurfaceFixture(input: {
   target: PromptTarget;
-  messages: AgentMessage[];
-  pendingUserMessage?: AgentMessage | null;
-  streamMessage?: AssistantMessage | null;
+  messages: RendererTranscriptEntry[];
+  pendingUserMessage?: RendererTranscriptEntry | null;
+  streamMessage?: RendererTranscriptAssistantEntry | null;
   streamSequence?: number;
-  queuedMessages?: ConversationSurfaceSnapshot["queuedMessages"];
-  composerDraft?: ConversationSurfaceSnapshot["composerDraft"];
+  queuedMessages?: QueuedSurfaceMessage[];
+  composerDraft?: ComposerDraft;
   provider?: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;
-  agentProfileId?: ConversationSurfaceSnapshot["agentProfileId"];
-  loadedExtensionIds?: ConversationSurfaceSnapshot["loadedExtensionIds"];
-  availableExtensionIds?: ConversationSurfaceSnapshot["availableExtensionIds"];
-  systemPrompt?: string;
-  resolvedSystemPrompt?: string;
-  externalContextSources?: ConversationSurfaceSnapshot["externalContextSources"];
-  promptBinding?: ConversationSurfaceSnapshot["promptBinding"];
-  promptStatus?: ConversationSurfaceSnapshot["promptStatus"];
+  agentProfileId?: AgentProfileId;
+  loadedExtensionIds?: string[];
+  availableExtensionIds?: string[];
+  promptStatus?: RendererSurfaceSeed["promptStatus"];
   activeTurnId?: string | null;
   activeTurnStartedAt?: string | null;
-  turnTimings?: ConversationSurfaceSnapshot["turnTimings"];
-}): ConversationSurfaceSnapshot {
-  const systemPrompt = input.systemPrompt ?? "You are svvy.";
-  return {
+  assistantTimings?: ConversationTurnTiming[];
+}): SurfaceFixture {
+  return surfaceFixtureFromRendererSeed({
     target: structuredClone(input.target),
     messages: structuredClone(input.messages),
     pendingUserMessage: input.pendingUserMessage ? structuredClone(input.pendingUserMessage) : null,
@@ -479,14 +528,231 @@ function createSurfaceSnapshot(input: {
     agentProfileId: input.agentProfileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID,
     loadedExtensionIds: structuredClone(input.loadedExtensionIds ?? []),
     availableExtensionIds: structuredClone(input.availableExtensionIds ?? []),
-    systemPrompt,
-    resolvedSystemPrompt: input.resolvedSystemPrompt ?? systemPrompt,
-    externalContextSources: structuredClone(input.externalContextSources ?? []),
-    promptBinding: input.promptBinding ? structuredClone(input.promptBinding) : undefined,
     promptStatus: input.promptStatus ?? "idle",
     activeTurnId: input.activeTurnId ?? null,
     activeTurnStartedAt: input.activeTurnStartedAt ?? null,
-    turnTimings: structuredClone(input.turnTimings ?? []),
+    assistantTimings: structuredClone(input.assistantTimings ?? []),
+  });
+}
+
+function surfaceFixtureFromRendererSeed(fixture: RendererSurfaceSeed): SurfaceFixture {
+  const target = fixture.target as never;
+  const transcriptMessages = [
+    ...fixture.messages,
+    ...(fixture.pendingUserMessage ? [fixture.pendingUserMessage] : []),
+  ]
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .map((message, index) => {
+      const timestamp = new Date(message.timestamp).toISOString();
+      const timing =
+        message.role === "assistant"
+          ? fixture.assistantTimings.find(
+              (candidate) =>
+                String(candidate.assistantMessageTimestamp) === String(message.timestamp),
+            )
+          : undefined;
+      const turnId = timing?.turnId ?? `turn-${Math.floor(index / 2) + 1}`;
+      const common = {
+        messageId: `${fixture.target.surfacePiSessionId}-message-${index + 1}`,
+        workspaceSessionId: fixture.target.workspaceSessionId,
+        surfacePiSessionId: fixture.target.surfacePiSessionId,
+        turnId,
+        ordinal: index,
+        piHistoryEntry: null,
+      };
+      if (message.role === "user") {
+        const content = typeof message.content === "string" ? [] : message.content;
+        const attachments = content.flatMap((block) =>
+          block.type === "text" ? parseComposerAttachmentTextSignature(block.textSignature) : [],
+        );
+        return {
+          ...common,
+          role: "user",
+          queueItemId: `queue-${index + 1}`,
+          message: {
+            text:
+              typeof message.content === "string"
+                ? message.content
+                : content
+                    .filter(
+                      (block) =>
+                        block.type === "text" &&
+                        parseComposerAttachmentTextSignature(block.textSignature).length === 0,
+                    )
+                    .map((block) => (block.type === "text" ? block.text : ""))
+                    .join("\n\n"),
+            attachments: attachments.map((attachment) => ({ ...attachment })),
+            ...((message as { svvyMetadata?: { snippetProvenance?: unknown[] } }).svvyMetadata
+              ?.snippetProvenance
+              ? {
+                  snippetProvenance: structuredClone(
+                    (message as unknown as { svvyMetadata: { snippetProvenance: unknown[] } })
+                      .svvyMetadata.snippetProvenance,
+                  ),
+                }
+              : {}),
+          },
+          submittedAt: timestamp,
+          committedAt: timestamp,
+        };
+      }
+      return {
+        ...common,
+        role: "assistant",
+        status: "completed",
+        content: message.content.map((block, contentIndex) =>
+          block.type === "text"
+            ? { kind: "text", contentIndex, text: block.text }
+            : block.type === "thinking"
+              ? {
+                  kind: "thinking",
+                  contentIndex,
+                  thinking: block.thinking,
+                  ...(block.redacted !== undefined ? { redacted: block.redacted } : {}),
+                }
+              : {
+                  kind: "tool-call",
+                  contentIndex,
+                  toolCallId: block.id,
+                  toolName: block.name,
+                  argumentsJson: JSON.stringify(block.arguments),
+                  argumentsStatus: "accepted",
+                  commandId: "commandId" in block ? (block.commandId ?? null) : null,
+                },
+        ),
+        api: message.api,
+        providerId: message.provider,
+        modelId: message.model,
+        responseId: null,
+        usage: message.usage,
+        stopReason: message.stopReason,
+        errorMessage: message.errorMessage ?? null,
+        startedAt: timing?.startedAt ?? timestamp,
+        messageTimestamp: timestamp,
+        updatedAt: timing?.finishedAt ?? timestamp,
+        finishedAt: timing?.finishedAt ?? timestamp,
+      };
+    });
+  const activeAssistantMessage = fixture.streamMessage
+    ? {
+        ...surfaceFixtureFromRendererSeed({
+          ...fixture,
+          messages: [fixture.streamMessage],
+          pendingUserMessage: null,
+          streamMessage: null,
+        }).transcript.messages[0],
+        status: "streaming",
+        finishedAt: null,
+      }
+    : null;
+  return {
+    transcript: {
+      target,
+      surfaceStatus: fixture.promptStatus === "streaming" ? "running" : "idle",
+      promptLock: {
+        activeTurnId: fixture.activeTurnId as never,
+        queuedCount: fixture.queuedMessages.length,
+      },
+      composerDraft: {
+        text: fixture.composerDraft.text,
+        attachmentIds: fixture.composerDraft.attachments.map((attachment) => attachment.id),
+      },
+      messages: transcriptMessages as never,
+      activeAssistantMessage: activeAssistantMessage as never,
+      streamCursor: fixture.streamMessage
+        ? ({
+            surfacePiSessionId: fixture.target.surfacePiSessionId,
+            streamGenerationId: "test-stream-generation",
+            streamSequence: fixture.streamSequence,
+          } as never)
+        : null,
+    },
+    summary: {
+      target,
+      title: fixture.target.surfacePiSessionId,
+      status: fixture.promptStatus === "streaming" ? "running" : "idle",
+      activeTurnId: fixture.activeTurnId as never,
+      activeTurnStartedAt: fixture.activeTurnStartedAt as never,
+      queuedCount: fixture.queuedMessages.length,
+      model: fixture.model,
+      provider: fixture.provider,
+      reasoningEffort: fixture.reasoningEffort,
+      agentProfileId: fixture.agentProfileId,
+      loadedExtensionIds: fixture.loadedExtensionIds,
+      availableExtensionIds: fixture.availableExtensionIds,
+    },
+    composer: {
+      target,
+      draft: {
+        ...fixture.composerDraft,
+        snippetMentions: fixture.composerDraft.snippetMentions ?? [],
+      },
+    },
+    queuedMessages: {
+      target,
+      queuedMessages: fixture.queuedMessages as never,
+    },
+  };
+}
+
+function stateReadModelsFromSurfaceFixture(fixture: SurfaceFixture): StateReadModelResult[] {
+  return [
+    { kind: "surfaceTranscript", value: fixture.transcript },
+    { kind: "surfaceSummary", value: fixture.summary },
+    { kind: "surfaceComposer", value: fixture.composer },
+    { kind: "surfaceQueuedMessages", value: fixture.queuedMessages },
+  ];
+}
+
+function surfaceTarget(fixture: SurfaceFixture): PromptTarget {
+  return fixture.transcript.target as PromptTarget;
+}
+
+function surfaceIsStreaming(fixture: SurfaceFixture): boolean {
+  return fixture.summary.status === "running" || fixture.summary.status === "waiting";
+}
+
+function withSurfaceTarget(fixture: SurfaceFixture, target: PromptTarget): SurfaceFixture {
+  const clonedTarget = cloneTarget(target) as never;
+  return {
+    transcript: { ...fixture.transcript, target: clonedTarget },
+    summary: { ...fixture.summary, target: clonedTarget },
+    composer: { ...fixture.composer, target: clonedTarget },
+    queuedMessages: { ...fixture.queuedMessages, target: clonedTarget },
+  };
+}
+
+function rendererEntryToTranscript(
+  target: PromptTarget,
+  message: RendererTranscriptEntry,
+  ordinal: number,
+) {
+  const converted = createSurfaceFixture({ target, messages: [message] }).transcript.messages[0];
+  if (!converted) {
+    throw new Error(
+      `Unable to convert renderer message ${ordinal} for ${target.surfacePiSessionId}.`,
+    );
+  }
+  return {
+    ...converted,
+    messageId: `${target.surfacePiSessionId}-message-${ordinal + 1}` as never,
+    ordinal,
+    turnId: `turn-${Math.floor(ordinal / 2) + 1}` as never,
+  };
+}
+
+function withQueuedMessages(
+  fixture: SurfaceFixture,
+  queuedMessages: readonly QueuedSurfaceMessage[],
+): SurfaceFixture {
+  return {
+    ...fixture,
+    transcript: {
+      ...fixture.transcript,
+      promptLock: { ...fixture.transcript.promptLock, queuedCount: queuedMessages.length },
+    },
+    summary: { ...fixture.summary, queuedCount: queuedMessages.length },
+    queuedMessages: { ...fixture.queuedMessages, queuedMessages: queuedMessages as never },
   };
 }
 
@@ -727,34 +993,6 @@ function createRuntimeApprovalRequest(
   };
 }
 
-function createMemoryStorage(): ChatStorage {
-  const customProviders = new Map<string, CustomProvider>();
-  const promptHistory = new Map<string, PromptHistoryEntry[]>();
-
-  return {
-    customProviders: {
-      get: async (id: string) => customProviders.get(id) ?? null,
-      set: async (provider: CustomProvider) => {
-        customProviders.set(provider.id, provider);
-      },
-      delete: async (id: string) => {
-        customProviders.delete(id);
-      },
-      getAll: async () => Array.from(customProviders.values()),
-      has: async (id: string) => customProviders.has(id),
-    },
-    promptHistory: {
-      list: async (workspaceId: string) => promptHistory.get(workspaceId) ?? [],
-      append: async (entry: PromptHistoryEntry) => {
-        const existing = promptHistory.get(entry.workspaceId) ?? [];
-        const next = [...existing, entry];
-        promptHistory.set(entry.workspaceId, next);
-        return entry;
-      },
-    },
-  } as ChatStorage;
-}
-
 function createRendererLayoutFixtureState(
   layout: RendererLayoutFixtureState["layouts"]["A"],
   activeLayoutId: "A" | "B" | "C" = "A",
@@ -887,7 +1125,7 @@ function emptyAppLogReadModel(): AppLogReadModel {
 
 function createFakeRpc(input: {
   sessions: WorkspaceSessionSummary[];
-  surfaces: ConversationSurfaceSnapshot[];
+  surfaces: SurfaceFixture[];
   commandInspector?: CommandInspectorReadModel;
   commandStdinResponse?: WriteCommandStdinResponse;
   handlerThreads?: WorkspaceHandlerThreadInspector[];
@@ -896,7 +1134,6 @@ function createFakeRpc(input: {
   runtimeApprovalRequests?: WorkspaceRuntimeApprovalRequest[];
 }): FakeRpcHarness {
   const artifactOpenListeners = new Set<(payload: ArtifactOpenMessage) => void>();
-  const surfaceSyncListeners = new Set<(payload: SurfaceSyncMessage) => void>();
   const desktopNotificationListeners = new Set<(payload: DesktopRendererNotification) => void>();
   const summaries = new Map<string, MutableSessionSummary>(
     input.sessions.map((summary) => [
@@ -905,9 +1142,9 @@ function createFakeRpc(input: {
     ]),
   );
   const surfaces = new Map<string, SurfaceRecord>(
-    input.surfaces.map((snapshot) => [
-      snapshot.target.surfacePiSessionId,
-      { snapshot: structuredClone(snapshot), retainCount: 0 },
+    input.surfaces.map((fixture) => [
+      fixture.transcript.target.surfacePiSessionId,
+      { fixture: structuredClone(fixture), retainCount: 0 },
     ]),
   );
   const promptHandlers = new Map<string, PromptHandler>();
@@ -929,6 +1166,13 @@ function createFakeRpc(input: {
     workflowTaskAttemptId: string;
   }> = [];
   let requestInputReadModelRequests = structuredClone(input.requestUserInputRequests ?? []);
+  let requestInputSettings: RequestInputSettings = {
+    mode: "nonblocking",
+    blockingTimeout: {
+      enabled: true,
+      durationMs: 300_000 as RequestInputSettings["blockingTimeout"]["durationMs"],
+    },
+  };
   let approvalsReadModelRequests = structuredClone(input.runtimeApprovalRequests ?? []);
   const requestUserInputAnswerRequests: Array<WorkspaceScoped<RequestUserInputAnswerRequest>> = [];
   const runtimeApprovalAnswerRequests: Array<
@@ -944,6 +1188,13 @@ function createFakeRpc(input: {
   const openSnippetSourceRequests: FakeRpcHarness["openSnippetSourceRequests"] = [];
   const sourceEditOpenRequests: FakeRpcHarness["sourceEditOpenRequests"] = [];
   const sourceEditSaveRequests: FakeRpcHarness["sourceEditSaveRequests"] = [];
+  const workflowAgentCreateRequests: FakeRpcHarness["workflowAgentCreateRequests"] = [];
+  const workflowAgentDuplicateRequests: FakeRpcHarness["workflowAgentDuplicateRequests"] = [];
+  const workflowAgentDeleteRequests: FakeRpcHarness["workflowAgentDeleteRequests"] = [];
+  const sourceEditorOpenRequests: FakeRpcHarness["sourceEditorOpenRequests"] = [];
+  const requestInputVariantRequests: FakeRpcHarness["requestInputVariantRequests"] = [];
+  const requestInputBlockingTimeoutRequests: FakeRpcHarness["requestInputBlockingTimeoutRequests"] =
+    [];
   const openWorkflowsGeneratedExportRequests: FakeRpcHarness["openWorkflowsGeneratedExportRequests"] =
     [];
   const workspaceLayoutSaveRequests: FakeRpcHarness["workspaceLayoutSaveRequests"] = [];
@@ -1031,13 +1282,17 @@ function createFakeRpc(input: {
     facts: [],
     exports: [],
   };
+  const promptHistoryEntries: PromptHistoryReadModel["entries"][number][] = [];
+  const acceptedPromptHistorySubmissionIds = new Set<string>();
   let desktopNotificationSequence = 0;
+  const nativeStreamSequences = new Map<string, number>();
   let rebaselineResult: StateReadModelBaseline = {
     app: [],
     workspaces: [],
     revision: 0 as StateRevision,
   };
   const requestCounts = {
+    agents: 0,
     sessionNavigation: 0,
     listProviderAuths: 0,
     fetchProviderAuth: 0,
@@ -1102,6 +1357,23 @@ function createFakeRpc(input: {
     }
   };
 
+  const emitPromptHistoryInvalidation = (workspaceId = TEST_WORKSPACE_INFO.workspaceId): void => {
+    desktopNotificationSequence += 1;
+    for (const listener of desktopNotificationListeners) {
+      listener({
+        kind: "read-model-changed",
+        eventGenerationId: "fake-runtime-event-generation" as never,
+        sequence: desktopNotificationSequence as never,
+        scope: { kind: "workspace", workspaceId: workspaceId as WorkspaceId },
+        invalidation: {
+          scope: "workspace",
+          workspaceId: workspaceId as WorkspaceId,
+          invalidation: { model: "promptHistory" },
+        },
+      });
+    }
+  };
+
   const emitWorkspaceLayoutInvalidation = (
     workspaceId: string,
     layoutId: WorkspaceLayoutSlotId,
@@ -1128,29 +1400,66 @@ function createFakeRpc(input: {
     }
   };
 
-  const emitSurfaceSync = (
-    payload: Omit<SurfaceSyncMessage, "workspaceId"> & { workspaceId?: string },
+  const emitSurfaceChanged = (
+    fixture: SurfaceFixture,
+    workspaceId = TEST_WORKSPACE_INFO.workspaceId,
   ): void => {
-    const scopedPayload: SurfaceSyncMessage = {
-      ...payload,
-      workspaceId: payload.workspaceId ?? TEST_WORKSPACE_INFO.workspaceId,
-    };
-    if (scopedPayload.reason === "surface.closed") {
-      surfaces.delete(scopedPayload.target.surfacePiSessionId);
-    } else if (scopedPayload.snapshot) {
-      const existing = surfaces.get(scopedPayload.target.surfacePiSessionId);
-      if (existing) {
-        existing.snapshot = structuredClone(scopedPayload.snapshot);
-      } else {
-        surfaces.set(scopedPayload.target.surfacePiSessionId, {
-          snapshot: structuredClone(scopedPayload.snapshot),
-          retainCount: 0,
-        });
-      }
+    const target = fixture.transcript.target;
+    const existing = surfaces.get(target.surfacePiSessionId);
+    if (existing) {
+      existing.fixture = structuredClone(fixture);
+    } else {
+      surfaces.set(target.surfacePiSessionId, {
+        fixture: structuredClone(fixture),
+        retainCount: 0,
+      });
     }
+    if (workspaceId !== TEST_WORKSPACE_INFO.workspaceId) return;
+    desktopNotificationSequence += 1;
+    for (const listener of desktopNotificationListeners) {
+      listener({
+        kind: "read-model-changed",
+        eventGenerationId: "fake-runtime-event-generation" as never,
+        sequence: desktopNotificationSequence as never,
+        scope: {
+          kind: "surface",
+          workspaceId: workspaceId as WorkspaceId,
+          surfacePiSessionId: target.surfacePiSessionId,
+        },
+        invalidation: {
+          scope: "workspace",
+          workspaceId: workspaceId as WorkspaceId,
+          invalidation: {
+            model: "surface",
+            ids: [target.surfacePiSessionId],
+          },
+        },
+      });
+    }
+  };
 
-    for (const listener of surfaceSyncListeners) {
-      listener(structuredClone(scopedPayload));
+  const emitSurfaceStreamPatch = (
+    target: PromptTarget,
+    patch: SurfaceStreamPatchInput,
+    workspaceId = TEST_WORKSPACE_INFO.workspaceId,
+  ): void => {
+    if (workspaceId !== TEST_WORKSPACE_INFO.workspaceId) return;
+    const surfacePiSessionId = target.surfacePiSessionId;
+    desktopNotificationSequence += 1;
+    const streamSequence = (nativeStreamSequences.get(surfacePiSessionId) ?? 0) + 1;
+    nativeStreamSequences.set(surfacePiSessionId, streamSequence);
+    for (const listener of desktopNotificationListeners) {
+      listener({
+        kind: "surface-stream-patch",
+        eventGenerationId: "fake-runtime-event-generation" as never,
+        sequence: desktopNotificationSequence as never,
+        workspaceId: workspaceId as WorkspaceId,
+        target: target as never,
+        surfacePiSessionId: surfacePiSessionId as never,
+        streamGenerationId: "test-stream-generation" as never,
+        streamSequence: streamSequence as never,
+        patch,
+      });
     }
   };
 
@@ -1218,22 +1527,21 @@ function createFakeRpc(input: {
   const emitAssistantStream = (
     target: PromptTarget,
     text: string,
-    provider: string,
-    model: string,
+    _provider: string,
+    _model: string,
   ): void => {
-    const partial = assistantMessage("", { provider, model });
-    partial.content = [{ type: "text", text }];
-    const record = getSurfaceRecord(target.surfacePiSessionId);
-    record.snapshot = {
-      ...record.snapshot,
-      target: cloneTarget(target),
-      streamMessage: partial,
-      promptStatus: "streaming",
-    };
-    emitSurfaceSync({
-      reason: "surface.updated",
-      target: cloneTarget(target),
-      snapshot: structuredClone(record.snapshot),
+    const messageId = `${target.surfacePiSessionId}-active-assistant`;
+    emitSurfaceStreamPatch(target, {
+      type: "assistant_message_started",
+      messageId: messageId as never,
+      turnId: `${target.surfacePiSessionId}-active-turn` as never,
+      createdAt: new Date().toISOString() as never,
+    });
+    emitSurfaceStreamPatch(target, {
+      type: "assistant_text_delta",
+      messageId: messageId as never,
+      contentIndex: 0 as never,
+      delta: text,
     });
   };
 
@@ -1244,60 +1552,6 @@ function createFakeRpc(input: {
           requestCounts.rendererReady += 1;
           return { ok: true as const };
         },
-        getAgentSettings: async () => ({
-          ...structuredClone(DEFAULT_AGENT_SETTINGS_STATE),
-          agents: {
-            ...structuredClone(DEFAULT_AGENT_SETTINGS_STATE.agents),
-            orchestrators: [
-              {
-                ...structuredClone(DEFAULT_AGENT_SETTINGS_STATE.agents.orchestrators[0]!),
-                provider: "openai",
-                model: "gpt-4o",
-                reasoningEffort: "medium",
-                systemPrompt: "Default",
-              },
-            ],
-            titleNamer: {
-              provider: "openai-codex",
-              model: "gpt-5.4-mini",
-              reasoningEffort: "low",
-              systemPrompt: "Name the session",
-            },
-          },
-          workflowAgents: {
-            explorer: {
-              id: "explorer",
-              label: "Explorer",
-              provider: "openai",
-              model: "gpt-4o",
-              reasoningEffort: "medium",
-              instructions: "Explore",
-              extensions: [],
-              extensionUsage: {},
-            },
-            implementer: {
-              id: "implementer",
-              label: "Implementer",
-              provider: "openai",
-              model: "gpt-4o",
-              reasoningEffort: "medium",
-              instructions: "Implement",
-              extensions: [],
-              extensionUsage: {},
-            },
-            reviewer: {
-              id: "reviewer",
-              label: "Reviewer",
-              provider: "openai",
-              model: "gpt-4o",
-              reasoningEffort: "medium",
-              instructions: "Review",
-              extensions: [],
-              extensionUsage: {},
-            },
-          },
-          appPreferences: structuredClone(persistedAppPreferences),
-        }),
         getAgentContextPreview: async () => ({
           actor: "orchestrator",
           profileId: "default-orchestrator",
@@ -1364,11 +1618,7 @@ function createFakeRpc(input: {
               };
             }
             case "appPreferences": {
-              const preferences = (
-                await harness.client.request.getAgentSettings({
-                  workspaceId: TEST_WORKSPACE_INFO.workspaceId,
-                })
-              ).appPreferences;
+              const preferences = structuredClone(persistedAppPreferences);
               return {
                 kind: "appPreferences",
                 value: {
@@ -1396,7 +1646,10 @@ function createFakeRpc(input: {
               }
               return {
                 kind: "settings",
-                value: { preferences: appPreferences.value },
+                value: {
+                  preferences: appPreferences.value,
+                  requestInput: structuredClone(requestInputSettings),
+                },
               };
             }
             case "appLogs":
@@ -1428,10 +1681,12 @@ function createFakeRpc(input: {
                 },
               };
             case "agents":
+              requestCounts.agents += 1;
               return {
                 kind: "agents",
                 value: {
                   configuredProfiles: structuredClone(configuredAgentProfiles),
+                  workflowAgents: [],
                   actorExtensionDefaults: structuredClone(agentActorExtensionDefaults),
                   bindings: [],
                   generatedContextPreviews: [],
@@ -1442,6 +1697,14 @@ function createFakeRpc(input: {
               return {
                 kind: "sessionNavigation",
                 value: listNavigation(),
+              };
+            case "promptHistory":
+              return {
+                kind: "promptHistory",
+                value: {
+                  workspaceId: request.workspaceId,
+                  entries: structuredClone(promptHistoryEntries),
+                },
               };
             case "commandInspector": {
               commandInspectorRequests.push({
@@ -1509,7 +1772,26 @@ function createFakeRpc(input: {
               throw new Error(`Unsupported state read model in harness: ${request.kind}`);
           }
         },
-        refetchStateReadModels: async () => [],
+        refetchStateReadModels: async ({ requests }) => {
+          const results: StateReadModelResult[] = [];
+          for (const request of requests) {
+            if (
+              request.kind === "surfaceTranscript" ||
+              request.kind === "surfaceSummary" ||
+              request.kind === "surfaceComposer" ||
+              request.kind === "surfaceQueuedMessages"
+            ) {
+              const surfaceResults = stateReadModelsFromSurfaceFixture(
+                getSurfaceRecord(request.target.surfacePiSessionId).fixture,
+              );
+              const result = surfaceResults.find((candidate) => candidate.kind === request.kind);
+              if (result) results.push(result);
+              continue;
+            }
+            results.push(await harness.client.request.fetchStateReadModel(request));
+          }
+          return results;
+        },
         refetchStateReadModelInvalidation: async ({ descriptor }) => {
           const descriptorWorkspaceId =
             descriptor.scope === "workspace"
@@ -1561,6 +1843,10 @@ function createFakeRpc(input: {
                       : (TEST_WORKSPACE_INFO.workspaceId as WorkspaceId),
                 }),
               ];
+            case "surface":
+              return descriptor.invalidation.ids.flatMap((surfacePiSessionId) =>
+                stateReadModelsFromSurfaceFixture(getSurfaceRecord(surfacePiSessionId).fixture),
+              );
             case "commandInspector":
               return await Promise.all(
                 descriptor.invalidation.ids.map((commandId) =>
@@ -1605,6 +1891,13 @@ function createFakeRpc(input: {
                   kind: "approvals",
                   workspaceId:
                     descriptor.scope === "workspace" ? descriptor.workspaceId : undefined,
+                }),
+              ];
+            case "promptHistory":
+              return [
+                await harness.client.request.fetchStateReadModel({
+                  kind: "promptHistory",
+                  workspaceId: descriptorWorkspaceId,
                 }),
               ];
             case "snippets":
@@ -1738,72 +2031,6 @@ function createFakeRpc(input: {
           snapshots: [],
         }),
         getOpenWorkspaces: async () => [structuredClone(TEST_WORKSPACE_INFO)],
-        updateWorkflowAgent: async ({ key, settings, workspaceId }) => {
-          const state = {
-            ...(await harness.client.request.getAgentSettings({ workspaceId })),
-            workflowAgents: {
-              ...(await harness.client.request.getAgentSettings({ workspaceId })).workflowAgents,
-              [key]: settings,
-            },
-          };
-          return { ok: true, state, agent: settings };
-        },
-        deleteWorkflowAgent: async ({ key, workspaceId }) => {
-          const next = await harness.client.request.getAgentSettings({ workspaceId });
-          const workflowAgents = { ...next.workflowAgents };
-          delete workflowAgents[key];
-          return {
-            ...next,
-            workflowAgents,
-          };
-        },
-        openWorkflowAgentSourceInEditor: async ({ key }) => ({
-          opened: true,
-          path: `/tmp/${key}.agent.json`,
-          editor: "system",
-        }),
-        setAgentProfileExtensionUsage: async ({
-          agentProfile,
-          extensionId,
-          state,
-          workspaceId,
-        }) => {
-          const next = await harness.client.request.getAgentSettings({ workspaceId });
-          const updateExtensionUsage = (extensionUsage: Record<string, ExtensionUsageState>) => {
-            if (extensionUsage[extensionId] === state) {
-              const nextUsage = { ...extensionUsage };
-              delete nextUsage[extensionId];
-              return nextUsage;
-            }
-            return { ...extensionUsage, [extensionId]: state };
-          };
-          next.agents.orchestrators = next.agents.orchestrators.map((profile) =>
-            profile.id === agentProfile
-              ? {
-                  ...profile,
-                  extensionUsage: updateExtensionUsage(profile.extensionUsage),
-                }
-              : profile,
-          );
-          if (next.agents.special.threadHandler.id === agentProfile) {
-            next.agents.special.threadHandler = {
-              ...next.agents.special.threadHandler,
-              extensionUsage: updateExtensionUsage(
-                next.agents.special.threadHandler.extensionUsage,
-              ),
-            };
-          }
-          if (next.workflowAgents[agentProfile]) {
-            const overrides = updateExtensionUsage(
-              next.workflowAgents[agentProfile].overrides ?? {},
-            );
-            next.workflowAgents[agentProfile] = {
-              ...next.workflowAgents[agentProfile],
-              overrides,
-            };
-          }
-          return next;
-        },
         stateAppPreferencesUpdate: async (request) => {
           const externalEditor = request.patch.externalEditor;
           persistedAppPreferences = {
@@ -1853,11 +2080,18 @@ function createFakeRpc(input: {
             },
           };
         },
-        updateRequestUserInputSettings: async ({ workspaceId, ...settings }) => {
-          return {
-            ...(await harness.client.request.getAgentSettings({ workspaceId })),
-            requestUserInput: settings,
+        setRequestInputVariant: async (request) => {
+          requestInputVariantRequests.push(structuredClone(request));
+          requestInputSettings = { ...requestInputSettings, mode: request.mode };
+          return structuredClone(requestInputSettings);
+        },
+        setRequestInputBlockingTimeout: async (request) => {
+          requestInputBlockingTimeoutRequests.push(structuredClone(request));
+          requestInputSettings = {
+            ...requestInputSettings,
+            blockingTimeout: structuredClone(request),
           };
+          return structuredClone(requestInputSettings);
         },
         getWorkspaceInfo: async () => structuredClone(workspaceInfo),
         stateWorkspaceLayoutSaveSlot: async (request) => {
@@ -2045,6 +2279,66 @@ function createFakeRpc(input: {
             reconcileRequired: true,
           };
         },
+        createWorkflowAgentSource: async (request) => {
+          workflowAgentCreateRequests.push(structuredClone(request));
+          const sourceId = request.source.draft.exportName;
+          const path = `/tmp/${sourceId}.agent.json` as AbsolutePath;
+          return {
+            status: "created",
+            session: {
+              sourceKind: "workflow-agent",
+              sourceId,
+              path,
+              sourceVersion: "sha256:created-version",
+              fingerprint: "sha256:created-version",
+              text: "{}\n",
+              diagnostics: [],
+            },
+            fileWriteReceipt: { path, previousExists: false, bytes: 3 },
+            reconcileRequired: true,
+          };
+        },
+        duplicateWorkflowAgentSource: async (request) => {
+          workflowAgentDuplicateRequests.push(structuredClone(request));
+          const sourceId = request.source.draftPatch.exportName;
+          const path = `/tmp/${sourceId}.agent.json` as AbsolutePath;
+          return {
+            status: "duplicated",
+            session: {
+              sourceKind: "workflow-agent",
+              sourceId,
+              path,
+              sourceVersion: "sha256:duplicated-version",
+              fingerprint: "sha256:duplicated-version",
+              text: "{}\n",
+              diagnostics: [],
+            },
+            fileWriteReceipt: { path, previousExists: false, bytes: 3 },
+            reconcileRequired: true,
+          };
+        },
+        deleteWorkflowAgentSource: async (request) => {
+          workflowAgentDeleteRequests.push(structuredClone(request));
+          const sourceId = request.source.sourceId;
+          const deletedPath = `/tmp/${sourceId}.agent.json` as AbsolutePath;
+          return {
+            status: "deleted",
+            sourceKind: "workflow-agent",
+            sourceId,
+            deletedPath,
+            previousSourceVersion: request.source.expectedSourceVersion,
+            fileWriteReceipt: { path: deletedPath, deleted: true },
+            reconcileRequired: true,
+          };
+        },
+        openSourceInEditor: async (request) => {
+          sourceEditorOpenRequests.push(structuredClone(request));
+          return {
+            opened: true,
+            editor: "system",
+            path: `/tmp/${request.sourceId}.agent.json`,
+          };
+        },
         stateAgentProfilesUpdateOrchestrator: async (request) => {
           const current = configuredAgentProfiles.find(
             (profile) =>
@@ -2210,43 +2504,33 @@ function createFakeRpc(input: {
         createSession: async ({ title }) => {
           const sessionId = `session-${summaries.size + 1}`;
           const summary = createSummary(sessionId, title ?? "New orchestrator", "");
-          const snapshot = createSurfaceSnapshot({
+          const fixture = createSurfaceFixture({
             target: createOrchestratorTarget(sessionId),
             messages: [],
           });
           summaries.set(sessionId, summary);
-          surfaces.set(sessionId, { snapshot, retainCount: 1 });
-          return structuredClone(snapshot);
+          surfaces.set(sessionId, { fixture, retainCount: 1 });
+          return { target: cloneTarget(surfaceTarget(fixture)) };
         },
         openSession: async ({ sessionId }) => {
           await openSessionHandlers.get(sessionId)?.();
           const record = getSurfaceRecord(sessionId);
           record.retainCount += 1;
-          openedTargets.push(cloneTarget(record.snapshot.target));
-          return structuredClone(record.snapshot);
+          const target = surfaceTarget(record.fixture);
+          openedTargets.push(cloneTarget(target));
+          return { target: cloneTarget(target) };
         },
         openSurface: async ({ target }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
           record.retainCount += 1;
-          record.snapshot = {
-            ...record.snapshot,
-            target: cloneTarget(target),
-          };
+          record.fixture = withSurfaceTarget(record.fixture, target);
           openedTargets.push(cloneTarget(target));
-          return structuredClone(record.snapshot);
+          return { target: cloneTarget(target) };
         },
         closeSurface: async ({ target }) => {
           closeRequests.push(cloneTarget(target));
           const record = getSurfaceRecord(target.surfacePiSessionId);
           record.retainCount = Math.max(0, record.retainCount - 1);
-          if (record.retainCount === 0 && record.snapshot.promptStatus !== "streaming") {
-            queueMicrotask(() => {
-              emitSurfaceSync({
-                reason: "surface.closed",
-                target: cloneTarget(target),
-              });
-            });
-          }
           return { ok: true };
         },
         renameSession: async ({ sessionId, title }) => {
@@ -2257,34 +2541,49 @@ function createFakeRpc(input: {
         },
         forkSession: async ({ sessionId, title }) => {
           const sourceSummary = summaries.get(sessionId) ?? null;
-          const sourceSurface = getSurfaceRecord(sessionId).snapshot;
+          const sourceFixture = getSurfaceRecord(sessionId).fixture;
           if (!sourceSummary) {
             throw new Error(`Missing source session ${sessionId}`);
           }
           const nextSessionId = `session-${summaries.size + 1}`;
+          const target = createOrchestratorTarget(nextSessionId);
           const summary = createSummary(
             nextSessionId,
             title ?? `${sourceSummary.title} fork`,
             sourceSummary.preview,
-            sourceSurface.reasoningEffort,
+            sourceFixture.summary.reasoningEffort as ReasoningEffort,
           );
-          const snapshot = createSurfaceSnapshot({
-            target: createOrchestratorTarget(nextSessionId),
-            messages: sourceSurface.messages,
-            provider: sourceSurface.provider,
-            model: sourceSurface.model,
-            reasoningEffort: sourceSurface.reasoningEffort,
-            systemPrompt: sourceSurface.systemPrompt,
-            resolvedSystemPrompt: sourceSurface.resolvedSystemPrompt,
-          });
+          const retargeted = withSurfaceTarget(structuredClone(sourceFixture), target);
+          const fixture: SurfaceFixture = {
+            ...retargeted,
+            transcript: {
+              ...retargeted.transcript,
+              messages: retargeted.transcript.messages.map((message, ordinal) => ({
+                ...message,
+                messageId: `${nextSessionId}-message-${ordinal + 1}` as never,
+                workspaceSessionId: nextSessionId as never,
+                surfacePiSessionId: nextSessionId as never,
+                ordinal,
+              })),
+              activeAssistantMessage: null,
+              streamCursor: null,
+            },
+            summary: {
+              ...retargeted.summary,
+              title: nextSessionId,
+              status: "idle",
+              activeTurnId: null,
+              activeTurnStartedAt: null,
+            },
+          };
           summaries.set(nextSessionId, summary);
-          surfaces.set(nextSessionId, { snapshot, retainCount: 1 });
-          return structuredClone(snapshot);
+          surfaces.set(nextSessionId, { fixture, retainCount: 1 });
+          return { target };
         },
         deleteSession: async ({ sessionId }) => {
           summaries.delete(sessionId);
           for (const [surfacePiSessionId, record] of surfaces.entries()) {
-            if (record.snapshot.target.workspaceSessionId === sessionId) {
+            if (surfaceTarget(record.fixture).workspaceSessionId === sessionId) {
               surfaces.delete(surfacePiSessionId);
             }
           }
@@ -2346,43 +2645,59 @@ function createFakeRpc(input: {
             ...structuredClone(request),
             message: structuredClone(runtimeMessage),
           };
-          const pendingUserMessage = submittedUserMessage(runtimeMessage);
-          if (record.snapshot.promptStatus === "streaming") {
-            record.snapshot = {
-              ...record.snapshot,
-              composerDraft: {
-                text: "",
-                attachments: [],
-                snippetMentions: [],
-                updatedAt: "2026-04-10T10:12:00.000Z",
-              },
-              queuedMessages: [
-                ...record.snapshot.queuedMessages,
-                {
-                  id: `queued-${++queuedMessageSequence}`,
-                  kind: "user_message",
-                  text:
-                    pendingUserMessage && typeof pendingUserMessage.content !== "string"
-                      ? pendingUserMessage.content
-                          .map((block) => (block.type === "text" ? block.text : ""))
-                          .join("")
-                      : String(pendingUserMessage?.content ?? ""),
-                  status: "queued",
-                  createdAt: "2026-04-10T10:12:00.000Z",
-                  updatedAt: "2026-04-10T10:12:00.000Z",
-                },
-              ],
-            };
-            queueMicrotask(() => {
-              emitSurfaceSync({
-                reason: "surface.updated",
-                target: cloneTarget(request.target),
-                snapshot: structuredClone(record.snapshot),
-              });
+          if (
+            request.text.trim() &&
+            !request.clientRequestId.includes(":queued:") &&
+            !acceptedPromptHistorySubmissionIds.has(request.clientRequestId)
+          ) {
+            acceptedPromptHistorySubmissionIds.add(request.clientRequestId);
+            promptHistoryEntries.push({
+              workspaceSessionId: request.target.workspaceSessionId as WorkspaceSessionId,
+              surfacePiSessionId: request.target.surfacePiSessionId as never,
+              queueItemId: `prompt-history-${request.clientRequestId}` as QueueItemId,
+              text: request.text,
+              sentAt: "2026-04-10T10:12:00.000Z" as never,
             });
+            queueMicrotask(() => emitPromptHistoryInvalidation(request.workspaceId));
+          }
+          const pendingUserMessage = submittedUserMessage(runtimeMessage);
+          if (surfaceIsStreaming(record.fixture)) {
+            const queuedMessage: QueuedSurfaceMessage = {
+              id: `queued-${++queuedMessageSequence}`,
+              kind: "user_message",
+              text:
+                typeof pendingUserMessage.content === "string"
+                  ? pendingUserMessage.content
+                  : pendingUserMessage.content
+                      .map((block) => (block.type === "text" ? block.text : ""))
+                      .join(""),
+              status: "queued",
+              createdAt: "2026-04-10T10:12:00.000Z",
+              updatedAt: "2026-04-10T10:12:00.000Z",
+            };
+            record.fixture = withQueuedMessages(
+              {
+                ...record.fixture,
+                transcript: {
+                  ...record.fixture.transcript,
+                  composerDraft: { text: "", attachmentIds: [] },
+                },
+                composer: {
+                  ...record.fixture.composer,
+                  draft: {
+                    text: "",
+                    attachments: [],
+                    snippetMentions: [],
+                    updatedAt: "2026-04-10T10:12:00.000Z",
+                  },
+                },
+              },
+              [...record.fixture.queuedMessages.queuedMessages, queuedMessage],
+            );
+            queueMicrotask(() => emitSurfaceChanged(record.fixture));
             return {
               target: cloneTarget(request.target),
-              queuedMessageId: record.snapshot.queuedMessages.at(-1)?.id ?? "queued-test",
+              queuedMessageId: queuedMessage.id,
               status: "queued",
               receipt: {
                 clientRequestId: request.clientRequestId,
@@ -2395,33 +2710,50 @@ function createFakeRpc(input: {
 
           promptRequests.push(normalizedRequest);
           pendingPromptSurfaces.add(request.target.surfacePiSessionId);
-          record.snapshot = {
-            ...record.snapshot,
-            target: cloneTarget(request.target),
-            pendingUserMessage: pendingUserMessage ? structuredClone(pendingUserMessage) : null,
-            composerDraft: {
-              text: "",
-              attachments: [],
-              snippetMentions: [],
-              updatedAt: "2026-04-10T10:12:00.000Z",
+          const activeTurnId = `turn-${promptRequests.length}`;
+          const committedUserMessage = rendererEntryToTranscript(
+            request.target,
+            pendingUserMessage,
+            record.fixture.transcript.messages.length,
+          );
+          record.fixture = withSurfaceTarget(
+            {
+              ...record.fixture,
+              transcript: {
+                ...record.fixture.transcript,
+                surfaceStatus: "running",
+                promptLock: {
+                  ...record.fixture.transcript.promptLock,
+                  activeTurnId: activeTurnId as never,
+                },
+                composerDraft: { text: "", attachmentIds: [] },
+                messages: [...record.fixture.transcript.messages, committedUserMessage],
+                activeAssistantMessage: null,
+                streamCursor: null,
+              },
+              summary: {
+                ...record.fixture.summary,
+                status: "running",
+                activeTurnId: activeTurnId as never,
+                activeTurnStartedAt: "2026-04-10T10:12:00.000Z",
+              },
+              composer: {
+                ...record.fixture.composer,
+                draft: {
+                  text: "",
+                  attachments: [],
+                  snippetMentions: [],
+                  updatedAt: "2026-04-10T10:12:00.000Z",
+                },
+              },
             },
-            streamMessage: null,
-            streamSequence: 0,
-            promptStatus: "streaming",
-            activeTurnId: `turn-${promptRequests.length}`,
-            activeTurnStartedAt: "2026-04-10T10:12:00.000Z",
-          };
+            request.target,
+          );
           updateSummary(request.target.workspaceSessionId, (summary) => {
             summary.status = "running";
           });
           emitSessionNavigationInvalidation();
-          queueMicrotask(() => {
-            emitSurfaceSync({
-              reason: "background.started",
-              target: cloneTarget(request.target),
-              snapshot: structuredClone(record.snapshot),
-            });
-          });
+          queueMicrotask(() => emitSurfaceChanged(record.fixture));
           void (async () => {
             await Bun.sleep(0);
             const promptHandler =
@@ -2434,55 +2766,57 @@ function createFakeRpc(input: {
               return;
             }
 
-            const provider = record.snapshot.provider;
-            const model = record.snapshot.model;
-            const nextMessages = [
-              ...(record.snapshot.messages as AgentMessage[]),
-              pendingUserMessage,
+            const provider = record.fixture.summary.provider;
+            const model = record.fixture.summary.model;
+            emitAssistantStream(request.target, result.assistantText, provider, model);
+            const appendedRendererTranscriptEntries = [
               ...(result.extraMessages ? structuredClone(result.extraMessages) : []),
               assistantMessage(result.assistantText, { provider, model }),
             ];
-
-            record.snapshot = {
-              ...record.snapshot,
-              target: cloneTarget(request.target),
-              messages: nextMessages,
-              provider,
-              model,
-              reasoningEffort: record.snapshot.reasoningEffort,
-              systemPrompt: record.snapshot.systemPrompt,
-              pendingUserMessage: null,
-              streamMessage: null,
-              promptStatus: "idle",
-              activeTurnId: null,
-              activeTurnStartedAt: null,
+            const committedMessages = [...record.fixture.transcript.messages];
+            for (const message of appendedRendererTranscriptEntries) {
+              committedMessages.push(
+                rendererEntryToTranscript(request.target, message, committedMessages.length),
+              );
+            }
+            record.fixture = {
+              ...record.fixture,
+              transcript: {
+                ...record.fixture.transcript,
+                surfaceStatus: "idle",
+                promptLock: { ...record.fixture.transcript.promptLock, activeTurnId: null },
+                messages: committedMessages,
+                activeAssistantMessage: null,
+                streamCursor: null,
+              },
+              summary: {
+                ...record.fixture.summary,
+                status: "idle",
+                activeTurnId: null,
+                activeTurnStartedAt: null,
+              },
             };
 
             updateSummary(request.target.workspaceSessionId, (summary) => {
               summary.preview = result.assistantText;
-              summary.messageCount = nextMessages.length;
+              summary.messageCount = committedMessages.length;
               summary.status = "idle";
               summary.isUnread = true;
               summary.unreadAt = "2026-04-10T10:12:00.000Z";
               summary.unreadReason = "assistant-turn-finished";
             });
 
-            const surfaceSyncPayload: SurfaceSyncMessage = {
-              workspaceId: TEST_WORKSPACE_INFO.workspaceId,
-              reason: result.reason ?? "prompt.settled",
-              target: cloneTarget(request.target),
-              snapshot: structuredClone(record.snapshot),
-            };
-            if (result.emitSurfaceSyncBeforeStreamDone) {
-              emitSurfaceSync(surfaceSyncPayload);
-            } else {
-              emitAssistantStream(request.target, result.assistantText, provider, model);
-              emitSurfaceSync(surfaceSyncPayload);
-            }
+            emitSurfaceStreamPatch(request.target, {
+              type: "assistant_message_finished",
+              messageId: `${request.target.surfacePiSessionId}-active-assistant` as never,
+              status: "completed",
+              finishedAt: new Date().toISOString() as never,
+            });
+            emitSurfaceChanged(record.fixture);
             emitSessionNavigationInvalidation();
-            const [nextQueued, ...remainingQueued] = record.snapshot.queuedMessages;
+            const [nextQueued, ...remainingQueued] = record.fixture.queuedMessages.queuedMessages;
             if (nextQueued) {
-              record.snapshot = { ...record.snapshot, queuedMessages: remainingQueued };
+              record.fixture = withQueuedMessages(record.fixture, remainingQueued as never);
               void harness.client.request.sendPrompt({
                 ...request,
                 text: nextQueued.text,
@@ -2512,42 +2846,63 @@ function createFakeRpc(input: {
         },
         editCommittedUserMessage: async ({ target, messageTimestamp, message, workspaceId }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
-          const messages = record.snapshot.messages as AgentMessage[];
+          const messages = record.fixture.transcript.messages;
+          const numericMessageTimestamp = Number(messageTimestamp);
+          const normalizedMessageTimestamp = Number.isFinite(numericMessageTimestamp)
+            ? numericMessageTimestamp
+            : Date.parse(String(messageTimestamp));
           const editIndex = messages.findIndex(
             (candidate) =>
-              candidate.role === "user" && String(candidate.timestamp) === String(messageTimestamp),
+              candidate.role === "user" &&
+              (Date.parse(candidate.submittedAt) === normalizedMessageTimestamp ||
+                Date.parse(candidate.committedAt) === normalizedMessageTimestamp),
           );
           if (editIndex < 0) {
             throw new Error(
               "Unable to edit: user message was not found in the active conversation.",
             );
           }
-          record.snapshot = {
-            ...record.snapshot,
-            messages: structuredClone(messages.slice(0, editIndex)),
+          record.fixture = {
+            ...record.fixture,
+            transcript: {
+              ...record.fixture.transcript,
+              messages: structuredClone(messages.slice(0, editIndex)),
+            },
           };
-          return await harness.client.request.sendPrompt({
+          await harness.client.request.sendPrompt({
             workspaceId,
             panelId: "primary",
             target,
-            ...submittedMessageFromAgentMessage(message),
+            ...submittedMessageFromRendererEntry(message),
             clientRequestId: "edit-committed-message",
           });
+          return { target: cloneTarget(target) };
         },
         updateComposerDraft: async ({ target, draft }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
-          record.snapshot = {
-            ...record.snapshot,
-            composerDraft: {
-              text: draft.text,
-              attachments: structuredClone(draft.attachments),
-              snippetMentions: structuredClone(draft.snippetMentions ?? []),
-              updatedAt:
-                draft.text.trim() ||
-                draft.attachments.length > 0 ||
-                (draft.snippetMentions?.length ?? 0) > 0
-                  ? "2026-04-10T10:12:00.000Z"
-                  : null,
+          const updatedAt =
+            draft.text.trim() ||
+            draft.attachments.length > 0 ||
+            (draft.snippetMentions?.length ?? 0) > 0
+              ? "2026-04-10T10:12:00.000Z"
+              : null;
+          record.fixture = {
+            ...record.fixture,
+            transcript: {
+              ...record.fixture.transcript,
+              composerDraft: {
+                text: draft.text,
+                attachmentIds: draft.attachments.map((attachment) => attachment.id),
+              },
+            },
+            composer: {
+              ...record.fixture.composer,
+              draft: {
+                text: draft.text,
+                attachments: structuredClone(draft.attachments),
+                snippetMentions: structuredClone(draft.snippetMentions ?? []),
+                updatedAt,
+              },
             },
           };
           return {
@@ -2557,97 +2912,73 @@ function createFakeRpc(input: {
         },
         deleteQueuedSurfaceMessage: async ({ target, queuedMessageId }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
-          record.snapshot = {
-            ...record.snapshot,
-            queuedMessages: record.snapshot.queuedMessages.filter(
+          record.fixture = withQueuedMessages(
+            record.fixture,
+            record.fixture.queuedMessages.queuedMessages.filter(
               (message) => message.id !== queuedMessageId,
             ),
-          };
-          queueMicrotask(() =>
-            emitSurfaceSync({
-              reason: "surface.updated",
-              target: cloneTarget(target),
-              snapshot: structuredClone(record.snapshot),
-            }),
           );
+          queueMicrotask(() => emitSurfaceChanged(record.fixture));
           return {
             ok: true,
             target: cloneTarget(target),
-            snapshot: structuredClone(record.snapshot),
           };
         },
         editQueuedSurfaceMessage: async ({ target, queuedMessageId }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
-          const queued = record.snapshot.queuedMessages.find(
+          const queued = record.fixture.queuedMessages.queuedMessages.find(
             (message) => message.id === queuedMessageId,
           );
-          record.snapshot = {
-            ...record.snapshot,
-            queuedMessages: record.snapshot.queuedMessages.filter(
+          record.fixture = withQueuedMessages(
+            record.fixture,
+            record.fixture.queuedMessages.queuedMessages.filter(
               (message) => message.id !== queuedMessageId,
             ),
-          };
+          );
+          queueMicrotask(() => emitSurfaceChanged(record.fixture));
           return {
             ok: true,
             text: queued?.text,
-            snapshot: structuredClone(record.snapshot),
           };
         },
         reorderQueuedSurfaceMessage: async ({ target, queuedMessageId, beforeQueuedMessageId }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
-          const moving = record.snapshot.queuedMessages.find(
+          const moving = record.fixture.queuedMessages.queuedMessages.find(
             (message) => message.id === queuedMessageId,
           );
           if (moving) {
-            const remaining = record.snapshot.queuedMessages.filter(
+            const remaining = record.fixture.queuedMessages.queuedMessages.filter(
               (message) => message.id !== queuedMessageId,
             );
             const beforeIndex = beforeQueuedMessageId
               ? remaining.findIndex((message) => message.id === beforeQueuedMessageId)
               : remaining.length;
-            record.snapshot = {
-              ...record.snapshot,
-              queuedMessages: [
-                ...remaining.slice(0, beforeIndex < 0 ? remaining.length : beforeIndex),
-                moving,
-                ...remaining.slice(beforeIndex < 0 ? remaining.length : beforeIndex),
-              ],
-            };
+            record.fixture = withQueuedMessages(record.fixture, [
+              ...remaining.slice(0, beforeIndex < 0 ? remaining.length : beforeIndex),
+              moving,
+              ...remaining.slice(beforeIndex < 0 ? remaining.length : beforeIndex),
+            ] as never);
           }
-          queueMicrotask(() =>
-            emitSurfaceSync({
-              reason: "surface.updated",
-              target: cloneTarget(target),
-              snapshot: structuredClone(record.snapshot),
-            }),
-          );
+          queueMicrotask(() => emitSurfaceChanged(record.fixture));
           return {
             ok: true,
             target: cloneTarget(target),
-            snapshot: structuredClone(record.snapshot),
           };
         },
         steerQueuedSurfaceMessage: async ({ target, queuedMessageId }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
-          record.snapshot = {
-            ...record.snapshot,
-            queuedMessages: record.snapshot.queuedMessages.map((message) =>
+          record.fixture = withQueuedMessages(
+            record.fixture,
+            record.fixture.queuedMessages.queuedMessages.map((message) =>
               message.id === queuedMessageId
                 ? { ...message, status: "steering", updatedAt: "2026-04-10T10:13:00.000Z" }
                 : message,
             ),
-          };
-          queueMicrotask(() =>
-            emitSurfaceSync({
-              reason: "surface.updated",
-              target: cloneTarget(target),
-              snapshot: structuredClone(record.snapshot),
-            }),
           );
+          queueMicrotask(() => emitSurfaceChanged(record.fixture));
           return {
             ok: true,
             target: cloneTarget(target),
-            snapshot: structuredClone(record.snapshot),
           };
         },
         answerRequestUserInput: async (request) => {
@@ -2672,33 +3003,26 @@ function createFakeRpc(input: {
                 : inputRequest.completedAt;
           }
           const surfaceRecord = getSurfaceRecord(request.surfacePiSessionId);
-          const target = surfaceRecord.snapshot.target;
-          surfaceRecord.snapshot = {
-            ...surfaceRecord.snapshot,
-            queuedMessages: [
-              {
-                id: `queued-${++queuedMessageSequence}`,
-                kind: "request_user_input_answer",
-                title: "Request user input answered",
-                text: JSON.stringify({
-                  type: "request_user_input.answer",
-                  requestId: request.requestId,
-                  questionId: request.questionId,
-                  delivery: request.delivery,
-                }),
-                status: "queued",
-                createdAt: "2026-04-10T10:13:00.000Z",
-                updatedAt: "2026-04-10T10:13:00.000Z",
-              },
-              ...surfaceRecord.snapshot.queuedMessages,
-            ],
+          const queuedAnswer: QueuedSurfaceMessage = {
+            id: `queued-${++queuedMessageSequence}`,
+            kind: "request_user_input_answer",
+            title: "Request user input answered",
+            text: JSON.stringify({
+              type: "request_user_input.answer",
+              requestId: request.requestId,
+              questionId: request.questionId,
+              delivery: request.delivery,
+            }),
+            status: "queued",
+            createdAt: "2026-04-10T10:13:00.000Z",
+            updatedAt: "2026-04-10T10:13:00.000Z",
           };
+          surfaceRecord.fixture = withQueuedMessages(surfaceRecord.fixture, [
+            queuedAnswer,
+            ...surfaceRecord.fixture.queuedMessages.queuedMessages,
+          ]);
           queueMicrotask(() => {
-            emitSurfaceSync({
-              reason: "surface.updated",
-              target: cloneTarget(target),
-              snapshot: structuredClone(surfaceRecord.snapshot),
-            });
+            emitSurfaceChanged(surfaceRecord.fixture);
             emitSessionNavigationInvalidation();
           });
           return {
@@ -2707,7 +3031,7 @@ function createFakeRpc(input: {
             status: "recorded",
             delivery: {
               kind: "nonblocking-queued",
-              queuedItemId: surfaceRecord.snapshot.queuedMessages[0]!.id as QueueItemId,
+              queuedItemId: queuedAnswer.id as QueueItemId,
             },
           };
         },
@@ -2753,37 +3077,16 @@ function createFakeRpc(input: {
           }
           return { requestId: request.requestId as RequestInputRequestId };
         },
-        setExtensionContextAutoUpdate: async ({ target, enabled }) => {
-          const record = getSurfaceRecord(target.surfacePiSessionId);
-          record.snapshot = {
-            ...record.snapshot,
-            promptBinding: record.snapshot.promptBinding
-              ? {
-                  ...record.snapshot.promptBinding,
-                  updateExtensionContextBeforeNextTurn: enabled,
-                }
-              : undefined,
-          };
-          queueMicrotask(() =>
-            emitSurfaceSync({
-              reason: "surface.updated",
-              target: cloneTarget(target),
-              snapshot: structuredClone(record.snapshot),
-            }),
-          );
-          return {
-            ok: true,
-            target: cloneTarget(target),
-            snapshot: structuredClone(record.snapshot),
-          };
-        },
+        setExtensionContextAutoUpdate: async ({ target }) => ({
+          ok: true,
+          target: cloneTarget(target),
+        }),
         setSurfaceModel: async ({ target, provider, model }) => {
           modelUpdates.push({ target: cloneTarget(target), model });
           const record = getSurfaceRecord(target.surfacePiSessionId);
-          record.snapshot = {
-            ...record.snapshot,
-            provider,
-            model,
+          record.fixture = {
+            ...record.fixture,
+            summary: { ...record.fixture.summary, provider, model },
           };
           if (target.surface === "orchestrator") {
             updateSummary(target.workspaceSessionId, (summary) => {
@@ -2791,40 +3094,28 @@ function createFakeRpc(input: {
               summary.modelId = model;
             });
           }
-          queueMicrotask(() => {
-            emitSurfaceSync({
-              reason: "surface.updated",
-              target: cloneTarget(target),
-              snapshot: structuredClone(record.snapshot),
-            });
-          });
+          queueMicrotask(() => emitSurfaceChanged(record.fixture));
           return { ok: true, target: cloneTarget(target) };
         },
         setSurfaceThoughtLevel: async ({ target, level }) => {
           thoughtLevelUpdates.push({ target: cloneTarget(target), level });
           const record = getSurfaceRecord(target.surfacePiSessionId);
-          record.snapshot = {
-            ...record.snapshot,
-            reasoningEffort: level,
+          record.fixture = {
+            ...record.fixture,
+            summary: { ...record.fixture.summary, reasoningEffort: level },
           };
           if (target.surface === "orchestrator") {
             updateSummary(target.workspaceSessionId, (summary) => {
               summary.thinkingLevel = level;
             });
           }
-          queueMicrotask(() => {
-            emitSurfaceSync({
-              reason: "surface.updated",
-              target: cloneTarget(target),
-              snapshot: structuredClone(record.snapshot),
-            });
-          });
+          queueMicrotask(() => emitSurfaceChanged(record.fixture));
           return { ok: true, target: cloneTarget(target) };
         },
         setSurfaceExtensionUsage: async ({ target, extensionId, state }) => {
           const record = getSurfaceRecord(target.surfacePiSessionId);
-          const loaded = new Set(record.snapshot.loadedExtensionIds);
-          const available = new Set(record.snapshot.availableExtensionIds);
+          const loaded = new Set(record.fixture.summary.loadedExtensionIds);
+          const available = new Set(record.fixture.summary.availableExtensionIds);
           loaded.delete(extensionId);
           available.delete(extensionId);
           if (state === "loaded") {
@@ -2832,22 +3123,18 @@ function createFakeRpc(input: {
           } else if (state === "available") {
             available.add(extensionId);
           }
-          record.snapshot = {
-            ...record.snapshot,
-            loadedExtensionIds: [...loaded],
-            availableExtensionIds: [...available],
+          record.fixture = {
+            ...record.fixture,
+            summary: {
+              ...record.fixture.summary,
+              loadedExtensionIds: [...loaded],
+              availableExtensionIds: [...available],
+            },
           };
-          queueMicrotask(() => {
-            emitSurfaceSync({
-              reason: "surface.updated",
-              target: cloneTarget(target),
-              snapshot: structuredClone(record.snapshot),
-            });
-          });
+          queueMicrotask(() => emitSurfaceChanged(record.fixture));
           return {
             ok: true,
             target: cloneTarget(target),
-            snapshot: structuredClone(record.snapshot),
           };
         },
         cancelPrompt: async ({ target }) => {
@@ -2856,21 +3143,23 @@ function createFakeRpc(input: {
             cancelledPromptSurfaces.add(target.surfacePiSessionId);
           }
           const record = getSurfaceRecord(target.surfacePiSessionId);
-          record.snapshot = {
-            ...record.snapshot,
-            pendingUserMessage: null,
-            streamMessage: null,
-            promptStatus: "idle",
-            activeTurnId: null,
-            activeTurnStartedAt: null,
+          record.fixture = {
+            ...record.fixture,
+            transcript: {
+              ...record.fixture.transcript,
+              surfaceStatus: "idle",
+              promptLock: { ...record.fixture.transcript.promptLock, activeTurnId: null },
+              activeAssistantMessage: null,
+              streamCursor: null,
+            },
+            summary: {
+              ...record.fixture.summary,
+              status: "idle",
+              activeTurnId: null,
+              activeTurnStartedAt: null,
+            },
           };
-          queueMicrotask(() => {
-            emitSurfaceSync({
-              reason: "prompt.settled",
-              target: cloneTarget(target),
-              snapshot: structuredClone(record.snapshot),
-            });
-          });
+          queueMicrotask(() => emitSurfaceChanged(record.fixture));
           return { ok: true };
         },
         listProviderAuths: async () => {
@@ -2895,10 +3184,6 @@ function createFakeRpc(input: {
           artifactOpenListeners.add(listener as (payload: ArtifactOpenMessage) => void);
           return;
         }
-        if (messageName === "sendSurfaceSync") {
-          surfaceSyncListeners.add(listener as (payload: SurfaceSyncMessage) => void);
-          return;
-        }
         if (messageName === "sendDesktopNotification") {
           desktopNotificationListeners.add(
             listener as (payload: DesktopRendererNotification) => void,
@@ -2909,10 +3194,6 @@ function createFakeRpc(input: {
       removeMessageListener: (messageName: string, listener: unknown) => {
         if (messageName === "sendArtifactOpen") {
           artifactOpenListeners.delete(listener as (payload: ArtifactOpenMessage) => void);
-          return;
-        }
-        if (messageName === "sendSurfaceSync") {
-          surfaceSyncListeners.delete(listener as (payload: SurfaceSyncMessage) => void);
           return;
         }
         if (messageName === "sendDesktopNotification") {
@@ -2945,6 +3226,12 @@ function createFakeRpc(input: {
     openSnippetSourceRequests,
     sourceEditOpenRequests,
     sourceEditSaveRequests,
+    workflowAgentCreateRequests,
+    workflowAgentDuplicateRequests,
+    workflowAgentDeleteRequests,
+    sourceEditorOpenRequests,
+    requestInputVariantRequests,
+    requestInputBlockingTimeoutRequests,
     openWorkflowsGeneratedExportRequests,
     workspaceLayoutSaveRequests,
     appLogSeenRequests,
@@ -2956,7 +3243,8 @@ function createFakeRpc(input: {
     updateSummary,
     emitSessionNavigationInvalidation,
     emitArtifactOpen,
-    emitSurfaceSync,
+    emitSurfaceChanged,
+    emitSurfaceStreamPatch,
     emitAppLogUpdate,
     emitDesktopNotification: (payload) => {
       for (const listener of desktopNotificationListeners) {
@@ -3009,8 +3297,8 @@ function createFakeRpc(input: {
       else openSessionHandlers.delete(sessionId);
     },
     getRetainCount: (surfacePiSessionId) => surfaces.get(surfacePiSessionId)?.retainCount ?? 0,
-    getSurfaceSnapshot: (surfacePiSessionId) =>
-      structuredClone(getSurfaceRecord(surfacePiSessionId).snapshot),
+    getSurfaceFixture: (surfacePiSessionId) =>
+      structuredClone(getSurfaceRecord(surfacePiSessionId).fixture),
     getRendererLayoutFixture: (workspaceId) =>
       structuredClone(rendererLayoutFixtures.get(workspaceId) ?? null),
     setRendererLayoutFixture: (workspaceId, state) => {
@@ -3023,7 +3311,6 @@ function createFakeRpc(input: {
 
 async function createRuntime(
   harness: FakeRpcHarness,
-  storage = createMemoryStorage(),
   workspaceInfo = TEST_WORKSPACE_INFO,
   options: {
     seedInitialLayout?: boolean;
@@ -3049,7 +3336,7 @@ async function createRuntime(
         : undefined;
     if (initialSession) {
       try {
-        harness.getSurfaceSnapshot(initialSession.id);
+        harness.getSurfaceFixture(initialSession.id);
         harness.setRendererLayoutFixture(
           workspaceInfo.workspaceId,
           createRendererLayoutFixtureState({
@@ -3070,7 +3357,7 @@ async function createRuntime(
           }),
         );
       } catch {
-        // Tests without a surface snapshot exercise empty-layout startup.
+        // Tests without surface read models exercise empty-layout startup.
       }
     }
   }
@@ -3078,38 +3365,17 @@ async function createRuntime(
   return await createChatRuntime(
     { workspaceInfo, ...options.runtimeOptions },
     harness.client as never,
-    storage,
   );
 }
 
 describe("createChatRuntime", () => {
-  it("hydrates the primary pane from an orchestrator surface and keeps the resolved prompt separate", async () => {
-    const rawPrompt = "You are svvy.";
-    const resolvedPrompt =
-      "You are svvy.\n\n# Project Context\n\nCurrent date: 2026-04-21\nCurrent working directory: /tmp/svvy";
+  it("hydrates the primary pane from orchestrator surface read models", async () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Prompt Channel", "done")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("inspect"), assistantMessage("done")],
-          systemPrompt: rawPrompt,
-          resolvedSystemPrompt: resolvedPrompt,
-          externalContextSources: [
-            {
-              id: "0:/tmp/svvy/AGENTS.md",
-              kind: "AGENTS.md",
-              title: "AGENTS.md",
-              path: "/tmp/svvy/AGENTS.md",
-              content: "# Standards",
-              contentHash: "abc123",
-              order: 0,
-              enabled: true,
-              actors: ["orchestrator", "handler", "workflow-task"],
-              sourceGroup: "workspace_chain",
-              readStatus: { status: "readable" },
-            },
-          ],
         }),
       ],
     });
@@ -3123,13 +3389,35 @@ describe("createChatRuntime", () => {
       createOrchestratorTarget("session-1"),
     );
     expect(controller).toBeTruthy();
-    expect(controller?.agent.state.systemPrompt).toBe(rawPrompt);
-    expect(controller?.resolvedSystemPrompt).toContain("# Project Context");
-    expect(controller?.externalContextSources).toEqual([
-      expect.objectContaining({ path: "/tmp/svvy/AGENTS.md", contentHash: "abc123" }),
-    ]);
-    expect(controller?.agent.state.messages.at(-1)).toMatchObject({
+    expect(controller?.view.messages.at(-1)).toMatchObject({
       role: "assistant",
+    });
+
+    runtime.dispose();
+  });
+
+  it("preserves redacted reasoning metadata from state-backed transcripts", async () => {
+    const assistant = assistantMessage("");
+    assistant.content = [{ type: "thinking", thinking: "", redacted: true }];
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Redacted reasoning", "")],
+      surfaces: [
+        createSurfaceFixture({
+          target: createOrchestratorTarget("session-1"),
+          messages: [userMessage("inspect"), assistant],
+        }),
+      ],
+    });
+
+    const runtime = await createRuntime(harness);
+    const renderedAssistant = runtime
+      .getPaneController(runtime.primaryPaneId)
+      ?.view.messages.find((message) => message.role === "assistant");
+
+    expect(renderedAssistant?.role === "assistant" ? renderedAssistant.content[0] : null).toEqual({
+      type: "thinking",
+      thinking: "",
+      redacted: true,
     });
 
     runtime.dispose();
@@ -3139,6 +3427,7 @@ describe("createChatRuntime", () => {
     const requestUserInputRequest = createRequestUserInputRequest({
       variant: "blocking",
       timeout: {
+        timerVersion: 1,
         enabled: true,
         durationMs: 300_000,
         startedAt: "2026-04-10T10:12:00.000Z",
@@ -3151,7 +3440,7 @@ describe("createChatRuntime", () => {
       sessions: [createSummary("session-1", "Orchestrator", "Waiting")],
       requestUserInputRequests: [requestUserInputRequest],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("clarify"), assistantMessage("Waiting")],
         }),
@@ -3190,16 +3479,22 @@ describe("createChatRuntime", () => {
       expiresAt: null,
     });
 
+    await runtime.setRequestUserInputTimerPaused({
+      surfacePiSessionId: "session-1",
+      requestId: "rui-request-1",
+      paused: false,
+    });
+    expect(harness.requestUserInputTimerRequests[1]?.clientSubmission).toMatchObject({
+      source: "desktop",
+      clientRequestId: expect.stringMatching(/^desktop-submit:/),
+    });
+
     await runtime.answerRequestUserInput({
       surfacePiSessionId: "session-1",
       requestId: "rui-request-1",
       questionId: "rui-question-1",
       answer: { kind: "option", optionId: "rui-option-2" },
       delivery: "enqueue-and-run",
-      clientSubmission: proxyObject({
-        correlationId: "request-input-answer-proxy",
-        source: "request-input-panel",
-      }),
     });
 
     expect(harness.requestUserInputAnswerRequests).toEqual([
@@ -3210,8 +3505,8 @@ describe("createChatRuntime", () => {
         answer: { kind: "option", optionId: "rui-option-2" },
         delivery: "enqueue-and-run",
         clientSubmission: {
-          correlationId: "request-input-answer-proxy",
-          source: "request-input-panel",
+          clientRequestId: expect.stringMatching(/^desktop-submit:/),
+          source: "desktop",
         },
         workspaceId: TEST_WORKSPACE_INFO.workspaceId,
       },
@@ -3237,7 +3532,7 @@ describe("createChatRuntime", () => {
       sessions: [createSummary("session-1", "Orchestrator", "Waiting")],
       runtimeApprovalRequests: [runtimeApprovalRequest],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("run"), assistantMessage("Waiting")],
         }),
@@ -3273,15 +3568,15 @@ describe("createChatRuntime", () => {
         createSummary("session-2", "Second", "second reply", "high"),
       ],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("main"), assistantMessage("main reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [userMessage("worker context"), assistantMessage("worker ready")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-2"),
           messages: [userMessage("second"), assistantMessage("second reply")],
           reasoningEffort: "high",
@@ -3313,11 +3608,11 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("main"), assistantMessage("main reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [userMessage("worker"), assistantMessage("worker ready")],
         }),
@@ -3358,11 +3653,11 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("main"), assistantMessage("main reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [userMessage("worker"), assistantMessage("worker ready")],
         }),
@@ -3388,12 +3683,12 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("keeps renderer draft state authoritative when stale surface snapshots arrive", async () => {
+  it("keeps renderer draft state authoritative when a stale surface read model arrives", async () => {
     const target = createOrchestratorTarget("session-1");
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Draft Race", "Initial")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target,
           messages: [userMessage("Initial"), assistantMessage("Ready")],
           composerDraft: {
@@ -3411,10 +3706,8 @@ describe("createChatRuntime", () => {
 
     await controller.updateComposerDraft({ text: "live renderer draft", attachments: [] });
 
-    harness.emitSurfaceSync({
-      reason: "surface.updated",
-      target,
-      snapshot: createSurfaceSnapshot({
+    harness.emitSurfaceChanged(
+      createSurfaceFixture({
         target,
         messages: [userMessage("Initial"), assistantMessage("Ready")],
         composerDraft: {
@@ -3423,7 +3716,7 @@ describe("createChatRuntime", () => {
           updatedAt: "2026-04-10T10:00:00.000Z",
         },
       }),
-    });
+    );
 
     expect(controller.composerDraft.text).toBe("live renderer draft");
 
@@ -3435,11 +3728,11 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("main"), assistantMessage("main reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [userMessage("worker"), assistantMessage("worker ready")],
         }),
@@ -3465,27 +3758,27 @@ describe("createChatRuntime", () => {
 
     expect(secondaryController.composerDraft.text).toBe("");
     expect(tertiaryController.composerDraft.text).toBe("");
-    expect(hasUserText(secondaryController.agent.state.messages, "ready to send")).toBe(true);
-    expect(hasUserText(tertiaryController.agent.state.messages, "ready to send")).toBe(true);
+    expect(hasUserText(secondaryController.view.messages, "ready to send")).toBe(true);
+    expect(hasUserText(tertiaryController.view.messages, "ready to send")).toBe(true);
     await Bun.sleep(160);
-    expect(harness.getSurfaceSnapshot(threadTarget.surfacePiSessionId).composerDraft.text).toBe("");
+    expect(harness.getSurfaceFixture(threadTarget.surfacePiSessionId).composer.draft.text).toBe("");
 
     activeTurn.resolve({ assistantText: "Done" });
     await sendPromise;
     runtime.dispose();
   });
 
-  it("releases a closed pane without disposing a streaming surface and reopens from a fresh snapshot", async () => {
+  it("releases a closed pane without disposing a streaming surface and reopens from fresh read models", async () => {
     const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
     const freshStreamMessage = assistantMessage("fresh worker state");
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("main"), assistantMessage("main reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [userMessage("worker")],
           streamMessage: assistantMessage("still working"),
@@ -3506,19 +3799,17 @@ describe("createChatRuntime", () => {
       "streaming",
     );
 
-    harness.emitSurfaceSync({
-      reason: "surface.updated",
-      target: threadTarget,
-      snapshot: createSurfaceSnapshot({
+    harness.emitSurfaceChanged(
+      createSurfaceFixture({
         target: threadTarget,
         messages: [userMessage("worker")],
         streamMessage: freshStreamMessage,
         promptStatus: "streaming",
       }),
-    });
+    );
     await runtime.openSurface(threadTarget, "secondary");
     expect(harness.getRetainCount(threadTarget.surfacePiSessionId)).toBe(1);
-    const reopenedStream = runtime.getPaneController("secondary")?.agent.state.streamMessage;
+    const reopenedStream = runtime.getPaneController("secondary")?.view.streamMessage;
     expect(reopenedStream?.role === "assistant" ? reopenedStream.content[0] : null).toMatchObject({
       type: "text",
       text: "fresh worker state",
@@ -3531,7 +3822,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("main"), assistantMessage("main reply")],
         }),
@@ -3564,11 +3855,11 @@ describe("createChatRuntime", () => {
         createSummary("session-2", "Second", "second reply"),
       ],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("main"), assistantMessage("main reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-2"),
           messages: [userMessage("second"), assistantMessage("second reply")],
         }),
@@ -3598,7 +3889,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Only Session", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("main"), assistantMessage("main reply")],
         }),
@@ -3624,11 +3915,11 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "ready")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("ready")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [assistantMessage("worker ready")],
         }),
@@ -3683,7 +3974,7 @@ describe("createChatRuntime", () => {
       threadTarget.surfacePiSessionId,
     ]);
     expect(
-      handlerController.agent.state.messages.some(
+      handlerController.view.messages.some(
         (message) =>
           message.role === "assistant" &&
           message.content[0]?.type === "text" &&
@@ -3691,7 +3982,7 @@ describe("createChatRuntime", () => {
       ),
     ).toBe(true);
     expect(
-      orchestratorController.agent.state.messages.some(
+      orchestratorController.view.messages.some(
         (message) =>
           message.role === "assistant" &&
           message.content[0]?.type === "text" &&
@@ -3708,7 +3999,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [session],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target,
           messages: [userMessage("Initial"), assistantMessage("Ready")],
         }),
@@ -3748,20 +4039,19 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("writes prompt history once when user messages enter the surface queue", async () => {
+  it("applies state prompt history once when user messages enter the surface queue", async () => {
     const session = createSummary("session-1", "Parser", "Initial");
     const target = createOrchestratorTarget(session.id);
-    const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [session],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target,
           messages: [userMessage("Initial"), assistantMessage("Ready")],
         }),
       ],
     });
-    const runtime = await createRuntime(harness, storage);
+    const runtime = await createRuntime(harness);
     const controller = runtime.getPaneController("primary");
     expect(controller).not.toBeNull();
     if (!controller) return;
@@ -3772,18 +4062,25 @@ describe("createChatRuntime", () => {
     const activePrompt = controller.sendPrompt({ text: "Active turn", attachments: [] });
     await waitFor(() => controller.promptStatus === "streaming");
     await controller.sendPrompt({ text: "Queued follow-up", attachments: [] });
+    await waitFor(
+      () =>
+        runtime.promptHistorySnapshot.map((entry) => entry.text).join("|") ===
+        "Active turn|Queued follow-up",
+    );
 
-    expect(
-      (await storage.promptHistory.list(runtime.workspaceId)).map((entry) => entry.text),
-    ).toEqual(["Active turn", "Queued follow-up"]);
+    expect(runtime.promptHistorySnapshot.map((entry) => entry.text)).toEqual([
+      "Active turn",
+      "Queued follow-up",
+    ]);
 
     activeTurn.resolve({ assistantText: "First turn done" });
     await activePrompt;
     await waitFor(() => harness.promptRequests.length >= 2);
 
-    expect(
-      (await storage.promptHistory.list(runtime.workspaceId)).map((entry) => entry.text),
-    ).toEqual(["Active turn", "Queued follow-up"]);
+    expect(runtime.promptHistorySnapshot.map((entry) => entry.text)).toEqual([
+      "Active turn",
+      "Queued follow-up",
+    ]);
 
     runtime.dispose();
   });
@@ -3794,7 +4091,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [session],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target,
           messages: [userMessage("Initial"), assistantMessage("Ready")],
         }),
@@ -3874,7 +4171,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [session],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target,
           messages: [userMessage("Initial"), assistantMessage("Ready")],
         }),
@@ -3934,7 +4231,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [session],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target,
           messages: [userMessage("Initial"), assistantMessage("Ready")],
         }),
@@ -4002,14 +4299,14 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("keeps an optimistic sent message visible when an older idle snapshot arrives", async () => {
+  it("keeps an optimistic sent message visible when an older idle read model arrives", async () => {
     const session = createSummary("session-1", "Draft Race", "Initial");
     const target = createOrchestratorTarget(session.id);
     const initialMessages = [userMessage("Initial"), assistantMessage("Ready")];
     const harness = createFakeRpc({
       sessions: [session],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target,
           messages: initialMessages,
         }),
@@ -4025,20 +4322,18 @@ describe("createChatRuntime", () => {
 
     const sendPromise = controller.sendPrompt({ text: "Keep this visible", attachments: [] });
     await waitFor(() => controller.promptStatus === "streaming");
-    expect(hasUserText(controller.agent.state.messages, "Keep this visible")).toBe(true);
+    expect(hasUserText(controller.view.messages, "Keep this visible")).toBe(true);
 
-    harness.emitSurfaceSync({
-      reason: "surface.updated",
-      target,
-      snapshot: createSurfaceSnapshot({
+    harness.emitSurfaceChanged(
+      createSurfaceFixture({
         target,
         messages: initialMessages,
         promptStatus: "idle",
       }),
-    });
+    );
 
     expect(controller.promptStatus).toBe("streaming");
-    expect(hasUserText(controller.agent.state.messages, "Keep this visible")).toBe(true);
+    expect(hasUserText(controller.view.messages, "Keep this visible")).toBe(true);
 
     activeTurn.resolve({ assistantText: "Done" });
     await sendPromise;
@@ -4051,7 +4346,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [session],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target,
           messages: [userMessage("Initial"), assistantMessage("Ready")],
         }),
@@ -4109,7 +4404,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [session],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target,
           messages: [firstUser, firstAssistant, secondUser, secondAssistant],
         }),
@@ -4136,8 +4431,8 @@ describe("createChatRuntime", () => {
       ],
     });
 
-    await waitFor(() => controller.agent.state.messages.length === 2);
-    const committedUserMessages = controller.agent.state.messages.filter(
+    await waitFor(() => controller.view.messages.length === 2);
+    const committedUserMessages = controller.view.messages.filter(
       (message) => message.role === "user",
     );
     expect(
@@ -4155,89 +4450,12 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("updates extension context auto-update through the surface controller", async () => {
-    const session = createSummary("session-1", "Parser", "Initial");
-    const target = createOrchestratorTarget(session.id);
-    const harness = createFakeRpc({
-      sessions: [session],
-      surfaces: [
-        createSurfaceSnapshot({
-          target,
-          messages: [userMessage("Initial"), assistantMessage("Ready")],
-          promptBinding: {
-            currentRevision: 1,
-            boundSystemPrompt: "old",
-            currentSystemPrompt: "new",
-            boundFingerprint: "old-fingerprint",
-            currentFingerprint: "new-fingerprint",
-            boundExternalSourceHashes: [],
-            currentExternalSourceHashes: [],
-            updateExtensionContextBeforeNextTurn: true,
-            stale: true,
-          },
-        }),
-      ],
-    });
-    const runtime = await createRuntime(harness);
-    const controller = runtime.getPaneController("primary");
-    expect(controller).not.toBeNull();
-    if (!controller) return;
-
-    expect(controller.promptBinding?.updateExtensionContextBeforeNextTurn).toBe(true);
-    expect(await controller.setExtensionContextAutoUpdate(false)).toBe(true);
-    expect(controller.promptBinding?.updateExtensionContextBeforeNextTurn).toBe(false);
-
-    runtime.dispose();
-  });
-
-  it("does not duplicate the assistant reply when a settled surface snapshot arrives before stream completion", async () => {
-    const harness = createFakeRpc({
-      sessions: [createSummary("session-1", "Orchestrator", "ready")],
-      surfaces: [
-        createSurfaceSnapshot({
-          target: createOrchestratorTarget("session-1"),
-          messages: [],
-        }),
-      ],
-    });
-    harness.setPromptHandler("session-1", async () => ({
-      assistantText: "Single settled reply.",
-      emitSurfaceSyncBeforeStreamDone: true,
-    }));
-
-    const runtime = await createRuntime(harness);
-    const controller = runtime.getPaneController(runtime.primaryPaneId);
-    if (!controller) {
-      throw new Error("Expected an orchestrator controller.");
-    }
-
-    await controller.sendPrompt({ text: "Greet me", attachments: [] });
-    await waitFor(() =>
-      controller.agent.state.messages.some(
-        (message) =>
-          message.role === "assistant" &&
-          message.content[0]?.type === "text" &&
-          message.content[0].text === "Single settled reply.",
-      ),
-    );
-
-    const replies = controller.agent.state.messages.filter(
-      (message) =>
-        message.role === "assistant" &&
-        message.content[0]?.type === "text" &&
-        message.content[0].text === "Single settled reply.",
-    );
-    expect(replies).toHaveLength(1);
-
-    runtime.dispose();
-  });
-
   it("keeps sidebar state live for a background prompt after its pane closes", async () => {
     const promptGate = createDeferred<void>();
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Background", "ready")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [],
         }),
@@ -4281,11 +4499,11 @@ describe("createChatRuntime", () => {
         createSummary("session-2", "Unfocused", "ready"),
       ],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-2"),
           messages: [],
         }),
@@ -4320,18 +4538,18 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("renders pending user and surface-owned stream state from snapshots", async () => {
+  it("renders pending user and surface-owned stream state from read models", async () => {
     const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
     const pendingUser = userMessage("Inspect the repo");
     const liveAssistant = assistantMessage("Scanning files now...");
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Streaming Handler", "worker running")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [],
           pendingUserMessage: pendingUser,
@@ -4339,7 +4557,7 @@ describe("createChatRuntime", () => {
           promptStatus: "streaming",
           activeTurnId: "turn-live-1",
           activeTurnStartedAt: "2026-04-10T10:12:00.000Z",
-          turnTimings: [],
+          assistantTimings: [],
         }),
       ],
     });
@@ -4356,7 +4574,7 @@ describe("createChatRuntime", () => {
     expect(controller.activeTurnStartedAt).toBe("2026-04-10T10:12:00.000Z");
     expect(controller.turnTimings).toEqual([]);
     expect(
-      controller.agent.state.messages.some(
+      controller.view.messages.some(
         (message) =>
           message.role === "user" &&
           "content" in message &&
@@ -4365,21 +4583,19 @@ describe("createChatRuntime", () => {
           message.content[0].text === "Inspect the repo",
       ),
     ).toBe(true);
-    const streamMessage = controller.agent.state.streamMessage;
+    const streamMessage = controller.view.streamMessage;
     expect(streamMessage?.role).toBe("assistant");
     expect(streamMessage?.role === "assistant" ? streamMessage.content[0] : null).toMatchObject({
       type: "text",
       text: "Scanning files now...",
     });
 
-    harness.emitSurfaceSync({
-      reason: "prompt.settled",
-      target: threadTarget,
-      snapshot: createSurfaceSnapshot({
+    harness.emitSurfaceChanged(
+      createSurfaceFixture({
         target: threadTarget,
         messages: [pendingUser, liveAssistant],
         promptStatus: "idle",
-        turnTimings: [
+        assistantTimings: [
           {
             turnId: "turn-live-1",
             assistantMessageTimestamp: liveAssistant.timestamp,
@@ -4388,21 +4604,21 @@ describe("createChatRuntime", () => {
           },
         ],
       }),
-    });
+    );
 
-    expect(controller.agent.state.streamMessage).toBeNull();
+    await waitFor(() => controller.view.streamMessage === null);
     expect(controller.activeTurnId).toBeNull();
     expect(controller.activeTurnStartedAt).toBeNull();
     expect(controller.turnTimings).toEqual([
       {
         turnId: "turn-live-1",
-        assistantMessageTimestamp: liveAssistant.timestamp,
+        assistantMessageTimestamp: new Date(liveAssistant.timestamp).toISOString(),
         startedAt: "2026-04-10T10:12:00.000Z",
         finishedAt: "2026-04-10T10:12:42.000Z",
       },
     ]);
     expect(
-      controller.agent.state.messages.filter(
+      controller.view.messages.filter(
         (message) =>
           message.role === "assistant" &&
           message.content[0]?.type === "text" &&
@@ -4413,16 +4629,16 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("applies ordered stream patches without replacing the surface snapshot", async () => {
+  it("applies ordered native stream patches across a surface read-model refresh", async () => {
     const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Streaming Handler", "worker running")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("Main session")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [userMessage("Inspect the repo")],
         }),
@@ -4436,42 +4652,29 @@ describe("createChatRuntime", () => {
       throw new Error("Expected a restored controller.");
     }
 
-    const streamMessage = assistantMessage("");
-    streamMessage.content = [];
-    harness.emitSurfaceSync({
-      reason: "stream.patch",
-      target: threadTarget,
-      streamPatch: { type: "start", sequence: 1, message: streamMessage },
+    const messageId = "thread-stream-message" as never;
+    harness.emitSurfaceStreamPatch(threadTarget, {
+      type: "assistant_message_started",
+      messageId,
+      turnId: "thread-stream-turn" as never,
+      createdAt: "2026-04-10T10:12:00.000Z" as never,
     });
-    harness.emitSurfaceSync({
-      reason: "stream.patch",
-      target: threadTarget,
-      streamPatch: { type: "text_start", sequence: 2, contentIndex: 0 },
+    harness.emitSurfaceStreamPatch(threadTarget, {
+      type: "assistant_text_delta",
+      messageId,
+      contentIndex: 0 as never,
+      delta: "Scanning",
     });
-    harness.emitSurfaceSync({
-      reason: "stream.patch",
-      target: threadTarget,
-      streamPatch: {
-        type: "text_delta",
-        sequence: 3,
-        contentIndex: 0,
-        delta: "Scanning",
-      },
-    });
-    const firstDeltaStreamMessage = controller.agent.state.streamMessage;
-    harness.emitSurfaceSync({
-      reason: "stream.patch",
-      target: threadTarget,
-      streamPatch: {
-        type: "text_delta",
-        sequence: 4,
-        contentIndex: 0,
-        delta: " files",
-      },
+    const firstDeltaStreamMessage = controller.view.streamMessage;
+    harness.emitSurfaceStreamPatch(threadTarget, {
+      type: "assistant_text_delta",
+      messageId,
+      contentIndex: 0 as never,
+      delta: " files",
     });
 
-    expect(controller.agent.state.messages).toHaveLength(1);
-    const patchedStreamMessage = controller.agent.state.streamMessage;
+    expect(controller.view.messages).toHaveLength(1);
+    const patchedStreamMessage = controller.view.streamMessage;
     expect(patchedStreamMessage).not.toBe(firstDeltaStreamMessage);
     expect(
       patchedStreamMessage?.role === "assistant" ? patchedStreamMessage.content[0] : null,
@@ -4481,30 +4684,22 @@ describe("createChatRuntime", () => {
     });
     expect(controller.promptStatus).toBe("streaming");
 
-    const midStreamSnapshot = createSurfaceSnapshot({
+    const midStreamReadModels = createSurfaceFixture({
       target: threadTarget,
       messages: [userMessage("Inspect the repo")],
-      streamMessage: controller.agent.state.streamMessage as AssistantMessage,
-      streamSequence: 4,
+      streamMessage: controller.view.streamMessage as RendererTranscriptAssistantEntry,
+      streamSequence: 3,
       promptStatus: "streaming",
     });
-    harness.emitSurfaceSync({
-      reason: "surface.updated",
-      target: threadTarget,
-      snapshot: midStreamSnapshot,
-    });
-    harness.emitSurfaceSync({
-      reason: "stream.patch",
-      target: threadTarget,
-      streamPatch: {
-        type: "text_delta",
-        sequence: 5,
-        contentIndex: 0,
-        delta: " now",
-      },
+    harness.emitSurfaceChanged(midStreamReadModels);
+    harness.emitSurfaceStreamPatch(threadTarget, {
+      type: "assistant_text_delta",
+      messageId,
+      contentIndex: 0 as never,
+      delta: " now",
     });
 
-    const continuedStreamMessage = controller.agent.state.streamMessage;
+    const continuedStreamMessage = controller.view.streamMessage;
     expect(continuedStreamMessage).not.toBe(patchedStreamMessage);
     expect(
       continuedStreamMessage?.role === "assistant" ? continuedStreamMessage.content[0] : null,
@@ -4513,29 +4708,30 @@ describe("createChatRuntime", () => {
       text: "Scanning files now",
     });
 
-    harness.emitSurfaceSync({
-      reason: "stream.patch",
-      target: threadTarget,
-      streamPatch: { type: "clear", sequence: 6, reason: "done" },
+    harness.emitSurfaceStreamPatch(threadTarget, {
+      type: "assistant_message_finished",
+      messageId,
+      status: "completed",
+      finishedAt: "2026-04-10T10:12:42.000Z" as never,
     });
 
-    expect(controller.agent.state.streamMessage).toBeNull();
+    expect(controller.view.streamMessage).toBeNull();
     expect(controller.promptStatus).toBe("idle");
 
     runtime.dispose();
   });
 
-  it("accepts a fresh stream sequence when dispatching after a previous stream snapshot", async () => {
+  it("accepts a fresh stream sequence when dispatching after a previous read model", async () => {
     const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
     const finishPrompt = createDeferred<void>();
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Streaming Handler", "worker ready")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("Main ready")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [assistantMessage("Previous turn")],
           streamSequence: 9,
@@ -4544,27 +4740,18 @@ describe("createChatRuntime", () => {
     });
 
     harness.setPromptHandler(threadTarget.surfacePiSessionId, async () => {
-      const streamMessage = assistantMessage("");
-      streamMessage.content = [];
-      harness.emitSurfaceSync({
-        reason: "stream.patch",
-        target: threadTarget,
-        streamPatch: { type: "start", sequence: 1, message: streamMessage },
+      const messageId = "fresh-stream-message" as never;
+      harness.emitSurfaceStreamPatch(threadTarget, {
+        type: "assistant_message_started",
+        messageId,
+        turnId: "fresh-stream-turn" as never,
+        createdAt: "2026-04-10T10:12:00.000Z" as never,
       });
-      harness.emitSurfaceSync({
-        reason: "stream.patch",
-        target: threadTarget,
-        streamPatch: { type: "text_start", sequence: 2, contentIndex: 0 },
-      });
-      harness.emitSurfaceSync({
-        reason: "stream.patch",
-        target: threadTarget,
-        streamPatch: {
-          type: "text_delta",
-          sequence: 3,
-          contentIndex: 0,
-          delta: "Visible fresh stream",
-        },
+      harness.emitSurfaceStreamPatch(threadTarget, {
+        type: "assistant_text_delta",
+        messageId,
+        contentIndex: 0 as never,
+        delta: "Visible fresh stream",
       });
       await finishPrompt.promise;
       return { assistantText: "Final fresh stream" };
@@ -4580,7 +4767,7 @@ describe("createChatRuntime", () => {
     const prompt = controller.sendPrompt({ text: "Run a fresh turn", attachments: [] });
     try {
       await waitFor(() => {
-        const streamMessage = controller.agent.state.streamMessage;
+        const streamMessage = controller.view.streamMessage;
         const firstBlock = streamMessage?.role === "assistant" ? streamMessage.content[0] : null;
         return firstBlock?.type === "text" && firstBlock.text === "Visible fresh stream";
       });
@@ -4592,16 +4779,16 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("accepts the stream start after a streaming snapshot without a stream message", async () => {
+  it("accepts a native stream start after a running read model without an active message", async () => {
     const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Streaming Handler", "worker ready")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("Main ready")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [assistantMessage("Previous turn")],
         }),
@@ -4615,42 +4802,30 @@ describe("createChatRuntime", () => {
       throw new Error("Expected a restored controller.");
     }
 
-    harness.emitSurfaceSync({
-      reason: "background.started",
-      target: threadTarget,
-      snapshot: createSurfaceSnapshot({
+    harness.emitSurfaceChanged(
+      createSurfaceFixture({
         target: threadTarget,
         messages: [assistantMessage("Previous turn"), userMessage("Run another turn")],
         promptStatus: "streaming",
         streamMessage: null,
-        streamSequence: 1,
       }),
+    );
+
+    const messageId = "stream-after-running-read-model" as never;
+    harness.emitSurfaceStreamPatch(threadTarget, {
+      type: "assistant_message_started",
+      messageId,
+      turnId: "stream-after-running-turn" as never,
+      createdAt: "2026-04-10T10:12:00.000Z" as never,
+    });
+    harness.emitSurfaceStreamPatch(threadTarget, {
+      type: "assistant_text_delta",
+      messageId,
+      contentIndex: 0 as never,
+      delta: "Visible stream after snapshot",
     });
 
-    const streamMessage = assistantMessage("");
-    streamMessage.content = [];
-    harness.emitSurfaceSync({
-      reason: "stream.patch",
-      target: threadTarget,
-      streamPatch: { type: "start", sequence: 1, message: streamMessage },
-    });
-    harness.emitSurfaceSync({
-      reason: "stream.patch",
-      target: threadTarget,
-      streamPatch: { type: "text_start", sequence: 2, contentIndex: 0 },
-    });
-    harness.emitSurfaceSync({
-      reason: "stream.patch",
-      target: threadTarget,
-      streamPatch: {
-        type: "text_delta",
-        sequence: 3,
-        contentIndex: 0,
-        delta: "Visible stream after snapshot",
-      },
-    });
-
-    const visibleStream = controller.agent.state.streamMessage;
+    const visibleStream = controller.view.streamMessage;
     expect(visibleStream?.role === "assistant" ? visibleStream.content[0] : null).toMatchObject({
       type: "text",
       text: "Visible stream after snapshot",
@@ -4665,11 +4840,11 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "ready")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("ready")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [assistantMessage("worker ready")],
         }),
@@ -4690,8 +4865,13 @@ describe("createChatRuntime", () => {
       throw new Error("Expected both surface controllers.");
     }
 
-    handlerController.agent.setModel(getModel("openai", "gpt-4.1"));
-    handlerController.agent.setThinkingLevel("high");
+    handlerController.setModel({
+      provider: "openai",
+      id: "gpt-4.1",
+      name: "gpt-4.1",
+      input: ["text"],
+    });
+    handlerController.setThinkingLevel("high");
 
     await waitFor(
       () => harness.modelUpdates.length === 1 && harness.thoughtLevelUpdates.length === 1,
@@ -4705,8 +4885,8 @@ describe("createChatRuntime", () => {
       target: threadTarget,
       level: "high",
     });
-    expect(orchestratorController.agent.state.model.id).toBe("gpt-4o");
-    expect(orchestratorController.agent.state.thinkingLevel).toBe("medium");
+    expect(orchestratorController.view.model.id).toBe("gpt-4o");
+    expect(orchestratorController.view.thinkingLevel).toBe("medium");
 
     const handlerPrompt = handlerController.sendPrompt({
       text: "Continue handling",
@@ -4733,15 +4913,15 @@ describe("createChatRuntime", () => {
         createSummary("session-2", "Background", "stale summary"),
       ],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("main"), assistantMessage("main reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [userMessage("worker"), assistantMessage("worker ready")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-2"),
           messages: [userMessage("background"), assistantMessage("done")],
         }),
@@ -4775,7 +4955,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
@@ -4799,11 +4979,11 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("ignores navigation invalidations and surface sync messages for other workspace ids", async () => {
+  it("ignores navigation and surface read-model invalidations for other workspace ids", async () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
@@ -4820,20 +5000,18 @@ describe("createChatRuntime", () => {
       summary.preview = "foreign workspace update";
     });
     harness.emitSessionNavigationInvalidation("/tmp/other");
-    harness.emitSurfaceSync({
-      workspaceId: "/tmp/other",
-      reason: "surface.updated",
-      target: createOrchestratorTarget("session-1"),
-      snapshot: createSurfaceSnapshot({
+    harness.emitSurfaceChanged(
+      createSurfaceFixture({
         target: createOrchestratorTarget("session-1"),
         messages: [assistantMessage("foreign surface update")],
       }),
-    });
+      "/tmp/other",
+    );
 
     expect(runtime.sessions.find((session) => session.id === "session-1")?.preview).toBe(
       "main reply",
     );
-    const lastMessage = controller.agent.state.messages.at(-1);
+    const lastMessage = controller.view.messages.at(-1);
     expect(
       lastMessage?.role === "assistant" && "content" in lastMessage ? lastMessage.content[0] : null,
     ).toMatchObject({ text: "main reply" });
@@ -4863,11 +5041,11 @@ describe("createChatRuntime", () => {
         },
       ],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("first"), assistantMessage("first reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-2"),
           messages: [userMessage("second"), assistantMessage("second reply")],
         }),
@@ -4926,7 +5104,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [session],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [],
         }),
@@ -4981,7 +5159,7 @@ describe("createChatRuntime", () => {
         },
       ],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [],
         }),
@@ -5032,7 +5210,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "First", "first reply")],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
       ],
       commandInspector: staleInspector,
     });
@@ -5146,7 +5324,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [session],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
       ],
       handlerThreads: [initialThread],
       workflowTaskAttemptInspector: initialAttempt,
@@ -5227,7 +5405,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "First", "first reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [userMessage("first"), assistantMessage("first reply")],
         }),
@@ -5268,7 +5446,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "First", "first reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("first reply")],
         }),
@@ -5286,7 +5464,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "First", "first reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("first reply")],
         }),
@@ -5319,11 +5497,11 @@ describe("createChatRuntime", () => {
         createSummary("session-2", "Second", "second reply"),
       ],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("first reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-2"),
           messages: [assistantMessage("second reply")],
         }),
@@ -5384,22 +5562,21 @@ describe("createChatRuntime", () => {
   });
 
   it("restores pane bindings and focused pane after restart", async () => {
-    const storage = createMemoryStorage();
     const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
     const firstHarness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [assistantMessage("worker ready")],
         }),
       ],
     });
-    const firstRuntime = await createRuntime(firstHarness, storage);
+    const firstRuntime = await createRuntime(firstHarness);
     await firstRuntime.openSurface(threadTarget, "secondary");
     await Bun.sleep(0);
     firstRuntime.dispose();
@@ -5416,18 +5593,18 @@ describe("createChatRuntime", () => {
     const secondHarness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [assistantMessage("worker ready")],
         }),
       ],
     });
     secondHarness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, restoreState!);
-    const secondRuntime = await createRuntime(secondHarness, storage);
+    const secondRuntime = await createRuntime(secondHarness);
 
     expect(secondRuntime.paneLayout.focusedPanelId).toBe("secondary");
     expect(secondRuntime.getPane("secondary")?.target).toEqual(threadTarget);
@@ -5436,7 +5613,6 @@ describe("createChatRuntime", () => {
   });
 
   it("restores multiple pane-bound surfaces with one controller per interactive surface", async () => {
-    const storage = createMemoryStorage();
     const orchestratorTarget = createOrchestratorTarget("session-1");
     const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
     const workflowsTarget = {
@@ -5445,11 +5621,11 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: orchestratorTarget,
           messages: [assistantMessage("main reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [assistantMessage("worker ready")],
         }),
@@ -5499,7 +5675,7 @@ describe("createChatRuntime", () => {
       }),
     );
 
-    const runtime = await createRuntime(harness, storage);
+    const runtime = await createRuntime(harness);
 
     expect(runtime.paneLayout.focusedPanelId).toBe("thread-right");
     expect(runtime.getPane("primary")?.target).toEqual(orchestratorTarget);
@@ -5523,7 +5699,6 @@ describe("createChatRuntime", () => {
   });
 
   it("restores mixed Dockview JSON, focus, panel-local state, static panes, and floating interactive panes", async () => {
-    const storage = createMemoryStorage();
     const orchestratorTarget = createOrchestratorTarget("session-1");
     const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
     const dockview = {
@@ -5561,11 +5736,11 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: orchestratorTarget,
           messages: [assistantMessage("main reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [assistantMessage("worker ready")],
         }),
@@ -5636,7 +5811,7 @@ describe("createChatRuntime", () => {
       }),
     );
 
-    const runtime = await createRuntime(harness, storage);
+    const runtime = await createRuntime(harness);
 
     expect(runtime.paneLayout.dockview).toEqual(dockview);
     expect(runtime.paneLayout.focusedPanelId).toBe("thread-float");
@@ -5664,13 +5839,12 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("restores prompt lock state from opened surface snapshots", async () => {
-    const storage = createMemoryStorage();
+  it("restores prompt lock state from opened surface read models", async () => {
     const threadTarget = createThreadTarget("session-1", "thread-session-1", "thread-123");
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Waiting Session", "worker waiting")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: threadTarget,
           messages: [assistantMessage("still running")],
           promptStatus: "streaming",
@@ -5697,7 +5871,7 @@ describe("createChatRuntime", () => {
       }),
     );
 
-    const runtime = await createRuntime(harness, storage);
+    const runtime = await createRuntime(harness);
 
     expect(runtime.getPaneController("primary")?.promptStatus).toBe("streaming");
     expect(runtime.getSurfaceController(threadTarget.surfacePiSessionId)?.promptStatus).toBe(
@@ -5708,11 +5882,10 @@ describe("createChatRuntime", () => {
   });
 
   it("drops restored empty panes and focuses a restorable bound pane", async () => {
-    const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
@@ -5746,7 +5919,7 @@ describe("createChatRuntime", () => {
       }),
     );
 
-    const runtime = await createRuntime(harness, storage);
+    const runtime = await createRuntime(harness);
 
     expect(runtime.paneLayout.panels).toHaveLength(1);
     expect(runtime.paneLayout.focusedPanelId).toBe("secondary");
@@ -5757,18 +5930,17 @@ describe("createChatRuntime", () => {
   });
 
   it("switches between fixed A/B/C layout slots and keeps empty slots selectable", async () => {
-    const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
       ],
     });
 
-    const runtime = await createRuntime(harness, storage);
+    const runtime = await createRuntime(harness);
 
     expect(runtime.activeLayoutId).toBe("A");
     expect(runtime.layoutSlots).toEqual([
@@ -5811,7 +5983,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
       ],
     });
     const runtime = await createRuntime(harness);
@@ -5846,7 +6018,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
       ],
     });
     const runtime = await createRuntime(harness);
@@ -5873,7 +6045,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
       ],
     });
     const runtime = await createRuntime(harness);
@@ -5898,8 +6070,8 @@ describe("createChatRuntime", () => {
         createSummary("session-2", "Second", "second"),
       ],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-2"), messages: [] }),
       ],
     });
     const runtime = await createRuntime(harness);
@@ -5933,8 +6105,8 @@ describe("createChatRuntime", () => {
         createSummary("session-2", "Second", "second"),
       ],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-2"), messages: [] }),
       ],
     });
     const runtime = await createRuntime(harness);
@@ -5974,8 +6146,8 @@ describe("createChatRuntime", () => {
         createSummary("session-2", "Second", "second"),
       ],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-2"), messages: [] }),
       ],
     });
     const runtime = await createRuntime(harness);
@@ -6013,11 +6185,11 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "First", "first")],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
       ],
     });
     const chromeCommitted = createDeferred();
-    const runtime = await createRuntime(harness, createMemoryStorage(), TEST_WORKSPACE_INFO, {
+    const runtime = await createRuntime(harness, TEST_WORKSPACE_INFO, {
       runtimeOptions: {
         awaitWorkspaceChromeMutations: () => chromeCommitted.promise,
       },
@@ -6044,7 +6216,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "First", "first")],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
       ],
     });
     harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
@@ -6116,8 +6288,8 @@ describe("createChatRuntime", () => {
         createSummary("session-2", "Second", "second"),
       ],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-2"), messages: [] }),
       ],
     });
     harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
@@ -6127,7 +6299,7 @@ describe("createChatRuntime", () => {
         C: null,
       },
     });
-    const runtime = await createRuntime(harness, createMemoryStorage(), TEST_WORKSPACE_INFO, {
+    const runtime = await createRuntime(harness, TEST_WORKSPACE_INFO, {
       runtimeOptions: {
         workspaceTabId: TEST_WORKSPACE_INFO.workspaceTabId,
         initialLayoutId: "A",
@@ -6167,9 +6339,9 @@ describe("createChatRuntime", () => {
         createSummary("session-3", "Authoritative", "authoritative"),
       ],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-3"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-3"), messages: [] }),
       ],
     });
     harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
@@ -6221,9 +6393,9 @@ describe("createChatRuntime", () => {
         createSummary("session-3", "Newer", "newer"),
       ],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-3"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-3"), messages: [] }),
       ],
     });
     harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
@@ -6233,7 +6405,7 @@ describe("createChatRuntime", () => {
         C: null,
       },
     });
-    const runtime = await createRuntime(harness, createMemoryStorage(), TEST_WORKSPACE_INFO, {
+    const runtime = await createRuntime(harness, TEST_WORKSPACE_INFO, {
       runtimeOptions: {
         workspaceTabId: TEST_WORKSPACE_INFO.workspaceTabId,
       },
@@ -6312,8 +6484,8 @@ describe("createChatRuntime", () => {
         createSummary("session-2", "Second", "second"),
       ],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-2"), messages: [] }),
       ],
     });
     harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
@@ -6324,7 +6496,7 @@ describe("createChatRuntime", () => {
       },
     });
     const selectionCommitted = createDeferred();
-    const runtime = await createRuntime(harness, createMemoryStorage(), TEST_WORKSPACE_INFO, {
+    const runtime = await createRuntime(harness, TEST_WORKSPACE_INFO, {
       runtimeOptions: {
         selectWorkspaceLayoutSlot: () => selectionCommitted.promise,
       },
@@ -6367,9 +6539,9 @@ describe("createChatRuntime", () => {
         createSummary("session-3", "Authoritative", "authoritative"),
       ],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-3"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-3"), messages: [] }),
       ],
     });
     harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
@@ -6379,7 +6551,7 @@ describe("createChatRuntime", () => {
         C: null,
       },
     });
-    const runtime = await createRuntime(harness, createMemoryStorage(), TEST_WORKSPACE_INFO, {
+    const runtime = await createRuntime(harness, TEST_WORKSPACE_INFO, {
       runtimeOptions: {
         workspaceTabId: TEST_WORKSPACE_INFO.workspaceTabId,
         initialLayoutId: "A",
@@ -6428,9 +6600,9 @@ describe("createChatRuntime", () => {
         createSummary("session-3", "Third", "third"),
       ],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-3"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-3"), messages: [] }),
       ],
     });
     harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
@@ -6476,9 +6648,9 @@ describe("createChatRuntime", () => {
         createSummary("session-3", "Third", "third"),
       ],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-3"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-3"), messages: [] }),
       ],
     });
     harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
@@ -6512,11 +6684,10 @@ describe("createChatRuntime", () => {
   });
 
   it("uses the tab-selected active layout against durable workspace layout slots", async () => {
-    const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
@@ -6545,7 +6716,7 @@ describe("createChatRuntime", () => {
       ),
     );
 
-    const runtime = await createRuntime(harness, storage, {
+    const runtime = await createRuntime(harness, {
       ...TEST_WORKSPACE_INFO,
       activeLayoutId: "B",
     });
@@ -6557,18 +6728,17 @@ describe("createChatRuntime", () => {
   });
 
   it("hydrates prompt pane controllers when switching to a saved inactive layout slot", async () => {
-    const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [
         createSummary("session-1", "Orchestrator", "main reply"),
         createSummary("session-2", "Second", "second reply"),
       ],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-2"),
           messages: [assistantMessage("second reply")],
         }),
@@ -6612,7 +6782,7 @@ describe("createChatRuntime", () => {
       },
     });
 
-    const runtime = await createRuntime(harness, storage);
+    const runtime = await createRuntime(harness);
 
     expect(runtime.activeLayoutId).toBe("A");
     expect(runtime.getPaneController("slot-a")).toBeTruthy();
@@ -6651,8 +6821,8 @@ describe("createChatRuntime", () => {
         createSummary("session-2", "Second", "second"),
       ],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-2"), messages: [] }),
       ],
     });
     harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
@@ -6713,8 +6883,8 @@ describe("createChatRuntime", () => {
         createSummary("session-2", "Second", "second"),
       ],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-2"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-2"), messages: [] }),
       ],
     });
     harness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, {
@@ -6776,11 +6946,10 @@ describe("createChatRuntime", () => {
   });
 
   it("syncs shared workspace layout slot changes into another open tab on the same slot", async () => {
-    const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
@@ -6790,12 +6959,10 @@ describe("createChatRuntime", () => {
     const firstRuntime = await createChatRuntime(
       { workspaceInfo: TEST_WORKSPACE_INFO },
       harness.client as never,
-      storage,
     );
     const secondRuntime = await createChatRuntime(
       { workspaceInfo: TEST_WORKSPACE_INFO },
       harness.client as never,
-      storage,
     );
 
     await firstRuntime.openSurface({ surface: "app-logs" }, "primary");
@@ -6809,11 +6976,10 @@ describe("createChatRuntime", () => {
   });
 
   it("preserves a saved empty layout without reopening the last session", async () => {
-    const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
@@ -6830,7 +6996,7 @@ describe("createChatRuntime", () => {
       }),
     );
 
-    const runtime = await createRuntime(harness, storage);
+    const runtime = await createRuntime(harness);
 
     expect(runtime.sessions).toHaveLength(1);
     expect(runtime.paneLayout.panels).toHaveLength(0);
@@ -6840,18 +7006,17 @@ describe("createChatRuntime", () => {
   });
 
   it("keeps an uninitialized user workspace slot blank when sessions already exist", async () => {
-    const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
       ],
     });
 
-    const runtime = await createRuntime(harness, storage, TEST_WORKSPACE_INFO, {
+    const runtime = await createRuntime(harness, TEST_WORKSPACE_INFO, {
       seedInitialLayout: false,
     });
 
@@ -6865,13 +7030,12 @@ describe("createChatRuntime", () => {
   });
 
   it("keeps an uninitialized empty user workspace slot blank without creating a session", async () => {
-    const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [],
       surfaces: [],
     });
 
-    const runtime = await createRuntime(harness, storage, TEST_WORKSPACE_INFO, {
+    const runtime = await createRuntime(harness, TEST_WORKSPACE_INFO, {
       seedInitialLayout: false,
     });
 
@@ -6884,7 +7048,6 @@ describe("createChatRuntime", () => {
   });
 
   it("restores default workspace panes and keeps durable layout slots enabled", async () => {
-    const storage = createMemoryStorage();
     const defaultWorkspaceInfo: WorkspaceTabInfo = {
       ...TEST_WORKSPACE_INFO,
       workspaceTabId: "default-tab-1",
@@ -6915,7 +7078,7 @@ describe("createChatRuntime", () => {
       }),
     );
 
-    const runtime = await createRuntime(harness, storage, defaultWorkspaceInfo);
+    const runtime = await createRuntime(harness, defaultWorkspaceInfo);
 
     expect(runtime.sessions).toHaveLength(0);
     expect(runtime.getPane("primary")?.target).toEqual({ surface: "app-logs" });
@@ -6927,7 +7090,6 @@ describe("createChatRuntime", () => {
   });
 
   it("seeds an empty persisted default workspace layout with Open Workspace", async () => {
-    const storage = createMemoryStorage();
     const defaultWorkspaceInfo: WorkspaceTabInfo = {
       ...TEST_WORKSPACE_INFO,
       workspaceTabId: "default-tab-1",
@@ -6949,7 +7111,7 @@ describe("createChatRuntime", () => {
       }),
     );
 
-    const runtime = await createRuntime(harness, storage, defaultWorkspaceInfo);
+    const runtime = await createRuntime(harness, defaultWorkspaceInfo);
 
     expect(runtime.getPane("primary")?.target).toEqual({ surface: "open-workspace" });
     expect(runtime.paneLayout.focusedPanelId).toBe("primary");
@@ -6958,7 +7120,6 @@ describe("createChatRuntime", () => {
   });
 
   it("keeps default workspace runtime-backed surfaces available beyond Open Workspace", async () => {
-    const storage = createMemoryStorage();
     const defaultWorkspaceInfo: WorkspaceTabInfo = {
       ...TEST_WORKSPACE_INFO,
       workspaceTabId: "default-tab-1",
@@ -6970,7 +7131,7 @@ describe("createChatRuntime", () => {
     };
     const harness = createFakeRpc({ sessions: [], surfaces: [] });
 
-    const runtime = await createRuntime(harness, storage, defaultWorkspaceInfo);
+    const runtime = await createRuntime(harness, defaultWorkspaceInfo);
 
     await runtime.createSession();
     expect(runtime.sessions).toHaveLength(1);
@@ -7012,21 +7173,6 @@ describe("createChatRuntime", () => {
       content: "artifact artifact-1",
     });
 
-    await runtime.storage.promptHistory.append({
-      workspaceId: runtime.workspaceId,
-      sessionId: "session-1",
-      text: "default workspace prompt",
-      sentAt: 1,
-    });
-    expect(await runtime.storage.promptHistory.list("workspace:default")).toEqual([
-      {
-        workspaceId: "workspace:default",
-        sessionId: "session-1",
-        text: "default workspace prompt",
-        sentAt: 1,
-      },
-    ]);
-
     runtime.dispose();
   });
 
@@ -7035,7 +7181,7 @@ describe("createChatRuntime", () => {
       createFakeRpc({
         sessions: [createSummary("session-1", "Existing", "ready")],
         surfaces: [
-          createSurfaceSnapshot({
+          createSurfaceFixture({
             target: createOrchestratorTarget("session-1"),
             messages: [],
           }),
@@ -7082,7 +7228,7 @@ describe("createChatRuntime", () => {
       createFakeRpc({
         sessions: [createSummary("session-1", "Existing", "ready")],
         surfaces: [
-          createSurfaceSnapshot({
+          createSurfaceFixture({
             target,
             messages: [],
           }),
@@ -7125,17 +7271,16 @@ describe("createChatRuntime", () => {
   });
 
   it("restores Dockview placement metadata for static panes after restart", async () => {
-    const storage = createMemoryStorage();
     const firstHarness = createFakeRpc({
       sessions: [createSummary("session-1", "Existing", "ready")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [],
         }),
       ],
     });
-    const firstRuntime = await createRuntime(firstHarness, storage);
+    const firstRuntime = await createRuntime(firstHarness);
 
     await firstRuntime.openSurface(
       { surface: "app-logs" },
@@ -7178,14 +7323,14 @@ describe("createChatRuntime", () => {
     const secondHarness = createFakeRpc({
       sessions: [createSummary("session-1", "Existing", "ready")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [],
         }),
       ],
     });
     secondHarness.setRendererLayoutFixture(TEST_WORKSPACE_INFO.workspaceId, restoreState!);
-    const secondRuntime = await createRuntime(secondHarness, storage);
+    const secondRuntime = await createRuntime(secondHarness);
 
     expect(secondRuntime.paneLayout.panels.map((panel) => panel.placement)).toEqual([
       null,
@@ -7200,7 +7345,6 @@ describe("createChatRuntime", () => {
   });
 
   it("creates a default workspace session and records history from command palette fallback text", async () => {
-    const storage = createMemoryStorage();
     const defaultWorkspaceInfo: WorkspaceTabInfo = {
       ...TEST_WORKSPACE_INFO,
       workspaceTabId: "default-tab-1",
@@ -7232,7 +7376,7 @@ describe("createChatRuntime", () => {
     );
     const createdTargets: PromptTarget[] = [];
 
-    const runtime = await createRuntime(harness, storage, defaultWorkspaceInfo);
+    const runtime = await createRuntime(harness, defaultWorkspaceInfo);
     const didRun = await executePaletteFallbackPrompt({
       runtime,
       prompt: "  Implement default workspace fallback prompt  ",
@@ -7248,23 +7392,22 @@ describe("createChatRuntime", () => {
     expect(createdTargets).toEqual([createOrchestratorTarget("session-1")]);
     expect(harness.promptRequests).toHaveLength(1);
     expect(harness.promptRequests[0]?.target).toEqual(createOrchestratorTarget("session-1"));
-    expect(
-      (await storage.promptHistory.list("workspace:default")).map((entry) => ({
-        sessionId: entry.sessionId,
-        text: entry.text,
-      })),
-    ).toEqual([
-      {
-        sessionId: "session-1",
+    await waitFor(
+      () =>
+        runtime.promptHistorySnapshot.length === 1 &&
+        runtime.promptHistorySnapshot[0]?.text === "Implement default workspace fallback prompt",
+    );
+    expect(runtime.promptHistorySnapshot).toEqual([
+      expect.objectContaining({
+        workspaceSessionId: "session-1",
         text: "Implement default workspace fallback prompt",
-      },
+      }),
     ]);
 
     runtime.dispose();
   });
 
   it("replaces the default Open Workspace pane when creating a session", async () => {
-    const storage = createMemoryStorage();
     const defaultWorkspaceInfo: WorkspaceTabInfo = {
       ...TEST_WORKSPACE_INFO,
       workspaceTabId: "default-tab-1",
@@ -7295,7 +7438,7 @@ describe("createChatRuntime", () => {
       }),
     );
 
-    const runtime = await createRuntime(harness, storage, defaultWorkspaceInfo);
+    const runtime = await createRuntime(harness, defaultWorkspaceInfo);
 
     await runtime.createSession();
 
@@ -7306,7 +7449,6 @@ describe("createChatRuntime", () => {
   });
 
   it("replaces the default Open Workspace pane when sidebar session creation requests a new panel", async () => {
-    const storage = createMemoryStorage();
     const defaultWorkspaceInfo: WorkspaceTabInfo = {
       ...TEST_WORKSPACE_INFO,
       workspaceTabId: "default-tab-1",
@@ -7337,7 +7479,7 @@ describe("createChatRuntime", () => {
       }),
     );
 
-    const runtime = await createRuntime(harness, storage, defaultWorkspaceInfo);
+    const runtime = await createRuntime(harness, defaultWorkspaceInfo);
 
     await runtime.createSession({}, { kind: "new-panel", direction: "right" });
 
@@ -7348,7 +7490,6 @@ describe("createChatRuntime", () => {
   });
 
   it("preserves restored prompt panes that fail to reopen as unavailable surfaces", async () => {
-    const storage = createMemoryStorage();
     const harness = createFakeRpc({
       sessions: [createSummary("missing-session", "Missing", "")],
       surfaces: [],
@@ -7373,7 +7514,7 @@ describe("createChatRuntime", () => {
       }),
     );
 
-    const runtime = await createRuntime(harness, storage);
+    const runtime = await createRuntime(harness);
 
     expect(runtime.sessions).toHaveLength(1);
     expect(runtime.paneLayout.panels).toHaveLength(1);
@@ -7456,7 +7597,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "First", "first")],
       surfaces: [
-        createSurfaceSnapshot({ target: createOrchestratorTarget("session-1"), messages: [] }),
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
       ],
       commandInspector: initialInspector,
     });
@@ -7504,7 +7645,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
@@ -7549,6 +7690,21 @@ describe("createChatRuntime", () => {
       ],
       workspaces: [
         {
+          kind: "promptHistory",
+          value: {
+            workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+            entries: [
+              {
+                workspaceSessionId: "session-2" as WorkspaceSessionId,
+                surfacePiSessionId: "session-2" as never,
+                queueItemId: "queue-rebaseline-prompt-history" as QueueItemId,
+                text: "Prompt from authoritative rebaseline",
+                sentAt: "2026-07-10T00:00:01.000Z" as never,
+              },
+            ],
+          },
+        },
+        {
           kind: "sessionNavigation",
           value: buildWorkspaceSessionNavigation([
             createSummary("session-2", "Rebaselined", "authoritative state"),
@@ -7570,6 +7726,7 @@ describe("createChatRuntime", () => {
     await waitFor(
       () =>
         runtime.appPreferencesSnapshot?.appAppearance === "dark" &&
+        runtime.promptHistorySnapshot[0]?.text === "Prompt from authoritative rebaseline" &&
         runtime.sessions[0]?.id === "session-2",
     );
     expect(runtime.appPreferencesSnapshot).toMatchObject({
@@ -7596,6 +7753,50 @@ describe("createChatRuntime", () => {
     });
     expect(runtime.sessions.map((session) => session.id)).toEqual(["session-2"]);
     expect(runtime.sessionNavigation.activeSessions[0]?.title).toBe("Rebaselined");
+    expect(runtime.promptHistorySnapshot).toEqual([
+      expect.objectContaining({ text: "Prompt from authoritative rebaseline" }),
+    ]);
+
+    runtime.dispose();
+  });
+
+  it("reads and mutates durable request-input settings through the runtime facade", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    const runtime = await createRuntime(harness);
+    const defaultRequestInput = {
+      mode: "nonblocking",
+      blockingTimeout: {
+        enabled: true,
+        durationMs: 300_000 as never,
+      },
+    } satisfies RequestInputSettings;
+
+    const initial = await runtime.getSettings();
+    expect(initial.requestInput).toEqual(defaultRequestInput);
+    expect(runtime.settingsSnapshot).toEqual(initial);
+
+    const blocking = await runtime.setRequestInputVariant({ mode: "blocking" });
+    expect(blocking.requestInput).toEqual({
+      ...defaultRequestInput,
+      mode: "blocking",
+    });
+    expect(harness.requestInputVariantRequests).toEqual([{ mode: "blocking" }]);
+
+    const timeout = await runtime.setRequestInputBlockingTimeout({
+      enabled: false,
+      durationMs: 120_000 as never,
+    });
+    expect(timeout.requestInput).toEqual({
+      mode: "blocking",
+      blockingTimeout: {
+        enabled: false,
+        durationMs: 120_000 as never,
+      },
+    });
+    expect(runtime.settingsSnapshot).toEqual(timeout);
+    expect(harness.requestInputBlockingTimeoutRequests).toEqual([
+      { enabled: false, durationMs: 120_000 as never },
+    ]);
 
     runtime.dispose();
   });
@@ -7882,6 +8083,7 @@ describe("createChatRuntime", () => {
       sourceKind: "workflow-agent",
       sourceId: "reviewer",
     });
+    const agentsReadsBeforeSave = harness.requestCounts.agents;
     expect(opened).toMatchObject({
       sourceKind: "workflow-agent",
       sourceId: "reviewer",
@@ -7899,16 +8101,107 @@ describe("createChatRuntime", () => {
       status: "saved",
       sourceVersion: "sha256:saved-version",
     });
+    expect(harness.requestCounts.agents).toBeGreaterThan(agentsReadsBeforeSave);
     expect(harness.sourceEditOpenRequests).toEqual([
       { sourceKind: "workflow-agent", sourceId: "reviewer" },
     ]);
     expect(harness.sourceEditSaveRequests).toEqual([
       {
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        source: {
+          sourceKind: "workflow-agent",
+          sourceId: "reviewer",
+          expectedSourceVersion: "sha256:source-version",
+          text: '{"id":"reviewer"}\n',
+          saveMode: "compare-and-swap",
+        },
+      },
+    ]);
+
+    runtime.dispose();
+  });
+
+  it("routes workflow-agent lifecycle and editor opening through identity-only runtime requests", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    const runtime = await createRuntime(harness);
+
+    const created = await runtime.createWorkflowAgentSource({
+      draft: {
+        exportName: "reviewAgent" as never,
+        displayName: "Review agent",
+        provider: "openai",
+        model: "gpt-4o",
+        reasoning: { effort: "medium" },
+        instructionText: "Review the change.",
+      },
+      sourceOwner: "agents-pane",
+    });
+    const duplicated = await runtime.duplicateWorkflowAgentSource({
+      sourceId: "reviewAgent" as never,
+      draftPatch: {
+        exportName: "reviewAgentCopy" as never,
+        displayName: "Review agent copy",
+      },
+      sourceOwner: "agents-pane",
+    });
+    const deleted = await runtime.deleteWorkflowAgentSource({
+      sourceId: "reviewAgentCopy" as never,
+      expectedSourceVersion: duplicated.session.sourceVersion,
+      sourceOwner: "agents-pane",
+    });
+    const opened = await runtime.openSourceInEditor({
+      sourceKind: "workflow-agent",
+      sourceId: "reviewAgent",
+    });
+
+    expect(created.status).toBe("created");
+    expect(duplicated.status).toBe("duplicated");
+    expect(deleted.status).toBe("deleted");
+    expect(opened).toBe(true);
+    expect(harness.workflowAgentCreateRequests).toEqual([
+      {
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        source: {
+          draft: {
+            exportName: "reviewAgent" as never,
+            displayName: "Review agent",
+            provider: "openai",
+            model: "gpt-4o",
+            reasoning: { effort: "medium" },
+            instructionText: "Review the change.",
+          },
+          sourceOwner: "agents-pane",
+        },
+      },
+    ]);
+    expect(harness.workflowAgentDuplicateRequests).toEqual([
+      {
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        source: {
+          sourceId: "reviewAgent" as never,
+          draftPatch: {
+            exportName: "reviewAgentCopy" as never,
+            displayName: "Review agent copy",
+          },
+          sourceOwner: "agents-pane",
+        },
+      },
+    ]);
+    expect(harness.workflowAgentDeleteRequests).toEqual([
+      {
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        source: {
+          sourceId: "reviewAgentCopy" as never,
+          expectedSourceVersion: "sha256:duplicated-version",
+          sourceOwner: "agents-pane",
+        },
+      },
+    ]);
+    expect(harness.sourceEditorOpenRequests).toEqual([
+      {
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId,
         sourceKind: "workflow-agent",
-        sourceId: "reviewer",
-        expectedSourceVersion: "sha256:source-version",
-        text: '{"id":"reviewer"}\n',
-        saveMode: "compare-and-swap",
+        sourceId: "reviewAgent",
       },
     ]);
 
@@ -8227,7 +8520,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
@@ -8273,7 +8566,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
@@ -8337,7 +8630,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),
@@ -8423,7 +8716,7 @@ describe("createChatRuntime", () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
-        createSurfaceSnapshot({
+        createSurfaceFixture({
           target: createOrchestratorTarget("session-1"),
           messages: [assistantMessage("main reply")],
         }),

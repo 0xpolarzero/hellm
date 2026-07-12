@@ -26,7 +26,6 @@ export type AgentProfileId = string;
 export type WorkflowAgentKey = string;
 export type AppAppearance = "system" | "light" | "dark";
 export type PreferredExternalEditor = "system" | "code" | "cursor" | "zed" | "sublime" | "custom";
-export type RequestUserInputMode = "nonblocking" | "blocking";
 export type ApprovalMode = "auto-review" | "user" | "full-access";
 export type AmbientAgentResourceHost = "pi" | "codex" | "claude" | "other";
 export type AmbientAgentResourceCategory =
@@ -64,9 +63,7 @@ export interface AgentProfileSettings extends AgentDefaults {
   locked: boolean;
 }
 
-export interface AgentProfileState {
-  orchestrators: AgentProfileSettings[];
-  special: Record<AgentProfileSpecialKey, AgentProfileSettings>;
+export interface InternalAgentSettings {
   titleNamer: AgentPromptSettings;
 }
 
@@ -83,12 +80,9 @@ export interface WorkflowAgentSettings {
 }
 
 export interface AgentSettingsState {
-  version: 2;
-  agents: AgentProfileState;
-  workflowAgents: Record<WorkflowAgentKey, WorkflowAgentSettings>;
-  extensionDefaults: ExtensionDefaultsSettings;
+  version: 3;
+  agents: InternalAgentSettings;
   extensionEnv: ExtensionEnvSettings;
-  requestUserInput: RequestUserInputSettings;
   appPreferences: AppPreferences;
 }
 
@@ -101,14 +95,6 @@ export type ExtensionEnvValues = Record<string, Record<string, string>>;
 
 export interface ExtensionEnvSettings {
   nonSecretOverrides: ExtensionEnvValues;
-}
-
-export interface RequestUserInputSettings {
-  mode: RequestUserInputMode;
-  blockingTimeout: {
-    enabled: boolean;
-    durationMs: number;
-  };
 }
 
 export interface AppPreferences {
@@ -222,35 +208,7 @@ export const DEFAULT_NAMER_SESSION_PROMPT = [
   "Assistant streaming duplicates",
 ].join("\n");
 
-export const DEFAULT_AGENT_PROFILES = {
-  orchestrators: [
-    {
-      id: DEFAULT_ORCHESTRATOR_PROFILE_ID,
-      kind: "orchestrator",
-      name: "Default orchestrator",
-      ...DEFAULT_AGENT_SETTINGS,
-      systemPrompt: DEFAULT_ORCHESTRATOR_SESSION_PROMPT,
-      extensionUsage: {},
-      extensionOrder: [],
-      updateFromComposer: false,
-      builtin: true,
-      locked: true,
-    },
-  ],
-  special: {
-    threadHandler: {
-      id: DEFAULT_THREAD_HANDLER_PROFILE_ID,
-      kind: "special",
-      name: "Thread handler",
-      ...DEFAULT_AGENT_SETTINGS,
-      systemPrompt: DEFAULT_THREAD_HANDLER_PROMPT,
-      extensionUsage: {},
-      extensionOrder: [],
-      updateFromComposer: false,
-      builtin: true,
-      locked: true,
-    },
-  },
+export const DEFAULT_INTERNAL_AGENT_SETTINGS = {
   titleNamer: {
     ...DEFAULT_AGENT_SETTINGS,
     provider: "openai-codex",
@@ -258,55 +216,13 @@ export const DEFAULT_AGENT_PROFILES = {
     reasoningEffort: "low",
     systemPrompt: DEFAULT_NAMER_SESSION_PROMPT,
   },
-} satisfies AgentProfileState;
-
-export const DEFAULT_WORKFLOW_AGENT_SETTINGS = {
-  explorer: {
-    id: "explorer",
-    label: "Explorer",
-    ...DEFAULT_AGENT_SETTINGS,
-    instructions:
-      "Inspect the repository and return concise findings, evidence, and unresolved questions. Do not edit files.",
-    overrides: {},
-    extensionOrder: [],
-  },
-  implementer: {
-    id: "implementer",
-    label: "Implementer",
-    ...DEFAULT_AGENT_SETTINGS,
-    instructions:
-      "Implement the assigned scoped change, keep edits focused, and return changed files plus verification.",
-    overrides: {},
-    extensionOrder: [],
-  },
-  reviewer: {
-    id: "reviewer",
-    label: "Reviewer",
-    ...DEFAULT_AGENT_SETTINGS,
-    instructions:
-      "Review the assigned result for correctness, regressions, edge cases, and missing tests. Lead with findings.",
-    overrides: {},
-    extensionOrder: [],
-  },
-} satisfies Record<WorkflowAgentKey, WorkflowAgentSettings>;
+} satisfies InternalAgentSettings;
 
 export const DEFAULT_AGENT_SETTINGS_STATE = {
-  version: 2,
-  agents: DEFAULT_AGENT_PROFILES,
-  workflowAgents: DEFAULT_WORKFLOW_AGENT_SETTINGS,
-  extensionDefaults: {
-    order: [],
-    usage: {},
-  },
+  version: 3,
+  agents: DEFAULT_INTERNAL_AGENT_SETTINGS,
   extensionEnv: {
     nonSecretOverrides: {},
-  },
-  requestUserInput: {
-    mode: "nonblocking",
-    blockingTimeout: {
-      enabled: true,
-      durationMs: 300_000,
-    },
   },
   appPreferences: {
     appAppearance: "system",

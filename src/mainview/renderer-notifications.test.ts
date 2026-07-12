@@ -4,11 +4,34 @@ import type {
   StateReadModelBaseline,
   StateReadModelResult,
 } from "../shared/workspace-contract";
-import { DEFAULT_EXTERNAL_INSTRUCTIONS, type WorkspaceId } from "@svvy/core";
-import { createRendererNotificationStore } from "./renderer-notifications";
+import {
+  DEFAULT_EXTERNAL_INSTRUCTIONS,
+  type RuntimeSurfaceTarget,
+  type WorkspaceId,
+} from "@svvy/core";
+import {
+  createRendererNotificationStore,
+  type SurfaceStreamPatchNotification,
+  type SurfaceStreamResetSignal,
+} from "./renderer-notifications";
 
 const workspaceId = "workspace-renderer-notifications" as WorkspaceId;
 const otherWorkspaceId = "workspace-renderer-notifications-other" as WorkspaceId;
+const firstSurfaceTarget = {
+  surface: "orchestrator",
+  workspaceSessionId: "session-renderer-notifications",
+  surfacePiSessionId: "surface-renderer-notifications-first",
+} as RuntimeSurfaceTarget;
+const secondSurfaceTarget = {
+  surface: "orchestrator",
+  workspaceSessionId: "session-renderer-notifications",
+  surfacePiSessionId: "surface-renderer-notifications-second",
+} as RuntimeSurfaceTarget;
+const collidingSurfaceTarget = {
+  surface: "orchestrator",
+  workspaceSessionId: "different-session-renderer-notifications",
+  surfacePiSessionId: firstSurfaceTarget.surfacePiSessionId,
+} as RuntimeSurfaceTarget;
 const emptyBaseline = (): StateReadModelBaseline => ({
   app: [],
   workspaces: [],
@@ -161,6 +184,315 @@ describe("renderer notification store", () => {
       { descriptor: { scope: "app", invalidation: { model: "appPreferences" } } },
     ]);
     expect(rebaselines).toEqual([]);
+    store.dispose();
+  });
+
+  it("delivers complete stream patches only to subscribers for their surface target", () => {
+    const firstPatches: SurfaceStreamPatchNotification[] = [];
+    const secondPatches: SurfaceStreamPatchNotification[] = [];
+    const collidingPatches: SurfaceStreamPatchNotification[] = [];
+    const errors: string[] = [];
+    const store = createRendererNotificationStore({
+      workspaceId,
+      rpcClient: {
+        request: {
+          refetchStateReadModelInvalidation: async () => [],
+          rebaselineStateReadModels: async () => emptyBaseline(),
+        },
+        addMessageListener: () => {},
+        removeMessageListener: () => {},
+      },
+      applyReadModelPatch: () => {},
+      applyReadModelBaseline: () => {},
+      onError: (_error, context) => errors.push(context),
+    });
+    const unsubscribeFirst = store.subscribeSurface(firstSurfaceTarget, {
+      onPatch: (notification) => firstPatches.push(notification),
+      onReset: () => {},
+    });
+    store.subscribeSurface(secondSurfaceTarget, {
+      onPatch: (notification) => secondPatches.push(notification),
+      onReset: () => {},
+    });
+    store.subscribeSurface(collidingSurfaceTarget, {
+      onPatch: (notification) => collidingPatches.push(notification),
+      onReset: () => {},
+    });
+    const firstPatch = {
+      kind: "surface-stream-patch",
+      eventGenerationId: "event-generation-7" as never,
+      sequence: 42 as never,
+      workspaceId,
+      target: firstSurfaceTarget,
+      surfacePiSessionId: firstSurfaceTarget.surfacePiSessionId,
+      streamGenerationId: "stream-generation-3" as never,
+      streamSequence: 9 as never,
+      patch: {
+        type: "assistant_text_delta",
+        messageId: "message-1" as never,
+        contentIndex: 0 as never,
+        delta: "hello",
+      },
+    } satisfies SurfaceStreamPatchNotification;
+
+    store.handle(firstPatch);
+
+    expect(firstPatches).toEqual([firstPatch]);
+    expect(firstPatches[0]).toMatchObject({
+      eventGenerationId: "event-generation-7",
+      sequence: 42,
+      streamGenerationId: "stream-generation-3",
+      streamSequence: 9,
+    });
+    expect(secondPatches).toEqual([]);
+    expect(collidingPatches).toEqual([]);
+    store.handle({
+      ...firstPatch,
+      sequence: 43 as never,
+      surfacePiSessionId: secondSurfaceTarget.surfacePiSessionId,
+    });
+    expect(firstPatches).toEqual([firstPatch]);
+    expect(errors).toEqual(["renderer-notifications.surface-target-mismatch"]);
+
+    unsubscribeFirst();
+    store.handle({ ...firstPatch, sequence: 44 as never, streamSequence: 10 as never });
+    expect(firstPatches).toEqual([firstPatch]);
+    store.dispose();
+  });
+
+  it("blocks discontinuous lanes without advancing them until the subscriber resumes", () => {
+    const patches: SurfaceStreamPatchNotification[] = [];
+    const resets: SurfaceStreamResetSignal[] = [];
+    const store = createRendererNotificationStore({
+      workspaceId,
+      rpcClient: {
+        request: {
+          refetchStateReadModelInvalidation: async () => [],
+          rebaselineStateReadModels: async () => emptyBaseline(),
+        },
+        addMessageListener: () => {},
+        removeMessageListener: () => {},
+      },
+      applyReadModelPatch: () => {},
+      applyReadModelBaseline: () => {},
+    });
+    store.subscribeSurface(firstSurfaceTarget, {
+      onPatch: (notification) => patches.push(notification),
+      onReset: (signal) => resets.push(signal),
+    });
+    const patch = (
+      streamGenerationId: string,
+      streamSequence: number,
+      sequence: number,
+    ): SurfaceStreamPatchNotification => ({
+      kind: "surface-stream-patch",
+      eventGenerationId: "event-generation-1" as never,
+      sequence: sequence as never,
+      workspaceId,
+      target: firstSurfaceTarget,
+      surfacePiSessionId: firstSurfaceTarget.surfacePiSessionId,
+      streamGenerationId: streamGenerationId as never,
+      streamSequence: streamSequence as never,
+      patch: {
+        type: "assistant_text_delta",
+        messageId: "message-1" as never,
+        contentIndex: 0 as never,
+        delta: `${streamGenerationId}:${streamSequence}`,
+      },
+    });
+    const first = patch("stream-generation-1", 1, 1);
+    const generationMismatch = patch("stream-generation-2", 1, 2);
+    const droppedWhileBlocked = patch("stream-generation-2", 2, 3);
+
+    store.handle(first);
+    store.handle(generationMismatch);
+    store.handle(droppedWhileBlocked);
+
+    expect(patches).toEqual([first]);
+    expect(resets).toEqual([
+      {
+        workspaceId,
+        target: firstSurfaceTarget,
+        surfacePiSessionId: firstSurfaceTarget.surfacePiSessionId,
+        cursor: {
+          eventGenerationId: first.eventGenerationId,
+          eventSequence: first.sequence,
+          streamGenerationId: first.streamGenerationId,
+          streamSequence: first.streamSequence,
+        },
+        trigger: {
+          kind: "discontinuity",
+          reason: "stream-generation-mismatch",
+          notification: generationMismatch,
+        },
+      },
+    ]);
+
+    store.resumeSurfaceAfterRebaseline(firstSurfaceTarget, {
+      surfacePiSessionId: firstSurfaceTarget.surfacePiSessionId,
+      streamGenerationId: "stream-generation-2" as never,
+      streamSequence: 2 as never,
+    });
+    const afterBaseline = patch("stream-generation-2", 3, 4);
+    const sequenceGap = patch("stream-generation-2", 5, 5);
+    store.handle(afterBaseline);
+    store.handle(sequenceGap);
+
+    expect(patches).toEqual([first, afterBaseline]);
+    expect(resets[1]).toEqual({
+      workspaceId,
+      target: firstSurfaceTarget,
+      surfacePiSessionId: firstSurfaceTarget.surfacePiSessionId,
+      cursor: {
+        eventGenerationId: afterBaseline.eventGenerationId,
+        eventSequence: afterBaseline.sequence,
+        streamGenerationId: afterBaseline.streamGenerationId,
+        streamSequence: afterBaseline.streamSequence,
+      },
+      trigger: {
+        kind: "discontinuity",
+        reason: "stream-sequence-gap",
+        notification: sequenceGap,
+        expectedStreamSequence: 4 as never,
+      },
+    });
+    store.dispose();
+  });
+
+  it("signals targeted gap and explicit stream resets with the last delivered cursor", () => {
+    const firstPatches: SurfaceStreamPatchNotification[] = [];
+    const firstResets: SurfaceStreamResetSignal[] = [];
+    const secondResets: SurfaceStreamResetSignal[] = [];
+    const secondPatches: SurfaceStreamPatchNotification[] = [];
+    const store = createRendererNotificationStore({
+      workspaceId,
+      rpcClient: {
+        request: {
+          refetchStateReadModelInvalidation: async () => [],
+          rebaselineStateReadModels: async () => emptyBaseline(),
+        },
+        addMessageListener: () => {},
+        removeMessageListener: () => {},
+      },
+      applyReadModelPatch: () => {},
+      applyReadModelBaseline: () => {},
+    });
+    store.subscribeSurface(firstSurfaceTarget, {
+      onPatch: (notification) => firstPatches.push(notification),
+      onReset: (signal) => firstResets.push(signal),
+    });
+    store.subscribeSurface(secondSurfaceTarget, {
+      onPatch: (notification) => secondPatches.push(notification),
+      onReset: (signal) => secondResets.push(signal),
+    });
+    store.handle({
+      kind: "surface-stream-patch",
+      eventGenerationId: "event-generation-1" as never,
+      sequence: 5 as never,
+      workspaceId,
+      target: firstSurfaceTarget,
+      surfacePiSessionId: firstSurfaceTarget.surfacePiSessionId,
+      streamGenerationId: "first-stream-generation" as never,
+      streamSequence: 2 as never,
+      patch: {
+        type: "assistant_text_delta",
+        messageId: "first-message" as never,
+        contentIndex: 0 as never,
+        delta: "partial",
+      },
+    });
+    const gap = {
+      kind: "read-model-rebaseline-required",
+      reason: "surface-stream-gap",
+      rebaselineRequired: true,
+      eventGenerationId: "event-generation-1" as never,
+      lastContiguousSequence: 5 as never,
+      scope: {
+        kind: "surface",
+        workspaceId,
+        surfacePiSessionId: firstSurfaceTarget.surfacePiSessionId,
+      },
+    } satisfies DesktopRendererNotification;
+
+    store.handle(gap);
+
+    expect(firstResets).toEqual([
+      {
+        workspaceId,
+        target: firstSurfaceTarget,
+        surfacePiSessionId: firstSurfaceTarget.surfacePiSessionId,
+        cursor: {
+          eventGenerationId: gap.eventGenerationId!,
+          eventSequence: gap.lastContiguousSequence!,
+          streamGenerationId: "first-stream-generation" as never,
+          streamSequence: 2 as never,
+        },
+        trigger: { kind: "rebaseline-required", notification: gap },
+      },
+    ]);
+    expect(secondResets).toEqual([]);
+    store.handle({
+      kind: "surface-stream-patch",
+      eventGenerationId: "event-generation-1" as never,
+      sequence: 6 as never,
+      workspaceId,
+      target: firstSurfaceTarget,
+      surfacePiSessionId: firstSurfaceTarget.surfacePiSessionId,
+      streamGenerationId: "first-stream-generation" as never,
+      streamSequence: 3 as never,
+      patch: {
+        type: "assistant_text_delta",
+        messageId: "first-message" as never,
+        contentIndex: 0 as never,
+        delta: "dropped until the baseline is applied",
+      },
+    });
+    expect(firstPatches).toHaveLength(1);
+
+    const resetPatch = {
+      kind: "surface-stream-patch",
+      eventGenerationId: "event-generation-1" as never,
+      sequence: 6 as never,
+      workspaceId,
+      target: secondSurfaceTarget,
+      surfacePiSessionId: secondSurfaceTarget.surfacePiSessionId,
+      streamGenerationId: "second-stream-generation" as never,
+      streamSequence: 1 as never,
+      patch: {
+        type: "stream_reset",
+        reason: "surface_reopened",
+        latestStreamSequence: 0 as never,
+      },
+    } satisfies SurfaceStreamPatchNotification;
+    store.handle(resetPatch);
+
+    expect(secondPatches).toEqual([resetPatch]);
+    expect(secondResets).toEqual([
+      {
+        workspaceId,
+        target: secondSurfaceTarget,
+        surfacePiSessionId: secondSurfaceTarget.surfacePiSessionId,
+        cursor: {
+          eventGenerationId: resetPatch.eventGenerationId,
+          eventSequence: resetPatch.sequence,
+          streamGenerationId: resetPatch.streamGenerationId,
+          streamSequence: resetPatch.streamSequence,
+        },
+        trigger: { kind: "stream-reset", notification: resetPatch },
+      },
+    ]);
+    store.handle({
+      ...resetPatch,
+      sequence: 7 as never,
+      streamSequence: 2 as never,
+      patch: {
+        type: "assistant_text_delta",
+        messageId: "second-message" as never,
+        contentIndex: 0 as never,
+        delta: "also dropped until the baseline is applied",
+      },
+    });
+    expect(secondPatches).toEqual([resetPatch]);
     store.dispose();
   });
 

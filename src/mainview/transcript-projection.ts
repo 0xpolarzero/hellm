@@ -1,4 +1,4 @@
-import type { ToolResultMessage } from "@mariozechner/pi-ai";
+import type { RendererCommandResultEntry } from "../shared/renderer-transcript";
 import type {
   WorkspaceCommandRollup,
   WorkspaceHandlerThreadSummary,
@@ -148,7 +148,7 @@ export function buildTranscriptSemanticBlocks(
 }
 
 export function summarizeExecuteTypescriptResult(
-  message: ToolResultMessage,
+  message: RendererCommandResultEntry,
 ): ExecuteTypescriptResultSummary | null {
   if (message.toolName !== "execute_typescript") return null;
   const rawText = message.content

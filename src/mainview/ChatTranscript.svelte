@@ -1,5 +1,9 @@
 <script lang="ts">
-	import { getModels, type AssistantMessage, type Model, type ToolResultMessage, type UserMessage } from "@mariozechner/pi-ai";
+	import type {
+		RendererTranscriptAssistantEntry,
+		RendererCommandResultEntry,
+		RendererTranscriptUserEntry,
+	} from "../shared/renderer-transcript";
 	import CheckIcon from "@lucide/svelte/icons/check";
 	import ClockIcon from "@lucide/svelte/icons/clock";
 	import CopyIcon from "@lucide/svelte/icons/copy";
@@ -54,6 +58,7 @@
 	import Button from "./ui/Button.svelte";
 	import Tooltip from "./ui/Tooltip.svelte";
 	import { formatTurnDuration, formatTurnDurationTooltip } from "./working-timer";
+	import type { RendererSurfaceModel } from "./chat-runtime";
 
 	const DEFAULT_TRANSCRIPT_ROW_GAP = 16;
 	type TranscriptArtifactOpenTarget = string | { id: string; name: string };
@@ -62,8 +67,8 @@
 		conversation: ConversationProjection;
 		target?: PromptTarget | null;
 		sessionId?: string;
-		streamMessage?: AssistantMessage;
-		currentModel?: Model<any> | null;
+		streamMessage?: RendererTranscriptAssistantEntry;
+		currentModel?: RendererSurfaceModel | null;
 		pendingToolCalls: ReadonlySet<string>;
 		isStreaming: boolean;
 		turnTimings: ConversationTurnTiming[];
@@ -75,8 +80,8 @@
 		onOpenHandlerThread?: (threadId: string) => void;
 		onInspectWorkflow?: (workflowId: string) => void;
 		onInspectWorkflowTaskAttempt?: (workflowTaskAttemptId: string) => void;
-		onForkAssistantMessage?: (message: AssistantMessage) => void;
-		onEditUserMessage?: (message: UserMessage, text: string) => void;
+		onForkAssistantMessage?: (message: RendererTranscriptAssistantEntry) => void;
+		onEditUserMessage?: (message: RendererTranscriptUserEntry, text: string) => void;
 		onReplyToWait?: (block: TranscriptSemanticBlock & { kind: "wait" }, text: string) => void;
 		onRetryFailure?: (block: TranscriptSemanticBlock & { kind: "failure" }) => void;
 		initialScroll?: { transcriptAnchorId: string | null; offsetPx: number } | null;
@@ -114,7 +119,7 @@
 	let threadElement = $state<HTMLDivElement | null>(null);
 	let transcriptRowGap = $state(DEFAULT_TRANSCRIPT_ROW_GAP);
 	let transcriptPinnedToEnd = $state(true);
-	let copiedAssistantMessageTimestamp = $state<string | null>(null);
+	let copiedAssistantMessageTimestamp = $state<number | null>(null);
 	let copiedUserMessageTimestamp = $state<string | null>(null);
 	let transcriptSessionId: string | undefined = undefined;
 	let transcriptSessionInitialized = false;
@@ -136,7 +141,7 @@
 	const representedToolCallIds = $derived.by(() => {
 		const ids = new Set<string>(conversation.toolCallsById.keys());
 		for (const block of streamingAssistant?.content ?? []) {
-			if (block.type === "toolCall") ids.add(block.id);
+			if (block.type === "tool-call") ids.add(block.id);
 		}
 		return ids;
 	});
@@ -147,7 +152,7 @@
 		}
 		return timings;
 	});
-	type AssistantContentBlock = AssistantMessage["content"][number];
+	type AssistantContentBlock = RendererTranscriptAssistantEntry["content"][number];
 	function thinkingDisplayText(block: Extract<AssistantContentBlock, { type: "thinking" }>): string {
 		if (block.thinking.trim()) return block.thinking;
 		if (block.redacted) return "[redacted]";
@@ -157,13 +162,13 @@
 
 	type TranscriptRow =
 		| { kind: "semantic"; key: string; block: TranscriptSemanticBlock; sortAt: number; sequence: number }
-		| { kind: "message"; key: string; message: UserMessage | AssistantMessage | ToolResultMessage; sortAt: number; sequence: number }
-		| { kind: "streaming"; key: string; message: AssistantMessage; sortAt: number; sequence: number };
+		| { kind: "message"; key: string; message: RendererTranscriptUserEntry | RendererTranscriptAssistantEntry | RendererCommandResultEntry; sortAt: number; sequence: number }
+		| { kind: "streaming"; key: string; message: RendererTranscriptAssistantEntry; sortAt: number; sequence: number };
 	const transcriptRows = $derived.by<TranscriptRow[]>(() => {
 		const rows: TranscriptRow[] = [];
 		let sequence = 0;
 		for (const message of conversation.visibleMessages) {
-			if (message.role === "toolResult" && conversation.toolCallsById.has(message.toolCallId)) {
+			if (message.role === "command-result" && conversation.toolCallsById.has(message.toolCallId)) {
 				continue;
 			}
 			rows.push({
@@ -232,7 +237,7 @@
 		if (row.kind === "semantic") return 156;
 		if (row.kind === "streaming") return 172;
 		if (row.message.role === "user") return 96;
-		if (row.message.role === "toolResult") return 148;
+		if (row.message.role === "command-result") return 148;
 		return 172;
 	}
 
@@ -256,7 +261,7 @@
 		return Number.MAX_SAFE_INTEGER;
 	}
 
-	function userTextLines(message: UserMessage): string[] {
+	function userTextLines(message: RendererTranscriptUserEntry): string[] {
 		if (typeof message.content === "string") return [message.content];
 		return message.content
 			.filter(
@@ -266,38 +271,38 @@
 			.map((block) => block.text);
 	}
 
-	function userDraftText(message: UserMessage): string {
+	function userDraftText(message: RendererTranscriptUserEntry): string {
 		return userTextLines(message).join("\n\n").trim();
 	}
 
-	function isEditingUserMessage(message: UserMessage): boolean {
+	function isEditingUserMessage(message: RendererTranscriptUserEntry): boolean {
 		return (
 			editingUserMessageTimestamp !== null &&
 			String(message.timestamp) === String(editingUserMessageTimestamp)
 		);
 	}
 
-	function assistantTurnTiming(message: AssistantMessage): ConversationTurnTiming | null {
+	function assistantTurnTiming(message: RendererTranscriptAssistantEntry): ConversationTurnTiming | null {
 		return turnTimingByAssistantTimestamp.get(String(message.timestamp)) ?? null;
 	}
 
-	function userImageBlocks(message: UserMessage) {
+	function userImageBlocks(message: RendererTranscriptUserEntry) {
 		if (typeof message.content === "string") return [];
 		return message.content.filter((block) => block.type === "image");
 	}
 
-	function userAttachments(message: UserMessage): ComposerAttachment[] {
+	function userAttachments(message: RendererTranscriptUserEntry): ComposerAttachment[] {
 		if (typeof message.content === "string") return [];
 		return message.content.flatMap((block) =>
 			block.type === "text" ? parseComposerAttachmentTextSignature(block.textSignature) : [],
 		);
 	}
 
-	function userSnippetProvenance(message: UserMessage): SentSnippetProvenance[] {
+	function userSnippetProvenance(message: RendererTranscriptUserEntry): SentSnippetProvenance[] {
 		return (message as SvvyUserMessage).svvyMetadata?.snippetProvenance ?? [];
 	}
 
-	function userImageAttachments(message: UserMessage): Array<{ attachment: ComposerAttachment; imageData: string | null }> {
+	function userImageAttachments(message: RendererTranscriptUserEntry): Array<{ attachment: ComposerAttachment; imageData: string | null }> {
 		const images = userImageBlocks(message);
 		return userAttachments(message)
 			.filter((attachment) => attachment.kind === "image")
@@ -310,7 +315,7 @@
 			});
 	}
 
-	function userFileAttachments(message: UserMessage): ComposerAttachment[] {
+	function userFileAttachments(message: RendererTranscriptUserEntry): ComposerAttachment[] {
 		return userAttachments(message).filter((attachment) => attachment.kind !== "image");
 	}
 
@@ -318,10 +323,10 @@
 		return attachment.workspaceRelativePath ?? attachment.path;
 	}
 
-	function isHandlerObjectiveMessage(message: UserMessage): boolean {
+	function isHandlerObjectiveMessage(message: RendererTranscriptUserEntry): boolean {
 		if (target?.surface !== "handler") return false;
 		const firstUserMessage = conversation.visibleMessages.find(
-			(candidate): candidate is UserMessage => candidate.role === "user",
+			(candidate): candidate is RendererTranscriptUserEntry => candidate.role === "user",
 		);
 		return firstUserMessage === message;
 	}
@@ -330,7 +335,7 @@
 		return parseTranscriptMentionLinks(line, workspaceMentionPaths);
 	}
 
-	function assistantMessageText(message: AssistantMessage): string {
+	function assistantMessageText(message: RendererTranscriptAssistantEntry): string {
 		return message.content
 			.filter((block): block is { type: "text"; text: string } => block.type === "text")
 			.map((block) => block.text)
@@ -342,22 +347,18 @@
 		return count.toLocaleString("en-US");
 	}
 
-	function knownModelContextWindow(message: AssistantMessage): number | null {
+	function knownModelContextWindow(message: RendererTranscriptAssistantEntry): number | null {
 		if (currentModel?.provider === message.provider && currentModel.id === message.model) {
 			return currentModel.contextWindow;
 		}
-		try {
-			return getModels(message.provider).find((model) => model.id === message.model)?.contextWindow ?? null;
-		} catch {
-			return null;
-		}
+		return null;
 	}
 
-	function assistantMessageContextBudget(message: AssistantMessage): ContextBudget | null {
+	function assistantMessageContextBudget(message: RendererTranscriptAssistantEntry): ContextBudget | null {
 		return buildContextBudgetFromUsage(message.usage, knownModelContextWindow(message));
 	}
 
-	function assistantMessageContextTooltipDetails(message: AssistantMessage, budget: ContextBudget) {
+	function assistantMessageContextTooltipDetails(message: RendererTranscriptAssistantEntry, budget: ContextBudget) {
 		const rows = [
 			{ label: "Context", value: `${exactTokenCount(budget.usedTokens)} tok` },
 			{ label: "Input", value: `${exactTokenCount(message.usage.input)} tok` },
@@ -415,7 +416,7 @@
 		}
 	}
 
-	async function handleCopyAssistantMessage(message: AssistantMessage) {
+	async function handleCopyAssistantMessage(message: RendererTranscriptAssistantEntry) {
 		const text = assistantMessageText(message);
 		if (!text) return;
 		if (copyResetTimer) {
@@ -430,7 +431,7 @@
 		}, 1800);
 	}
 
-	async function handleCopyUserMessage(message: UserMessage) {
+	async function handleCopyUserMessage(message: RendererTranscriptUserEntry) {
 		const text = userDraftText(message);
 		if (!text) return;
 		if (copyResetTimer) {
@@ -451,7 +452,7 @@
 		onOpenWorkspacePath(path);
 	}
 
-	function resultDetailsText(message: ToolResultMessage): string {
+	function resultDetailsText(message: RendererCommandResultEntry): string {
 		return toolResultText(message);
 	}
 
@@ -564,7 +565,7 @@
 		return "pending";
 	}
 
-	function toolResultPreview(message: ToolResultMessage | undefined): string | null {
+	function toolResultPreview(message: RendererCommandResultEntry | undefined): string | null {
 		if (!message) return null;
 		const executeSummary = summarizeExecuteTypescriptResult(message);
 		if (executeSummary) {
@@ -967,7 +968,7 @@
 										<AssistantMarkdown content={thinkingDisplayText(block)} isFinished={true} />
 									</div>
 								</details>
-							{:else if block.type === "toolCall"}
+							{:else if block.type === "tool-call"}
 								{@const projectedToolCall = conversation.toolCallsById.get(block.id)}
 								{@const resultMessage = conversation.toolResultsById.get(block.id)}
 								{@const matchedCommand = commandRollupByToolCallId.get(block.id)}
@@ -1085,7 +1086,7 @@
 											<AssistantMarkdown content={thinkingDisplayText(block)} isFinished={false} />
 										</div>
 									</details>
-								{:else if block.type === "toolCall"}
+								{:else if block.type === "tool-call"}
 									{@const matchedCommand = commandRollupByToolCallId.get(block.id)}
 									{@const matchedCommandCard = matchedCommand ? commandToolCall(matchedCommand) : null}
 									<ToolCallCard
@@ -1116,7 +1117,7 @@
 							</footer>
 						</div>
 					</article>
-				{:else if row?.kind === "message" && row.message.role === "toolResult"}
+				{:else if row?.kind === "message" && row.message.role === "command-result"}
 					{@const message = row.message}
 					<article
 						data-index={virtualRow.index}

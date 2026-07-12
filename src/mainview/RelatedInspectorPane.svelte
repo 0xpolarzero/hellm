@@ -58,7 +58,7 @@
       activeTarget.surface === "command" || activeTarget.surface === "workflow-task-attempt"
         ? activeRuntime.subscribe(refresh)
         : undefined;
-    if (!unsubscribe) refresh();
+    refresh();
     return () => {
       loadRevision += 1;
       unsubscribe?.();

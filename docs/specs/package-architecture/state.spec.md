@@ -239,6 +239,7 @@ import {
   RuntimeSessionWaitStatePort,
   RuntimeSourceStatePort,
   RuntimeThreadStatePort,
+  RuntimeTranscriptStatePort,
   RuntimeTurnStatePort,
   SandboxPolicySource,
   SecretStorePort,
@@ -388,6 +389,7 @@ The public named state-backed port layers are exactly:
 - `layerRuntimeSessionWaitStatePort`
 - `layerRuntimeSourceStatePort`
 - `layerRuntimeThreadStatePort`
+- `layerRuntimeTranscriptStatePort`
 - `layerRuntimeWorkflowTaskStatePort`
 - `layerExtensionStatePort`
 - `layerSandboxPolicySource`
@@ -467,7 +469,7 @@ that succeed, and returns that aggregate when all stores succeed. When at least 
 sweep fails with a typed `StateContractError` (`reason: "transaction-failed"`, `operation` prefixed
 `workspace-state-router.`) whose `cause` carries the preserved partial results (the aggregated values
 and committed after-commit descriptors of the stores that succeeded) so already-committed descriptors
-from earlier stores are never dropped. `layerWorkspaceStateRouter` provides the fourteen runtime-facing state-port layers
+from earlier stores are never dropped. `layerWorkspaceStateRouter` provides the fifteen runtime-facing state-port layers
 from a constructed router. The router is constructed only by app bootstrap at the runtime-state
 composition edge, and has no product call site elsewhere.
 
@@ -677,6 +679,7 @@ type SettingsReadModel = {
     externalInstructions: ExternalInstructionsSettings;
     ambientResources: AmbientAgentResourceSettings;
   };
+  requestInput: RequestInputSettings;
 };
 
 // Exact schema-backed contract imported from the `@svvy/core` package root.
@@ -900,9 +903,25 @@ type ApprovalsReadModel = {
 
 type AgentsReadModel = {
   configuredProfiles: readonly ConfiguredAgentProfileReadModelRecord[];
+  workflowAgents: readonly WorkflowAgentSourceReadModelRecord[];
   actorExtensionDefaults: readonly AgentActorExtensionDefaultsReadModelRecord[];
   bindings: readonly AgentBindingReadModelRecord[];
   generatedContextPreviews: readonly GeneratedContextPreviewReadModelRecord[];
+};
+
+type WorkflowAgentSourceReadModelRecord = {
+  sourceId: string;
+  path: AbsolutePath;
+  sourceVersion: string;
+  fingerprint: string;
+  validationStatus: "valid" | "invalid";
+  diagnostics: readonly SourceDiagnostic[];
+  parameters: TaskAgentParametersSource | null;
+  extensionOrder: readonly ExtensionId[];
+  observedAt: IsoDateTimeString;
+  updatedAt: IsoDateTimeString;
+  builtin: boolean;
+  deletable: boolean;
 };
 
 type AgentActorExtensionDefaultsReadModelRecord = {
@@ -960,18 +979,40 @@ type GeneratedContextPreviewReadModelRecord = {
 
 `configuredProfiles` contains only `agent_profile` rows. It preserves sparse extension usage exactly,
 including explicit `unavailable` values, and preserves stored extension order and position rather
-than resolving them into loaded/available arrays. The `default-orchestrator` orchestrator and
-`thread-handler` handler rows derive `{ builtin: true, locked: true, deletable: false }`; another
-orchestrator row derives `{ builtin: false, locked: false, deletable: true }`. Handler rows are never
-deletable because the state command surface exposes no handler-profile deletion operation.
+than resolving them into loaded/available arrays. A newly initialized state store inserts
+`default-orchestrator` and `thread-handler` itself with the canonical `zai` / `glm-5-turbo`, medium
+reasoning, empty sparse usage/order, and `followComposer: false` defaults. Initialization uses
+conflict-safe inserts, does not advance the state revision, and never overwrites an existing row on
+reopen. No app-bootstrap or JSON-settings seed owns these rows. The `default-orchestrator`
+orchestrator and `thread-handler` handler rows derive
+`{ builtin: true, locked: true, deletable: false }`; another orchestrator row derives
+`{ builtin: false, locked: false, deletable: true }`. Handler rows are never deletable because the
+state command surface exposes no handler-profile deletion operation.
 `actorExtensionDefaults` is a separate app-global collection backed by
 `agent_actor_extension_defaults`; orchestrator and workflow-task defaults never alias profile rows
-or each other. Missing rows project empty usage/order with `updatedAt: null`. Promoting one extension
-default upserts only the addressed actor-default row, and actor-default reset clears only the
-requested usage and/or order field. Orchestrator profile usage remains sparse: selecting the exact
-persisted actor-default state removes that extension key from the profile override. The singleton
-handler profile is its own authority and keeps explicit usage because there is no handler
-actor-default row.
+or each other. New stores insert empty rows for both actors with the same conflict-safe initialization
+policy; defensive projection of a missing row remains empty usage/order with `updatedAt: null`.
+Promoting one extension default updates only the addressed actor-default row, and actor-default
+reset clears only the requested usage and/or order field. Orchestrator profile usage remains sparse:
+selecting the exact persisted actor-default state removes that extension key from the profile
+override. The singleton handler profile is its own authority and keeps explicit usage because there
+is no handler actor-default row.
+`workflowAgents` contains only current `workflow_agent_source_index` rows whose exact path, source
+version, and fingerprint still join a non-deleted app-global `runtime_source_fact` row with
+`sourceKind = "workflow-agent"`. Valid and invalid source observations remain visible. Invalid
+filename-derived ids remain plain strings. Rows contain parsed parameters, extension order, and
+diagnostics but never source text or generated workflow exports. `builtin` is true only for
+`defaultAgent`, `explorerAgent`, `implementerAgent`, and `reviewerAgent`; `deletable` is true only
+for a non-builtin source id accepted by `WorkflowAgentSourceExportNameSchema`. Invalid content with
+a valid filename remains deletable, while invalid filename rows remain inspectable without exposing
+a delete action that cannot satisfy the workflow-agent lifecycle contract. Generated-package export
+rows are never a fallback for this collection. Workflow-task generated-context previews resolve the
+selected source parameters and workflow-task actor defaults from this same freshly fetched `agents`
+read-model snapshot. `agent-settings.json` contains no visible profile, workflow-agent, or actor
+default fields. Extension Managing receives an immutable state-backed authority snapshot and emits
+typed mutations; profile/default mutations enter `StateCommands.agentProfiles`, while workflow-agent
+source saves enter runtime source edits with the committed source version as their compare-and-swap
+base. Reading local app/title settings never rewrites workflow-agent source files or state rows.
 `bindings` contains only live surface/thread/workflow-attempt facts and must not be treated as
 editable profile configuration. There is no combined or compatibility `profiles` collection.
 
@@ -1086,6 +1127,7 @@ state-owned facade contracts named in this table.
 | Kind                    | Builder source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Invalidation mapping                                                                                                                                                                               | Root exports                                                                                                                                                  | Tests                                                                                                                                                                                                                |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `sessionNavigation`     | `packages/state/src/state-facade.ts` builds and core-schema-validates `SessionNavigationReadModel` from workspace-routed `StructuredSessionState.listSessionStates()`, composer drafts, `buildStructuredSessionSummaryProjection(...)`, `buildStructuredSessionView(...)`, and `@svvy/state/session-navigation` grouping. It includes durable provisional-title/title-generation facts, renderer-safe parent session ids for fork badges, orchestrator-local status, thread status groups, sidebar thread/workflow rows and subtitles, command rollups, and product events, but no session-file or parent-session-file paths. | Workspace `{ model: "sessionNavigation" }` refetches `sessionNavigation`; renderer startup/manual/runtime rebaseline includes it for workspace scope.                                              | `SessionNavigationReadModelRequest`, `SessionNavigationReadModel`, `SessionNavigationSummary` from `@svvy/state`; exact nested DTO schemas from `@svvy/core`. | `packages/core/src/session-navigation-contracts.test.ts` strict schema golden; `packages/state/src/state-facade.test.ts` structured fixture parity/golden; `packages/package-boundaries.test.ts` root-export ledger. |
+| `promptHistory`         | `packages/state/src/state-facade.ts` reads the workspace's chronological prompt-history rows recorded atomically with accepted ordinary user-message queue rows and returns exact submitted text plus workspace-session, surface, queue-item, and acceptance-time lineage. | Workspace `{ model: "promptHistory" }` refetches `promptHistory`; workspace rebaseline includes it. | `PromptHistoryReadModelRequest`, `PromptHistoryReadModel`, `PromptHistoryReadModelEntry` from `@svvy/state`. | `packages/state/src/runtime-queue-state-port.test.ts` atomic write/idempotency coverage; `packages/state/src/state-facade.test.ts` exact duplicates, refetch, and rebaseline coverage; `packages/package-boundaries.test.ts` root-export ledger. |
 | `surfaceTranscript`     | `packages/state/src/state-facade.ts` builds the already-authored `SurfaceTranscriptReadModel` from the target session snapshot, committed turns/commands, composer draft, prompt-lock turn state, and queue count.                                                                                                                                                                                                                                                                                                                                                     | Workspace `{ model: "surface", ids }` expands to `surfaceTranscript`, `surfaceSummary`, `surfaceComposer`, and `surfaceQueuedMessages` for each addressed surface id.                              | `SurfaceTranscriptReadModelRequest`, `SurfaceTranscriptReadModel` from `@svvy/state`.                                                                         | `packages/state/src/state-facade.test.ts` fixture assertion plus `refetchInvalidation` surface expansion coverage; `packages/package-boundaries.test.ts` root-export ledger.                                         |
 | `surfaceSummary`        | `packages/state/src/state-facade.ts` builds a minimal pane-header surface summary from the target snapshot, active turn, queue count, title, model/provider/reasoning, and bound extension ids.                                                                                                                                                                                                                                                                                                                                                                        | Workspace `{ model: "surface", ids }` expands to `surfaceSummary` with the sibling surface slices.                                                                                                 | `SurfaceSummaryReadModelRequest`, `SurfaceSummaryReadModel` from `@svvy/state`.                                                                               | `packages/state/src/state-facade.test.ts`; `packages/package-boundaries.test.ts` root-export ledger.                                                                                                                 |
 | `surfaceComposer`       | `packages/state/src/state-facade.ts` reads `StructuredSessionState.getComposerDraft(surfacePiSessionId)` and returns durable draft text, attachments, snippet mentions, and update time.                                                                                                                                                                                                                                                                                                                                                                               | Workspace `{ model: "surface", ids }` expands to `surfaceComposer` with the sibling surface slices.                                                                                                | `SurfaceComposerReadModelRequest`, `SurfaceComposerReadModel` from `@svvy/state`.                                                                             | `packages/state/src/state-facade.test.ts`; `packages/package-boundaries.test.ts` root-export ledger.                                                                                                                 |
@@ -1098,7 +1140,8 @@ Second-half Increment 6 read-model rows:
 
 | Kind                           | Builder source                                                                                                                                                                                                                                                                                                                                                                   | Invalidation mapping                                                                                                                            | Root exports                                                                                                                                   | Tests                                                                                                                                                                                                                       |
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agents`                       | `packages/state/src/state-facade.ts` projects app-global DB-backed orchestrator and handler configuration into `configuredProfiles` without mixing in surface state, projects independently persisted orchestrator/workflow-task defaults into `actorExtensionDefaults`, and separately projects live session/thread/workflow-attempt profile/context facts into `bindings`. `generatedContextPreviews` remains data-only binding metadata: owner/surface identity, actor, fingerprint/revision, loaded/available extension ids, and external source hashes; it excludes prompt, guidance, and declaration bodies.                                                                                  | App `{ model: "agents", ids? }` refetches `agents`; app rebaseline includes `agents`.                                                           | `AgentsReadModelRequest`, `AgentsReadModel`, `ConfiguredAgentProfileReadModelRecord`, `AgentActorExtensionDefaultsReadModelRecord`, `AgentBindingReadModelRecord`, `GeneratedContextPreviewReadModelRecord` from `@svvy/state`.       | `packages/state/src/state-facade.test.ts` proves exact configured profile/default preservation, sparse override and locked-profile policy, live-binding separation, data-only generated-context metadata, and rebaseline coverage; `packages/package-boundaries.test.ts` root-export ledger.                                                                 |
+| `settings`                     | `packages/state/src/state-facade.ts` joins app-global app preferences with the authoritative `request_user_input_settings` singleton and returns both as `SettingsReadModel`; even a workspace-requested rebaseline reads this settings result from the app-global store.                                                                                                              | App `{ model: "settings" }` refetches `settings`; app and workspace-requested rebaseline include the app-global `settings` result.              | `SettingsReadModel` from `@svvy/state`; `RequestInputSettings` from `@svvy/core`.                                                              | `packages/state/src/state-facade.test.ts` default, invalidation-refetch, app/workspace routing, and rebaseline coverage; `packages/state/src/structured-session-state-sqlite.test.ts` reopen coverage.                          |
+| `agents`                       | `packages/state/src/state-facade.ts` projects app-global DB-backed orchestrator/handler configuration into `configuredProfiles`, current exact-join workflow-agent source observations into `workflowAgents`, independently persisted orchestrator/workflow-task defaults into `actorExtensionDefaults`, and live session/thread/workflow-attempt facts into `bindings`. `generatedContextPreviews` remains data-only binding metadata and excludes prompt/guidance/declaration bodies. | App `{ model: "agents", ids? }` refetches `agents`; app rebaseline includes `agents`. | `AgentsReadModelRequest`, `AgentsReadModel`, `WorkflowAgentSourceReadModelRecord`, `ConfiguredAgentProfileReadModelRecord`, `AgentActorExtensionDefaultsReadModelRecord`, `AgentBindingReadModelRecord`, `GeneratedContextPreviewReadModelRecord` from `@svvy/state`. | `packages/state/src/state-facade.test.ts` proves valid/invalid workflow-agent rows, no generated-export fallback, builtin/deletable policy, configured profile/default preservation, live-binding separation, data-only generated-context metadata, and rebaseline coverage; `packages/package-boundaries.test.ts` root-export ledger. |
 | `extensions`                   | `packages/state/src/state-facade.ts` builds extension inventory/readiness from profile extension usage plus generated `@svvyx/extensions` package facts.                                                                                                                                                                                                                         | App `{ model: "extensions", ids? }` refetches `extensions`; app rebaseline includes `extensions`.                                               | `ExtensionsReadModelRequest`, `ExtensionsReadModel`, `ExtensionReadModelRecord` from `@svvy/state`.                                            | `packages/state/src/state-facade.test.ts` generated-package parity fixture assertion and `extensionEnv` descriptor test; `packages/package-boundaries.test.ts` root-export ledger.                                          |
 | `snippets`                     | `packages/state/src/state-facade.ts` reads state-owned `snippet` rows seeded once from the legacy managed snippet file store and then maintained by `StateCommands.snippets`; managed svvy snippets are durable DB rows and discovered snippet rows use the same read-model DTO when committed by source reconciliation.                                                         | Workspace `{ model: "snippets", ids? }` refetches `snippets`; workspace rebaseline includes `snippets`.                                         | `SnippetsReadModelRequest`, `SnippetsReadModel`, `SnippetReadModelRecord` from `@svvy/state`.                                                  | `packages/state/src/state-facade.test.ts` non-empty row fixture, rebaseline coverage, and `snippets.createManaged` descriptor/idempotency test; `packages/package-boundaries.test.ts` root-export ledger.                   |
 | `workflowsGenerated`           | `packages/state/src/state-facade.ts` reads the current `@svvyx/workflows` package fact and joins it by `buildId` to state-owned `generated_workflows_export` rows. A requested noncurrent build id returns empty facts and exports; the facade never mixes rows from another build. Export rows include the generated code/paths, exact agent parameters, and `workflowAgentId`. | App `{ model: "workflowsGenerated", ids? }` refetches `workflowsGenerated`; app rebaseline includes `workflowsGenerated`.                       | `WorkflowsGeneratedReadModelRequest`, `WorkflowsGeneratedReadModel`, `WorkflowsGeneratedExportReadModelRecord` from `@svvy/state`.             | `packages/state/src/state-facade.test.ts` non-empty export projection, build-id filtering, generated-package fact fixture assertion, and app rebaseline coverage; `packages/package-boundaries.test.ts` root-export ledger. |
@@ -1120,9 +1163,11 @@ decisions; state refetch callers supply no fabricated event payload, ad hoc scop
 command-specific invalidation, caller-authored descriptor, or separate cursor fields. Workspace `{ model: "surface",
 ids }` descriptors expand into every open surface-scoped read request the caller asks state to
 maintain for that surface: surface summary, surface transcript, composer state, queued-message
-state, prompt-history state, prompt status, and surface-local chrome. Those slices may have
+state, prompt status, and surface-local chrome. Those slices may have
 separate `StateReadModelRequest` kinds for efficient fetching, but they do not have independent
-invalidation descriptors. Workspace `{ model: "commandInspector", ids }` descriptors refetch the
+invalidation descriptors. Workspace-scoped prompt history instead uses the dedicated
+`{ model: "promptHistory" }` invalidation because one accepted prompt updates every composer in the
+workspace. Workspace `{ model: "commandInspector", ids }` descriptors refetch the
 `commandInspector` read model; state does not expose a separate live stdout/stderr/progress delta
 read model.
 
@@ -1245,6 +1290,14 @@ rows named as unreadable files or descendants of unreadable roots, records scan 
 per-root fingerprints, bumps the state revision once, and returns one workspace `snippets`
 after-commit invalidation. It never updates or tombstones managed `source = "svvy"` rows. Any
 identity collision or invalid observation rolls the entire row/scan/root-fact write back.
+
+`RuntimeSourceStatePort.recordWorkflowAgentSourceSave(...)` and
+`recordWorkflowAgentSourceDelete(...)` commit the app-global editable source fact and durable
+workflow-agent source index upsert/tombstone in one SQLite transaction and bump `state_revision`
+once. `reconcileWorkflowAgentSources(...)` atomically upserts every exact core observation, commits
+matching app-global workflow-agent facts, tombstones current facts/index rows absent from the scan,
+updates the `workflows` scan/root-fingerprint receipts, and bumps the revision once. Each method
+returns one deduplicated app invalidation batch containing `agents` and `workflowsGenerated`.
 
 `afterCommit` is the field name for Effect state-port mutation results returned inside
 runtime-owned lanes. `StateCommandsFacade` hides those descriptors and returns only the state command
@@ -1370,6 +1423,10 @@ type StateCommandsFacade = {
     ): Promise<StateCommandResult>;
     resetActorExtensionDefaults(
       input: ResetActorExtensionDefaultsCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
+    setActorExtensionDefaults(
+      input: SetAgentActorExtensionDefaultsCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
     setExternalInstructionActorUsage(
@@ -1686,6 +1743,13 @@ type PromoteProfileExtensionDefaultCommandInput = {
 type ResetActorExtensionDefaultsCommandInput = {
   actor: "orchestrator" | "workflow-task";
   reset: "usage" | "order" | "usage-and-order";
+  clientSubmission?: StateCommandClientSubmission;
+};
+
+type SetAgentActorExtensionDefaultsCommandInput = {
+  actor: "orchestrator" | "workflow-task";
+  extensionUsage: Readonly<Record<ExtensionId, ExtensionUsageState>>;
+  extensionOrder: readonly ExtensionId[];
   clientSubmission?: StateCommandClientSubmission;
 };
 
@@ -2108,7 +2172,8 @@ type StateMutationResult<T> = {
 RuntimeWorkspaceStatePort:
 
 - Caller: @svvy/runtime workspace acquisition and release.
-- Methods: acquireWorkspace, acquireDefaultWorkspace, releaseWorkspace.
+- Methods: resolvePromptTargetWorkspaceId, acquireWorkspace, acquireDefaultWorkspace,
+  releaseWorkspace.
 - Rule: workspace acquisition and release methods commit durable workspace/session ownership facts
   and return `StateMutationResult` wrappers with session navigation invalidations only after
   commit. They do not acquire live workspace runtime scopes, start source watchers, create
@@ -2118,6 +2183,10 @@ The exact workspace state port is:
 
 ```ts
 type RuntimeWorkspaceStatePort = {
+  resolvePromptTargetWorkspaceId(input: {
+    target: PromptTarget;
+  }): Effect.Effect<WorkspaceId, StateContractError>;
+
   acquireWorkspace(
     input: AcquireWorkspaceInput,
   ): Effect.Effect<StateMutationResult<AcquireWorkspaceResult>, StateContractError>;
@@ -2146,8 +2215,10 @@ RuntimeQueueStatePort:
   committed queue lanes.
 - Rule: ordinary runtime composer send acceptance uses
   `acceptSubmittedSurfaceMessage(...)`, which inserts the `user_message` queue row and clears the
-  submitted durable composer draft inside one state transaction. Duplicate idempotency-key replay
-  returns the existing queue row with `afterCommit: []` and must not clear the user's current draft.
+  submitted durable composer draft and, for non-empty submitted text, appends the exact workspace
+  prompt-history row inside one state transaction. Duplicate client-submission idempotency-key
+  replay returns the existing queue row with `afterCommit: []`, appends no history row, and must not
+  clear the user's current draft, including after the original queue row becomes terminal.
   `enqueueSurfaceMessage(...)` remains the lower-level queue insert for runtime-owned non-composer
   work such as request-input answer deliveries, workflow task starts, report requests, and other
   surface-control queue items.
@@ -2285,11 +2356,13 @@ RuntimeTurnStatePort:
 
 - Caller: `@svvy/runtime` turn execution after a queue row has been durably claimed through
   `RuntimeQueueStatePort`.
-- Methods: startTurn, setTurnDecision, finishTurn, queueTopLevelTitleGeneration.
+- Methods: startTurn, setTurnDecision, finishTurn, recoverInterruptedTurn, settlePromptTurn,
+  queueTopLevelTitleGeneration.
 - Rule: active-turn writes are serialized by surface and prompt-lock ownership. `startTurn(...)`
   records turn state for the already claimed queue item but does not claim queue rows, choose queue
-  ordering, wake lanes, or enqueue follow-up work. Queue row delivery/failure/retry settlement
-  remains on `RuntimeQueueStatePort`; runtime coordinates the sequence across the two ports.
+  ordering, wake lanes, or enqueue follow-up work. Ordinary queue-only transitions remain on
+  `RuntimeQueueStatePort`; terminal prompt settlement uses `settlePromptTurn(...)` so the accepted
+  queue row cannot be replayed after its turn has already committed terminal state.
 
 The exact turn state port is:
 
@@ -2307,10 +2380,97 @@ type RuntimeTurnStatePort = {
     input: FinishRuntimeTurnInput,
   ): Effect.Effect<StateMutationResult<RuntimeTurnRecord>, StateContractError>;
 
+  recoverInterruptedTurn(
+    input: RecoverInterruptedRuntimeTurnInput,
+  ): Effect.Effect<
+    StateMutationResult<RuntimeInterruptedTurnRecoveryResult>,
+    StateContractError
+  >;
+
+  settlePromptTurn(
+    input: SettleRuntimePromptTurnInput,
+  ): Effect.Effect<
+    StateMutationResult<RuntimePromptTurnSettlementResult>,
+    StateContractError
+  >;
+
   queueTopLevelTitleGeneration(input: {
     sessionId: WorkspaceSessionId;
     surfacePiSessionId: SurfacePiSessionId;
   }): Effect.Effect<StateMutationResult<RuntimeTitleGenerationQueueReceipt>, StateContractError>;
+};
+```
+
+`recoverInterruptedTurn(...)` is one state transaction for an active turn that can no longer have a
+live runtime owner. It applies the requested failed/cancelled terminal status to the turn, active
+transcript assistant, linked commands, and dispatching queue claim; cancels blocking request-input
+and approval rows in the same transaction; and clears only the matching session wait. The result
+names every command terminalized anywhere inside that transaction plus every other changed durable
+identity so runtime can cancel matching process-local command handles and publish the complete
+post-commit invalidation batch. Repeating the same recovery after those facts are terminal is a
+no-op.
+
+`settlePromptTurn(...)` is the normal prompt terminalization transaction. It claim-fences and
+settles the accepted queue row, records the exact completed/failed/cancelled turn state, and
+terminalizes any still-live commands in one commit. A same-facts replay returns `changed: false`
+and no invalidations; a mismatched terminal replay or foreign command/queue lineage fails without
+partially mutating any row.
+
+RuntimeTranscriptStatePort:
+
+- Caller: `@svvy/runtime` while admitting a claimed prompt and consuming normalized pi message
+  lifecycle events.
+- Methods: commitUserMessage, beginAssistantMessage, appendAssistantContentDelta,
+  upsertAssistantToolCall, linkAssistantToolCallCommand, commitAssistantMessage,
+  failAssistantMessage, bindPiHistoryEntry, advanceStreamCursor, readSurfaceTranscript.
+- Rule: transcript messages are Svvy-owned durable records ordered by a surface-local ordinal.
+  User rows preserve the complete `RuntimeSubmittedMessage`; assistant rows preserve ordered text,
+  thinking, and tool-call blocks plus provider/model/API, usage, stop/error, timestamps, command
+  linkage, and optional pi history identity. One runtime turn may own multiple assistant messages.
+  Surface stream generation and sequence compare-and-swap is committed atomically with each live
+  transcript mutation. Per-packet delta/tool/cursor writes return no read-model invalidations;
+  user commit, assistant begin, assistant commit, and assistant fail return exactly one surface
+  invalidation.
+
+The exact transcript state port is:
+
+```ts
+type RuntimeTranscriptStatePort = {
+  commitUserMessage(input: CommitRuntimeTranscriptUserMessageInput): Effect.Effect<
+    StateMutationResult<RuntimeTranscriptUserMutation>,
+    StateContractError
+  >;
+  beginAssistantMessage(input: BeginRuntimeTranscriptAssistantMessageInput): Effect.Effect<
+    StateMutationResult<RuntimeTranscriptAssistantMutation>,
+    StateContractError
+  >;
+  appendAssistantContentDelta(
+    input: AppendRuntimeTranscriptAssistantContentDeltaInput,
+  ): Effect.Effect<StateMutationResult<RuntimeTranscriptAssistantMutation>, StateContractError>;
+  upsertAssistantToolCall(
+    input: UpsertRuntimeTranscriptAssistantToolCallInput,
+  ): Effect.Effect<StateMutationResult<RuntimeTranscriptAssistantMutation>, StateContractError>;
+  linkAssistantToolCallCommand(
+    input: LinkRuntimeTranscriptAssistantToolCallCommandInput,
+  ): Effect.Effect<StateMutationResult<RuntimeTranscriptAssistantMutation>, StateContractError>;
+  commitAssistantMessage(
+    input: CommitRuntimeTranscriptAssistantMessageInput,
+  ): Effect.Effect<StateMutationResult<RuntimeTranscriptAssistantMutation>, StateContractError>;
+  failAssistantMessage(input: FailRuntimeTranscriptAssistantMessageInput): Effect.Effect<
+    StateMutationResult<RuntimeTranscriptAssistantMutation>,
+    StateContractError
+  >;
+  bindPiHistoryEntry(input: BindRuntimeTranscriptPiHistoryEntryInput): Effect.Effect<
+    StateMutationResult<RuntimeTranscriptMessage>,
+    StateContractError
+  >;
+  advanceStreamCursor(input: AdvanceRuntimeTranscriptStreamCursorInput): Effect.Effect<
+    StateMutationResult<RuntimeTranscriptStreamCursor>,
+    StateContractError
+  >;
+  readSurfaceTranscript(
+    input: ReadRuntimeSurfaceTranscriptInput,
+  ): Effect.Effect<RuntimeSurfaceTranscriptSnapshot, StateContractError>;
 };
 ```
 
@@ -2363,8 +2523,11 @@ RuntimeApprovalStatePort:
 - Methods: createApprovalRequest, getApprovalRequest, listOpenApprovalRequests,
   resolveApprovalRequest.
 - Rule: approval rows are durable `@svvy/state` facts created for runtime-owned approval policy.
-  State records requests and answers atomically through core-owned state ports; runtime owns policy,
-  waiting, command terminalization, queue effects, and publication after commit.
+  Runtime owns policy and process-local waiter wakeups. For user review, state creates the pending
+  approval, transitions its active linked command to `waiting`, and records the matching approval
+  wait in one transaction. State resolves every approval, transitions its linked command, and clears
+  only the matching approval wait in one transaction, then returns the complete post-commit
+  invalidation batch.
 
 Approval port contract:
 
@@ -2428,7 +2591,6 @@ type GetRuntimeApprovalRequestInput = {
 };
 
 type ListOpenRuntimeApprovalRequestsInput = {
-  sessionId?: WorkspaceSessionId;
   surfacePiSessionId?: SurfacePiSessionId;
 };
 
@@ -2455,12 +2617,17 @@ type RuntimeApprovalStatePort = {
 };
 ```
 
-`createApprovalRequest(...)` inserts a pending row and returns
-`StateMutationResult<RuntimeApprovalRecord>`. `resolveApprovalRequest(...)` is a
-compare-and-set transition from `pending` to one terminal status; resolving an already terminal row
-with the same terminal facts is idempotent and returns `afterCommit: []`. A conflicting terminal
-answer fails with `StateContractError.reason: "conflict"`. Successful create/resolve writes emit
-runtime-approval and affected surface/session invalidations; read-only get/list methods return no
+`createApprovalRequest(...)` validates exact session/surface/thread/turn/command lineage and rejects
+terminal linked commands. It inserts a pending row and returns
+`StateMutationResult<RuntimeApprovalRecord>`. A `user` approval requires an active linked command;
+the same transaction moves that command to `waiting` and records its session approval wait.
+`resolveApprovalRequest(...)` is a compare-and-set transition from `pending` to one terminal status.
+In the same transaction it starts the linked command for approval, cancels it for
+denial/cancellation, and clears the matching approval wait when no other pending approval owns that
+session/thread wait. Resolving an already terminal row with the same terminal facts is idempotent
+and returns `afterCommit: []`. A conflicting terminal answer fails with
+`StateContractError.reason: "conflict"`. Successful create/resolve writes emit runtime-approval,
+command, and affected surface/session invalidations; read-only get/list methods return no
 invalidation descriptors.
 
 RuntimeActorExtensionBindingStatePort:
@@ -2753,8 +2920,10 @@ type RuntimeExtensionStatePort = {
 RuntimeSourceStatePort:
 
 - Caller: @svvy/runtime source edit and invalidation workers.
-- Methods: readSourceVersion, recordSourceSave, recordSourceDelete, recordSourceScan,
-  reconcileDiscoveredHostSnippets, recordObservedSourceDeletion, recordSourceDiagnostic.
+- Methods: readSourceVersion, recordSourceSave, recordSourceDelete,
+  recordWorkflowAgentSourceSave, recordWorkflowAgentSourceDelete,
+  reconcileWorkflowAgentSources, recordSourceScan, reconcileDiscoveredHostSnippets,
+  recordObservedSourceDeletion, recordSourceDiagnostic.
 - Rule: this port owns three distinct durable source fact families. Editable source facts are keyed
   by `(sourceInvalidationScope, sourceKind, sourceId)` and support compare-and-swap source edits,
   source deletion facts, and recovery after two-phase file/state work. Runtime source-root
@@ -2771,7 +2940,9 @@ RuntimeSourceStatePort:
   runtime-owned deterministic reconciliation and return
   `StateMutationResult<RuntimeSourceScanFactRecord>`. Every write emits only committed
   source/read-model invalidation descriptors derived from the affected source kind or source
-  domain plus the committed scope. The port does not infer scope from a bound workspace store, read
+  domain plus the committed scope. Workflow-agent direct saves/deletes and external scans use the
+  dedicated atomic methods so `runtime_source_fact`, `workflow_agent_source_index`, and the
+  workflows scan receipt cannot diverge. The port does not infer scope from a bound workspace store, read
   or write file contents, watch files, generate extension packages, build generated context, own
   recovery scheduling, publish runtime events, or mutate renderer drafts.
 
@@ -2790,6 +2961,18 @@ type RuntimeSourceStatePort = {
   recordSourceDelete(
     input: RecordRuntimeSourceDeleteInput,
   ): Effect.Effect<StateMutationResult<RuntimeSourceFactRecord>, StateContractError>;
+
+  recordWorkflowAgentSourceSave(
+    input: RecordRuntimeWorkflowAgentSourceSaveInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceFactRecord>, StateContractError>;
+
+  recordWorkflowAgentSourceDelete(
+    input: RecordRuntimeWorkflowAgentSourceDeleteInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceFactRecord>, StateContractError>;
+
+  reconcileWorkflowAgentSources(
+    input: ReconcileRuntimeWorkflowAgentSourcesInput,
+  ): Effect.Effect<StateMutationResult<RuntimeSourceScanFactRecord>, StateContractError>;
 
   recordSourceScan(
     input: RecordRuntimeSourceScanInput,
@@ -2836,7 +3019,10 @@ type RecordRuntimeSourceDeleteInput = {
   scope: SourceInvalidationScope;
   sourceKind: ExtensionSourceKind;
   sourceId: string;
-  previousSourceVersion?: string | null;
+  path: AbsolutePath;
+  previousSourceVersion: string;
+  previousFingerprint: string;
+  sourceCommandId?: CommandId | null;
   deletedAt: IsoDateTimeString;
 };
 
@@ -2858,7 +3044,12 @@ does not appear on `RecordRuntimeSourceSaveInput`. `RecordRuntimeSourceSaveInput
 is state-port evidence produced after the source owner resolves the file-backed save. The state
 port save input owns `scope`, `path`, `sourceVersion`, `fingerprint`, `diagnostics`, and `savedAt`;
 callers must not submit renderer draft state, generated-context read-model payloads, source text, or
-best-effort summaries. `RecordRuntimeSourceScanInput.sourceFingerprint` is the aggregate
+best-effort summaries. `RecordRuntimeSourceDeleteInput` carries the exact deleted path plus the
+previous version/fingerprint needed to create or update a tombstone even when no active source fact
+has been recorded yet. Replaying an exact save target or delete tombstone is idempotent recovery;
+an existing fact with divergent target evidence is a typed stale-state failure and is never silently
+accepted. Tombstone updates preserve prior diagnostics while recording deletion lineage and time.
+`RecordRuntimeSourceScanInput.sourceFingerprint` is the aggregate
 domain-level scan receipt fingerprint. `RecordRuntimeSourceScanInput.sourceRoots` contains the
 source-root fingerprints observed in the same deterministic scan batch. Runtime is responsible for
 submitting stable source-root paths; state stores and looks up the exact submitted path. Committing a
@@ -2871,21 +3062,37 @@ not accept storage/projection fields such as `scopeKey`, `lastObservedPath`, `la
 
 RuntimeRequestStatePort:
 
-- Caller: @svvy/runtime request-input creation, snapshot reads, open blocking wait recovery, answer
-  recording, timer pause commits, timeout defaulting, cancellation, and later nonblocking answer
-  delivery linkage.
-- Methods: createRequestInput, getRequestInput, listOpenBlockingRequestInputs,
-  answerRequestInput, setRequestInputTimerPaused, defaultOpenRequestInputQuestions,
-  cancelRequestInput.
+- Caller: @svvy/runtime app-global settings reads/writes, request-input creation, snapshot reads, open
+  blocking wait recovery, answer recording, timer pause commits, timeout defaulting, cancellation,
+  and later nonblocking answer delivery linkage.
+- Methods: readRequestInputSettings, setRequestInputVariant,
+  setRequestInputBlockingTimeout, createRequestInput, getRequestInput,
+  listOpenBlockingRequestInputs, answerRequestInput, setRequestInputTimerPaused,
+  defaultOpenRequestInputQuestions, cancelRequestInput.
 - Rule: this port owns request-input records and any later nonblocking answer delivery linkage.
-  Command progress, waiting status, terminal command facts, and command immutability are handled
-  separately through `RuntimeCommandStatePort`. Session/surface wait projections are handled
-  separately through `RuntimeSessionWaitStatePort`; request-input timer scheduling itself is runtime
-  process behavior and is never owned by state.
-- Transaction rule: answer recording and timer pause/resume delegate surface ownership validation and
-  committed row changes to structured-session write methods. The state port adapter must not
-  pre-read `getRequestUserInputRequest(...)` only to recover session ownership, validate the target
-  surface, or derive stale invalidations before calling `answerRequestUserInput(...)` or
+  Creation validates exact session/surface/thread/turn/command lineage and requires an active turn
+  and command. For blocking requests, creation atomically records the request/questions, the linked
+  command's waiting state, and the durable user wait. The first completed/expired/cancelled request
+  transition atomically terminalizes the linked command and clears only the matching user wait. A
+  nonblocking answer atomically records the answer, its delivery queue row, and `steering` priority
+  for `enqueue-and-run`. Standalone command and wait operations remain available through their
+  narrow ports; request-input timer scheduling itself is runtime process behavior and is never owned
+  by state.
+- Settings rule: the router always dispatches the three settings methods to the app-global store.
+  Existing request rows and all row-addressed methods remain workspace-routed. The app-global
+  `request_user_input_settings` singleton defaults without inserting a row to mode `nonblocking`
+  with `{ enabled: true, durationMs: 300000 }`, and each settings write updates that one row and
+  bumps `state_revision` exactly once. There is no JSON mirror, migration bridge, compatibility row,
+  or dual-write path.
+- Settings invalidations: `setRequestInputVariant(...)` returns app `settings`, app `extensions`
+  narrowed to extension id `request-user-input`, and app `agents` descriptors in that order.
+  `setRequestInputBlockingTimeout(...)` returns only app `settings`.
+- Transaction rule: blocking creation, the terminal answer, timeout defaulting, and cancellation
+  each delegate all request/command/wait writes to one structured-session transaction. Answer
+  recording and timer pause/resume delegate surface ownership validation and committed row changes
+  to structured-session write methods. The state port adapter must not pre-read
+  `getRequestUserInputRequest(...)` only to recover session ownership, validate the target surface,
+  or derive stale invalidations before calling `answerRequestUserInput(...)` or
   `setRequestUserInputTimerPaused(...)`.
 
 RuntimeSessionWaitStatePort:
@@ -3602,6 +3809,13 @@ source?: "live-stream" | "final-result" | "execute_typescript" | "retained-log-a
 };
 
 type RuntimeRequestStatePort = {
+readRequestInputSettings(): Effect.Effect<RequestInputSettings, StateContractError>;
+setRequestInputVariant(
+input: SetRequestInputVariantInput,
+): Effect.Effect<StateMutationResult<SetRequestInputVariantResult>, StateContractError>;
+setRequestInputBlockingTimeout(
+input: SetRequestInputBlockingTimeoutInput,
+): Effect.Effect<StateMutationResult<SetRequestInputBlockingTimeoutResult>, StateContractError>;
 createRequestInput(
 input: CreateRuntimeRequestInput,
 ): Effect.Effect<StateMutationResult<RuntimeRequestInputRecord>, StateContractError>;
@@ -3642,12 +3856,13 @@ answer: AnswerRequestInputResult;
 target: PromptTarget;
 };
 
+`RequestInputSettings`, both named settings mutation input/result pairs,
 `AnswerRequestInputInput`, `AnswerRequestInputResult`, `SetRequestInputTimerPausedInput`, and
 `SetRequestInputTimerPausedResult` are core-owned runtime request-input contracts imported from
 `@svvy/core`. `RuntimeRequestStatePort` must not import these shapes from `@svvy/runtime` or define
 state-local aliases with the same names. Runtime facade methods and state ports share the core
-contract, while state owns only the DB-backed request rows, question rows, answer rows, timeout
-facts and committed request-input post-commit handoff values.
+contract, while state owns the app-global settings singleton, DB-backed request rows, question rows,
+answer rows, timeout facts, and committed request-input post-commit handoff values.
 
 `answerRequestInput(...)` returns the public `AnswerRequestInputResult` inside
 `RuntimeAnswerRequestInputCommitResult.answer` and the committed owning `PromptTarget` inside
@@ -3658,11 +3873,18 @@ must not issue a post-answer `getRequestInput(...)` read only to reconstruct the
 public runtime facade still returns only `AnswerRequestInputResult`. For blocking requests,
 `answer.delivery.kind` is `blocking-open` while any question in the committed request remains open
 and `blocking-resolved` only after the committed request has no open questions.
+When `AnswerRequestInputInput.clientSubmission` provides a submission, client-request, or
+correlation id, the answer transaction stores the selected key on the answer row. Replaying the
+same `(requestId, questionId, key)` returns the original answer and queued-delivery receipt with
+`status: "duplicate"` and `afterCommit: []`; it does not insert another answer or queue row. A fresh
+answer returns `status: "recorded"`.
 
 State persists request-input timeout deadline facts during `createRequestInput(...)` from explicit
 runtime-provided timestamp/duration inputs plus manifest-adopted `DateTime`/`Duration` helpers.
-Runtime remains the owner of timeout policy and clock access. Runtime passes only requested duration
-and mode; callers do not author persisted deadline timestamps. On pause, state writes `pausedAt` and
+Durable timeout policy is the app-global request-input settings row; runtime reads that policy and
+remains the owner of clock access and process-local scheduling. Runtime passes only the resolved
+duration and mode; extension effects and UI callers do not author persisted deadline timestamps. On
+pause, state writes `pausedAt` and
 `remainingMsWhenPaused` from the committed clock time and clears `expiresAt`. On resume, state
 recomputes `expiresAt = now + remainingMsWhenPaused`, clears pause fields, and keeps the original
 `durationMs`. Restart recovery and timeout scans read persisted `expiresAt` / pause fields rather
@@ -3721,7 +3943,8 @@ limit: PositiveSafeInteger;
 };
 
 Request-input mutations use the same single envelope as every other runtime-facing state write:
-`StateMutationResult<T>`. `createRequestInput`, `answerRequestInput`,
+`StateMutationResult<T>`. `setRequestInputVariant`, `setRequestInputBlockingTimeout`,
+`createRequestInput`, `answerRequestInput`,
 `defaultOpenRequestInputQuestions`, `cancelRequestInput`, and `setRequestInputTimerPaused` return
 their committed domain value as `value` and their publication descriptors as `afterCommit`. They do
 not embed a second nested `afterCommit`, `receipt`, queue row preview, or best-effort delivery claim
@@ -3752,16 +3975,16 @@ createdAt: IsoDateTimeString;
 }[];
 };
 
-`SurfaceTranscriptReadModel` is DB/product-state-backed. It returns committed transcript,
-composer, prompt-lock, and queue-derived facts only. Live assistant deltas, stream generation ids,
-runtime event sequences, and rebaseline cursors are process-local runtime event data. Desktop and
-renderer surfaces receive them only through app/bootstrap renderer-safe fanout. Browser, headless,
-and test edges may consume runtime facade subscriptions directly. All consumers refetch through
-state using ordinary `StateReadModelRequest` values when a committed invalidation arrives.
-`RuntimeTurnStatePort.finishTurn(...)` commits the final assistant message id and accumulated
-assistant text together with the terminal turn status. The transcript projection emits that
-assistant row after its user row and attaches the turn's durable command ids to the assistant row;
-it never reconstructs settled assistant text from renderer patches or pi transcript objects.
+`SurfaceTranscriptReadModel` is DB/product-state-backed. It returns the committed rich transcript,
+composer and prompt-lock facts, the current durable streaming assistant when one exists, and the
+matching surface-local `{ streamGenerationId, streamSequence }` cursor. Runtime persists a compact
+transcript mutation before publishing its corresponding renderer patch. This permits an
+authoritative targeted mid-stream rebaseline without publishing a global read-model invalidation for
+every packet: the renderer replaces its durable base from state, resumes at the returned cursor, and
+applies only later contiguous patches. The projection reads `transcript_message`, ordered
+`transcript_content_block`, and `surface_transcript_stream`; it does not reconstruct transcript
+messages from turn summaries, legacy turn assistant columns, renderer patches, or pi-native message
+objects.
 
 type CommandInspectorReadModelInput = {
 workspaceId: WorkspaceId;
@@ -3817,11 +4040,37 @@ type RecoveryWorkScope = { kind: "app" } | { kind: "workspace"; workspaceId: Wor
 
 type RecoveryWorkPriority = "interactive" | "runtime" | "background";
 
+type RuntimeRecoveryWorkOwnerScope =
+  | { kind: "workspace" }
+  | { kind: "source"; sourceKind: ExtensionSourceKind; sourceId: string }
+  | { kind: "workspace_session"; workspaceSessionId: WorkspaceSessionId }
+  | {
+      kind: "surface";
+      workspaceSessionId: WorkspaceSessionId;
+      surfacePiSessionId: SurfacePiSessionId;
+    }
+  | {
+      kind: "thread";
+      workspaceSessionId: WorkspaceSessionId;
+      threadId: ThreadId;
+      surfacePiSessionId: SurfacePiSessionId;
+    }
+  | { kind: "workflow_run"; workflowRunId: WorkflowRunId; smithersRunId: string }
+  | { kind: "queue_item"; queuedItemId: QueueItemId; surfacePiSessionId: SurfacePiSessionId }
+  | { kind: "title_job"; titleJobId: TitleJobId };
+
+type SourceReconcileRecoveryPayload = {
+  request: SourceReconcileRequest;
+  retry:
+    | { operation: "record-save"; record: RecordRuntimeSourceSaveInput }
+    | { operation: "record-delete"; record: RecordRuntimeSourceDeleteInput };
+};
+
 type RecoveryWorkPayloadByKind = {
   queue_delivery: { surfacePiSessionId: SurfacePiSessionId };
   active_turn_recovery: { surfacePiSessionId: SurfacePiSessionId; turnId?: TurnId };
   workflow_task_attempt_recovery: { workflowTaskAttemptId: WorkflowTaskAttemptId };
-  source_reconcile: SourceReconcileRequest;
+  source_reconcile: SourceReconcileRecoveryPayload;
   generated_context_refresh: RefreshGeneratedContextRequest;
   generated_package_refresh: Extract<RefreshGeneratedPackagesRequest, { scope: "app-global" }>;
   workspace_generated_package_link_repair: Extract<
@@ -3882,6 +4131,12 @@ type EnsureRecoveryWorkInput<K extends RecoveryWorkKind = RecoveryWorkKind> = {
 `claimed` rows. A claimed row represents work already draining; a new ensure with the same logical
 key records a pending follow-up row so queue-delivery and other dirty-set style work cannot lose a
 wake that arrives during an active drain.
+
+`source_reconcile` work must use `ownerScope: { kind: "source", sourceKind, sourceId }`; source
+owner scope is reserved for that recovery kind. The payload is not a bare scan request: it retains
+the reconcile request and the exact idempotent state-recording retry that must run after a prior file
+mutation succeeded. Recovery workers replay that record first, then perform or request normal
+source reconciliation; they do not reconstruct deleted paths, fingerprints, or prior versions.
 
 type ClaimRecoveryWorkInput = {
   scope?: RecoveryWorkScope;
@@ -4626,6 +4881,12 @@ The concrete state records for the runtime lifecycle/source ports are:
   `deleted_at`; delete operations mark the existing fact deleted and require the expected source
   version when supplied. This table is the editable-source compare-and-swap ledger, not the
   deterministic source-root scan ledger.
+- `workflow_agent_source_index`, keyed by plain-string filename-derived `source_id`, records the
+  latest validated or invalid app-global workflow-agent observation: path, version, fingerprint,
+  diagnostics, parsed task-agent parameters when valid, extension order, observation/commit
+  timestamps, and an optional tombstone. It never stores source text. Current read-model rows must
+  join an exact non-deleted app-global workflow-agent `runtime_source_fact`; generated workflow
+  exports are not an authority or fallback for this index.
 - `runtime_source_root_fingerprint_fact`, keyed by the exact `source_root` supplied by runtime with
   committed source-invalidation scope and source-domain metadata, records the current deterministic
   aggregate fingerprint for a source root, root diagnostics, observation timestamp, and commit
@@ -5184,7 +5445,7 @@ Target package paths:
   targets fail with a typed `StateContractError` (`reason: "not-found"`); and that the router
   dispatches through the exact acquired store instance without opening a second connection.
 - Routing-identity audit test enumerating every runtime-facing routed state-port method across the
-  fourteen ports and classifying each by the routable identity present in its decoded input or a
+  fifteen ports and classifying each by the routable identity present in its decoded input or a
   durable committed record; the audit is exhaustive over the routed port method set at compile time
   (`Record<keyof Service, …>` exhaustiveness and `keyof` input-field proofs) and complete against the
   constructed router's method set at runtime.

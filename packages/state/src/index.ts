@@ -20,6 +20,7 @@ export { layerRuntimeSessionWaitStatePort } from "./runtime-session-wait-state-p
 export { layerRuntimeSourceStatePort } from "./runtime-source-state-port";
 export { layerRuntimeSurfaceLifecycleStatePort } from "./runtime-surface-lifecycle-state-port";
 export { layerRuntimeThreadStatePort } from "./runtime-thread-state-port";
+export { layerRuntimeTranscriptStatePort } from "./runtime-transcript-state-port";
 export { layerRuntimeTurnStatePort } from "./runtime-turn-state-port";
 export { layerRuntimeWorkflowTaskStatePort } from "./runtime-workflow-task-state-port";
 export { layerRuntimeWorkspaceStatePort } from "./runtime-workspace-state-port";
@@ -117,6 +118,10 @@ export {
   encodeReorderOrchestratorProfilesCommandInputExit,
   encodeResetActorExtensionDefaultsCommandInputEffect,
   encodeResetActorExtensionDefaultsCommandInputExit,
+  decodeUnknownSetAgentActorExtensionDefaultsCommandInputEffect,
+  decodeUnknownSetAgentActorExtensionDefaultsCommandInputExit,
+  encodeSetAgentActorExtensionDefaultsCommandInputEffect,
+  encodeSetAgentActorExtensionDefaultsCommandInputExit,
   encodeSaveWorkspaceLayoutSlotCommandInputEffect,
   encodeSaveWorkspaceLayoutSlotCommandInputExit,
   encodeSelectWorkspaceLayoutSlotCommandInputEffect,
@@ -156,6 +161,7 @@ export {
   RemoveExtensionEnvOverrideCommandInputSchema,
   ReorderOrchestratorProfilesCommandInputSchema,
   ResetActorExtensionDefaultsCommandInputSchema,
+  SetAgentActorExtensionDefaultsCommandInputSchema,
   SaveWorkspaceLayoutSlotCommandInputSchema,
   SelectWorkspaceLayoutSlotCommandInputSchema,
   SelectWorkspaceTabCommandInputSchema,
@@ -195,6 +201,7 @@ export type {
   RemoveExtensionEnvOverrideCommandInput,
   ReorderOrchestratorProfilesCommandInput,
   ResetActorExtensionDefaultsCommandInput,
+  SetAgentActorExtensionDefaultsCommandInput,
   SaveWorkspaceLayoutSlotCommandInput,
   SelectWorkspaceLayoutSlotCommandInput,
   SelectWorkspaceTabCommandInput,
@@ -253,11 +260,15 @@ export type {
   ExtensionsReadModel,
   ExtensionsReadModelRequest,
   GeneratedContextPreviewReadModelRecord,
+  WorkflowAgentSourceReadModelRecord,
   HandlerInspectorReadModel,
   HandlerInspectorReadModelRequest,
   ProviderAuthReadModel,
   ProviderAuthReadModelRequest,
   ProviderAuthStateCommands,
+  PromptHistoryReadModel,
+  PromptHistoryReadModelEntry,
+  PromptHistoryReadModelRequest,
   RequestInputReadModel,
   RequestInputReadModelRequest,
   RequestInputReadModelRequestItem,

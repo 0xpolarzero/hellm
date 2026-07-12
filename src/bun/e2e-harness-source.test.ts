@@ -5,6 +5,13 @@ import { join } from "node:path";
 const harnessSource = readFileSync(join(import.meta.dir, "..", "..", "e2e", "harness.ts"), "utf8");
 
 describe("e2e harness launch isolation", () => {
+  test("rebuilds the OrbStack app when extracted package sources change", async () => {
+    const configSource = await Bun.file(`${import.meta.dir}/../../electrobun-e2e.config.ts`).text();
+
+    expect(configSource).toContain('"packages"');
+    expect(configSource).toContain('"bun.lock"');
+  });
+
   test("keeps prepared-home state across transient metadata retries", () => {
     const launchStart = harnessSource.indexOf("export async function launchSvvyApp");
     const launchEnd = harnessSource.indexOf("function adoptReadyDriver", launchStart);
