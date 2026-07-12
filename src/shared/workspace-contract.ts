@@ -38,6 +38,7 @@ import type {
   AppLogReadModel,
   AppLogSummary,
   CommandId,
+  CreateSurfaceResult,
   JsonValue,
   ListModelsInput,
   MessageId,
@@ -1994,9 +1995,9 @@ export interface ChatRPCSchema {
         params: WorkspaceScoped<{ sessionId: string; artifactId: string }>;
         response: WorkspaceArtifactPreview;
       };
-      createSession: {
-        params: WorkspaceScoped<CreateSessionRequest>;
-        response: SurfaceOpenResponse;
+      createOrchestratorSurface: {
+        params: WorkspaceScoped<Omit<CreateSessionRequest, "parentSessionId">>;
+        response: CreateSurfaceResult;
       };
       openSurface: {
         params: WorkspaceScoped<OpenSurfaceRequest>;

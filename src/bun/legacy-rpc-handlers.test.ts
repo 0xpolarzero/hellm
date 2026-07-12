@@ -62,6 +62,7 @@ const FACADE_BACKED_REQUESTS = [
   "closeSurface",
   "stateExtensionEnvSetOverride",
   "stateExtensionEnvRemoveOverride",
+  "createOrchestratorSurface",
 ] as const satisfies readonly ChatRpcRequestName[];
 
 const LEGACY_HANDLER_RETIREMENT_INCREMENT = 10 as const;
@@ -103,7 +104,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "openWorkspacePath",
   "openGeneratedAgentContextExternalSourceInEditor",
   "getArtifactPreview",
-  "createSession",
   "renameSession",
   "forkSession",
   "deleteSession",

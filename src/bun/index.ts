@@ -1642,23 +1642,22 @@ function buildDesktopRpcHandlers(
           artifactId,
         });
       },
-      createSession: async (input) => {
+      createOrchestratorSurface: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const { title, parentSessionId, agentProfileId } = input;
-        const session = await runtime.catalog.createSession(
-          { title, parentSessionId, agentProfileId },
-          getSessionDefaults(agentProfileId),
-        );
+        const { title, agentProfileId } = input;
+        const session = await facades.runtime.surfaces.createOrchestrator({
+          workspaceId: input.workspaceId as WorkspaceId,
+          ...(title === undefined ? {} : { title }),
+          ...(agentProfileId === undefined ? {} : { profileId: agentProfileId as never }),
+        });
         recordDevBrowserToolsEvent("session.created", {
-          parentSessionId: parentSessionId ?? null,
-          sessionId: session.target.workspaceSessionId,
+          sessionId: session.workspaceSessionId,
           title: title?.trim() || null,
         });
         runtime.appLog.info("session", "Workspace session created.", {
-          parentSessionId: parentSessionId ?? null,
-          workspaceSessionId: session.target.workspaceSessionId,
+          workspaceSessionId: session.workspaceSessionId,
         });
-        return { target: session.target };
+        return session;
       },
       openSurface: async (input) => {
         const { target } = input;

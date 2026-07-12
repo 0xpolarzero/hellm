@@ -295,6 +295,7 @@ describe("retired desktop integration RPC paths", () => {
       "setRequestInputBlockingTimeout",
       "stateExtensionEnvSetOverride",
       "stateExtensionEnvRemoveOverride",
+      "createOrchestratorSurface",
     ]) {
       expect(sharedContractSource).toContain(`${channel}: {`);
       expect(backendSource).toContain(`${channel}:`);
@@ -309,6 +310,7 @@ describe("retired desktop integration RPC paths", () => {
     expect(backendSource).toContain("facades.runtime.requestInput.setBlockingTimeout(input)");
     expect(backendSource).toContain("facades.commands.state.extensionEnv.setOverride");
     expect(backendSource).toContain("facades.commands.state.extensionEnv.removeOverride");
+    expect(backendSource).toContain("facades.runtime.surfaces.createOrchestrator");
   });
 
   it("pins increment-6 legacy renderer RPC channels until pane migration retires them", async () => {
@@ -359,6 +361,9 @@ describe("retired desktop integration RPC paths", () => {
       "openWorkflowAgentSourceInEditor",
       "setAgentProfileExtensionUsage",
       "updateRequestUserInputSettings",
+      "setExtensionEnvOverride",
+      "removeExtensionEnvOverride",
+      "createSession",
     ]) {
       expect(sharedContractSource).not.toContain(`${channel}: {`);
       expect(chatRuntimeSource).not.toContain(`rpcClient.request.${channel}(`);

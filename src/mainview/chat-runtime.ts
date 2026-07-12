@@ -830,7 +830,7 @@ export interface ChatRuntimeRpcClient {
     openGeneratedAgentContextExternalSourceInEditor: typeof rpc.request.openGeneratedAgentContextExternalSourceInEditor;
     writeCommandStdin: typeof rpc.request.writeCommandStdin;
     getArtifactPreview: typeof rpc.request.getArtifactPreview;
-    createSession: typeof rpc.request.createSession;
+    createOrchestratorSurface: typeof rpc.request.createOrchestratorSurface;
     openSurface: typeof rpc.request.openSurface;
     closeSurface: typeof rpc.request.closeSurface;
     renameSession: typeof rpc.request.renameSession;
@@ -950,7 +950,7 @@ export interface ChatRuntime {
   recordRendererTelemetry: (event: RendererTelemetryEvent) => void;
   writeClipboardText: (text: string) => Promise<void>;
   createSession: (
-    request?: CreateSessionRequest,
+    request?: Omit<CreateSessionRequest, "parentSessionId">,
     openTarget?: PaneOpenTarget | string,
   ) => Promise<void>;
   openSession: (sessionId: string, openTarget?: PaneOpenTarget | string) => Promise<void>;
@@ -4334,8 +4334,8 @@ export async function createChatRuntime(
       await rpcClient.request.writeClipboardText({ text });
     },
     createSession: async (request = {}, openTarget) => {
-      const opened = await rpcClient.request.createSession(scoped(request));
-      const target = normalizePromptTarget(opened.target);
+      const opened = await rpcClient.request.createOrchestratorSurface(scoped(request));
+      const target = normalizePromptTarget(opened.target as PromptTarget);
       const nextPaneId = resolveOpenTarget(target, openTarget);
       await bindPaneToSurfaceReadModels(nextPaneId, await fetchSurfaceReadModels(target));
       await refreshSessions();

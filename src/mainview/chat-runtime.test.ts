@@ -2484,7 +2484,7 @@ function createFakeRpc(input: {
           missingFile: false,
           content: `artifact ${artifactId}`,
         }),
-        createSession: async ({ title }) => {
+        createOrchestratorSurface: async ({ title }) => {
           const sessionId = `session-${summaries.size + 1}`;
           const summary = createSummary(sessionId, title ?? "New orchestrator", "");
           const fixture = createSurfaceFixture({
@@ -2493,7 +2493,14 @@ function createFakeRpc(input: {
           });
           summaries.set(sessionId, summary);
           surfaces.set(sessionId, { fixture, retainCount: 1 });
-          return { target: cloneTarget(surfaceTarget(fixture)) };
+          const target = cloneTarget(surfaceTarget(fixture));
+          return {
+            workspaceSessionId: target.workspaceSessionId as never,
+            surfacePiSessionId: target.surfacePiSessionId as never,
+            target: target as never,
+            created: "new",
+            stateRevision: 1 as StateRevision,
+          };
         },
         openSurface: async ({ target }) => {
           if (target.surface === "orchestrator") {
