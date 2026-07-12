@@ -65,9 +65,6 @@ mock.module("electrobun/bun", () => ({
         if (rendererSendFailure) throw rendererSendFailure;
         notifications.push(structuredClone(notification));
       },
-      sendArtifactOpen(payload: unknown) {
-        calls.push(`legacy:${JSON.stringify(payload)}`);
-      },
     };
     const send = Object.assign(
       (messageName: keyof typeof sendProxy, payload: unknown) =>
@@ -224,29 +221,6 @@ describe("Electrobun desktop host adapter", () => {
     await expect(host.bridge.sendToRenderer(notification)).rejects.toThrow("not available");
   });
 
-  it("keeps legacy renderer sends inside the guarded host transport", async () => {
-    const { host } = createHost();
-    const payload = {
-      workspaceId: "workspace_01",
-      workspaceSessionId: "session_01",
-      artifactId: "artifact_01",
-    } as never;
-    await expect(host.sendLegacyMessage("sendArtifactOpen", payload)).rejects.toThrow(
-      "not available",
-    );
-    const registration = await host.bridge.exposeRendererApi(rendererApiInput);
-    await host.sendLegacyMessage("sendArtifactOpen", payload);
-    expect(calls).not.toContain(
-      'legacy:{"workspaceId":"workspace_01","workspaceSessionId":"session_01","artifactId":"artifact_01"}',
-    );
-    await reportRendererReady();
-    await registration.rendererReady;
-    expect(calls).toContain(
-      'legacy:{"workspaceId":"workspace_01","workspaceSessionId":"session_01","artifactId":"artifact_01"}',
-    );
-    await registration.dispose();
-  });
-
   it("acknowledges concurrent renderer-ready calls before one shared failing buffer flush", async () => {
     const { host } = createHost();
     const registration = await host.bridge.exposeRendererApi(rendererApiInput);
@@ -271,6 +245,18 @@ describe("Electrobun desktop host adapter", () => {
   it("collapses an overflowing startup handoff queue into one rebaseline request", async () => {
     const { host } = createHost();
     const registration = await host.bridge.exposeRendererApi(rendererApiInput);
+    const commandInvalidation = {
+      kind: "read-model-changed",
+      eventGenerationId: "generation-startup" as never,
+      sequence: 1 as never,
+      scope: { kind: "workspace", workspaceId: "workspace_01" as never },
+      invalidation: {
+        scope: "workspace",
+        workspaceId: "workspace_01" as never,
+        invalidation: { model: "commandInspector", ids: ["command-open" as never] },
+      },
+    } satisfies DesktopRendererNotification;
+    await host.bridge.sendToRenderer(commandInvalidation);
     for (let index = 0; index < 65; index += 1) {
       await host.bridge.sendToRenderer({
         kind: "read-model-changed",
@@ -290,6 +276,7 @@ describe("Electrobun desktop host adapter", () => {
         reason: "slow-consumer",
         rebaselineRequired: true,
       },
+      commandInvalidation,
     ]);
     await registration.dispose();
   });
@@ -310,13 +297,6 @@ describe("Electrobun desktop host adapter", () => {
     expect(beforeQuitListener).toBeDefined();
     await expect(
       host.bridge.sendToRenderer({ kind: "renderer-command", command: "settings.open" }),
-    ).rejects.toBe(startupError);
-    await expect(
-      host.sendLegacyMessage("sendArtifactOpen", {
-        workspaceId: "workspace_01",
-        workspaceSessionId: "session_01",
-        artifactId: "artifact_01",
-      } as never),
     ).rejects.toBe(startupError);
     await expect(host.bridge.exposeRendererApi(rendererApiInput)).rejects.toBe(startupError);
     await registration.dispose();

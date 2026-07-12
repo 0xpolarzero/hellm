@@ -103,6 +103,7 @@ describe("@svvy/runtime prompt execution service", () => {
       const handlerTurnIds: TurnId[] = [];
       const published: Array<readonly StateInvalidationDescriptor[]> = [];
       const emitted: unknown[] = [];
+      const finishedFacts: unknown[] = [];
       const operations: ExtensionRuntimeOperation[] = [
         {
           kind: "runtime_effect",
@@ -140,6 +141,7 @@ describe("@svvy/runtime prompt execution service", () => {
         finishCommand: (input) =>
           Effect.sync(() => {
             calls.push(`command:finish:${input.commandId}:${input.status}`);
+            finishedFacts.push(input.facts ?? null);
             return {
               value: commandRecord({
                 status: input.status,
@@ -204,6 +206,10 @@ describe("@svvy/runtime prompt execution service", () => {
                   return {
                     result: {
                       content: [{ type: "text" as const, text: "tool result" }],
+                      details: {
+                        status: "succeeded" as const,
+                        commandFacts: { intent: "test-intent", accepted: true },
+                      },
                     },
                     operations,
                   };
@@ -276,7 +282,12 @@ describe("@svvy/runtime prompt execution service", () => {
           Effect.sync(() => {
             assert.deepStrictEqual(result, {
               content: [{ type: "text", text: "tool result" }],
+              details: {
+                status: "succeeded",
+                commandFacts: { intent: "test-intent", accepted: true },
+              },
             });
+            assert.deepStrictEqual(finishedFacts, [{ intent: "test-intent", accepted: true }]);
             assert.deepStrictEqual(handlerTurnIds, [turnId]);
             assert.deepStrictEqual(
               createdRequests.map((input) => ({

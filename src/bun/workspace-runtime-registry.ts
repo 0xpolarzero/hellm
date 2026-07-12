@@ -51,11 +51,7 @@ import {
   type WorkflowAgentSourceExportName,
 } from "@svvy/core";
 import type { ExtensionSourceRoots, GeneratedPackageRoots } from "@svvy/extensions";
-import type {
-  ArtifactOpenMessage,
-  WorkspaceInfoResponse,
-  WorkspaceKind,
-} from "../shared/workspace-contract";
+import type { WorkspaceInfoResponse, WorkspaceKind } from "../shared/workspace-contract";
 import { appendAppLoggerEvent, createAppLogger, type BridgeLogLevel } from "./app-logger";
 import { createStateAppLogsFacade, type StateAppLogsFacade } from "@svvy/state";
 import {
@@ -196,7 +192,6 @@ type WorkspaceRuntimeRegistryOptions = {
     details?: Record<string, unknown>,
     error?: unknown,
   ) => void;
-  onArtifactOpen?: (workspaceId: string, payload: ArtifactOpenMessage) => void;
   runtimeDependencies?: Partial<RuntimeProviderAuthDependencies>;
   runtimeLayerConfig: RuntimeLayerConfig;
   sandboxHostSupport: PackagedSandboxHostSupportServices;
@@ -958,7 +953,6 @@ export class WorkspaceRuntimeRegistry {
 
     const detachCatalogListeners = (): void => {
       void catalog.setCommittedStateInvalidationPublisher(null);
-      catalog.setArtifactOpenListener(null);
       catalog.setTitleGenerationLogListener(null);
       catalog.setWorkflowsGeneratedPackageLogListener(null);
       catalog.setAppLogListener(null);
@@ -1128,12 +1122,6 @@ export class WorkspaceRuntimeRegistry {
         this.openingWorkspaceCwds.set(requestedWorkspaceId, cwd);
       }
       try {
-        catalog.setArtifactOpenListener((payload) => {
-          this.options.onArtifactOpen?.(workspaceId, {
-            ...payload,
-            workspaceId: workspaceId as WorkspaceId,
-          });
-        });
         catalog.setTitleGenerationLogListener((event) => {
           recordTitleGenerationLog(workspaceAppLog, event);
         });

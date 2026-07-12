@@ -2319,8 +2319,7 @@ describe("execute_typescript tool", () => {
     });
   });
 
-  it("opens generated-runtime-facade artifacts through the attached UI bridge", async () => {
-    const openedArtifacts: Array<{ sessionId: string; artifactId: string }> = [];
+  it("records generated-runtime-facade artifact opens as durable command intents", async () => {
     const workspaceCwd = createWorkspaceRoot();
     const store = createStore("session-artifact-open", workspaceCwd);
     const runtime = createRuntime(store, "session-artifact-open");
@@ -2328,10 +2327,6 @@ describe("execute_typescript tool", () => {
       cwd: workspaceCwd,
       runtime,
       store,
-      openArtifact: (request) => {
-        openedArtifacts.push(request);
-        return true;
-      },
     });
 
     const result = await tool.execute("tool-call-artifact-open", {
@@ -2345,16 +2340,24 @@ describe("execute_typescript tool", () => {
     expect(tsFacts(result)).toMatchObject({
       success: true,
       result: {
-        opened: true,
+        intent: "open_artifact_inspector",
+        accepted: true,
       },
     });
     const returned = tsFacts(result).result as { id: string };
-    expect(openedArtifacts).toEqual([
-      {
-        sessionId: "session-artifact-open",
-        artifactId: returned.id,
-      },
-    ]);
+    const snapshot = store.getSessionState("session-artifact-open");
+    expect(
+      snapshot.commands.find((command) => command.facts?.intent === "open_artifact_inspector")
+        ?.facts,
+    ).toMatchObject({
+      commandFamily: "artifacts",
+      artifactCommandId: "open",
+      artifactId: returned.id,
+      workspaceSessionId: "session-artifact-open",
+      intent: "open_artifact_inspector",
+      accepted: true,
+      missingFile: false,
+    });
   });
 
   it("records failed child commands for invalid dynamic generated-runtime-facade inputs", async () => {

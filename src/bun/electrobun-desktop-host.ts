@@ -20,13 +20,10 @@ type BunRpcFactory = typeof defineElectrobunRPC<ChatRPCSchema, "bun">;
 type BunRpcConfig = Parameters<BunRpcFactory>[1];
 type BunRpc = ReturnType<BunRpcFactory>;
 type ApplicationMenuClickEvent = { data?: { action?: unknown } };
-type BufferedRendererDelivery =
-  | { readonly kind: "notification"; readonly notification: DesktopRendererNotification }
-  | {
-      readonly kind: "legacy-message";
-      readonly messageName: keyof ChatRPCSchema["webview"]["messages"];
-      readonly payload: ChatRPCSchema["webview"]["messages"][keyof ChatRPCSchema["webview"]["messages"]];
-    };
+type BufferedRendererDelivery = {
+  readonly kind: "notification";
+  readonly notification: DesktopRendererNotification;
+};
 
 const MAX_RENDERER_HANDOFF_QUEUE_SIZE = 64;
 
@@ -67,10 +64,6 @@ export interface ElectrobunDesktopHostAdapter extends DesktopHostAdapter {
   };
   getMainWindow(): BrowserWindow | null;
   rejectRendererCalls(error: unknown): void;
-  sendLegacyMessage<Name extends keyof ChatRPCSchema["webview"]["messages"]>(
-    messageName: Name,
-    payload: ChatRPCSchema["webview"]["messages"][Name],
-  ): Promise<void>;
 }
 
 type MainWindowRecord = {
@@ -94,7 +87,6 @@ export function createElectrobunDesktopHostAdapter(
   let rendererTransportReady = false;
   let rendererDelivery = Promise.resolve();
   let bufferedRendererDeliveries: BufferedRendererDelivery[] = [];
-  let rendererBufferFailure: Error | null = null;
 
   const reportError = (error: unknown, context: string): void => {
     try {
@@ -178,37 +170,24 @@ export function createElectrobunDesktopHostAdapter(
     return delivery;
   };
 
-  const enqueueLegacyRendererMessage = (
-    delivery: Extract<BufferedRendererDelivery, { readonly kind: "legacy-message" }>,
-  ): Promise<void> => {
-    const rpc = rendererRpc;
-    if (!rpc) {
-      return Promise.reject(new Error("The Electrobun renderer API is not available."));
-    }
-    const queued = rendererDelivery.then(() => {
-      if (rendererRpc !== rpc) {
-        throw new Error("The Electrobun renderer API changed before legacy message delivery.");
-      }
-      const send = rpc.sendProxy[delivery.messageName] as (
-        payload: typeof delivery.payload,
-      ) => void;
-      send(delivery.payload);
-    });
-    rendererDelivery = queued.catch(() => undefined);
-    return queued;
-  };
-
   const bufferRendererDelivery = (delivery: BufferedRendererDelivery): void => {
-    if (rendererBufferFailure) {
-      throw rendererBufferFailure;
+    const isCommandInvalidation = (candidate: BufferedRendererDelivery): boolean =>
+      candidate.notification.kind === "read-model-changed" &&
+      candidate.notification.invalidation.invalidation.model === "commandInspector";
+    if (
+      bufferedRendererDeliveries.some(
+        (candidate) => candidate.notification.kind === "read-model-rebaseline-required",
+      )
+    ) {
+      if (isCommandInvalidation(delivery)) {
+        bufferedRendererDeliveries.push(structuredClone(delivery));
+      }
+      return;
     }
     if (bufferedRendererDeliveries.length < MAX_RENDERER_HANDOFF_QUEUE_SIZE) {
       bufferedRendererDeliveries.push(structuredClone(delivery));
       return;
     }
-    const legacyMessages = bufferedRendererDeliveries.filter(
-      (candidate) => candidate.kind === "legacy-message",
-    );
     const rebaseline = {
       kind: "notification",
       notification: {
@@ -217,16 +196,10 @@ export function createElectrobunDesktopHostAdapter(
         rebaselineRequired: true,
       },
     } satisfies BufferedRendererDelivery;
-    bufferedRendererDeliveries = [...legacyMessages, rebaseline];
-    if (delivery.kind === "legacy-message") {
-      if (bufferedRendererDeliveries.length >= MAX_RENDERER_HANDOFF_QUEUE_SIZE) {
-        rendererBufferFailure = new Error(
-          "The renderer startup buffer overflowed with non-recoverable legacy messages.",
-        );
-        throw rendererBufferFailure;
-      }
-      bufferedRendererDeliveries.push(structuredClone(delivery));
-    }
+    const recoverableCommandInvalidations = [...bufferedRendererDeliveries, delivery].filter(
+      isCommandInvalidation,
+    );
+    bufferedRendererDeliveries = [rebaseline, ...recoverableCommandInvalidations];
   };
 
   const bridge: DesktopBridgeAdapter = {
@@ -242,7 +215,6 @@ export function createElectrobunDesktopHostAdapter(
       rendererTransportReady = false;
       rendererDelivery = Promise.resolve();
       bufferedRendererDeliveries = [];
-      rendererBufferFailure = null;
       let rendererReadySettled = false;
       let rendererReadySettlement: Promise<void> | null = null;
       let rendererReadySchedule: ReturnType<typeof setTimeout> | null = null;
@@ -263,19 +235,12 @@ export function createElectrobunDesktopHostAdapter(
         clearTimeout(rendererReadyTimeout);
         rendererReadySettlement = (async () => {
           try {
-            if (rendererBufferFailure) {
-              throw rendererBufferFailure;
-            }
             rendererTransportReady = true;
             const deliveries = bufferedRendererDeliveries;
             bufferedRendererDeliveries = [];
             const pendingDeliveries: Promise<void>[] = [];
             for (const delivery of deliveries) {
-              if (delivery.kind === "notification") {
-                pendingDeliveries.push(enqueueRendererNotification(delivery.notification));
-              } else {
-                pendingDeliveries.push(enqueueLegacyRendererMessage(delivery));
-              }
+              pendingDeliveries.push(enqueueRendererNotification(delivery.notification));
             }
             await Promise.all(pendingDeliveries);
             rendererReadySettled = true;
@@ -352,7 +317,6 @@ export function createElectrobunDesktopHostAdapter(
             rendererRpc = null;
             rendererTransportReady = false;
             bufferedRendererDeliveries = [];
-            rendererBufferFailure = null;
             currentRpc?.setTransport({});
           }
         },
@@ -520,29 +484,6 @@ export function createElectrobunDesktopHostAdapter(
     return mainWindow;
   }
 
-  const sendLegacyMessage = async <Name extends keyof ChatRPCSchema["webview"]["messages"]>(
-    messageName: Name,
-    payload: ChatRPCSchema["webview"]["messages"][Name],
-  ): Promise<void> => {
-    if (rendererCallsRejectedWith !== undefined) {
-      throw rendererCallsRejectedWith;
-    }
-    const rpc = rendererRpc;
-    if (!rpc) {
-      throw new Error("The Electrobun renderer API is not available.");
-    }
-    const delivery = {
-      kind: "legacy-message",
-      messageName,
-      payload,
-    } as Extract<BufferedRendererDelivery, { readonly kind: "legacy-message" }>;
-    if (!rendererTransportReady) {
-      bufferRendererDelivery(delivery);
-      return;
-    }
-    await enqueueLegacyRendererMessage(delivery);
-  };
-
   return {
     bridge,
     windows,
@@ -558,7 +499,6 @@ export function createElectrobunDesktopHostAdapter(
       rendererCallsRejectedWith = error;
       rendererTransportReady = false;
       bufferedRendererDeliveries = [];
-      rendererBufferFailure = null;
       const rpc = rendererRpc;
       rendererRpc = null;
       try {
@@ -567,7 +507,6 @@ export function createElectrobunDesktopHostAdapter(
         reportError(detachError, "electrobun-desktop-host.reject-renderer-calls");
       }
     },
-    sendLegacyMessage,
   };
 }
 

@@ -67,7 +67,6 @@ import { effectiveExtensionsGeneratedPackagePath } from "./generated-extensions-
 import {
   formatSvvyxArtifactsError,
   runSvvyxArtifactsOperation,
-  type SvvyxArtifactOpenHandler,
   type SvvyxArtifactsOperationInput,
   type SvvyxArtifactsRuntimeContext,
 } from "./svvyx-artifacts-command";
@@ -152,7 +151,6 @@ type DirectToolOptions = {
   commandState?: RuntimeCommandStatePortService;
   readArtifactRootForSession?: (sessionId: string) => string | null;
   runState?: <A>(effect: Effect.Effect<A, StateContractError>) => A;
-  openArtifact?: SvvyxArtifactOpenHandler;
   onWorkflowsGeneratedPackageChanged?: (input: {
     reason: "svvyx-workflows-build" | "svvyx-workflows-save";
     commandFacts: Record<string, unknown>;
@@ -663,16 +661,9 @@ type PreparedSvvyxSubprocess = {
 
 const RUN_TASK_AGENT_BRIDGE_TOKEN_ENV = "SVVY_WORKFLOW_AGENT_BRIDGE_TOKEN";
 
-type SvvyxSubprocessAppAction = {
-  kind: "artifact.open";
-  artifactId: string;
-  sessionId: string;
-};
-
 type SvvyxSubprocessTransport = {
   agentProfileMutations: readonly AgentProfileMutation[];
   agentSettingsState?: AgentSettingsState;
-  appActions: SvvyxSubprocessAppAction[];
   appLogEvents: AppLoggerEvent[];
   commandFacts?: Record<string, unknown>;
   intents: SvvyxSubprocessIntent[];
@@ -739,7 +730,6 @@ function prepareSvvyxSubprocess(input: {
   const context = {
     agentProfileSnapshot: input.options.agentProfileSnapshot ?? null,
     agentSettingsState: input.options.agentSettingsStore?.getState() ?? null,
-    canRequestArtifactOpen: input.options.openArtifact !== undefined,
     cwd: input.commandCwd,
     // This env-visible context is intentionally non-secret. Extension secret values are never
     // serialized here; svvyx subprocesses read secrets through the app-owned secret store only.
@@ -963,7 +953,6 @@ async function finalizeSvvyxSubprocessResult(input: {
       commandFacts,
     );
     replaySvvyxSubprocessAppLogEvents(input.options, transport.appLogEvents);
-    await replaySvvyxSubprocessAppActions(input.options, transport.appActions);
     replaySvvyxSubprocessAgentSettings(input.options, transport.agentSettingsState);
     if (commandFacts?.workflowBuildOk === true) {
       await input.options.onWorkflowsGeneratedPackageChanged?.({
@@ -1034,7 +1023,6 @@ async function applySvvyxSubprocessIntents(
         readArtifactRootForSession: options.readArtifactRootForSession,
         sourceCommand: { id: subprocess.sourceCommandId as CommandId },
         onAppLog: options.onAppLog,
-        openArtifact: options.openArtifact,
       }).catch((error) => {
         throw new Error(JSON.stringify(formatSvvyxArtifactsError(error)));
       });
@@ -1207,7 +1195,6 @@ function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubpro
     if (!isValidSvvyxSubprocessSignature(signed, resultKey)) {
       return {
         agentProfileMutations: [],
-        appActions: [],
         appLogEvents: [],
         intents: [],
         ok: false,
@@ -1218,16 +1205,12 @@ function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubpro
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return {
         agentProfileMutations: [],
-        appActions: [],
         appLogEvents: [],
         intents: [],
         ok: false,
         progressEvents: [],
       };
     }
-    const appActions = Array.isArray((parsed as { appActions?: unknown }).appActions)
-      ? (parsed as { appActions: SvvyxSubprocessAppAction[] }).appActions
-      : [];
     const appLogEvents = Array.isArray((parsed as { appLogEvents?: unknown }).appLogEvents)
       ? (parsed as { appLogEvents: AppLoggerEvent[] }).appLogEvents
       : [];
@@ -1252,7 +1235,6 @@ function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubpro
     const output = (parsed as { output?: unknown }).output;
     return {
       agentProfileMutations,
-      appActions,
       appLogEvents,
       ...(agentSettingsState && typeof agentSettingsState === "object"
         ? { agentSettingsState: agentSettingsState as AgentSettingsState }
@@ -1270,7 +1252,6 @@ function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubpro
   } catch {
     return {
       agentProfileMutations: [],
-      appActions: [],
       appLogEvents: [],
       intents: [],
       ok: false,
@@ -1432,31 +1413,6 @@ function replaySvvyxSubprocessAppLogEvents(
 ): void {
   for (const event of events) {
     options.onAppLog?.(event);
-  }
-}
-
-async function replaySvvyxSubprocessAppActions(
-  options: DirectToolOptions,
-  actions: SvvyxSubprocessAppAction[],
-): Promise<void> {
-  for (const action of actions) {
-    if (action.kind === "artifact.open") {
-      const opened = await options.openArtifact?.({
-        sessionId: action.sessionId,
-        artifactId: action.artifactId,
-      });
-      if (!opened) {
-        throw new Error(
-          JSON.stringify({
-            error: {
-              code: "UI_UNAVAILABLE",
-              message: "Artifact inspector UI is not attached to this command runtime.",
-              id: action.artifactId,
-            },
-          }),
-        );
-      }
-    }
   }
 }
 

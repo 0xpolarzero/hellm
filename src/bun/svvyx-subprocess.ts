@@ -36,7 +36,6 @@ import type {
 type SvvyxSubprocessContext = {
   agentProfileSnapshot?: AgentProfileAuthoritySnapshot | null;
   agentSettingsState?: AgentSettingsState | null;
-  canRequestArtifactOpen?: boolean;
   cwd: string;
   extensionEnvValues?: SvvyxRuntimeEnvValues | null;
   extensionsBuildRoot?: string;
@@ -55,19 +54,12 @@ type SvvyxSubprocessContext = {
 type SvvyxSubprocessResult = {
   agentProfileMutations?: readonly AgentProfileMutation[];
   agentSettingsState?: AgentSettingsState;
-  appActions: SvvyxSubprocessAppAction[];
   appLogEvents: AppLoggerEvent[];
   commandFacts?: Record<string, unknown>;
   intents?: SvvyxSubprocessIntent[];
   ok: boolean;
   output?: unknown;
   progressEvents?: SvvyxSubprocessProgressEvent[];
-};
-
-type SvvyxSubprocessAppAction = {
-  kind: "artifact.open";
-  artifactId: string;
-  sessionId: string;
 };
 
 type SvvyxSubprocessIntent =
@@ -88,7 +80,6 @@ async function main(): Promise<number> {
   const context = readContext();
   const argv = Bun.argv.slice(2);
   const command = ["svvyx", ...argv].map(shellQuote).join(" ");
-  const appActions: SvvyxSubprocessAppAction[] = [];
   const appLogEvents: AppLoggerEvent[] = [];
   const intents: SvvyxSubprocessIntent[] = [];
   const progressEvents: SvvyxSubprocessProgressEvent[] = [];
@@ -194,7 +185,6 @@ async function main(): Promise<number> {
         ...(agentSettingsStore.dirty()
           ? { agentSettingsState: agentSettingsStore.getState() }
           : {}),
-        appActions,
         appLogEvents,
         ...(commandFacts ? { commandFacts } : {}),
         ...(intents.length > 0 ? { intents } : {}),
@@ -233,7 +223,6 @@ async function main(): Promise<number> {
         ...(agentSettingsStore.dirty()
           ? { agentSettingsState: agentSettingsStore.getState() }
           : {}),
-        appActions,
         appLogEvents,
         ...(commandFacts ? { commandFacts } : {}),
         ok: false,
@@ -416,7 +405,6 @@ function writeResult(
     ...(result.intents ? { intents: result.intents } : {}),
     ...(result.progressEvents ? { progressEvents: result.progressEvents } : {}),
     diagnostics: result.ok ? [] : ["svvyx subprocess command failed"],
-    appActions: result.appActions,
     appLogEvents: result.appLogEvents,
     ...(result.agentProfileMutations
       ? { agentProfileMutations: result.agentProfileMutations }

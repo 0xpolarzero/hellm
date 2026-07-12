@@ -1458,7 +1458,7 @@ function toolResultSummary(result: NativeToolResult | undefined): string {
 }
 
 function toolResultFacts(result: NativeToolResult | undefined) {
-  return result?.details ?? null;
+  return result?.details?.commandFacts ?? result?.details ?? null;
 }
 
 function parseToolArguments(argumentsJson: string): unknown {

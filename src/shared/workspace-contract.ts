@@ -33,7 +33,6 @@ import type { GeneratedAgentContextExternalSource } from "./generated-agent-cont
 import type {
   AnswerRequestInputResult,
   AnswerRuntimeApprovalResult,
-  ArtifactId,
   AppLogLevel,
   AppLogQuery,
   AppLogReadModel,
@@ -87,7 +86,6 @@ import type {
   ComposerAttachment,
   WorkflowTaskAttemptId,
   WorkspaceId,
-  WorkspaceSessionId,
 } from "@svvy/core";
 import { COMPOSER_ATTACHMENT_TEXT_SIGNATURE_PREFIX } from "@svvy/core";
 import type {
@@ -1021,12 +1019,6 @@ export interface UpdateComposerDraftRequest {
     attachments: ComposerAttachment[];
     snippetMentions?: ComposerSnippetMention[];
   };
-}
-
-export interface ArtifactOpenMessage {
-  workspaceId: WorkspaceId;
-  workspaceSessionId: WorkspaceSessionId;
-  artifactId: ArtifactId;
 }
 
 export interface CancelPromptRequest {
@@ -2148,7 +2140,6 @@ export interface ChatRPCSchema {
   webview: {
     requests: Record<string, never>;
     messages: {
-      sendArtifactOpen: ArtifactOpenMessage;
       sendDesktopNotification: DesktopRendererNotification;
     };
   };

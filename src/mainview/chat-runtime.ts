@@ -45,7 +45,6 @@ import type {
 import {
   composerAttachmentPromptText,
   serializeComposerAttachmentTextSignature,
-  type ArtifactOpenMessage,
   type AppLogEntry,
   type AppLogLevel,
   type AppLogQuery,
@@ -2041,6 +2040,11 @@ export async function createChatRuntime(
   const commandInspectorAliases = new Map<string, string>();
   const commandInspectorKnownMissing = new Set<string>();
   const commandInspectorInFlight = new Map<string, Promise<CommandInspectorReadModel | null>>();
+  const processedArtifactOpenCommandIds = new Set<string>();
+  const pendingArtifactOpenInspectors = new Map<string, CommandInspectorReadModel>();
+  let handleArtifactOpenInspector = (inspector: CommandInspectorReadModel): void => {
+    pendingArtifactOpenInspectors.set(inspector.commandId, structuredClone(inspector));
+  };
   const handlerInspectorCache = new Map<string, WorkspaceHandlerThreadInspector>();
   const handlerInspectorKnownMissing = new Set<string>();
   const handlerInspectorInFlight = new Map<
@@ -2756,11 +2760,14 @@ export async function createChatRuntime(
         case "commandInspector": {
           const requestedId =
             commandInspectorIds[commandInspectorIndex++] ?? result.value?.commandId;
-          applyCommandInspectorCache(
+          const inspector = applyCommandInspectorCache(
             result.value,
             requestedId ? [requestedId] : [],
             Boolean(context),
           );
+          if (context && inspector) {
+            handleArtifactOpenInspector(inspector);
+          }
           break;
         }
         case "handlerInspector": {
@@ -3906,18 +3913,42 @@ export async function createChatRuntime(
     recordFocusedSession();
   };
 
-  const artifactOpenListener = (payload: ArtifactOpenMessage) => {
-    if (payload.workspaceId !== workspaceInfo.workspaceId) {
+  handleArtifactOpenInspector = (inspector): void => {
+    if (
+      processedArtifactOpenCommandIds.has(inspector.commandId) ||
+      inspector.status !== "succeeded" ||
+      inspector.facts?.commandFamily !== "artifacts" ||
+      inspector.facts.artifactCommandId !== "open" ||
+      inspector.facts?.intent !== "open_artifact_inspector" ||
+      inspector.facts.accepted !== true ||
+      typeof inspector.facts.missingFile !== "boolean"
+    ) {
       return;
     }
+    const workspaceSessionId = inspector.facts.workspaceSessionId;
+    const artifactId = inspector.facts.artifactId;
+    if (
+      typeof workspaceSessionId !== "string" ||
+      typeof artifactId !== "string" ||
+      artifactId.length === 0 ||
+      inspector.target.workspaceSessionId !== workspaceSessionId
+    ) {
+      return;
+    }
+    processedArtifactOpenCommandIds.add(inspector.commandId);
     void openStaticWorkspacePane({
-      workspaceSessionId: payload.workspaceSessionId,
+      workspaceSessionId,
       surface: "artifact",
-      artifactId: payload.artifactId,
-    }).catch((error) => console.error("Failed to persist opened artifact pane:", error));
+      artifactId,
+    }).catch((error) => {
+      processedArtifactOpenCommandIds.delete(inspector.commandId);
+      console.error("Failed to persist opened artifact pane:", error);
+    });
   };
-
-  rpcClient.addMessageListener("sendArtifactOpen", artifactOpenListener);
+  for (const inspector of pendingArtifactOpenInspectors.values()) {
+    handleArtifactOpenInspector(inspector);
+  }
+  pendingArtifactOpenInspectors.clear();
   recordFocusedSession();
 
   const recordRendererTelemetry = (event: RendererTelemetryEvent): void => {
@@ -4075,7 +4106,6 @@ export async function createChatRuntime(
       resetInspectorCaches();
       activeRuntimeEmitters.delete(runtimeCacheEmitter);
       rendererNotificationStore.dispose();
-      rpcClient.removeMessageListener("sendArtifactOpen", artifactOpenListener);
       for (const controller of surfaceControllers.values()) {
         controller.dispose();
       }

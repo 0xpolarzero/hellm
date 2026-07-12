@@ -4704,61 +4704,41 @@ if (readFileSync(target, "utf8") !== "before\n") {
     ).toBeNull();
   });
 
-  it("returns UI_UNAVAILABLE for active artifact opens without an attached UI bridge", async () => {
+  it("accepts active artifact opens without an attached UI", async () => {
     const harness = createArtifactsHarness();
-    const created = await harness.run("svvyx artifacts create --name open.md --json");
-
-    await expectArtifactErrorCode(
-      harness.run(`svvyx artifacts open --id ${created.output.id} --json`),
-      "UI_UNAVAILABLE",
-    );
-  });
-
-  it("opens active artifacts through the attached UI bridge", async () => {
-    const openedArtifacts: Array<{ sessionId: string; artifactId: string }> = [];
-    const harness = createArtifactsHarness({
-      openArtifact: (request) => {
-        openedArtifacts.push(request);
-        return true;
-      },
-    });
     const created = await harness.run("svvyx artifacts create --name open.md --json");
 
     const opened = await harness.run(`svvyx artifacts open --id ${created.output.id} --json`);
 
-    expect(opened.output).toEqual({ id: created.output.id, opened: true });
-    expect(opened.details!.commandFacts).toEqual({
-      artifactId: created.output.id,
-      opened: true,
+    expect(opened.output).toEqual({
+      id: created.output.id,
+      intent: "open_artifact_inspector",
+      accepted: true,
     });
-    expect(openedArtifacts).toEqual([
-      {
-        sessionId: "session-artifacts",
-        artifactId: created.output.id,
-      },
-    ]);
+    expect(opened.details!.commandFacts).toEqual({
+      commandFamily: "artifacts",
+      artifactCommandId: "open",
+      artifactId: created.output.id,
+      workspaceSessionId: "session-artifacts",
+      intent: "open_artifact_inspector",
+      accepted: true,
+      missingFile: false,
+    });
   });
 
   it("opens artifact inspector panes for records whose backing file is missing", async () => {
-    const openedArtifacts: Array<{ sessionId: string; artifactId: string }> = [];
-    const harness = createArtifactsHarness({
-      openArtifact: (request) => {
-        openedArtifacts.push(request);
-        return true;
-      },
-    });
+    const harness = createArtifactsHarness();
     const created = await harness.run("svvyx artifacts create --name missing.md --json");
     rmSync(created.output.path);
 
     const opened = await harness.run(`svvyx artifacts open --id ${created.output.id} --json`);
 
-    expect(opened.output).toEqual({ id: created.output.id, opened: true });
-    expect(openedArtifacts).toEqual([
-      {
-        sessionId: "session-artifacts",
-        artifactId: created.output.id,
-      },
-    ]);
+    expect(opened.output).toEqual({
+      id: created.output.id,
+      intent: "open_artifact_inspector",
+      accepted: true,
+    });
+    expect(opened.details!.commandFacts).toMatchObject({ missingFile: true });
   });
 
   it("leaves malformed svvyx shell syntax on the ordinary shell path", async () => {
@@ -4862,10 +4842,6 @@ function createArtifactsHarness(
     workspaceArtifactDir?: string;
     readArtifactRootForSession?: (sessionId: string) => string | null;
     onAppLog?: (event: AppLoggerEvent) => void;
-    openArtifact?: (request: {
-      sessionId: string;
-      artifactId: string;
-    }) => boolean | Promise<boolean>;
   } = {},
 ) {
   const cwd = mkdtempSync(join(tmpdir(), "svvy-direct-tools-cwd-"));
@@ -4913,7 +4889,6 @@ function createArtifactsHarness(
     runtime,
     store,
     readArtifactRootForSession: harnessOptions.readArtifactRootForSession,
-    openArtifact: harnessOptions.openArtifact,
     onAppLog: harnessOptions.onAppLog,
     extensionsRoot,
   }).codingTools;

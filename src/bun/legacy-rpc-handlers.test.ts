@@ -155,11 +155,11 @@ describe("legacy RPC handler seam", () => {
     }
   });
 
-  it("keeps legacy sync messages in their dedicated retirement seam", async () => {
+  it("keeps retired sync messages in their dedicated boundary test", async () => {
     const syncSeamSource = await Bun.file(`${import.meta.dir}/legacy-sync-seam.test.ts`).text();
 
     expect(syncSeamSource).toContain('not.toContain("sendAppMenuAction")');
-    expect(syncSeamSource).toContain("sendArtifactOpen");
+    expect(syncSeamSource).toContain('not.toContain("sendArtifactOpen")');
     expect(syncSeamSource).not.toContain('channel: "sendSurfaceSync"');
     expect(syncSeamSource).not.toContain('channel: "sendWorkspaceSync"');
   });

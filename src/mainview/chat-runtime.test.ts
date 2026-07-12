@@ -11,7 +11,6 @@ import {
   composerAttachmentPromptText,
   parseComposerAttachmentTextSignature,
   serializeComposerAttachmentTextSignature,
-  type ArtifactOpenMessage,
   type ComposerAttachment,
   type CommandInspectorReadModel,
   type AppLogEntry,
@@ -275,7 +274,6 @@ type FakeRpcHarness = {
   setPromptHandler: (surfacePiSessionId: string, handler: PromptHandler) => void;
   updateSummary: (sessionId: string, updater: (summary: MutableSessionSummary) => void) => void;
   emitSessionNavigationInvalidation: (workspaceId?: string) => void;
-  emitArtifactOpen: (payload: ArtifactOpenMessage) => void;
   emitSurfaceChanged: (fixture: SurfaceFixture, workspaceId?: string) => void;
   emitSurfaceStreamPatch: (
     target: PromptTarget,
@@ -1133,7 +1131,6 @@ function createFakeRpc(input: {
   requestUserInputRequests?: WorkspaceRequestUserInputRequest[];
   runtimeApprovalRequests?: WorkspaceRuntimeApprovalRequest[];
 }): FakeRpcHarness {
-  const artifactOpenListeners = new Set<(payload: ArtifactOpenMessage) => void>();
   const desktopNotificationListeners = new Set<(payload: DesktopRendererNotification) => void>();
   const summaries = new Map<string, MutableSessionSummary>(
     input.sessions.map((summary) => [
@@ -1391,12 +1388,6 @@ function createFakeRpc(input: {
           invalidation: { model: "workspaceLayout", ids: [layoutId] },
         },
       });
-    }
-  };
-
-  const emitArtifactOpen = (payload: ArtifactOpenMessage): void => {
-    for (const listener of artifactOpenListeners) {
-      listener(structuredClone(payload));
     }
   };
 
@@ -3178,10 +3169,6 @@ function createFakeRpc(input: {
         removeProviderAuth: async () => ({ ok: true }),
       },
       addMessageListener: (messageName: string, listener: unknown) => {
-        if (messageName === "sendArtifactOpen") {
-          artifactOpenListeners.add(listener as (payload: ArtifactOpenMessage) => void);
-          return;
-        }
         if (messageName === "sendDesktopNotification") {
           desktopNotificationListeners.add(
             listener as (payload: DesktopRendererNotification) => void,
@@ -3190,10 +3177,6 @@ function createFakeRpc(input: {
         }
       },
       removeMessageListener: (messageName: string, listener: unknown) => {
-        if (messageName === "sendArtifactOpen") {
-          artifactOpenListeners.delete(listener as (payload: ArtifactOpenMessage) => void);
-          return;
-        }
         if (messageName === "sendDesktopNotification") {
           desktopNotificationListeners.delete(
             listener as (payload: DesktopRendererNotification) => void,
@@ -3240,7 +3223,6 @@ function createFakeRpc(input: {
     },
     updateSummary,
     emitSessionNavigationInvalidation,
-    emitArtifactOpen,
     emitSurfaceChanged,
     emitSurfaceStreamPatch,
     emitAppLogUpdate,
@@ -4949,7 +4931,7 @@ describe("createChatRuntime", () => {
     runtime.dispose();
   });
 
-  it("opens artifact inspector panes from identity-only artifact events", async () => {
+  it("opens artifact inspector panes from committed command intent facts once", async () => {
     const harness = createFakeRpc({
       sessions: [createSummary("session-1", "Orchestrator", "main reply")],
       surfaces: [
@@ -4961,11 +4943,61 @@ describe("createChatRuntime", () => {
     });
 
     const runtime = await createRuntime(harness);
-    harness.emitArtifactOpen({
-      workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
-      workspaceSessionId: "session-1" as WorkspaceSessionId,
-      artifactId: "artifact-1" as never,
+    harness.setCommandInspector({
+      ...createCommandInspector("command-artifact-open"),
+      facts: {
+        commandFamily: "artifacts",
+        artifactCommandId: "open",
+        artifactId: "artifact-1",
+        workspaceSessionId: "session-mismatch",
+        intent: "open_artifact_inspector",
+        accepted: true,
+        missingFile: false,
+      },
     });
+    const notification = {
+      kind: "read-model-changed",
+      eventGenerationId: "fake-runtime-event-generation" as never,
+      sequence: 1 as never,
+      scope: {
+        kind: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+      },
+      invalidation: {
+        scope: "workspace",
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId as WorkspaceId,
+        invalidation: {
+          model: "commandInspector",
+          ids: ["command-artifact-open" as CommandId],
+        },
+      },
+    } satisfies DesktopRendererNotification;
+    harness.emitDesktopNotification(notification);
+    await waitFor(() => harness.commandInspectorRequests.length === 1);
+    expect(runtime.paneLayout.panels.some((pane) => pane.binding?.surface === "artifact")).toBe(
+      false,
+    );
+
+    harness.setCommandInspector({
+      ...createCommandInspector("command-artifact-open"),
+      facts: {
+        commandFamily: "artifacts",
+        artifactCommandId: "open",
+        artifactId: "artifact-1",
+        workspaceSessionId: "session-1",
+        intent: "open_artifact_inspector",
+        accepted: true,
+        missingFile: false,
+      },
+    });
+    harness.emitDesktopNotification({ ...notification, sequence: 2 as never });
+    await waitFor(() =>
+      runtime.paneLayout.panels.some(
+        (pane) => pane.binding?.surface === "artifact" && pane.binding.artifactId === "artifact-1",
+      ),
+    );
+    harness.emitDesktopNotification({ ...notification, sequence: 3 as never });
+    await waitFor(() => harness.commandInspectorRequests.length === 3);
 
     const focusedPaneId = runtime.paneLayout.focusedPanelId ?? runtime.primaryPaneId;
     expect(runtime.getPane(focusedPaneId)?.target).toEqual({
@@ -4973,6 +5005,11 @@ describe("createChatRuntime", () => {
       surface: "artifact",
       artifactId: "artifact-1",
     });
+    expect(
+      runtime.paneLayout.panels.filter(
+        (pane) => pane.binding?.surface === "artifact" && pane.binding.artifactId === "artifact-1",
+      ),
+    ).toHaveLength(1);
 
     runtime.dispose();
   });

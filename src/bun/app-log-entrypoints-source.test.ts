@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFile } from "node:fs/promises";
 
 describe("Bun app-log entrypoints", () => {
-  it("emits targeted logs for provider auth, sessions, surfaces, prompts, and external editor handoff", async () => {
+  it("emits targeted logs for provider auth, legacy session actions, surface settings, prompts, and external editor handoff", async () => {
     const indexSource = await readFile(new URL("./index.ts", import.meta.url), "utf8");
     const runtimeLayerSource = await readFile(
       new URL("../../packages/runtime/src/runtime-layer.ts", import.meta.url),
@@ -16,11 +16,10 @@ describe("Bun app-log entrypoints", () => {
     expect(indexSource).toContain('"auth.provider", "Provider OAuth failed."');
     expect(indexSource).toContain('"auth.provider", "Provider auth removed."');
     expect(indexSource).toContain('"session", "Workspace session created."');
-    expect(indexSource).toContain('"session", "Workspace session opened."');
     expect(indexSource).toContain('"session", "Workspace session renamed."');
     expect(indexSource).toContain('"session", "Workspace session deleted."');
-    expect(indexSource).toContain('"surface", "Surface opened."');
-    expect(indexSource).toContain('"surface", "Surface closed."');
+    expect(indexSource).toContain("facades.runtime.surfaces.open");
+    expect(indexSource).toContain("facades.runtime.surfaces.close");
     expect(indexSource).toContain('"surface", "Surface model changed."');
     expect(indexSource).toContain('"surface", "Surface reasoning changed."');
     expect(runtimeLayerSource).toContain('source: "prompt"');

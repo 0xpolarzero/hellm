@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 describe("legacy sync seam", () => {
-  it("pins artifact open as the only remaining legacy renderer sync channel", async () => {
+  it("keeps all retired renderer sync channels out of the desktop contract", async () => {
     const contractSource = await Bun.file(
       `${import.meta.dir}/../shared/workspace-contract.ts`,
     ).text();
@@ -9,7 +9,7 @@ describe("legacy sync seam", () => {
     const runtimeSource = await Bun.file(`${import.meta.dir}/../mainview/chat-runtime.ts`).text();
 
     for (const source of [contractSource, indexSource, runtimeSource]) {
-      expect(source).toContain("sendArtifactOpen");
+      expect(source).not.toContain("sendArtifactOpen");
       expect(source).not.toContain("sendSurfaceSync");
       expect(source).not.toContain("sendWorkspaceSync");
     }

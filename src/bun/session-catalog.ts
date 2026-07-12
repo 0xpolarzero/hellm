@@ -85,7 +85,6 @@ import {
   type SandboxPolicySourceService,
 } from "@svvy/core";
 import type {
-  ArtifactOpenMessage,
   CreateSessionRequest,
   ForkSessionRequest,
   PromptTarget,
@@ -384,7 +383,6 @@ interface CreateManagedSessionOptions {
   onAppLog?: (event: AppLoggerEvent) => void;
   runTaskAgentBridge?: runTaskAgentBridgeEnvProvider;
   runtimeCommandStdin?: LiveCommandStdinRegistry;
-  openArtifact?: (input: { sessionId: string; artifactId: string }) => boolean | Promise<boolean>;
   approvalBoundary?: RuntimeApprovalBoundary;
   extensionsRoot?: string;
   managedSandbox?: boolean | (() => boolean);
@@ -569,7 +567,6 @@ export class WorkspaceSessionCatalog {
   private readonly extensionsRoot: string;
   private readonly approvalBoundary: RuntimeApprovalBoundary;
   private closed = false;
-  private artifactOpenListener: ((payload: ArtifactOpenMessage) => void) | null = null;
   private titleGenerationLogListener: ((event: TitleGenerationLogEvent) => void) | null = null;
   private workflowsGeneratedPackageLogListener:
     | ((event: WorkflowsGeneratedPackageLogEvent) => void)
@@ -763,10 +760,6 @@ export class WorkspaceSessionCatalog {
     if (this.recoveryStarted) return;
     this.recoveryStarted = true;
     void this.recoveryCoordinator.start();
-  }
-
-  setArtifactOpenListener(listener: ((payload: ArtifactOpenMessage) => void) | null): void {
-    this.artifactOpenListener = listener;
   }
 
   setTitleGenerationLogListener(listener: ((event: TitleGenerationLogEvent) => void) | null): void {
@@ -2155,7 +2148,6 @@ export class WorkspaceSessionCatalog {
       queueThreadReportNotification: this.queueThreadReportNotification.bind(this),
       refreshGeneratedContext: this.refreshGeneratedContextForLoadExtension.bind(this),
       onRequestContextLoaded: this.markPromptRefreshRequired.bind(this),
-      openArtifact: this.openArtifactFromRuntime.bind(this),
       onWorkflowsGeneratedPackageChanged: this.emitWorkflowsGeneratedPackageLog.bind(this),
       onAppLog: this.emitAppLog.bind(this),
       runTaskAgentBridge: this.runTaskAgentBridgeEnv.bind(this),
@@ -2225,7 +2217,6 @@ export class WorkspaceSessionCatalog {
       queueThreadReportNotification: this.queueThreadReportNotification.bind(this),
       refreshGeneratedContext: this.refreshGeneratedContextForLoadExtension.bind(this),
       onRequestContextLoaded: this.markPromptRefreshRequired.bind(this),
-      openArtifact: this.openArtifactFromRuntime.bind(this),
       onWorkflowsGeneratedPackageChanged: this.emitWorkflowsGeneratedPackageLog.bind(this),
       onAppLog: this.emitAppLog.bind(this),
       runTaskAgentBridge: this.runTaskAgentBridgeEnv.bind(this),
@@ -2289,31 +2280,6 @@ export class WorkspaceSessionCatalog {
   private markOpenSurfacesForPromptRefresh(): void {
     for (const session of this.managedSurfaces.values()) {
       session.recreateOnNextPrompt = true;
-    }
-  }
-
-  private async openArtifactFromRuntime(input: {
-    sessionId: string;
-    artifactId: string;
-  }): Promise<boolean> {
-    return this.emitArtifactOpen({
-      workspaceId: this.workspaceId as WorkspaceId,
-      workspaceSessionId: input.sessionId as WorkspaceSessionId,
-      artifactId: input.artifactId as ArtifactOpenMessage["artifactId"],
-    });
-  }
-
-  private emitArtifactOpen(payload: ArtifactOpenMessage): boolean {
-    if (this.closed || !this.artifactOpenListener) {
-      return false;
-    }
-
-    try {
-      this.artifactOpenListener(structuredClone(payload));
-      return true;
-    } catch (error) {
-      console.error("Failed to emit artifact open payload:", error);
-      return false;
     }
   }
 
@@ -3762,7 +3728,6 @@ async function createManagedSession(
     turnState: options.turnState,
     runState: options.runState,
     readArtifactRootForSession: options.readArtifactRootForSession,
-    openArtifact: options.openArtifact,
     onWorkflowsGeneratedPackageChanged: options.onWorkflowsGeneratedPackageChanged,
     onAppLog: options.onAppLog,
     agentSettingsStore: options.agentSettingsStore,
@@ -3817,7 +3782,6 @@ async function createManagedSession(
     approvalBoundary: options.approvalBoundary,
     networkAccess: () => options.agentSettingsStore.getState().appPreferences.networkAccess,
     managedSandbox: options.managedSandbox,
-    openArtifact: options.openArtifact,
     onWorkflowsGeneratedPackageChanged: options.onWorkflowsGeneratedPackageChanged,
     onAppLog: options.onAppLog,
     runTaskAgentBridge: options.runTaskAgentBridge,

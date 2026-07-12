@@ -33,7 +33,6 @@ import {
 } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import type {
-  ChatRPCSchema,
   ComposerAttachment,
   ComposerMentionKind,
   ImportComposerAttachmentInput,
@@ -727,30 +726,7 @@ const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
     ensureUsableProviderAuth,
     getProviderAuthUnavailableMessage,
   },
-  onArtifactOpen: (_workspaceId, payload) => {
-    void sendLegacyRendererMessage(
-      "sendArtifactOpen",
-      payload,
-      "Unable to send artifact open request to the main view.",
-    );
-  },
 });
-
-async function sendLegacyRendererMessage<Name extends keyof ChatRPCSchema["webview"]["messages"]>(
-  messageName: Name,
-  payload: ChatRPCSchema["webview"]["messages"][Name],
-  errorMessage: string,
-): Promise<void> {
-  const host = desktopHost;
-  if (!host) {
-    return;
-  }
-  try {
-    await host.sendLegacyMessage(messageName, payload);
-  } catch (error) {
-    recordDevBrowserToolsError("rpc", errorMessage, "rpc", {}, error);
-  }
-}
 
 function recordAppRuntimeLog(
   level: "info" | "warning",

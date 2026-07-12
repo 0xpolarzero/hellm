@@ -121,8 +121,8 @@ session. It may filter by `--thread-id`. It does not support `--command-id`.
 `inspect` returns metadata and the artifact path; it does not print file contents. You may read the
 returned artifact path directly when you need to inspect content.
 
-`open` records or emits a declarative artifact-open intent for desktop consumers. It does not return
-artifact metadata and does not synchronously report pane state.
+`open` commits a declarative artifact-open intent in terminal command facts. It does not return
+artifact metadata, require an attached UI, or synchronously report pane state.
 
 `delete` is an explicit artifact lifecycle command. Runtime executes the file deletion and commits
 the artifact lifecycle/status transition through state. Do not use delete to hide failed work or
@@ -617,12 +617,14 @@ Behavior:
 - when metadata exists but the file is missing, runtime commits an open-intent/command fact that
   includes missing-file status; desktop may render or focus a missing-file artifact inspector after
   refetching the artifact read model
-- returns an immutable artifact-open intent/fact keyed by artifact id, workspace, and session
-  context
+- returns an immutable artifact-open intent/fact keyed by the app-owned Artifacts command family,
+  `open` command id, artifact id, workspace, and session context
 - `@svvy/runtime` commits the command outcome and publishes the after-commit notification for
   desktop consumers
-- lets desktop consume the intent, refetch artifact/read-model state, and decide whether to open or
-  focus an inspector pane
+- succeeds with the same durable outcome when no desktop UI is attached
+- lets desktop consume the terminal command inspector after its invalidation, validate the command
+  target/session/artifact facts, deduplicate by command id, and decide whether to open or focus an
+  inspector pane
 - does not mutate artifact metadata or artifact file content
 
 `open` is a desktop intent command. It is not a read API and does not return artifact metadata.

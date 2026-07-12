@@ -124,6 +124,14 @@ export function refreshRuntimeArtifact(
   };
 }
 
+export function isRuntimeArtifactFileMissing(artifact: ArtifactMetadataRecord): boolean {
+  try {
+    return !statSync(artifact.storedPath).isFile();
+  } catch {
+    return true;
+  }
+}
+
 export function deleteRuntimeArtifact(input: {
   artifactState: RuntimeArtifactStatePortService;
   runState: RuntimeArtifactStateRunner;

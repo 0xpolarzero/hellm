@@ -54,7 +54,6 @@ import type * as Effect from "effect/Effect";
 import {
   formatSvvyxArtifactsError,
   runSvvyxArtifactsOperation,
-  type SvvyxArtifactOpenHandler,
   type SvvyxArtifactsOperationInput,
   type SvvyxArtifactsRuntimeContext,
 } from "./svvyx-artifacts-command";
@@ -191,7 +190,6 @@ type ExecuteTypescriptToolOptions = {
   turnState: RuntimeTurnStatePortService;
   runState: <A>(effect: Effect.Effect<A, StateContractError>) => A;
   readArtifactRootForSession?: (sessionId: string) => string | null;
-  openArtifact?: SvvyxArtifactOpenHandler;
   onWorkflowsGeneratedPackageChanged?: (input: {
     reason: "svvyx-workflows-build" | "svvyx-workflows-save";
     commandFacts: Record<string, unknown>;
@@ -341,7 +339,6 @@ export function createExecuteTypescriptTool(
           executor,
           loadedExtensionIds: runtime.loadedExtensionIds,
         },
-        openArtifact: options.openArtifact,
         onWorkflowsGeneratedPackageChanged: options.onWorkflowsGeneratedPackageChanged,
         workflowsExtensionsGeneratedPackagePath: options.workflowsExtensionsGeneratedPackagePath,
         extensionsRoot: options.extensionsRoot,
@@ -388,7 +385,6 @@ export async function runExecuteTypescript(input: {
   signal?: AbortSignal;
   typescriptCode: string;
   context: ExecuteTypescriptContext;
-  openArtifact?: SvvyxArtifactOpenHandler;
   onWorkflowsGeneratedPackageChanged?: (input: {
     reason: "svvyx-workflows-build" | "svvyx-workflows-save";
     commandFacts: Record<string, unknown>;
@@ -587,7 +583,6 @@ export async function runExecuteTypescript(input: {
     parentCommand,
     childCommandFacts,
     incurClientModule,
-    openArtifact: input.openArtifact,
     onWorkflowsGeneratedPackageChanged: input.onWorkflowsGeneratedPackageChanged,
     workflowsGeneratedPackagePath: input.workflowsGeneratedPackagePath,
     extensionsRoot: input.extensionsRoot,
@@ -1625,7 +1620,6 @@ function createExecuteTypescriptExtensions(input: {
   parentCommand: Pick<RuntimeCommandRecord, "id">;
   childCommandFacts: Array<{ status: RuntimeCommandStatus }>;
   incurClientModule: IncurClientModuleRuntime;
-  openArtifact?: SvvyxArtifactOpenHandler;
   onWorkflowsGeneratedPackageChanged?: (input: {
     reason: "svvyx-workflows-build" | "svvyx-workflows-save";
     commandFacts: Record<string, unknown>;
@@ -1693,7 +1687,6 @@ function createExecuteTypescriptExtensions(input: {
             runState: input.runState,
             readArtifactRootForSession: input.readArtifactRootForSession,
             sourceCommand: { id: childCommand.id as CommandId },
-            openArtifact: input.openArtifact,
             onAppLog: input.onAppLog,
           });
           input.runState(

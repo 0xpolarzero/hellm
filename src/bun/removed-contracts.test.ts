@@ -381,11 +381,11 @@ describe("retired desktop integration RPC paths", () => {
       "SessionNavigationSummary as CoreSessionNavigationSummary",
     );
     expect(sharedContractSource).not.toContain("sessionFile?:");
-    expect(sharedContractSource).toContain("sendArtifactOpen: ArtifactOpenMessage");
+    expect(sharedContractSource).not.toContain("sendArtifactOpen");
     expect(sharedContractSource).not.toContain("sendWorkspaceSync");
     expect(chatRuntimeSource).toContain('kind: "sessionNavigation"');
-    expect(sessionCatalogSource).toContain("setArtifactOpenListener");
-    expect(sessionCatalogSource).toContain("emitArtifactOpen");
+    expect(sessionCatalogSource).not.toContain("setArtifactOpenListener");
+    expect(sessionCatalogSource).not.toContain("emitArtifactOpen");
     expect(sessionCatalogSource).not.toContain("emitWorkspaceSync");
     expect(sessionCatalogSource).not.toContain("async listSessions(");
   });

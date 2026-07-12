@@ -14,6 +14,7 @@ import {
   artifactRootForSession,
   deleteRuntimeArtifact,
   inferArtifactKind,
+  isRuntimeArtifactFileMissing,
   materializeRuntimeArtifact,
   refreshRuntimeArtifact,
   resolveArtifactSourcePath,
@@ -49,11 +50,6 @@ export type SvvyxArtifactsRuntimeContext = {
   surfaceThreadId: string | null;
 };
 
-export type SvvyxArtifactOpenHandler = (input: {
-  sessionId: string;
-  artifactId: string;
-}) => boolean | Promise<boolean>;
-
 type SourceCommandReference = {
   id: CommandId;
 };
@@ -80,7 +76,6 @@ export async function runSvvyxArtifactsCommand(input: {
   runState: SvvyxArtifactStateRunner;
   sourceCommand: SourceCommandReference;
   readArtifactRootForSession?: (sessionId: string) => string | null;
-  openArtifact?: SvvyxArtifactOpenHandler;
   onAppLog?: (event: AppLoggerEvent) => void;
 }): Promise<SvvyxArtifactsCommandResult> {
   let operationStarted = false;
@@ -186,7 +181,6 @@ export async function runSvvyxArtifactsOperation(input: {
   runState: SvvyxArtifactStateRunner;
   sourceCommand: SourceCommandReference;
   readArtifactRootForSession?: (sessionId: string) => string | null;
-  openArtifact?: SvvyxArtifactOpenHandler;
   onAppLog?: (event: AppLoggerEvent) => void;
 }): Promise<SvvyxArtifactsCommandResult> {
   try {
@@ -226,7 +220,6 @@ async function runSvvyxArtifactsOperationCore(input: {
   runState: SvvyxArtifactStateRunner;
   sourceCommand: SourceCommandReference;
   readArtifactRootForSession?: (sessionId: string) => string | null;
-  openArtifact?: SvvyxArtifactOpenHandler;
 }): Promise<SvvyxArtifactsCommandResult> {
   if (input.operation.commandId === "create") {
     const { name, path: sourcePath, immutable = false, mimeType } = input.operation.options;
@@ -342,28 +335,22 @@ async function runSvvyxArtifactsOperationCore(input: {
       }),
     );
     ensureNotDeleted(artifact);
-    const opened =
-      input.openArtifact !== undefined
-        ? await input.openArtifact({
-            sessionId: input.runtime.sessionId,
-            artifactId: artifact.artifactId,
-          })
-        : false;
-    if (!opened) {
-      throw artifactCommandError(
-        "UI_UNAVAILABLE",
-        "Artifact inspector UI is not attached to this command runtime.",
-        undefined,
-        undefined,
-        input.operation.options.id,
-      );
-    }
-    const output = { id: artifact.artifactId, opened: true };
+    const missingFile = isRuntimeArtifactFileMissing(artifact);
+    const output = {
+      id: artifact.artifactId,
+      intent: "open_artifact_inspector" as const,
+      accepted: true as const,
+    };
     return {
       output,
       commandFacts: {
+        commandFamily: "artifacts",
+        artifactCommandId: "open",
         artifactId: artifact.artifactId,
-        opened: true,
+        workspaceSessionId: input.runtime.sessionId,
+        intent: output.intent,
+        accepted: output.accepted,
+        missingFile,
       },
     };
   }

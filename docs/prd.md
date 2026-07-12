@@ -1250,7 +1250,10 @@ Extensions own:
 
 Artifacts is a builtin `svvyx` extension with generated TypeScript facade declarations. Its model-callable API is
 the `svvyx artifacts ...` command family, with `create`, `inspect`, `list`, `open`, and `delete`
-commands defined in `docs/specs/extension/artifacts.extension.spec.md`.
+commands defined in `docs/specs/extension/artifacts.extension.spec.md`. `open` is a UI-independent
+command that succeeds by committing a terminal `open_artifact_inspector` command intent; attached
+renderers consume the resulting command-inspector invalidation, while headless callers retain the
+same successful durable command outcome without requiring a UI bridge.
 
 External instruction records represent files such as `AGENTS.md` and `CLAUDE.md`. They appear in the
 Extensions pane as a distinct read-only category, use enabled/disabled plus selected actor kinds
