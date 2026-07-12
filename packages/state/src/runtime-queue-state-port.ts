@@ -125,6 +125,21 @@ export function runtimeQueueStatePortFromStructuredSessionState(
             mutationResult(record, queueInvalidations(state.workspaceId, record)),
           ),
         ),
+    reorderSurfaceMessage: (input) =>
+      Effect.gen(function* () {
+        const before = yield* state.listQueuedSurfaceMessages({
+          surfacePiSessionId: input.surfacePiSessionId,
+        });
+        const records = yield* state.reorderSurfaceMessage(input);
+        const changed = before.some(
+          (record, index) =>
+            record.id !== records[index]?.id || record.position !== records[index]?.position,
+        );
+        return mutationResult(
+          records,
+          changed ? queueManyInvalidations(state.workspaceId, records) : [],
+        );
+      }),
   };
 }
 

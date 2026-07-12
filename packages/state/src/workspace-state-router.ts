@@ -4,6 +4,7 @@ import {
   RuntimeActorExtensionBindingStatePort,
   RuntimeApprovalStatePort,
   RuntimeCommandStatePort,
+  RuntimeComposerDraftStatePort,
   RuntimeEpisodeStatePort,
   RuntimeGeneratedPackageStatePort,
   PiSessionReferencePort,
@@ -26,6 +27,7 @@ import {
   type RuntimeApprovalRecord,
   type RuntimeApprovalStatePortService,
   type RuntimeCommandStatePortService,
+  type RuntimeComposerDraftStatePortService,
   type RuntimeEpisodeStatePortService,
   type RuntimeGeneratedPackageStatePortService,
   type RuntimeGeneratedPackageWorkspaceLinkRecord,
@@ -50,6 +52,7 @@ import {
 import { runtimeActorExtensionBindingStatePortFromStructuredSessionState } from "./runtime-actor-extension-binding-state-port";
 import { runtimeApprovalStatePortFromStructuredSessionState } from "./runtime-approval-state-port";
 import { runtimeCommandStatePortFromStructuredSessionState } from "./runtime-command-state-port";
+import { runtimeComposerDraftStatePortFromStructuredSessionState } from "./runtime-composer-draft-state-port";
 import { runtimeEpisodeStatePortFromStructuredSessionState } from "./runtime-episode-state-port";
 import { runtimeGeneratedPackageStatePortFromStructuredSessionState } from "./runtime-generated-package-state-port";
 import { runtimePromptDefaultsStatePortFromStructuredSessionState } from "./runtime-prompt-defaults-state-port";
@@ -93,6 +96,7 @@ export interface WorkspaceStateRouter {
   readonly request: RuntimeRequestStatePortService;
   readonly approval: RuntimeApprovalStatePortService;
   readonly command: RuntimeCommandStatePortService;
+  readonly composerDraft: RuntimeComposerDraftStatePortService;
   readonly sessionWait: RuntimeSessionWaitStatePortService;
   readonly thread: RuntimeThreadStatePortService;
   readonly transcript: RuntimeTranscriptStatePortService;
@@ -125,6 +129,7 @@ interface RegisteredStore {
     readonly request: RuntimeRequestStatePortService;
     readonly approval: RuntimeApprovalStatePortService;
     readonly command: RuntimeCommandStatePortService;
+    readonly composerDraft: RuntimeComposerDraftStatePortService;
     readonly sessionWait: RuntimeSessionWaitStatePortService;
     readonly thread: RuntimeThreadStatePortService;
     readonly transcript: RuntimeTranscriptStatePortService;
@@ -156,6 +161,7 @@ function registerStore(store: StructuredSessionStateStore): RegisteredStore {
       request: runtimeRequestStatePortFromStructuredSessionState(structuredSession),
       approval: runtimeApprovalStatePortFromStructuredSessionState(structuredSession),
       command: runtimeCommandStatePortFromStructuredSessionState(structuredSession),
+      composerDraft: runtimeComposerDraftStatePortFromStructuredSessionState(structuredSession),
       sessionWait: runtimeSessionWaitStatePortFromStructuredSessionState(structuredSession),
       thread: runtimeThreadStatePortFromStructuredSessionState(structuredSession),
       transcript: runtimeTranscriptStatePortFromStructuredSessionState(structuredSession),
@@ -644,6 +650,13 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
         ]),
         (registered) => registered.ports.queue.cancelSurfaceMessage(request),
       ),
+    reorderSurfaceMessage: (request) =>
+      via(
+        locate("reorderSurfaceMessage", `no store owns surface ${request.surfacePiSessionId}`, [
+          surfaceProbe(request.surfacePiSessionId),
+        ]),
+        (registered) => registered.ports.queue.reorderSurfaceMessage(request),
+      ),
   };
 
   const request: RuntimeRequestStatePortService = {
@@ -847,6 +860,17 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
           sessionProbe(input_.sessionId),
         ]),
         (registered) => registered.ports.command.hasCommandOutputEvent(input_),
+      ),
+  };
+
+  const composerDraft: RuntimeComposerDraftStatePortService = {
+    setDraft: (input_) =>
+      via(locatePromptTarget("setComposerDraft", input_.target), (registered) =>
+        registered.ports.composerDraft.setDraft(input_),
+      ),
+    clearSubmittedDraft: (input_) =>
+      via(locatePromptTarget("clearSubmittedComposerDraft", input_.target), (registered) =>
+        registered.ports.composerDraft.clearSubmittedDraft(input_),
       ),
   };
 
@@ -1122,6 +1146,7 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
     request,
     approval,
     command,
+    composerDraft,
     sessionWait,
     thread,
     transcript,
@@ -1154,6 +1179,7 @@ export function layerWorkspaceStateRouter(
   | RuntimeRequestStatePort
   | RuntimeApprovalStatePort
   | RuntimeCommandStatePort
+  | RuntimeComposerDraftStatePort
   | RuntimeSessionWaitStatePort
   | RuntimeThreadStatePort
   | RuntimeTranscriptStatePort
@@ -1173,6 +1199,7 @@ export function layerWorkspaceStateRouter(
     Layer.succeed(RuntimeRequestStatePort, router.request),
     Layer.succeed(RuntimeApprovalStatePort, router.approval),
     Layer.succeed(RuntimeCommandStatePort, router.command),
+    Layer.succeed(RuntimeComposerDraftStatePort, router.composerDraft),
     Layer.succeed(RuntimeSessionWaitStatePort, router.sessionWait),
     Layer.succeed(RuntimeThreadStatePort, router.thread),
     Layer.succeed(RuntimeTranscriptStatePort, router.transcript),

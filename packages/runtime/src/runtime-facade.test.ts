@@ -131,7 +131,9 @@ const cancelledCommandResult = {
   status: "already_terminal" as const,
 };
 
-type RuntimeServiceTestOverrides = Pick<RuntimeService, "messages" | "queues" | "events"> & {
+type RuntimeServiceTestOverrides = Pick<RuntimeService, "events"> & {
+  messages: Partial<RuntimeService["messages"]>;
+  queues: Partial<RuntimeService["queues"]>;
   commands: Partial<RuntimeService["commands"]>;
 } & Partial<
     Pick<
@@ -146,7 +148,7 @@ type RuntimeServiceTestOverrides = Pick<RuntimeService, "messages" | "queues" | 
   >;
 
 function runtimeService(overrides: RuntimeServiceTestOverrides): RuntimeService {
-  const { commands, ...restOverrides } = overrides;
+  const { messages, queues, commands, ...restOverrides } = overrides;
   return {
     workspaces: {
       acquire: () => Effect.die("unused"),
@@ -157,6 +159,18 @@ function runtimeService(overrides: RuntimeServiceTestOverrides): RuntimeService 
       createOrchestrator: () => Effect.die("unused"),
       open: () => Effect.die("unused"),
       close: () => Effect.die("unused"),
+    },
+    messages: {
+      submit: () => Effect.die("unused"),
+      abort: () => Effect.die("unused"),
+      updateDraft: () => Effect.die("unused"),
+      ...messages,
+    },
+    queues: {
+      steer: () => Effect.die("unused"),
+      restoreToComposer: () => Effect.die("unused"),
+      reorder: () => Effect.die("unused"),
+      ...queues,
     },
     requestInput: {
       setVariant: () => Effect.die("unused"),

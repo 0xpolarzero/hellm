@@ -303,6 +303,7 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
               markSurfaceMessageFailed: () => Effect.die("unused"),
               markSurfaceMessageQueued: () => Effect.die("unused"),
               cancelSurfaceMessage: () => Effect.die("unused"),
+              reorderSurfaceMessage: () => Effect.die("unused"),
             }),
             Layer.succeed(RuntimeTurnStatePort, {
               startTurn: () =>

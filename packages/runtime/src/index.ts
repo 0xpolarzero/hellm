@@ -40,6 +40,7 @@ import type {
   RuntimeCommandsApiEffect,
   RuntimeApprovalStatePort,
   RuntimeCommandStatePort,
+  RuntimeComposerDraftStatePort,
   RuntimeEventError,
   RuntimeEvent,
   RuntimeEventSubscriptionClose,
@@ -87,6 +88,12 @@ import type {
   SetRequestInputVariantInput,
   SetRequestInputVariantResult,
   SteerQueuedMessageInput,
+  UpdateComposerDraftInput,
+  UpdateComposerDraftResult,
+  RestoreQueuedMessageToComposerInput,
+  RestoreQueuedMessageToComposerResult,
+  ReorderQueuedMessageInput,
+  ReorderQueuedMessageResult,
   SubmitMessageInput,
   SubmitMessageResult,
   WriteCommandStdinInput,
@@ -147,6 +154,12 @@ import {
   decodeUnknownSourceReconcileRequestEffect,
   decodeUnknownSourceReconcileResultEffect,
   decodeUnknownSteerQueuedMessageInputEffect,
+  decodeUnknownUpdateComposerDraftInputEffect,
+  decodeUnknownUpdateComposerDraftResultEffect,
+  decodeUnknownRestoreQueuedMessageToComposerInputEffect,
+  decodeUnknownRestoreQueuedMessageToComposerResultEffect,
+  decodeUnknownReorderQueuedMessageInputEffect,
+  decodeUnknownReorderQueuedMessageResultEffect,
   decodeUnknownSubmitMessageInputEffect,
   decodeUnknownSubmitMessageResultEffect,
   decodeUnknownWriteCommandStdinInputEffect,
@@ -395,6 +408,7 @@ export namespace Runtime {
     | RuntimeRequestStatePort
     | RuntimeApprovalStatePort
     | RuntimeCommandStatePort
+    | RuntimeComposerDraftStatePort
     | RuntimeSessionWaitStatePort
     | RuntimeThreadStatePort
     | RuntimeTranscriptStatePort
@@ -446,10 +460,22 @@ interface RuntimeMessagesFacade {
     options?: RuntimeFacadeCallOptions,
   ): Promise<SubmitMessageResult>;
   abort(input: AbortPromptInput, options?: RuntimeFacadeCallOptions): Promise<void>;
+  updateDraft(
+    input: UpdateComposerDraftInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<UpdateComposerDraftResult>;
 }
 
 interface RuntimeQueuesFacade {
   steer(input: SteerQueuedMessageInput, options?: RuntimeFacadeCallOptions): Promise<void>;
+  restoreToComposer(
+    input: RestoreQueuedMessageToComposerInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<RestoreQueuedMessageToComposerResult>;
+  reorder(
+    input: ReorderQueuedMessageInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<ReorderQueuedMessageResult>;
 }
 
 interface RuntimeRequestInputFacade {
@@ -1053,6 +1079,25 @@ export function createRuntimeFacade(
           options,
           { allowRuntimeCancel: true },
         ),
+      updateDraft: (input, options) =>
+        run(
+          "runtime.messages.updateDraft",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.messages.updateDraft",
+              decodeUnknownUpdateComposerDraftInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.messages.updateDraft(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.messages.updateDraft",
+              decodeUnknownUpdateComposerDraftResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
     },
     queues: {
       steer: (input, options) =>
@@ -1066,6 +1111,44 @@ export function createRuntimeFacade(
             );
             const runtime = yield* Runtime;
             return yield* runtime.queues.steer(decodedInput);
+          }),
+          options,
+        ),
+      restoreToComposer: (input, options) =>
+        run(
+          "runtime.queues.restoreToComposer",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.queues.restoreToComposer",
+              decodeUnknownRestoreQueuedMessageToComposerInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.queues.restoreToComposer(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.queues.restoreToComposer",
+              decodeUnknownRestoreQueuedMessageToComposerResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
+      reorder: (input, options) =>
+        run(
+          "runtime.queues.reorder",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.queues.reorder",
+              decodeUnknownReorderQueuedMessageInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.queues.reorder(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.queues.reorder",
+              decodeUnknownReorderQueuedMessageResultEffect,
+              result,
+            );
           }),
           options,
         ),

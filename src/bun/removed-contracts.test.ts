@@ -314,6 +314,41 @@ describe("retired desktop integration RPC paths", () => {
     expect(backendSource).toContain("facades.hostActions.clipboard.writeText(input)");
   });
 
+  it("routes workspace file authority through app actions and native effects through host actions", async () => {
+    const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const handlerSource = backendSource
+      .split("listWorkspacePaths:")[1]
+      ?.split("openWorkflowsGeneratedExportInEditor:")[0];
+
+    expect(handlerSource).toContain("facades.appActions.workspaceFiles.listPaths(input)");
+    expect(handlerSource).toContain("facades.appActions.workspaceFiles.getRoot(input)");
+    expect(handlerSource).toContain("facades.hostActions.dialogs.pickFilesAndFolders");
+    expect(handlerSource).toContain(
+      "facades.appActions.workspaceFiles.materializeSelectedAttachments",
+    );
+    expect(handlerSource).toContain("facades.appActions.workspaceFiles.importComposerAttachments");
+    expect(handlerSource).toContain("facades.appActions.workspaceFiles.resolvePathTarget(input)");
+    expect(handlerSource).toContain("facades.hostActions.paths.reveal");
+    expect(handlerSource).toContain("facades.hostActions.paths.open");
+    expect(handlerSource).not.toContain("Utils.openFileDialog");
+    expect(handlerSource).not.toContain("Utils.openPath");
+    expect(handlerSource).not.toContain("Utils.showItemInFolder");
+    expect(handlerSource).not.toContain("getWorkspaceRuntime(input)");
+  });
+
+  it("routes generated workflow export editor launches through typed host actions", async () => {
+    const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const handlerSource = backendSource
+      .split("openWorkflowsGeneratedExportInEditor:")[1]
+      ?.split("openGeneratedAgentContextExternalSourceInEditor:")[0];
+
+    expect(handlerSource).toContain(
+      "openPathInPreferredEditor(runtime, facades.hostActions, path)",
+    );
+    expect(handlerSource).not.toContain("Utils.openPath");
+    expect(handlerSource).not.toContain("spawn(");
+  });
+
   it("pins increment-6 legacy renderer RPC channels until pane migration retires them", async () => {
     const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
     const chatRuntimeSource = await Bun.file(

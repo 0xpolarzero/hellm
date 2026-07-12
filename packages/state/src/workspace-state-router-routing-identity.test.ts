@@ -8,6 +8,7 @@ import type {
   RuntimeActorExtensionBindingStatePortService,
   RuntimeApprovalStatePortService,
   RuntimeCommandStatePortService,
+  RuntimeComposerDraftStatePortService,
   RuntimeEpisodeStatePortService,
   RuntimeGeneratedPackageStatePortService,
   RuntimePromptDefaultsStatePortService,
@@ -173,6 +174,24 @@ const queueAudit: PortRoutingAudit<RuntimeQueueStatePortService> = {
     via: "committed-owner-row",
     inputFields: ["id"],
     committedRecords: ["surface_message_queue"],
+  },
+  reorderSurfaceMessage: {
+    via: "committed-owner-row",
+    inputFields: ["surfacePiSessionId"],
+    committedRecords: ["pi_session_reference"],
+  },
+};
+
+const composerDraftAudit: PortRoutingAudit<RuntimeComposerDraftStatePortService> = {
+  setDraft: {
+    via: "prompt-target",
+    inputField: "target",
+    committedRecords: ["pi_session_reference", "session"],
+  },
+  clearSubmittedDraft: {
+    via: "prompt-target",
+    inputField: "target",
+    committedRecords: ["pi_session_reference", "session"],
   },
 };
 
@@ -430,6 +449,7 @@ const auditedPorts = [
   ["request", requestAudit],
   ["approval", approvalAudit],
   ["command", commandAudit],
+  ["composerDraft", composerDraftAudit],
   ["sessionWait", sessionWaitAudit],
   ["thread", threadAudit],
   ["transcript", transcriptAudit],
@@ -490,7 +510,7 @@ function createRegistry() {
 }
 
 describe("workspace state router routing-identity audit", () => {
-  it("classifies exactly the fifteen routed state ports and 85 dispatched methods", () => {
+  it("classifies exactly the sixteen routed state ports and 88 dispatched methods", () => {
     const { registry, cleanup } = createRegistry();
     const router = createWorkspaceStateRouter({
       appGlobalStore: makeStore(registry, "workspace_app_global", "appglobal"),
@@ -511,6 +531,7 @@ describe("workspace state router routing-identity audit", () => {
         request: router.request,
         approval: router.approval,
         command: router.command,
+        composerDraft: router.composerDraft,
         sessionWait: router.sessionWait,
         thread: router.thread,
         transcript: router.transcript,
@@ -527,12 +548,12 @@ describe("workspace state router routing-identity audit", () => {
         totalMethods += auditedMethods.length;
       }
 
-      expect(auditedPorts.length).toBe(15);
+      expect(auditedPorts.length).toBe(16);
       expect(Object.keys(routerPorts).toSorted()).toEqual(
         auditedPorts.map(([key]) => key).toSorted(),
       );
-      expect(totalMethods).toBe(85);
-      expect(auditRows.length).toBe(85);
+      expect(totalMethods).toBe(88);
+      expect(auditRows.length).toBe(88);
     } finally {
       cleanup();
     }

@@ -4,6 +4,11 @@ import type { DesktopRendererNotification } from "@svvy/desktop";
 const calls: string[] = [];
 const notifications: DesktopRendererNotification[] = [];
 const configuredMenus: unknown[] = [];
+const detachedLaunches: Array<{
+  command: string;
+  args: readonly string[];
+  cwd: string;
+}> = [];
 let menuListener: ((event: unknown) => void) | undefined;
 let beforeQuitListener: ((event: { response?: { allow: boolean } }) => void) | undefined;
 const windowCloseListeners = new Map<string, (event: { data: { id: number } }) => void>();
@@ -134,6 +139,7 @@ function createHost(
     platform: "darwin",
     positionTrafficLights: () => calls.push("window.position-traffic-lights"),
     onError: (error, context) => errors.push(`${context}:${String(error)}`),
+    launchDetached: (input) => detachedLaunches.push(input),
     ...overrides,
   });
   return { host, errors };
@@ -161,6 +167,7 @@ describe("Electrobun desktop host adapter", () => {
     calls.length = 0;
     notifications.length = 0;
     configuredMenus.length = 0;
+    detachedLaunches.length = 0;
     beforeQuitListener = undefined;
     windowCloseListeners.clear();
     nextWindowId = 1;
@@ -263,6 +270,106 @@ describe("Electrobun desktop host adapter", () => {
     expect(calls).toContain("path.open:/workspace/folder");
     expect(calls).toContain("path.open:/workspace/missing");
     expect(calls).toContain("path.reveal:/workspace/file.ts");
+  });
+
+  it("opens paths with the configured system or named external editor", async () => {
+    const { host } = createHost();
+
+    await expect(
+      host.actions.editor.open({
+        path: "/workspace/file.ts",
+        cwd: "/workspace",
+        editor: "system",
+        customCommand: "",
+      }),
+    ).resolves.toEqual({ opened: true, editor: "system" });
+    for (const [editor, appName] of [
+      ["code", "Visual Studio Code"],
+      ["cursor", "Cursor"],
+      ["zed", "Zed"],
+      ["sublime", "Sublime Text"],
+    ] as const) {
+      await expect(
+        host.actions.editor.open({
+          path: "/workspace/file.ts",
+          cwd: "/workspace",
+          editor,
+          customCommand: "",
+        }),
+      ).resolves.toEqual({ opened: true, editor });
+      expect(detachedLaunches.at(-1)).toEqual({
+        command: "/usr/bin/open",
+        args: ["-a", appName, "/workspace/file.ts"],
+        cwd: "/workspace",
+      });
+    }
+    expect(calls).toContain("path.open:/workspace/file.ts");
+  });
+
+  it("parses custom editor commands and returns typed launch failures", async () => {
+    const launchFailure = new Error("launch failed");
+    const { host } = createHost({
+      launchDetached: (input) => {
+        detachedLaunches.push(input);
+        if (input.command === "broken-editor" || input.command === "/usr/bin/open") {
+          throw launchFailure;
+        }
+      },
+    });
+
+    await expect(
+      host.actions.editor.open({
+        path: "/workspace/file.ts",
+        cwd: "/workspace",
+        editor: "custom",
+        customCommand: "custom-editor --reuse-window",
+      }),
+    ).resolves.toEqual({ opened: true, editor: "custom" });
+    expect(detachedLaunches[0]).toEqual({
+      command: "custom-editor",
+      args: ["--reuse-window", "/workspace/file.ts"],
+      cwd: "/workspace",
+    });
+    await expect(
+      host.actions.editor.open({
+        path: "/workspace/file.ts",
+        cwd: "/workspace",
+        editor: "custom",
+        customCommand: "   ",
+      }),
+    ).resolves.toEqual({
+      opened: false,
+      editor: "custom",
+      failure: { kind: "custom-command-empty" },
+    });
+    await expect(
+      host.actions.editor.open({
+        path: "/workspace/file.ts",
+        cwd: "/workspace",
+        editor: "custom",
+        customCommand: "broken-editor --wait",
+      }),
+    ).resolves.toEqual({
+      opened: false,
+      editor: "custom",
+      failure: {
+        kind: "custom-command-launch",
+        command: "broken-editor",
+        message: "launch failed",
+      },
+    });
+    await expect(
+      host.actions.editor.open({
+        path: "/workspace/file.ts",
+        cwd: "/workspace",
+        editor: "zed",
+        customCommand: "",
+      }),
+    ).resolves.toEqual({
+      opened: false,
+      editor: "zed",
+      failure: { kind: "app-launch", message: "launch failed" },
+    });
   });
 
   it("guards renderer notification delivery across bridge disposal", async () => {

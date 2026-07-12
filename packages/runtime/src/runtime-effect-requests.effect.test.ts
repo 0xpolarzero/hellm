@@ -913,6 +913,7 @@ describe("runtime effect request application", () => {
           markSurfaceMessageDelivered: () => Effect.die("Unexpected queue delivered."),
           markSurfaceMessageFailed: () => Effect.die("Unexpected queue failure."),
           cancelSurfaceMessage: () => Effect.die("Unexpected queue cancellation."),
+          reorderSurfaceMessage: () => Effect.die("Unexpected queue reorder."),
         } satisfies RuntimeQueueStatePortService;
 
         const request = {
@@ -997,6 +998,7 @@ describe("runtime effect request application", () => {
             markSurfaceMessageDelivered: () => Effect.die("Unexpected queue delivered."),
             markSurfaceMessageFailed: () => Effect.die("Unexpected queue failure."),
             cancelSurfaceMessage: () => Effect.die("Unexpected queue cancellation."),
+            reorderSurfaceMessage: () => Effect.die("Unexpected queue reorder."),
           } satisfies RuntimeQueueStatePortService;
 
           const request = {
@@ -1060,6 +1062,7 @@ describe("runtime effect request application", () => {
             markSurfaceMessageDelivered: () => Effect.die("Unexpected queue delivered."),
             markSurfaceMessageFailed: () => Effect.die("Unexpected queue failure."),
             cancelSurfaceMessage: () => Effect.die("Unexpected queue cancellation."),
+            reorderSurfaceMessage: () => Effect.die("Unexpected queue reorder."),
           } satisfies RuntimeQueueStatePortService;
 
           const request = {

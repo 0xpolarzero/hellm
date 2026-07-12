@@ -43,6 +43,37 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
       }),
       releaseVisual: async () => ({ released: true }),
     },
+    git: {
+      listBranches: async () => ({ branches: [] }),
+      switchBranch: async () => ({
+        ok: false as const,
+        workspace: {
+          workspaceId: "workspace_01",
+          cwd: "/workspace",
+          workspaceLabel: "workspace",
+          kind: "user" as const,
+        },
+        error: "Branch is not available in this workspace.",
+      }),
+    },
+    artifacts: {
+      preview: async ({ workspaceSessionId, artifactId }) => ({
+        artifactId,
+        sessionId: workspaceSessionId,
+        kind: "text" as const,
+        name: "preview.md",
+        createdAt: "2026-07-12T00:00:00.000Z",
+        missingFile: false,
+        content: "preview",
+      }),
+    },
+    workspaceFiles: {
+      getRoot: async () => ({ cwd: "/workspace" }),
+      listPaths: async () => [],
+      materializeSelectedAttachments: async () => ({ attachments: [], skippedPaths: [] }),
+      importComposerAttachments: async () => ({ attachments: [], skippedPaths: [] }),
+      resolvePathTarget: async () => ({ kind: "missing" as const }),
+    },
   } satisfies CreateDesktopAppInput["appActions"];
   const commands = {
     runtime: {},
@@ -81,6 +112,9 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
         paths: {
           open: async () => ({ opened: true }),
           reveal: async () => ({ ok: true as const }),
+        },
+        editor: {
+          open: async ({ editor }) => ({ opened: true, editor }),
         },
       },
       bridge: {

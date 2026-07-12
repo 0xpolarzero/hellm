@@ -137,6 +137,7 @@ function createHarness(
         }
         return mutation(cancelled, [queueInvalidation]);
       }),
+    reorderSurfaceMessage: () => Effect.die("Unexpected reorderSurfaceMessage call."),
   } satisfies RuntimeQueueStatePortService;
 
   const run = (input: Extract<AbortPromptInput, { mode: "queued" }> = abortInput) =>

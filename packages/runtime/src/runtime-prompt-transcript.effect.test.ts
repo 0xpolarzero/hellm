@@ -239,6 +239,7 @@ describe("@svvy/runtime durable prompt transcript", () => {
       markSurfaceMessageSteering: () => Effect.die("Unexpected steering."),
       markSurfaceMessageQueued: () => Effect.die("Unexpected requeue."),
       cancelSurfaceMessage: () => Effect.die("Unexpected cancellation."),
+      reorderSurfaceMessage: () => Effect.die("Unexpected reorder."),
     } satisfies RuntimeQueueStatePortService;
 
     const turnState = {

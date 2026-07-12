@@ -1,6 +1,7 @@
 import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -105,11 +106,25 @@ describe("WorkspaceRuntimeRegistry", () => {
       "surfaces",
       "workspaces",
     ]);
-    expect(Object.keys(facades.appActions)).toEqual(["workspaces"]);
+    expect(Object.keys(facades.appActions).toSorted()).toEqual([
+      "artifacts",
+      "git",
+      "workspaceFiles",
+      "workspaces",
+    ]);
     expect(Object.keys(facades.appActions.workspaces)).toEqual([
       "acquireByCwd",
       "acquireDefault",
       "releaseVisual",
+    ]);
+    expect(Object.keys(facades.appActions.git)).toEqual(["listBranches", "switchBranch"]);
+    expect(Object.keys(facades.appActions.artifacts)).toEqual(["preview"]);
+    expect(Object.keys(facades.appActions.workspaceFiles)).toEqual([
+      "getRoot",
+      "listPaths",
+      "materializeSelectedAttachments",
+      "importComposerAttachments",
+      "resolvePathTarget",
     ]);
     expect("events" in facades.runtimeActions).toBeFalse();
     expect("commands" in facades.runtimeActions).toBeFalse();
@@ -204,6 +219,115 @@ describe("WorkspaceRuntimeRegistry", () => {
     await expect(
       facades.appActions.workspaces.releaseVisual({ workspaceId: acquired.workspaceId }),
     ).resolves.toEqual({ released: true });
+  });
+
+  it("lists and switches workspace branches through renderer-safe app actions", async () => {
+    const cwd = tempWorkspace("desktop-app-actions-git");
+    runGit(cwd, ["init", "-b", "main"]);
+    writeFileSync(join(cwd, "tracked.txt"), "main\n");
+    runGit(cwd, ["add", "tracked.txt"]);
+    runGit(cwd, [
+      "-c",
+      "user.name=Svvy Test",
+      "-c",
+      "user.email=svvy@example.test",
+      "commit",
+      "-m",
+      "initial",
+    ]);
+    runGit(cwd, ["branch", "feature/app-actions"]);
+
+    const registry = createRegistry(cwd);
+    const facades = await registry.acquireDesktopAppFacades();
+    const workspace = await facades.appActions.workspaces.acquireByCwd({ cwd });
+    const runtime = registry.getRuntime(workspace.workspaceId);
+    let pathIndexRefreshes = 0;
+    const refreshPathIndex = runtime.pathIndex.refresh.bind(runtime.pathIndex);
+    runtime.pathIndex.refresh = () => {
+      pathIndexRefreshes += 1;
+      return refreshPathIndex();
+    };
+
+    await expect(
+      facades.appActions.git.listBranches({ workspaceId: workspace.workspaceId }),
+    ).resolves.toEqual({
+      currentBranch: "main",
+      branches: [
+        { name: "feature/app-actions", current: false },
+        { name: "main", current: true },
+      ],
+    });
+    await expect(
+      facades.appActions.git.switchBranch({
+        workspaceId: workspace.workspaceId,
+        branch: "missing",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      workspace: { workspaceId: workspace.workspaceId, branch: "main" },
+      error: "Branch is not available in this workspace.",
+    });
+    expect(pathIndexRefreshes).toBe(0);
+
+    await expect(
+      facades.appActions.git.switchBranch({
+        workspaceId: workspace.workspaceId,
+        branch: " feature/app-actions ",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      switched: true,
+      workspace: { workspaceId: workspace.workspaceId, branch: "feature/app-actions" },
+    });
+    expect(pathIndexRefreshes).toBe(1);
+    expect(runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim()).toBe(
+      "feature/app-actions",
+    );
+    await expect(
+      facades.appActions.git.switchBranch({
+        workspaceId: workspace.workspaceId,
+        branch: "feature/app-actions",
+      }),
+    ).resolves.toMatchObject({ ok: true, switched: false });
+    expect(pathIndexRefreshes).toBe(1);
+  });
+
+  it("routes workspace file actions through the requested workspace host", async () => {
+    const firstCwd = tempWorkspace("desktop-app-actions-files-first");
+    const secondCwd = tempWorkspace("desktop-app-actions-files-second");
+    writeFileSync(join(firstCwd, "first.txt"), "first");
+    writeFileSync(join(secondCwd, "second.txt"), "second");
+    const registry = createRegistry(firstCwd);
+    const facades = await registry.acquireDesktopAppFacades();
+    const first = await facades.appActions.workspaces.acquireByCwd({ cwd: firstCwd });
+    const second = await facades.appActions.workspaces.acquireByCwd({ cwd: secondCwd });
+
+    const firstPaths = await facades.appActions.workspaceFiles.listPaths({
+      workspaceId: first.workspaceId,
+      refresh: true,
+    });
+    const secondPaths = await facades.appActions.workspaceFiles.listPaths({
+      workspaceId: second.workspaceId,
+      refresh: true,
+    });
+    expect(firstPaths).toContainEqual({ kind: "file", workspaceRelativePath: "first.txt" });
+    expect(firstPaths).not.toContainEqual({ kind: "file", workspaceRelativePath: "second.txt" });
+    expect(secondPaths).toContainEqual({ kind: "file", workspaceRelativePath: "second.txt" });
+
+    const imported = await facades.appActions.workspaceFiles.importComposerAttachments({
+      workspaceId: second.workspaceId,
+      attachments: [{ name: "note.txt", dataBase64: Buffer.from("note").toString("base64") }],
+    });
+    expect(imported.skippedPaths).toEqual([]);
+    expect(imported.attachments[0]?.workspaceRelativePath).toStartWith(
+      ".svvy/attachments/user-input/",
+    );
+    expect(
+      existsSync(join(secondCwd, imported.attachments[0]?.workspaceRelativePath ?? "")),
+    ).toBeTrue();
+    expect(
+      existsSync(join(firstCwd, imported.attachments[0]?.workspaceRelativePath ?? "")),
+    ).toBeFalse();
   });
 
   it("does not open the initial cwd unless startup opening is requested", async () => {
@@ -2795,6 +2919,14 @@ function tempWorkspace(name: string): string {
   const dir = mkdtempSync(join(tmpdir(), `svvy-${name}-`));
   tempDirs.push(dir);
   return dir;
+}
+
+function runGit(cwd: string, args: readonly string[]) {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${(result.stderr || result.stdout).trim()}`);
+  }
+  return result;
 }
 
 function workspaceStateStore(runtime: WorkspaceRuntime) {

@@ -284,6 +284,8 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "ApprovalReadModelRequestItem",
       "ApprovalsReadModel",
       "ApprovalsReadModelRequest",
+      "ArtifactInspectorReadModel",
+      "ArtifactInspectorReadModelRequest",
       "ClearWorkspaceAppLogUnreadCommandInput",
       "ClearWorkspaceAppLogUnreadCommandInputSchema",
       "CompactWorkspaceSurface",
@@ -726,6 +728,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
     [
       "CreateDesktopAppInput",
       "DesktopAppActionsFacade",
+      "DesktopArtifactPreview",
       "DesktopApp",
       "DesktopBridgeAdapter",
       "DesktopBridgeRegistration",
@@ -733,16 +736,23 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "DesktopHostActionsAdapter",
       "DesktopHostAdapter",
       "DesktopMainWindowInput",
+      "DesktopImportComposerAttachmentInput",
       "DesktopMenuAdapter",
       "DesktopMenuRegistration",
       "DesktopNotificationBridge",
       "DesktopRendererCommand",
       "DesktopRendererNotification",
       "DesktopRuntimeActionsFacade",
+      "DesktopSwitchWorkspaceBranchResult",
       "DesktopWindowAdapter",
       "DesktopWindowHandle",
       "DesktopWindowId",
       "DesktopWorkspaceInfo",
+      "DesktopWorkspaceAttachmentResult",
+      "DesktopWorkspaceBranchInfo",
+      "DesktopWorkspaceBranchList",
+      "DesktopWorkspacePathIndexEntry",
+      "DesktopWorkspacePathTarget",
       "RendererStateCommandsFacade",
       "RendererModelMetadataFacade",
       "RendererStateFacade",
@@ -7664,12 +7674,10 @@ describe("package boundaries", () => {
       "src/bun/live-command-stdin-registry.ts -> @svvy/runtime/bootstrap",
       "src/bun/runtime-service-adapter.ts -> @svvy/runtime/bootstrap",
       "src/bun/runtime-state-tools.ts -> @svvy/runtime/prompt-execution-context",
-      "src/bun/session-catalog.ts -> @svvy/pi-adapter/messages",
       "src/bun/session-catalog.ts -> @svvy/pi-adapter/session",
       "src/bun/session-catalog.ts -> @svvy/runtime/bootstrap",
       "src/bun/session-catalog.ts -> @svvy/runtime/prompt-execution-context",
       "src/bun/session-catalog.ts -> @svvy/state/structured-session-adapters",
-      "src/bun/session-catalog.ts -> @svvy/state/structured-session-projections",
       "src/bun/session-catalog.ts -> @svvy/state/structured-session-state",
       "src/bun/source-watch-inputs.ts -> @svvy/runtime/bootstrap",
       "src/bun/svvy-direct-tools.ts -> @svvy/runtime/prompt-execution-context",
@@ -8990,8 +8998,6 @@ describe("package boundaries", () => {
       "src/bun/index.ts -> facades.runtime.messages.abort",
       "src/bun/index.ts -> facades.runtime.queues.steer",
       "src/bun/index.ts -> runtime.catalog.editCommittedUserMessage",
-      "src/bun/index.ts -> runtime.catalog.editQueuedSurfaceMessage",
-      "src/bun/index.ts -> runtime.catalog.reorderQueuedSurfaceMessage",
     ]);
   });
 
@@ -9985,7 +9991,6 @@ describe("package boundaries", () => {
     expect(actual).toEqual([
       "src/bun/app-runtime-bootstrap.ts -> @svvy/state/structured-session-adapters",
       "src/bun/session-catalog.ts -> @svvy/state/structured-session-adapters",
-      "src/bun/session-catalog.ts -> @svvy/state/structured-session-projections",
       "src/bun/session-catalog.ts -> @svvy/state/structured-session-state",
     ]);
   });
@@ -10007,7 +10012,7 @@ describe("package boundaries", () => {
     expect(actual).toEqual(["src/bun/session-catalog.ts -> @svvy/pi-adapter/session"]);
   });
 
-  it("pi message conversion bridge is consumed only by session-catalog production bootstrap", () => {
+  it("pi message conversion bridge is absent from production consumers", () => {
     const actual = [appSourceRoot, ...sourceRoots]
       .filter((root) => existsSync(root))
       .flatMap((root) =>
@@ -10021,7 +10026,7 @@ describe("package boundaries", () => {
       )
       .toSorted();
 
-    expect(actual).toEqual(["src/bun/session-catalog.ts -> @svvy/pi-adapter/messages"]);
+    expect(actual).toEqual([]);
   });
 
   it("non-state extracted packages do not import @svvy/state implementation subpaths", () => {

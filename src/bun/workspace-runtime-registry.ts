@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -49,6 +50,7 @@ import {
   type RuntimeOwnerRef,
   type ReleaseWorkspaceResult,
   type WorkspaceId,
+  type WorkspaceSessionId,
   type WorkflowAgentSourceExportName,
 } from "@svvy/core";
 import type { ExtensionSourceRoots, GeneratedPackageRoots } from "@svvy/extensions";
@@ -99,6 +101,12 @@ import {
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
 import { DEFAULT_AGENT_SETTINGS_STATE, type AppPreferences } from "../shared/agent-settings";
 import { resolvePackagedExtensionTemplatesRoot } from "./packaged-extension-templates";
+import { readRuntimeArtifactPreviewContent } from "./runtime-artifact-materializer";
+import {
+  importWorkspaceComposerAttachments,
+  materializeSelectedWorkspaceAttachments,
+  resolveWorkspacePathTarget,
+} from "./workspace-file-actions";
 
 type WorkspaceGeneratedPackageBoundaryHost = RuntimeGeneratedPackageRefreshBoundaryHost & {
   readonly sourceRoots: ExtensionSourceRoots;
@@ -181,6 +189,40 @@ const nodeGeneratedPackageWorkspaceLinkFileHost: RuntimeGeneratedPackageWorkspac
     symlinkSync(input.targetPath, input.linkPath, "dir");
   },
 };
+
+function getWorkspaceBranch(cwd: string): string | undefined {
+  const result = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (result.status !== 0) return undefined;
+
+  const branch = result.stdout.trim();
+  return branch && branch !== "HEAD" ? branch : undefined;
+}
+
+function getWorkspaceBranches(cwd: string): string[] {
+  const result = spawnSync("git", ["for-each-ref", "--format=%(refname:short)", "refs/heads"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (result.status !== 0) return [];
+
+  return result.stdout
+    .split(/\r?\n/)
+    .map((branch) => branch.trim())
+    .filter(Boolean);
+}
+
+function workspaceInfoWithBranch(runtime: WorkspaceRuntime): WorkspaceInfoResponse {
+  const branch = getWorkspaceBranch(runtime.cwd);
+  return {
+    ...runtime.getInfo(),
+    ...(branch ? { branch } : {}),
+  };
+}
 
 type WorkspaceRuntimeRegistryOptions = {
   initialCwd: string;
@@ -667,6 +709,110 @@ export class WorkspaceRuntimeRegistry {
               releaseVisual: async ({ workspaceId }) => ({
                 released: await this.releaseWorkspace(workspaceId),
               }),
+            },
+            git: {
+              listBranches: async ({ workspaceId }) => {
+                const host = this.getRuntime(workspaceId);
+                const currentBranch = getWorkspaceBranch(host.cwd);
+                return {
+                  ...(currentBranch ? { currentBranch } : {}),
+                  branches: getWorkspaceBranches(host.cwd).map((branch) => ({
+                    name: branch,
+                    current: branch === currentBranch,
+                  })),
+                };
+              },
+              switchBranch: async ({ workspaceId, branch }) => {
+                const host = this.getRuntime(workspaceId);
+                const nextBranch = branch.trim();
+                const branches = getWorkspaceBranches(host.cwd);
+                if (!nextBranch || !branches.includes(nextBranch)) {
+                  return {
+                    ok: false,
+                    workspace: workspaceInfoWithBranch(host),
+                    error: "Branch is not available in this workspace.",
+                  };
+                }
+
+                if (getWorkspaceBranch(host.cwd) === nextBranch) {
+                  return { ok: true, switched: false, workspace: workspaceInfoWithBranch(host) };
+                }
+
+                const result = spawnSync("git", ["switch", nextBranch], {
+                  cwd: host.cwd,
+                  encoding: "utf8",
+                  stdio: ["ignore", "pipe", "pipe"],
+                });
+                if (result.status !== 0) {
+                  return {
+                    ok: false,
+                    workspace: workspaceInfoWithBranch(host),
+                    error: (result.stderr || result.stdout).trim() || "Unable to switch branch.",
+                  };
+                }
+
+                host.pathIndex.refresh();
+                host.appLog.info("workspace", "Workspace branch switched.", {
+                  workspaceId: host.workspaceId,
+                  branch: nextBranch,
+                });
+                return { ok: true, switched: true, workspace: workspaceInfoWithBranch(host) };
+              },
+            },
+            artifacts: {
+              preview: async ({ workspaceId, workspaceSessionId, artifactId }) => {
+                const result = await runtime.state.readModels.fetch({
+                  kind: "artifactInspector",
+                  workspaceId: workspaceId as WorkspaceId,
+                  workspaceSessionId: workspaceSessionId as WorkspaceSessionId,
+                  artifactId,
+                });
+                if (result.kind !== "artifactInspector") {
+                  throw new Error(`Expected artifact inspector; received ${result.kind}.`);
+                }
+                const artifact = result.value;
+                if (!artifact) {
+                  throw new Error(`Structured artifact not found: ${artifactId}`);
+                }
+                const file = artifact.path
+                  ? readRuntimeArtifactPreviewContent(artifact.path)
+                  : { missingFile: true, content: "" };
+                return {
+                  artifactId: artifact.artifactId,
+                  sessionId: artifact.workspaceSessionId,
+                  kind: artifact.kind,
+                  name: artifact.name,
+                  ...(artifact.path ? { path: artifact.path } : {}),
+                  createdAt: artifact.createdAt,
+                  ...(artifact.sourceCommandId
+                    ? { sourceCommandId: artifact.sourceCommandId }
+                    : {}),
+                  ...(artifact.workflowRunId ? { workflowRunId: artifact.workflowRunId } : {}),
+                  ...(artifact.workflowName ? { workflowName: artifact.workflowName } : {}),
+                  ...(artifact.producerLabel ? { producerLabel: artifact.producerLabel } : {}),
+                  missingFile: file.missingFile,
+                  content: file.content,
+                };
+              },
+            },
+            workspaceFiles: {
+              getRoot: async ({ workspaceId }) => ({ cwd: this.getRuntime(workspaceId).cwd }),
+              listPaths: async ({ workspaceId, refresh }) => {
+                const host = this.getRuntime(workspaceId);
+                return refresh ? host.pathIndex.refresh() : host.pathIndex.list();
+              },
+              materializeSelectedAttachments: async ({ workspaceId, selectedPaths }) => {
+                const host = this.getRuntime(workspaceId);
+                return materializeSelectedWorkspaceAttachments({ cwd: host.cwd, selectedPaths });
+              },
+              importComposerAttachments: async ({ workspaceId, attachments }) => {
+                const host = this.getRuntime(workspaceId);
+                return importWorkspaceComposerAttachments({ cwd: host.cwd, attachments });
+              },
+              resolvePathTarget: async ({ workspaceId, workspaceRelativePath }) => {
+                const host = this.getRuntime(workspaceId);
+                return resolveWorkspacePathTarget({ cwd: host.cwd, workspaceRelativePath });
+              },
             },
           },
           runtimeActions: {

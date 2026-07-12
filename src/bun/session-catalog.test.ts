@@ -1729,77 +1729,6 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
-  it("publishes composer and queue restore/reorder invalidations only after each commit", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-    const store = getStructuredSessionStore(catalog);
-    const created = await catalog.createSession({ title: "Surface invalidations" }, DEFAULTS);
-    const publications: StateInvalidationDescriptor[][] = [];
-
-    try {
-      await catalog.setCommittedStateInvalidationPublisher(async (afterCommit) => {
-        publications.push([...afterCommit]);
-      });
-      publications.length = 0;
-
-      await catalog.updateComposerDraft({
-        target: created.target,
-        draft: { text: "durable cross-tab draft", attachments: [] },
-      });
-      expect(store.getComposerDraft(created.target.surfacePiSessionId)?.text).toBe(
-        "durable cross-tab draft",
-      );
-
-      const first = store.enqueueSurfaceMessage({
-        sessionId: created.target.workspaceSessionId,
-        surfacePiSessionId: created.target.surfacePiSessionId,
-        messageJson: JSON.stringify(userMessage("first")),
-      });
-      const second = store.enqueueSurfaceMessage({
-        sessionId: created.target.workspaceSessionId,
-        surfacePiSessionId: created.target.surfacePiSessionId,
-        messageJson: JSON.stringify(userMessage("second")),
-      });
-      await catalog.reorderQueuedSurfaceMessage({
-        target: created.target,
-        queuedMessageId: second.id,
-        beforeQueuedMessageId: first.id,
-      });
-      expect(
-        store
-          .listQueuedSurfaceMessages({ surfacePiSessionId: created.target.surfacePiSessionId })
-          .map((row) => row.id),
-      ).toEqual([second.id, first.id]);
-
-      await catalog.editQueuedSurfaceMessage({
-        target: created.target,
-        queuedMessageId: first.id,
-      });
-      expect(store.getSurfaceQueuedMessage({ id: first.id }).status).toBe("cancelled");
-
-      expect(publications).toHaveLength(3);
-      for (const publication of publications) {
-        expect(publication).toEqual([
-          {
-            scope: "workspace",
-            workspaceId: cwd as WorkspaceId,
-            invalidation: {
-              model: "surface",
-              ids: [created.target.surfacePiSessionId as never],
-            },
-          },
-          {
-            scope: "workspace",
-            workspaceId: cwd as WorkspaceId,
-            invalidation: { model: "sessionNavigation" },
-          },
-        ]);
-      }
-    } finally {
-      await catalog.dispose();
-    }
-  });
-
   it("publishes running and completed top-level title invalidations from the asynchronous job", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const restoreTitleNamerEnv = configureHermeticTitleNamer(agentDir);
@@ -2156,22 +2085,23 @@ describe("WorkspaceSessionCatalog", () => {
 
     try {
       const created = await catalog.createSession({ title: "New Session" }, DEFAULTS);
-      await catalog.updateComposerDraft({
-        target: created.target,
-        draft: {
-          text: "A text written in the composer should survive closing surfaces",
-          attachments: [
-            {
-              id: "attachment:docs/progress.md",
-              kind: "file",
-              name: "progress.md",
-              path: join(cwd, "docs/progress.md"),
-              workspaceRelativePath: "docs/progress.md",
-              mimeType: "text/markdown",
-              sizeBytes: 123,
-            },
-          ],
-        },
+      getStructuredSessionStore(catalog).setComposerDraft({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        threadId: null,
+        text: "A text written in the composer should survive closing surfaces",
+        attachments: [
+          {
+            id: "attachment:docs/progress.md",
+            kind: "file",
+            name: "progress.md",
+            path: join(cwd, "docs/progress.md"),
+            workspaceRelativePath: "docs/progress.md",
+            mimeType: "text/markdown",
+            sizeBytes: 123,
+          },
+        ],
+        snippetMentions: [],
       });
 
       await catalog.closeSurface(created.target);
@@ -3082,42 +3012,6 @@ describe("WorkspaceSessionCatalog", () => {
 
       await closeSurface(catalog, created.target);
       await waitFor(() => getManagedSurfaces(catalog).size === 0);
-    } finally {
-      await catalog.dispose();
-    }
-  });
-
-  it("rejects edit-to-composer for rows that are already dispatching", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
-    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
-
-    try {
-      const created = await catalog.createSession({ title: "Queued Edit Guard" }, DEFAULTS);
-      const store = getStructuredSessionStore(catalog);
-      const queued = store.enqueueSurfaceMessage({
-        sessionId: created.target.workspaceSessionId,
-        surfacePiSessionId: created.target.surfacePiSessionId,
-        messageJson: JSON.stringify(userMessage("This row is already claimed.")),
-      });
-      const claimed = store.claimNextQueuedSurfaceMessage({
-        surfacePiSessionId: created.target.surfacePiSessionId,
-        claimOwnerId: "runtime-worker-edit-guard",
-        leaseDurationMs: 15_000,
-      });
-
-      await expect(
-        catalog.editQueuedSurfaceMessage({
-          target: created.target,
-          queuedMessageId: queued.id,
-        }),
-      ).rejects.toThrow("Surface queued message claim is stale or not cancellable");
-
-      expect(store.getSurfaceQueuedMessage({ id: queued.id })).toMatchObject({
-        id: queued.id,
-        status: "dispatching",
-        claimOwnerId: "runtime-worker-edit-guard",
-        leaseVersion: claimed!.leaseVersion,
-      });
     } finally {
       await catalog.dispose();
     }

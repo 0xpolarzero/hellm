@@ -1,4 +1,5 @@
 import type {
+  ComposerAttachment,
   ListModelsInput,
   ModelInfo,
   RuntimeEventGenerationId,
@@ -27,13 +28,100 @@ export interface DesktopWorkspaceInfo {
   readonly cwd: string;
   readonly workspaceLabel: string;
   readonly kind: WorkspaceKind;
+  readonly branch?: string;
 }
+
+export interface DesktopWorkspaceBranchInfo {
+  readonly name: string;
+  readonly current: boolean;
+}
+
+export interface DesktopWorkspaceBranchList {
+  readonly branches: readonly DesktopWorkspaceBranchInfo[];
+  readonly currentBranch?: string;
+}
+
+export type DesktopSwitchWorkspaceBranchResult =
+  | {
+      readonly ok: true;
+      readonly switched: boolean;
+      readonly workspace: DesktopWorkspaceInfo;
+    }
+  | { readonly ok: false; readonly workspace: DesktopWorkspaceInfo; readonly error: string };
+
+export interface DesktopArtifactPreview {
+  readonly artifactId: string;
+  readonly sessionId: string;
+  readonly kind: "text" | "log" | "json" | "file";
+  readonly name: string;
+  readonly path?: string;
+  readonly createdAt: string;
+  readonly sourceCommandId?: string;
+  readonly workflowRunId?: string;
+  readonly workflowName?: string;
+  readonly producerLabel?: string;
+  readonly missingFile: boolean;
+  readonly content: string;
+}
+
+export interface DesktopWorkspacePathIndexEntry {
+  readonly kind: "file" | "folder";
+  readonly workspaceRelativePath: string;
+}
+
+export interface DesktopImportComposerAttachmentInput {
+  readonly name: string;
+  readonly mimeType?: string;
+  readonly dataBase64: string;
+}
+
+export interface DesktopWorkspaceAttachmentResult {
+  readonly attachments: readonly ComposerAttachment[];
+  readonly skippedPaths: readonly string[];
+}
+
+export type DesktopWorkspacePathTarget =
+  | { readonly kind: "missing" }
+  | { readonly kind: "file" | "folder"; readonly absolutePath: string };
 
 export interface DesktopAppActionsFacade {
   readonly workspaces: {
     acquireByCwd(input: { readonly cwd: string }): Promise<DesktopWorkspaceInfo>;
     acquireDefault(): Promise<DesktopWorkspaceInfo>;
     releaseVisual(input: { readonly workspaceId: string }): Promise<{ readonly released: boolean }>;
+  };
+  readonly git: {
+    listBranches(input: { readonly workspaceId: string }): Promise<DesktopWorkspaceBranchList>;
+    switchBranch(input: {
+      readonly workspaceId: string;
+      readonly branch: string;
+    }): Promise<DesktopSwitchWorkspaceBranchResult>;
+  };
+  readonly artifacts: {
+    preview(input: {
+      readonly workspaceId: string;
+      readonly workspaceSessionId: string;
+      readonly artifactId: string;
+    }): Promise<DesktopArtifactPreview>;
+  };
+  readonly workspaceFiles: {
+    getRoot(input: { readonly workspaceId: string }): Promise<{ readonly cwd: string }>;
+    listPaths(input: {
+      readonly workspaceId: string;
+      readonly refresh?: boolean;
+    }): Promise<readonly DesktopWorkspacePathIndexEntry[]>;
+    materializeSelectedAttachments(input: {
+      readonly workspaceId: string;
+      readonly selectedPaths: readonly string[];
+    }): Promise<DesktopWorkspaceAttachmentResult>;
+    importComposerAttachments(input: {
+      readonly workspaceId: string;
+      readonly attachments: readonly DesktopImportComposerAttachmentInput[];
+    }): Promise<DesktopWorkspaceAttachmentResult>;
+    resolvePathTarget(input: {
+      readonly workspaceId: string;
+      readonly workspaceRelativePath: string;
+    }): Promise<DesktopWorkspacePathTarget>;
   };
 }
 
@@ -100,6 +188,25 @@ export interface DesktopHostActionsAdapter {
   readonly paths: {
     open(input: { readonly path: string }): Promise<{ readonly opened: boolean }>;
     reveal(input: { readonly path: string }): Promise<{ readonly ok: true }>;
+  };
+  readonly editor: {
+    open(input: {
+      readonly path: string;
+      readonly cwd: string;
+      readonly editor: "system" | "code" | "cursor" | "zed" | "sublime" | "custom";
+      readonly customCommand: string;
+    }): Promise<{
+      readonly opened: boolean;
+      readonly editor: "system" | "code" | "cursor" | "zed" | "sublime" | "custom";
+      readonly failure?:
+        | { readonly kind: "app-launch"; readonly message: string }
+        | { readonly kind: "custom-command-empty" }
+        | {
+            readonly kind: "custom-command-launch";
+            readonly command: string;
+            readonly message: string;
+          };
+    }>;
   };
 }
 

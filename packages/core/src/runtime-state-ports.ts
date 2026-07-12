@@ -3,6 +3,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { strictBoundaryParseOptions } from "./boundary-parse-options";
 import {
+  ComposerAttachmentSchema,
+  ComposerSnippetMentionSchema,
   DiscoveredSnippetScopeSchema,
   DiscoveredSnippetSourceSchema,
   SnippetMetadataSchema,
@@ -771,6 +773,13 @@ export const CancelRuntimeSurfaceMessageInputSchema = Schema.Struct({
 });
 export type CancelRuntimeSurfaceMessageInput = typeof CancelRuntimeSurfaceMessageInputSchema.Type;
 
+export const ReorderRuntimeSurfaceMessageInputSchema = Schema.Struct({
+  surfacePiSessionId: SurfacePiSessionId,
+  id: QueueItemId,
+  beforeId: Schema.optionalKey(Schema.NullOr(QueueItemId)),
+});
+export type ReorderRuntimeSurfaceMessageInput = typeof ReorderRuntimeSurfaceMessageInputSchema.Type;
+
 export interface RuntimeQueueStatePortService {
   acceptSubmittedSurfaceMessage(
     input: AcceptSubmittedRuntimeSurfaceMessageInput,
@@ -802,6 +811,9 @@ export interface RuntimeQueueStatePortService {
   cancelSurfaceMessage(
     input: CancelRuntimeSurfaceMessageInput,
   ): Effect.Effect<StateMutationResult<RuntimeSurfaceMessageRecord>, StateContractError>;
+  reorderSurfaceMessage(
+    input: ReorderRuntimeSurfaceMessageInput,
+  ): Effect.Effect<StateMutationResult<readonly RuntimeSurfaceMessageRecord[]>, StateContractError>;
 }
 
 export interface RuntimeQueueStatePort {
@@ -1606,7 +1618,18 @@ export const ClearSubmittedComposerDraftInputSchema = Schema.Struct({
 });
 export type ClearSubmittedComposerDraftInput = typeof ClearSubmittedComposerDraftInputSchema.Type;
 
+export const SetRuntimeComposerDraftInputSchema = Schema.Struct({
+  target: PromptTargetSchema,
+  text: Schema.String,
+  attachments: Schema.Array(ComposerAttachmentSchema),
+  snippetMentions: Schema.Array(ComposerSnippetMentionSchema),
+});
+export type SetRuntimeComposerDraftInput = typeof SetRuntimeComposerDraftInputSchema.Type;
+
 export interface RuntimeComposerDraftStatePortService {
+  setDraft(
+    input: SetRuntimeComposerDraftInput,
+  ): Effect.Effect<StateMutationResult<void>, StateContractError>;
   clearSubmittedDraft(
     input: ClearSubmittedComposerDraftInput,
   ): Effect.Effect<StateMutationResult<void>, StateContractError>;

@@ -38,15 +38,32 @@ describe("RuntimeComposerDraftStatePort", () => {
             createdAt: "2026-04-18T08:55:00.000Z",
             updatedAt: "2026-04-18T08:56:00.000Z",
           });
-          yield* state.setComposerDraft({
-            sessionId: workspaceSessionId,
-            surfacePiSessionId,
+          const port = yield* RuntimeComposerDraftStatePort;
+          const setResult = yield* port.setDraft({
+            target: {
+              workspaceSessionId,
+              surface: "orchestrator",
+              surfacePiSessionId,
+            },
             text: "queued draft",
             attachments: [],
             snippetMentions: [],
           });
+          const persisted = yield* state.getComposerDraft(surfacePiSessionId);
+          expect(persisted?.text).toBe("queued draft");
+          expect(setResult.afterCommit).toEqual([
+            {
+              scope: "workspace",
+              workspaceId: workspace.id,
+              invalidation: { model: "surface", ids: [surfacePiSessionId] },
+            },
+            {
+              scope: "workspace",
+              workspaceId: workspace.id,
+              invalidation: { model: "sessionNavigation" },
+            },
+          ]);
 
-          const port = yield* RuntimeComposerDraftStatePort;
           const result = yield* port.clearSubmittedDraft({
             target: {
               workspaceSessionId,

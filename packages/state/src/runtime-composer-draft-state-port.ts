@@ -15,6 +15,27 @@ export function runtimeComposerDraftStatePortFromStructuredSessionState(
   state: StructuredSessionState["Service"],
 ): RuntimeComposerDraftStatePortService {
   return {
+    setDraft: (input) =>
+      state
+        .setComposerDraft({
+          sessionId: input.target.workspaceSessionId,
+          surfacePiSessionId: input.target.surfacePiSessionId,
+          threadId: input.target.surface === "handler" ? input.target.threadId : null,
+          text: input.text,
+          attachments: [...input.attachments],
+          snippetMentions: [...input.snippetMentions],
+        })
+        .pipe(
+          Effect.map(() =>
+            mutationResult(
+              undefined,
+              surfaceAndSessionNavigationInvalidations(
+                state.workspaceId,
+                input.target.surfacePiSessionId,
+              ),
+            ),
+          ),
+        ),
     clearSubmittedDraft: (input) =>
       state
         .setComposerDraft({

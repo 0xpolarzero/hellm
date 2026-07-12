@@ -22,27 +22,16 @@ import type {
   WorkspaceId,
 } from "@svvy/core";
 import { randomUUID } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { basename, extname, join, relative, resolve, sep } from "node:path";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import type {
-  ComposerAttachment,
-  ComposerMentionKind,
-  ImportComposerAttachmentInput,
   OpenWorkspaceRequest,
   ProviderAuthInfo,
   StateReadModelBaseline as DesktopStateReadModelBaseline,
   StateReadModelResult as DesktopStateReadModelResult,
   EditCommittedUserMessageResponse,
   SendPromptResponse,
-  SwitchWorkspaceBranchResponse,
   WorkspaceInfoResponse,
 } from "../shared/workspace-contract";
 import {
@@ -348,257 +337,42 @@ function getWorkspaceBranch(cwd: string): string | undefined {
   return branch && branch !== "HEAD" ? branch : undefined;
 }
 
-function getWorkspaceBranches(cwd: string): string[] {
-  const result = spawnSync("git", ["for-each-ref", "--format=%(refname:short)", "refs/heads"], {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  if (result.status !== 0) {
-    return [];
-  }
-
-  return result.stdout
-    .split(/\r?\n/)
-    .map((branch) => branch.trim())
-    .filter(Boolean);
-}
-
-function switchWorkspaceBranch(
-  runtime: WorkspaceRuntime,
-  branch: string,
-): SwitchWorkspaceBranchResponse {
-  const nextBranch = branch.trim();
-  const branches = getWorkspaceBranches(runtime.cwd);
-  if (!nextBranch || !branches.includes(nextBranch)) {
-    return {
-      ok: false,
-      workspace: addWorkspaceBranch(runtime.getInfo()),
-      error: "Branch is not available in this workspace.",
-    };
-  }
-
-  if (getWorkspaceBranch(runtime.cwd) === nextBranch) {
-    return { ok: true, workspace: addWorkspaceBranch(runtime.getInfo()) };
-  }
-
-  const result = spawnSync("git", ["switch", nextBranch], {
-    cwd: runtime.cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.status !== 0) {
-    const message = (result.stderr || result.stdout).trim() || "Unable to switch branch.";
-    return {
-      ok: false,
-      workspace: addWorkspaceBranch(runtime.getInfo()),
-      error: message,
-    };
-  }
-
-  runtime.pathIndex.refresh();
-  runtime.appLog.info("workspace", "Workspace branch switched.", {
-    workspaceId: runtime.workspaceId,
-    branch: nextBranch,
-  });
-  recordDevBrowserToolsEvent("workspace.branch-switched", {
-    workspaceId: runtime.workspaceId,
-    branch: nextBranch,
-  });
-  return { ok: true, workspace: addWorkspaceBranch(runtime.getInfo()) };
-}
-
-function resolveSafeWorkspacePath(
-  runtime: WorkspaceRuntime,
-  workspaceRelativePath: string,
-): string | null {
-  const cwd = runtime.cwd;
-  const normalizedRelativePath = workspaceRelativePath.trim().replace(/\\/g, "/").replace(/^@/, "");
-  if (
-    !normalizedRelativePath ||
-    normalizedRelativePath.startsWith("/") ||
-    normalizedRelativePath.includes("\0") ||
-    normalizedRelativePath.split("/").includes("..")
-  ) {
-    return null;
-  }
-
-  const absolutePath = resolve(cwd, normalizedRelativePath);
-  const root = resolve(cwd);
-  if (absolutePath !== root && !absolutePath.startsWith(`${root}${sep}`)) return null;
-  return absolutePath;
-}
-
-function getWorkspacePathKind(absolutePath: string): ComposerMentionKind | "missing" {
+function getWorkspacePathKind(absolutePath: string): "file" | "folder" | "missing" {
   try {
-    const stats = statSync(absolutePath);
-    return stats.isDirectory() ? "folder" : "file";
+    return statSync(absolutePath).isDirectory() ? "folder" : "file";
   } catch {
     return "missing";
   }
 }
 
-function sanitizeAttachmentName(name: string): string {
-  const sanitized = name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return sanitized || "attachment";
-}
-
-function imageMimeTypeFromPath(path: string): string | null {
-  const extension = extname(path).toLowerCase();
-  if (extension === ".png") return "image/png";
-  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
-  if (extension === ".gif") return "image/gif";
-  if (extension === ".webp") return "image/webp";
-  return null;
-}
-
-function importedAttachmentPath(
-  cwd: string,
-  name: string,
-): { absolutePath: string; workspaceRelativePath: string } {
-  const attachmentId = randomUUID();
-  const relativePath = join(
-    ".svvy",
-    "attachments",
-    "user-input",
-    `${attachmentId}-${sanitizeAttachmentName(name)}`,
-  );
-  const absolutePath = resolve(cwd, relativePath);
-  mkdirSync(join(cwd, ".svvy", "attachments", "user-input"), { recursive: true });
-  return { absolutePath, workspaceRelativePath: relativePath.split(sep).join("/") };
-}
-
-function createComposerAttachmentFromPath(
-  cwd: string,
-  selectedPath: string,
-): ComposerAttachment | null {
-  const absolutePath = resolve(selectedPath);
-  const kind = getWorkspacePathKind(absolutePath);
-  if (kind === "missing") return null;
-
-  const workspaceRelativePath = relative(cwd, absolutePath);
-  const isWorkspacePath =
-    workspaceRelativePath !== "" &&
-    !workspaceRelativePath.startsWith("..") &&
-    !workspaceRelativePath.includes(`..${sep}`) &&
-    resolve(cwd, workspaceRelativePath) === absolutePath;
-  const normalizedPath = (isWorkspacePath ? workspaceRelativePath : absolutePath)
-    .split(sep)
-    .join("/");
-  const stats = statSync(absolutePath);
-  const mimeType = kind === "file" ? imageMimeTypeFromPath(absolutePath) : null;
-
-  if (kind === "file" && !isWorkspacePath) {
-    const imported = importedAttachmentPath(cwd, basename(absolutePath));
-    copyFileSync(absolutePath, imported.absolutePath);
-    const importedMimeType = mimeType ?? imageMimeTypeFromPath(imported.absolutePath);
-    return {
-      id: `attachment:${imported.workspaceRelativePath}`,
-      kind: importedMimeType?.startsWith("image/") ? "image" : "file",
-      name: basename(absolutePath),
-      path: imported.workspaceRelativePath,
-      workspaceRelativePath: imported.workspaceRelativePath,
-      mimeType: importedMimeType ?? undefined,
-      sizeBytes: stats.size,
-      dataBase64: importedMimeType?.startsWith("image/")
-        ? readFileSync(imported.absolutePath).toString("base64")
-        : undefined,
-    };
-  }
-
-  return {
-    id: `${kind}:${normalizedPath}`,
-    kind: mimeType?.startsWith("image/") ? "image" : kind,
-    name: basename(absolutePath),
-    path: normalizedPath,
-    workspaceRelativePath: isWorkspacePath ? workspaceRelativePath.split(sep).join("/") : undefined,
-    mimeType: mimeType ?? undefined,
-    sizeBytes: kind === "file" ? stats.size : undefined,
-    dataBase64: mimeType?.startsWith("image/")
-      ? readFileSync(absolutePath).toString("base64")
-      : undefined,
-  };
-}
-
-function createImportedComposerAttachment(
-  cwd: string,
-  input: ImportComposerAttachmentInput,
-): ComposerAttachment {
-  const name = sanitizeAttachmentName(input.name || "attachment");
-  const imported = importedAttachmentPath(cwd, name);
-  const bytes = Buffer.from(input.dataBase64, "base64");
-  writeFileSync(imported.absolutePath, bytes);
-  const mimeType = input.mimeType || imageMimeTypeFromPath(name) || "application/octet-stream";
-  return {
-    id: `attachment:${imported.workspaceRelativePath}`,
-    kind: mimeType.startsWith("image/") ? "image" : "file",
-    name,
-    path: imported.workspaceRelativePath,
-    workspaceRelativePath: imported.workspaceRelativePath,
-    mimeType,
-    sizeBytes: bytes.byteLength,
-    dataBase64: mimeType.startsWith("image/") ? input.dataBase64 : undefined,
-  };
-}
-
-function openPathInPreferredEditor(
+async function openPathInPreferredEditor(
   runtime: WorkspaceRuntime,
+  hostActions: ElectrobunRendererApiInput["hostActions"],
   path: string,
-): { opened: boolean; editor: string } {
+): Promise<{ opened: boolean; editor: string }> {
   const preferences = runtime.agentSettingsStore.getState().appPreferences;
-  const editor = preferences.preferredExternalEditor;
-  if (editor === "system") {
-    return { opened: Utils.openPath(path), editor };
-  }
-
-  const appNameByEditor = {
-    code: "Visual Studio Code",
-    cursor: "Cursor",
-    zed: "Zed",
-    sublime: "Sublime Text",
-  } satisfies Record<Exclude<typeof editor, "system" | "custom">, string>;
-  if (editor !== "custom") {
-    try {
-      const child = spawn("/usr/bin/open", ["-a", appNameByEditor[editor], path], {
-        cwd: runtime.cwd,
-        detached: true,
-        stdio: "ignore",
-      });
-      child.unref();
-      return { opened: true, editor };
-    } catch (error) {
-      runtime.appLog.warning("external-editor", "External editor app launch failed.", {
-        editor,
-        path,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return { opened: false, editor };
-    }
-  }
-
-  const configuredCommand = preferences.customExternalEditorCommand;
-  const [command, ...baseArgs] = configuredCommand.split(/\s+/).filter(Boolean);
-  if (!command) {
-    runtime.appLog.warning("external-editor", "Custom external editor command is empty.", { path });
-    return { opened: false, editor };
-  }
-
-  try {
-    const child = spawn(command, [...baseArgs, path], {
-      cwd: runtime.cwd,
-      detached: true,
-      stdio: "ignore",
-    });
-    child.unref();
-    return { opened: true, editor };
-  } catch (error) {
-    runtime.appLog.warning("external-editor", "Custom external editor command failed.", {
-      command,
+  const result = await hostActions.editor.open({
+    path,
+    cwd: runtime.cwd,
+    editor: preferences.preferredExternalEditor,
+    customCommand: preferences.customExternalEditorCommand,
+  });
+  if (result.failure?.kind === "app-launch") {
+    runtime.appLog.warning("external-editor", "External editor app launch failed.", {
+      editor: result.editor,
       path,
-      message: error instanceof Error ? error.message : String(error),
+      message: result.failure.message,
     });
-    return { opened: false, editor };
+  } else if (result.failure?.kind === "custom-command-empty") {
+    runtime.appLog.warning("external-editor", "Custom external editor command is empty.", { path });
+  } else if (result.failure?.kind === "custom-command-launch") {
+    runtime.appLog.warning("external-editor", "Custom external editor command failed.", {
+      command: result.failure.command,
+      path,
+      message: result.failure.message,
+    });
   }
+  return { opened: result.opened, editor: result.editor };
 }
 
 function providerOAuthExpiresAt(provider: string): string | null | undefined {
@@ -1240,7 +1014,7 @@ function buildDesktopRpcHandlers(
         if (input.path && !existsSync(path)) {
           throw new Error(`Extension source file does not exist: ${path}`);
         }
-        const result = openPathInPreferredEditor(runtime, path);
+        const result = await openPathInPreferredEditor(runtime, facades.hostActions, path);
         runtime.appLog.info(
           "external-editor",
           "Extension instruction file opened in external editor.",
@@ -1383,7 +1157,7 @@ function buildDesktopRpcHandlers(
           });
           throw new Error(`Discovered snippet source is not available: ${input.snippetId}`);
         }
-        const result = openPathInPreferredEditor(runtime, snippet.path);
+        const result = await openPathInPreferredEditor(runtime, facades.hostActions, snippet.path);
         runtime.appLog.info("external-editor", "Snippet source opened in external editor.", {
           snippetId: snippet.id,
           path: snippet.path,
@@ -1401,7 +1175,7 @@ function buildDesktopRpcHandlers(
       openSourceInEditor: async (input) => {
         const runtime = getWorkspaceRuntime(input);
         const session = await facades.runtime.sourceEdits.open(stripWorkspaceId(input));
-        const result = openPathInPreferredEditor(runtime, session.path);
+        const result = await openPathInPreferredEditor(runtime, facades.hostActions, session.path);
         runtime.appLog.info("external-editor", "Source opened in external editor.", {
           sourceKind: session.sourceKind,
           sourceId: session.sourceId,
@@ -1454,76 +1228,52 @@ function buildDesktopRpcHandlers(
         recordDevBrowserToolsEvent("workspace.closed", { workspaceId, closed: released });
         return { ok: released };
       },
-      listWorkspaceBranches: (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const currentBranch = getWorkspaceBranch(runtime.cwd);
+      listWorkspaceBranches: async (input) => {
+        const result = await facades.appActions.git.listBranches(input);
         return {
-          currentBranch,
-          branches: getWorkspaceBranches(runtime.cwd).map((branch) => ({
-            name: branch,
-            current: branch === currentBranch,
-          })),
+          ...(result.currentBranch ? { currentBranch: result.currentBranch } : {}),
+          branches: result.branches.map((branch) => ({ ...branch })),
         };
       },
-      switchWorkspaceBranch: (input) => {
-        return switchWorkspaceBranch(getWorkspaceRuntime(input), input.branch);
+      switchWorkspaceBranch: async (input) => {
+        const result = await facades.appActions.git.switchBranch(input);
+        if (result.ok && result.switched) {
+          recordDevBrowserToolsEvent("workspace.branch-switched", {
+            workspaceId: input.workspaceId,
+            branch: input.branch.trim(),
+          });
+        }
+        return result.ok
+          ? { ok: true, workspace: result.workspace }
+          : { ok: false, workspace: result.workspace, error: result.error };
       },
       writeClipboardText: (input) => facades.hostActions.clipboard.writeText(input),
-      listWorkspacePaths: (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        return input.refresh ? runtime.pathIndex.refresh() : runtime.pathIndex.list();
-      },
+      listWorkspacePaths: async (input) =>
+        (await facades.appActions.workspaceFiles.listPaths(input)).map((entry) => ({ ...entry })),
       pickWorkspaceAttachments: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const cwd = runtime.cwd;
-        const selectedPaths = await Utils.openFileDialog({
+        const { cwd } = await facades.appActions.workspaceFiles.getRoot(input);
+        const { selectedPaths } = await facades.hostActions.dialogs.pickFilesAndFolders({
           startingFolder: cwd,
-          allowedFileTypes: "*",
-          canChooseFiles: true,
-          canChooseDirectory: true,
-          allowsMultipleSelection: true,
         });
-        const attachments = [];
-        const skippedPaths = [];
-
-        for (const selectedPath of selectedPaths) {
-          if (!selectedPath) continue;
-          const attachment = createComposerAttachmentFromPath(cwd, selectedPath);
-          if (!attachment) {
-            skippedPaths.push(selectedPath);
-            continue;
-          }
-          attachments.push(attachment);
-        }
-
-        return { attachments, skippedPaths };
+        const result = await facades.appActions.workspaceFiles.materializeSelectedAttachments({
+          workspaceId: input.workspaceId,
+          selectedPaths,
+        });
+        return { attachments: [...result.attachments], skippedPaths: [...result.skippedPaths] };
       },
       importComposerAttachments: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const attachments = [];
-        const skippedPaths = [];
-        for (const attachment of input.attachments) {
-          try {
-            attachments.push(createImportedComposerAttachment(runtime.cwd, attachment));
-          } catch {
-            skippedPaths.push(attachment.name);
-          }
-        }
-        return { attachments, skippedPaths };
+        const result = await facades.appActions.workspaceFiles.importComposerAttachments(input);
+        return { attachments: [...result.attachments], skippedPaths: [...result.skippedPaths] };
       },
-      openWorkspacePath: (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const absolutePath = resolveSafeWorkspacePath(runtime, input.workspaceRelativePath);
-        if (!absolutePath) return { opened: false, kind: "missing" };
-
-        const kind = getWorkspacePathKind(absolutePath);
-        if (kind === "missing") return { opened: false, kind };
-
-        const opened = kind === "folder" ? Utils.openPath(absolutePath) : true;
-        if (kind === "file") {
-          Utils.showItemInFolder(absolutePath);
+      openWorkspacePath: async (input) => {
+        const target = await facades.appActions.workspaceFiles.resolvePathTarget(input);
+        if (target.kind === "missing") return { opened: false, kind: target.kind };
+        if (target.kind === "file") {
+          await facades.hostActions.paths.reveal({ path: target.absolutePath });
+          return { opened: true, kind: target.kind };
         }
-        return { opened, kind };
+        const { opened } = await facades.hostActions.paths.open({ path: target.absolutePath });
+        return { opened, kind: target.kind };
       },
       openWorkflowsGeneratedExportInEditor: async (input) => {
         const runtime = getWorkspaceRuntime(input);
@@ -1549,7 +1299,7 @@ function buildDesktopRpcHandlers(
             `Workflows export ${input.target} file does not exist: ${input.qualifiedName}`,
           );
         }
-        const result = openPathInPreferredEditor(runtime, path);
+        const result = await openPathInPreferredEditor(runtime, facades.hostActions, path);
         runtime.appLog.info("external-editor", "Workflows export opened in external editor.", {
           qualifiedName: generatedExport.qualifiedName,
           target: input.target,
@@ -1569,7 +1319,7 @@ function buildDesktopRpcHandlers(
           });
           throw new Error(`Prompt standards source does not exist: ${input.path}`);
         }
-        const result = openPathInPreferredEditor(runtime, source.path);
+        const result = await openPathInPreferredEditor(runtime, facades.hostActions, source.path);
         runtime.appLog.info(
           "external-editor",
           "Prompt standards source opened in external editor.",
@@ -1589,10 +1339,10 @@ function buildDesktopRpcHandlers(
         });
       },
       getArtifactPreview: async (input) => {
-        const { sessionId, artifactId } = input;
-        return await getWorkspaceRuntime(input).catalog.getArtifactPreview({
-          sessionId,
-          artifactId,
+        return await facades.appActions.artifacts.preview({
+          workspaceId: input.workspaceId,
+          workspaceSessionId: input.sessionId,
+          artifactId: input.artifactId,
         });
       },
       createOrchestratorSurface: async (input) => {
@@ -1724,8 +1474,13 @@ function buildDesktopRpcHandlers(
         return { ok: true };
       },
       updateComposerDraft: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        return await runtime.catalog.updateComposerDraft(input);
+        const result = await facades.runtime.messages.updateDraft({
+          target: input.target as Parameters<
+            typeof facades.runtime.messages.updateDraft
+          >[0]["target"],
+          draft: input.draft,
+        });
+        return { ok: true, target: result.target };
       },
       editCommittedUserMessage: async (payload): Promise<EditCommittedUserMessageResponse> => {
         const runtime = getWorkspaceRuntime(payload);
@@ -1760,22 +1515,37 @@ function buildDesktopRpcHandlers(
           threadId: input.target.threadId,
           queuedMessageId: input.queuedMessageId,
         });
-        return runtime.catalog.refreshQueuedSurfaceMutation({ target: input.target });
+        return { ok: true, target: input.target };
       },
       editQueuedSurfaceMessage: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const result = await runtime.catalog.editQueuedSurfaceMessage(input);
+        const result = await facades.runtime.queues.restoreToComposer({
+          target: input.target as Parameters<
+            typeof facades.runtime.queues.restoreToComposer
+          >[0]["target"],
+          queuedMessageId: input.queuedMessageId as Parameters<
+            typeof facades.runtime.queues.restoreToComposer
+          >[0]["queuedMessageId"],
+        });
         runtime.appLog.info("prompt", "Queued surface message restored to composer.", {
           workspaceSessionId: input.target.workspaceSessionId,
           surfacePiSessionId: input.target.surfacePiSessionId,
           threadId: input.target.threadId,
           queuedMessageId: input.queuedMessageId,
         });
-        return result;
+        return { ok: true, text: result.text };
       },
       reorderQueuedSurfaceMessage: async (input) => {
         const runtime = getWorkspaceRuntime(input);
-        const result = await runtime.catalog.reorderQueuedSurfaceMessage(input);
+        const result = await facades.runtime.queues.reorder({
+          target: input.target as Parameters<typeof facades.runtime.queues.reorder>[0]["target"],
+          queuedMessageId: input.queuedMessageId as Parameters<
+            typeof facades.runtime.queues.reorder
+          >[0]["queuedMessageId"],
+          beforeQueuedMessageId: input.beforeQueuedMessageId as Parameters<
+            typeof facades.runtime.queues.reorder
+          >[0]["beforeQueuedMessageId"],
+        });
         runtime.appLog.info("prompt", "Queued surface messages reordered.", {
           workspaceSessionId: input.target.workspaceSessionId,
           surfacePiSessionId: input.target.surfacePiSessionId,
@@ -1783,7 +1553,7 @@ function buildDesktopRpcHandlers(
           queuedMessageId: input.queuedMessageId,
           beforeQueuedMessageId: input.beforeQueuedMessageId ?? null,
         });
-        return result;
+        return { ok: true, target: result.target };
       },
       steerQueuedSurfaceMessage: async (input) => {
         await facades.runtime.queues.steer({

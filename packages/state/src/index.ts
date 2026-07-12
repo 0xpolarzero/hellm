@@ -241,6 +241,8 @@ export type {
   AppPreferencesReadModel,
   AppPreferencesReadModelRequest,
   AppPreferencesStateCommands,
+  ArtifactInspectorReadModel,
+  ArtifactInspectorReadModelRequest,
   AgentActorExtensionDefaultsReadModelRecord,
   AgentBindingReadModelRecord,
   AgentProfileStateCommands,

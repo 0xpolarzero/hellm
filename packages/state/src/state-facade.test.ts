@@ -1259,6 +1259,11 @@ describe("State read-model kind expansion", () => {
         kind: "workflowTaskAttemptInspector",
         workflowTaskAttemptId: "workflow-task-explicit-workspace",
       },
+      {
+        kind: "artifactInspector",
+        workspaceSessionId: "session-explicit-workspace",
+        artifactId: "artifact-explicit-workspace",
+      },
     ]) {
       expect(() => Schema.decodeUnknownSync(StateReadModelRequestSchema)(request)).toThrow();
     }
@@ -1419,6 +1424,20 @@ describe("State read-model kind expansion", () => {
         summary: "Run fixture command",
         arguments: { cmd: "printf ok" },
         facts: { exitCode: 0 },
+      });
+      const artifact = store.recordArtifactMetadata({
+        workspaceSessionId: created.workspaceSessionId,
+        sourceCommandId: command.id,
+        kind: "text",
+        name: "read-model-preview.md",
+        storedPath:
+          "/tmp/svvy-state-facade-read-models-artifacts/" +
+          `${created.workspaceSessionId}/read-model-preview.md`,
+        mimeType: "text/markdown",
+        byteSize: 42,
+        sha256: "a".repeat(64),
+        immutable: false,
+        materializationStatus: "ready",
       });
       const transcriptUser = store.commitRuntimeTranscriptUserMessage({
         workspaceSessionId: created.workspaceSessionId as never,
@@ -1916,6 +1935,44 @@ describe("State read-model kind expansion", () => {
           }),
         ),
       ).toEqual([promptHistory]);
+
+      expect(
+        await runTestEffect(
+          readModels.fetch({
+            kind: "artifactInspector",
+            workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+            workspaceSessionId: created.workspaceSessionId as WorkspaceSessionId,
+            artifactId: artifact.artifactId,
+          }),
+        ),
+      ).toEqual({
+        kind: "artifactInspector",
+        value: {
+          artifactId: artifact.artifactId,
+          workspaceSessionId: created.workspaceSessionId,
+          kind: "text",
+          name: "read-model-preview.md",
+          path: artifact.storedPath,
+          mimeType: "text/markdown",
+          byteSize: 42,
+          sha256: "a".repeat(64),
+          immutable: false,
+          createdAt: artifact.createdAt,
+          deletedAt: null,
+          sourceCommandId: command.id,
+          producerLabel: "Run exec_command",
+        },
+      });
+      expect(
+        await runTestEffect(
+          readModels.fetch({
+            kind: "artifactInspector",
+            workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
+            workspaceSessionId: "session-other" as WorkspaceSessionId,
+            artifactId: artifact.artifactId,
+          }),
+        ),
+      ).toEqual({ kind: "artifactInspector", value: null });
 
       const transcript = await runTestEffect(
         readModels.fetch({ kind: "surfaceTranscript", target: created.target }),

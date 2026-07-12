@@ -51,7 +51,11 @@ import {
   JsonValue,
 } from "./ids";
 
-import { SnippetSourceSchema } from "./composer-contracts";
+import {
+  ComposerAttachmentSchema,
+  ComposerSnippetMentionSchema,
+  SnippetSourceSchema,
+} from "./composer-contracts";
 import {
   RuntimeContractError,
   RuntimeEventRebaselineRequired,
@@ -603,6 +607,47 @@ export const SteerQueuedMessageInputSchema = Schema.Struct({
 });
 
 export type SteerQueuedMessageInput = typeof SteerQueuedMessageInputSchema.Type;
+
+export const UpdateComposerDraftInputSchema = Schema.Struct({
+  target: PromptTargetSchema,
+  draft: Schema.Struct({
+    text: Schema.String,
+    attachments: Schema.Array(ComposerAttachmentSchema),
+    snippetMentions: Schema.optionalKey(Schema.Array(ComposerSnippetMentionSchema)),
+  }),
+});
+export type UpdateComposerDraftInput = typeof UpdateComposerDraftInputSchema.Type;
+
+export const UpdateComposerDraftResultSchema = Schema.Struct({
+  target: PromptTargetSchema,
+});
+export type UpdateComposerDraftResult = typeof UpdateComposerDraftResultSchema.Type;
+
+export const RestoreQueuedMessageToComposerInputSchema = Schema.Struct({
+  target: PromptTargetSchema,
+  queuedMessageId: QueueItemId,
+});
+export type RestoreQueuedMessageToComposerInput =
+  typeof RestoreQueuedMessageToComposerInputSchema.Type;
+
+export const RestoreQueuedMessageToComposerResultSchema = Schema.Struct({
+  target: PromptTargetSchema,
+  text: Schema.String,
+});
+export type RestoreQueuedMessageToComposerResult =
+  typeof RestoreQueuedMessageToComposerResultSchema.Type;
+
+export const ReorderQueuedMessageInputSchema = Schema.Struct({
+  target: PromptTargetSchema,
+  queuedMessageId: QueueItemId,
+  beforeQueuedMessageId: Schema.optionalKey(Schema.NullOr(QueueItemId)),
+});
+export type ReorderQueuedMessageInput = typeof ReorderQueuedMessageInputSchema.Type;
+
+export const ReorderQueuedMessageResultSchema = Schema.Struct({
+  target: PromptTargetSchema,
+});
+export type ReorderQueuedMessageResult = typeof ReorderQueuedMessageResultSchema.Type;
 
 export const CancelCommandInputSchema = Schema.Struct({
   commandId: CommandId,
@@ -1784,10 +1829,19 @@ export interface RuntimeSurfacesApiEffect {
 export interface RuntimeMessagesApiEffect {
   submit(input: SubmitMessageInput): Effect.Effect<SubmitMessageResult, RuntimeContractError>;
   abort(input: AbortPromptInput): Effect.Effect<void, RuntimeContractError>;
+  updateDraft(
+    input: UpdateComposerDraftInput,
+  ): Effect.Effect<UpdateComposerDraftResult, RuntimeContractError>;
 }
 
 export interface RuntimeQueuesApiEffect {
   steer(input: SteerQueuedMessageInput): Effect.Effect<void, RuntimeContractError>;
+  restoreToComposer(
+    input: RestoreQueuedMessageToComposerInput,
+  ): Effect.Effect<RestoreQueuedMessageToComposerResult, RuntimeContractError>;
+  reorder(
+    input: ReorderQueuedMessageInput,
+  ): Effect.Effect<ReorderQueuedMessageResult, RuntimeContractError>;
 }
 
 export interface RuntimeCommandsApiEffect {
@@ -2032,6 +2086,30 @@ export const decodeUnknownSteerQueuedMessageInputExit = Schema.decodeUnknownExit
 );
 export const decodeUnknownSteerQueuedMessageInputEffect = Schema.decodeUnknownEffect(
   SteerQueuedMessageInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownUpdateComposerDraftInputEffect = Schema.decodeUnknownEffect(
+  UpdateComposerDraftInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownUpdateComposerDraftResultEffect = Schema.decodeUnknownEffect(
+  UpdateComposerDraftResultSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownRestoreQueuedMessageToComposerInputEffect = Schema.decodeUnknownEffect(
+  RestoreQueuedMessageToComposerInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownRestoreQueuedMessageToComposerResultEffect = Schema.decodeUnknownEffect(
+  RestoreQueuedMessageToComposerResultSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownReorderQueuedMessageInputEffect = Schema.decodeUnknownEffect(
+  ReorderQueuedMessageInputSchema,
+  RuntimeBoundaryParseOptions,
+);
+export const decodeUnknownReorderQueuedMessageResultEffect = Schema.decodeUnknownEffect(
+  ReorderQueuedMessageResultSchema,
   RuntimeBoundaryParseOptions,
 );
 export const unsafeDecodeRuntimeEventsInputSyncForTestsAndBootstrap = Schema.decodeUnknownSync(

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
@@ -20,7 +20,6 @@ import {
   type ModelRegistry,
 } from "@mariozechner/pi-coding-agent";
 import {
-  unsafeDecodeRuntimeSubmittedMessageSyncForTestsAndBootstrap,
   unsafeDecodeRuntimeClientSubmissionInputSyncForTestsAndBootstrap,
   normalizeRuntimeClientSubmissionMetadata,
   type RuntimeClientSubmissionInput,
@@ -91,9 +90,7 @@ import type {
   PromptClientSubmissionMetadata,
   SurfaceMutationResponse,
   SurfaceOpenResponse,
-  UpdateComposerDraftRequest,
   WorkspaceMutationResponse,
-  WorkspaceArtifactPreview,
   AgentContextPreviewRequest,
   AgentContextPreviewExtension,
   AgentContextPreviewResponse,
@@ -134,7 +131,6 @@ import {
   type ThreadHandlerProfileInput,
   type WorkflowAgentSourceReadModelRecord,
 } from "@svvy/state";
-import { buildStructuredArtifactLink } from "@svvy/state/structured-session-projections";
 import {
   runtimeActorExtensionBindingStatePortFromStore,
   runtimeApprovalStatePortFromStore,
@@ -166,7 +162,6 @@ import {
 } from "./extension-tools";
 import { getCredential, resolveApiKey, resolveAuthState } from "./auth-store";
 import { getOAuthRefreshError, refreshIfNeeded, supportsOAuth } from "./oauth-login";
-import { runtimeSubmittedMessagePromptText } from "@svvy/pi-adapter/messages";
 import { PiAdapter, layer as PiAdapterLayer } from "@svvy/pi-adapter";
 import { createPiManagedAgentSession } from "@svvy/pi-adapter/session";
 import { countPromptTokens } from "./token-count";
@@ -1238,41 +1233,6 @@ export class WorkspaceSessionCatalog {
     });
   }
 
-  async getArtifactPreview(input: {
-    sessionId: string;
-    artifactId: string;
-  }): Promise<WorkspaceArtifactPreview> {
-    const snapshot = this.getStructuredSnapshot(input.sessionId);
-    if (!snapshot) {
-      throw new Error(`Structured session not found: ${input.sessionId}`);
-    }
-
-    const artifact = snapshot.artifacts.find((candidate) => candidate.id === input.artifactId);
-    if (!artifact) {
-      throw new Error(`Structured artifact not found: ${input.artifactId}`);
-    }
-
-    const link = buildStructuredArtifactLink(snapshot, artifact);
-    const path = artifact.path;
-    const pathContent = path && existsSync(path) ? readFileSync(path, "utf8") : undefined;
-    const content = pathContent ?? "";
-
-    return {
-      artifactId: artifact.id,
-      sessionId: input.sessionId,
-      kind: artifact.kind,
-      name: artifact.name,
-      ...(artifact.path ? { path: artifact.path } : {}),
-      createdAt: artifact.createdAt,
-      ...(link.sourceCommandId ? { sourceCommandId: link.sourceCommandId } : {}),
-      ...(link.workflowRunId ? { workflowRunId: link.workflowRunId } : {}),
-      ...(link.workflowName ? { workflowName: link.workflowName } : {}),
-      ...(link.producerLabel ? { producerLabel: link.producerLabel } : {}),
-      missingFile: Boolean(link.missingFile),
-      content,
-    };
-  }
-
   async createSession(
     request: CreateSessionRequest,
     defaults: SessionDefaults,
@@ -1484,39 +1444,11 @@ export class WorkspaceSessionCatalog {
     return { ok: true };
   }
 
-  async updateComposerDraft(input: UpdateComposerDraftRequest): Promise<SurfaceMutationResponse> {
-    this.assertValidPromptTarget(input.target);
-    await this.publishCommittedCatalogMutation(
-      "surface.composer-draft.update",
-      this.catalogStateMutations.setComposerDraft({
-        sessionId: input.target.workspaceSessionId,
-        surfacePiSessionId: input.target.surfacePiSessionId,
-        threadId: input.target.threadId ?? null,
-        text: input.draft.text,
-        attachments: input.draft.attachments,
-        snippetMentions: input.draft.snippetMentions ?? [],
-      }),
-      {
-        workspaceSessionId: input.target.workspaceSessionId,
-        surfacePiSessionId: input.target.surfacePiSessionId,
-        threadId: input.target.threadId ?? undefined,
-      },
-    );
-    return { ok: true, target: structuredClone(input.target) };
-  }
-
   async editCommittedUserMessage(
     options: EditCommittedUserMessageOptions,
   ): Promise<SendAgentPromptResult> {
     void options;
     throw new Error("Committed-message edit dispatch is runtime-owned and unavailable here.");
-  }
-
-  async refreshQueuedSurfaceMutation(input: {
-    target: PromptTarget;
-  }): Promise<SurfaceMutationResponse> {
-    this.assertValidPromptTarget(input.target);
-    return { ok: true, target: structuredClone(input.target) };
   }
 
   async setExtensionContextAutoUpdate(input: {
@@ -1553,62 +1485,6 @@ export class WorkspaceSessionCatalog {
         },
       );
     }
-    return { ok: true, target: structuredClone(input.target) };
-  }
-
-  async editQueuedSurfaceMessage(input: {
-    target: PromptTarget;
-    queuedMessageId: string;
-  }): Promise<{ ok: boolean; text?: string }> {
-    this.assertValidPromptTarget(input.target);
-    const queued = this.assertQueuedMessageBelongsToSurface(input.queuedMessageId, input.target);
-    if (queued.kind !== "user_message") {
-      throw new Error("Only queued user messages can be restored to the composer.");
-    }
-    const text = this.getQueuedMessageText(queued.messageJson);
-    if (!text) {
-      throw new Error("Queued user message payload cannot be restored to the composer.");
-    }
-    await this.publishCommittedCatalogMutation(
-      "surface.queue.restore-to-composer",
-      this.catalogStateMutations.cancelSurfaceMessage({
-        id: input.queuedMessageId,
-        expectedStatuses: ["queued", "steering"],
-      }),
-      {
-        workspaceSessionId: input.target.workspaceSessionId,
-        surfacePiSessionId: input.target.surfacePiSessionId,
-        threadId: input.target.threadId ?? undefined,
-        queuedMessageId: input.queuedMessageId,
-      },
-    );
-    return { ok: true, text };
-  }
-
-  async reorderQueuedSurfaceMessage(input: {
-    target: PromptTarget;
-    queuedMessageId: string;
-    beforeQueuedMessageId?: string | null;
-  }): Promise<SurfaceMutationResponse> {
-    this.assertValidPromptTarget(input.target);
-    this.assertQueuedMessageBelongsToSurface(input.queuedMessageId, input.target);
-    if (input.beforeQueuedMessageId) {
-      this.assertQueuedMessageBelongsToSurface(input.beforeQueuedMessageId, input.target);
-    }
-    await this.publishCommittedCatalogMutation(
-      "surface.queue.reorder",
-      this.catalogStateMutations.reorderSurfaceMessage({
-        surfacePiSessionId: input.target.surfacePiSessionId,
-        id: input.queuedMessageId,
-        beforeId: input.beforeQueuedMessageId ?? null,
-      }),
-      {
-        workspaceSessionId: input.target.workspaceSessionId,
-        surfacePiSessionId: input.target.surfacePiSessionId,
-        threadId: input.target.threadId ?? undefined,
-        queuedMessageId: input.queuedMessageId,
-      },
-    );
     return { ok: true, target: structuredClone(input.target) };
   }
 
@@ -2245,22 +2121,6 @@ export class WorkspaceSessionCatalog {
     }
     session.session.dispose();
     this.managedSurfaces.delete(session.sessionId);
-  }
-
-  private getQueuedMessageText(messageJson: string): string {
-    try {
-      const parsed = JSON.parse(messageJson) as unknown;
-      const runtimeMessage = unsafeDecodeRuntimeSubmittedMessageSyncForTestsAndBootstrap(parsed);
-      return runtimeSubmittedMessagePromptText(runtimeMessage).trim();
-    } catch {
-      try {
-        const message = JSON.parse(messageJson) as Message;
-        if (message.role !== "user") return "";
-        return flattenUserMessageContent(message.content).trim();
-      } catch {
-        return "";
-      }
-    }
   }
 
   private assertQueuedMessageBelongsToSurface(
@@ -4170,25 +4030,6 @@ function diffStringSet(
     added: current.filter((value) => !previousSet.has(value)).toSorted(),
     removed: previous.filter((value) => !currentSet.has(value)).toSorted(),
   };
-}
-
-function flattenUserMessageContent(content: Message["content"]): string {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content
-    .map((block) => {
-      if (block.type === "text") {
-        return block.text;
-      }
-      if (block.type === "image") {
-        return "[image]";
-      }
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n");
 }
 
 function resolveThreadTargets(

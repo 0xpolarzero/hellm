@@ -134,6 +134,7 @@ function createHarness(
     markSurfaceMessageDelivered: () => Effect.die("Unexpected markSurfaceMessageDelivered call."),
     markSurfaceMessageFailed: () => Effect.die("Unexpected markSurfaceMessageFailed call."),
     cancelSurfaceMessage: () => Effect.die("Unexpected cancelSurfaceMessage call."),
+    reorderSurfaceMessage: () => Effect.die("Unexpected reorderSurfaceMessage call."),
   } satisfies RuntimeQueueStatePortService;
 
   const run = (input: SteerQueuedMessageInput) =>

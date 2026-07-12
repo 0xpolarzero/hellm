@@ -1,5 +1,6 @@
 import { ApplicationMenu, BrowserWindow, Utils, defineElectrobunRPC } from "electrobun/bun";
 import Electrobun from "electrobun/bun";
+import { spawn } from "node:child_process";
 import type {
   DesktopBridgeAdapter,
   DesktopBridgeRegistration,
@@ -62,6 +63,11 @@ export interface CreateElectrobunDesktopHostOptions {
   readonly positionTrafficLights?: (window: BrowserWindow<BunRpc>) => void;
   readonly onBeforeQuit?: () => void | Promise<void>;
   readonly onError?: (error: unknown, context: string) => void;
+  readonly launchDetached?: (input: {
+    readonly command: string;
+    readonly args: readonly string[];
+    readonly cwd: string;
+  }) => void;
 }
 
 export interface ElectrobunDesktopHostAdapter extends DesktopHostAdapter {
@@ -102,6 +108,21 @@ export function createElectrobunDesktopHostAdapter(
       // Host cleanup and typed bridge closure remain authoritative over diagnostics.
     }
   };
+
+  const launchDetached =
+    options.launchDetached ??
+    ((input: {
+      readonly command: string;
+      readonly args: readonly string[];
+      readonly cwd: string;
+    }) => {
+      const child = spawn(input.command, [...input.args], {
+        cwd: input.cwd,
+        detached: true,
+        stdio: "ignore",
+      });
+      child.unref();
+    });
 
   const beforeQuitListener = (event: { response?: { allow: boolean } }): void => {
     if (!options.onBeforeQuit) {
@@ -517,6 +538,58 @@ export function createElectrobunDesktopHostAdapter(
       async reveal({ path }) {
         Utils.showItemInFolder(path);
         return { ok: true };
+      },
+    },
+    editor: {
+      async open({ path, cwd, editor, customCommand }) {
+        if (editor === "system") {
+          return { opened: Utils.openPath(path), editor };
+        }
+
+        const appNameByEditor = {
+          code: "Visual Studio Code",
+          cursor: "Cursor",
+          zed: "Zed",
+          sublime: "Sublime Text",
+        } satisfies Record<Exclude<typeof editor, "system" | "custom">, string>;
+        if (editor !== "custom") {
+          try {
+            launchDetached({
+              command: "/usr/bin/open",
+              args: ["-a", appNameByEditor[editor], path],
+              cwd,
+            });
+            return { opened: true, editor };
+          } catch (error) {
+            return {
+              opened: false,
+              editor,
+              failure: {
+                kind: "app-launch",
+                message: error instanceof Error ? error.message : String(error),
+              },
+            };
+          }
+        }
+
+        const [command, ...baseArgs] = customCommand.split(/\s+/).filter(Boolean);
+        if (!command) {
+          return { opened: false, editor, failure: { kind: "custom-command-empty" } };
+        }
+        try {
+          launchDetached({ command, args: [...baseArgs, path], cwd });
+          return { opened: true, editor };
+        } catch (error) {
+          return {
+            opened: false,
+            editor,
+            failure: {
+              kind: "custom-command-launch",
+              command,
+              message: error instanceof Error ? error.message : String(error),
+            },
+          };
+        }
       },
     },
   };

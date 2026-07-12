@@ -119,6 +119,7 @@ import { structuredSessionStatePortsLayerWithSandboxPolicyConfig } from "./struc
 import { buildWorkspaceSessionNavigation } from "./session-navigation";
 import {
   buildStructuredCommandInspector,
+  buildStructuredArtifactLink,
   buildStructuredHandlerThreadInspector,
   buildStructuredSessionSummaryProjection,
   buildStructuredSessionView,
@@ -239,6 +240,7 @@ export type StateReadModelRequest =
   | SurfaceComposerReadModelRequest
   | SurfaceQueuedMessagesReadModelRequest
   | CommandInspectorReadModelRequest
+  | ArtifactInspectorReadModelRequest
   | RequestInputReadModelRequest
   | ApprovalsReadModelRequest
   | AgentsReadModelRequest
@@ -263,6 +265,7 @@ export type StateReadModelResult =
   | { kind: "surfaceComposer"; value: SurfaceComposerReadModel }
   | { kind: "surfaceQueuedMessages"; value: SurfaceQueuedMessagesReadModel }
   | { kind: "commandInspector"; value: CommandInspectorReadModel | null }
+  | { kind: "artifactInspector"; value: ArtifactInspectorReadModel | null }
   | { kind: "requestInput"; value: RequestInputReadModel }
   | { kind: "approvals"; value: ApprovalsReadModel }
   | { kind: "agents"; value: AgentsReadModel }
@@ -344,6 +347,12 @@ export const StateReadModelRequestSchema = Schema.Union([
     commandId: Schema.String,
   }),
   Schema.Struct({
+    kind: Schema.Literal("artifactInspector"),
+    workspaceId: WorkspaceId,
+    workspaceSessionId: Schema.String,
+    artifactId: Schema.String,
+  }),
+  Schema.Struct({
     kind: Schema.Literal("requestInput"),
     workspaceId: Schema.optionalKey(Schema.String),
     surfacePiSessionId: Schema.optionalKey(Schema.String),
@@ -404,6 +413,7 @@ export const StateReadModelResultSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("surfaceComposer"), value: Schema.Json }),
   Schema.Struct({ kind: Schema.Literal("surfaceQueuedMessages"), value: Schema.Json }),
   Schema.Struct({ kind: Schema.Literal("commandInspector"), value: Schema.NullOr(Schema.Json) }),
+  Schema.Struct({ kind: Schema.Literal("artifactInspector"), value: Schema.NullOr(Schema.Json) }),
   Schema.Struct({ kind: Schema.Literal("requestInput"), value: Schema.Json }),
   Schema.Struct({ kind: Schema.Literal("approvals"), value: Schema.Json }),
   Schema.Struct({ kind: Schema.Literal("agents"), value: Schema.Json }),
@@ -468,6 +478,31 @@ export interface CommandInspectorReadModelRequest {
   kind: "commandInspector";
   workspaceId: WorkspaceIdType;
   commandId: CommandId;
+}
+
+export interface ArtifactInspectorReadModelRequest {
+  kind: "artifactInspector";
+  workspaceId: WorkspaceIdType;
+  workspaceSessionId: WorkspaceSessionId;
+  artifactId: string;
+}
+
+export interface ArtifactInspectorReadModel {
+  artifactId: string;
+  workspaceSessionId: WorkspaceSessionId;
+  kind: "text" | "log" | "json" | "file";
+  name: string;
+  path?: string;
+  mimeType: string;
+  byteSize: number;
+  sha256: string;
+  immutable: boolean;
+  createdAt: string;
+  deletedAt: string | null;
+  sourceCommandId?: string;
+  workflowRunId?: string;
+  workflowName?: string;
+  producerLabel?: string;
 }
 
 export interface RequestInputReadModelRequest {
@@ -1828,6 +1863,11 @@ function stateReadModelsFromState(state: {
               kind: "commandInspector",
               value: yield* buildCommandInspectorReadModel(structuredSession, request.commandId),
             };
+          case "artifactInspector":
+            return {
+              kind: "artifactInspector",
+              value: yield* buildArtifactInspectorReadModel(structuredSession, request),
+            };
           case "requestInput":
             return {
               kind: "requestInput",
@@ -2156,6 +2196,7 @@ function readModelWorkspaceId(request: StateReadModelRequest): WorkspaceIdType |
     case "sessionNavigation":
     case "promptHistory":
     case "commandInspector":
+    case "artifactInspector":
     case "requestInput":
     case "approvals":
     case "snippets":
@@ -2439,6 +2480,40 @@ function buildCommandInspectorReadModel(
     }
     return null;
   });
+}
+
+function buildArtifactInspectorReadModel(
+  state: StructuredSessionState["Service"],
+  request: ArtifactInspectorReadModelRequest,
+): Effect.Effect<ArtifactInspectorReadModel | null, StateContractError> {
+  return state.listSessionStates().pipe(
+    Effect.map((snapshots) => {
+      const snapshot = snapshots.find(
+        (candidate) => candidate.session.id === request.workspaceSessionId,
+      );
+      const artifact = snapshot?.artifacts.find((candidate) => candidate.id === request.artifactId);
+      if (!snapshot || !artifact) return null;
+
+      const link = buildStructuredArtifactLink(snapshot, artifact);
+      return {
+        artifactId: artifact.id,
+        workspaceSessionId: artifact.sessionId as WorkspaceSessionId,
+        kind: artifact.kind,
+        name: artifact.name,
+        ...(artifact.path ? { path: artifact.path } : {}),
+        mimeType: artifact.mimeType,
+        byteSize: artifact.bytes,
+        sha256: artifact.sha256,
+        immutable: artifact.immutable,
+        createdAt: artifact.createdAt,
+        deletedAt: artifact.deletedAt,
+        ...(link.sourceCommandId ? { sourceCommandId: link.sourceCommandId } : {}),
+        ...(link.workflowRunId ? { workflowRunId: link.workflowRunId } : {}),
+        ...(link.workflowName ? { workflowName: link.workflowName } : {}),
+        ...(link.producerLabel ? { producerLabel: link.producerLabel } : {}),
+      };
+    }),
+  );
 }
 
 function buildRequestInputReadModel(

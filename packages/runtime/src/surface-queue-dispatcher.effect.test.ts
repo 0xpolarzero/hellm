@@ -130,6 +130,7 @@ function createState(queue: RuntimeSurfaceMessageRecord[] = []) {
       });
     },
     cancelSurfaceMessage: () => Effect.die("Unexpected cancelSurfaceMessage call."),
+    reorderSurfaceMessage: () => Effect.die("Unexpected reorderSurfaceMessage call."),
   };
   return { queueStatePort, calls, queue };
 }

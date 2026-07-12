@@ -12,6 +12,7 @@ import {
   RuntimeActorExtensionBindingStatePort,
   RuntimeApprovalStatePort,
   RuntimeCommandStatePort,
+  RuntimeComposerDraftStatePort,
   RuntimeContractError,
   RuntimeEpisodeStatePort,
   RuntimeEventStreamError,
@@ -2144,6 +2145,7 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
         Layer.succeed(RuntimeRequestStatePort, unusedPort("RuntimeRequestStatePort")),
         Layer.succeed(RuntimeApprovalStatePort, emptyApprovalStatePort()),
         Layer.succeed(RuntimeCommandStatePort, testRuntimeCommandStatePort(overrides)),
+        Layer.succeed(RuntimeComposerDraftStatePort, unusedPort("RuntimeComposerDraftStatePort")),
         Layer.succeed(
           RuntimeGeneratedPackageStatePort,
           unusedPort("RuntimeGeneratedPackageStatePort"),
@@ -2330,6 +2332,7 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
         Layer.succeed(RuntimeRequestStatePort, startupRestoreRequestStatePort()),
         Layer.succeed(RuntimeApprovalStatePort, emptyApprovalStatePort()),
         Layer.succeed(RuntimeCommandStatePort, testRuntimeCommandStatePort({ published: [] })),
+        Layer.succeed(RuntimeComposerDraftStatePort, unusedPort("RuntimeComposerDraftStatePort")),
         Layer.succeed(RuntimeGeneratedPackageStatePort, testRuntimeGeneratedPackageStatePort()),
         Layer.succeed(RuntimeSessionWaitStatePort, unusedPort("RuntimeSessionWaitStatePort")),
         Layer.succeed(RuntimeTranscriptStatePort, testRuntimeTranscriptStatePort()),

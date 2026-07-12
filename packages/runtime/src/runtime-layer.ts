@@ -10,6 +10,7 @@ import {
   RuntimeActorExtensionBindingStatePort,
   RuntimeApprovalStatePort,
   RuntimeCommandStatePort,
+  RuntimeComposerDraftStatePort,
   RuntimeContractError,
   RuntimeEventStreamError,
   ExtensionError,
@@ -98,6 +99,9 @@ import {
   type SourceReconcileRecoveryPayload,
   type TaskAgentParametersSource,
   type SteerQueuedMessageInput,
+  type UpdateComposerDraftInput,
+  type RestoreQueuedMessageToComposerInput,
+  type ReorderQueuedMessageInput,
   type SubmitMessageInput,
   type SubmitMessageResult,
   type WriteCommandStdinInput,
@@ -144,6 +148,11 @@ import {
   type RuntimeQueuedMessageSteeredInput,
 } from "./runtime-queue-steering";
 import { RuntimeEventBus } from "./runtime-event-bus";
+import {
+  reorderRuntimeQueuedMessage,
+  restoreRuntimeQueuedMessageToComposer,
+  updateRuntimeComposerDraft,
+} from "./runtime-composer-queue-mutations";
 import {
   RuntimeSurfaceEventPublisher,
   type RuntimeSurfaceChangedReason,
@@ -240,6 +249,7 @@ export type RuntimeLayerRequirements =
   | RuntimeRequestStatePort
   | RuntimeApprovalStatePort
   | RuntimeCommandStatePort
+  | RuntimeComposerDraftStatePort
   | RuntimeSessionWaitStatePort
   | RuntimeThreadStatePort
   | RuntimeTranscriptStatePort
@@ -277,6 +287,7 @@ export function makeRuntimeService() {
     const crypto = yield* Crypto.Crypto;
     const extensionSourceRoots = yield* ExtensionSourceRootsPort;
     const queueState = yield* RuntimeQueueStatePort;
+    const composerDraftState = yield* RuntimeComposerDraftStatePort;
     const requestState = yield* RuntimeRequestStatePort;
     const approvalState = yield* RuntimeApprovalStatePort;
     const commandState = yield* RuntimeCommandStatePort;
@@ -395,6 +406,14 @@ export function makeRuntimeService() {
               approvalWaitService,
             }),
           ),
+        updateDraft: (input: UpdateComposerDraftInput) =>
+          admit(
+            "runtime.messages.updateDraft",
+            updateRuntimeComposerDraft(input).pipe(
+              Effect.provideService(RuntimeComposerDraftStatePort, composerDraftState),
+              Effect.provideService(RuntimeEventBus, eventBus),
+            ),
+          ),
       },
       queues: {
         steer: (input: SteerQueuedMessageInput) =>
@@ -410,6 +429,22 @@ export function makeRuntimeService() {
               Effect.mapError((cause: unknown) =>
                 runtimeAdapterError("runtime.queues.steer", cause),
               ),
+            ),
+          ),
+        restoreToComposer: (input: RestoreQueuedMessageToComposerInput) =>
+          admit(
+            "runtime.queues.restoreToComposer",
+            restoreRuntimeQueuedMessageToComposer(input).pipe(
+              Effect.provideService(RuntimeQueueStatePort, queueState),
+              Effect.provideService(RuntimeEventBus, eventBus),
+            ),
+          ),
+        reorder: (input: ReorderQueuedMessageInput) =>
+          admit(
+            "runtime.queues.reorder",
+            reorderRuntimeQueuedMessage(input).pipe(
+              Effect.provideService(RuntimeQueueStatePort, queueState),
+              Effect.provideService(RuntimeEventBus, eventBus),
             ),
           ),
       },

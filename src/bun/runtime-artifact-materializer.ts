@@ -132,6 +132,28 @@ export function isRuntimeArtifactFileMissing(artifact: ArtifactMetadataRecord): 
   }
 }
 
+export function readRuntimeArtifactPreviewContent(path: string): {
+  missingFile: boolean;
+  content: string;
+} {
+  try {
+    if (!statSync(path).isFile()) {
+      return { missingFile: true, content: "" };
+    }
+    return { missingFile: false, content: readFileSync(path, "utf8") };
+  } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
+      return { missingFile: true, content: "" };
+    }
+    throw error;
+  }
+}
+
 export function deleteRuntimeArtifact(input: {
   artifactState: RuntimeArtifactStatePortService;
   runState: RuntimeArtifactStateRunner;

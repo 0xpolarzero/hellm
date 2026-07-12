@@ -224,6 +224,22 @@ describe("RuntimeQueueStatePort", () => {
             surfacePiSessionId: "surface-runtime-queue-state-port",
             messageJson: JSON.stringify({ role: "user", content: "Second queued prompt" }),
           });
+          const reordered = yield* port.reorderSurfaceMessage({
+            surfacePiSessionId: "surface-runtime-queue-state-port" as SurfacePiSessionId,
+            id: second.value.id as never,
+            beforeId: first.value.id as never,
+          });
+          expect(reordered.value.map((record) => record.id)).toEqual([
+            second.value.id,
+            first.value.id,
+          ]);
+          expect(reordered.afterCommit).toEqual(second.afterCommit);
+          const noOpReorder = yield* port.reorderSurfaceMessage({
+            surfacePiSessionId: "surface-runtime-queue-state-port" as SurfacePiSessionId,
+            id: second.value.id as never,
+            beforeId: first.value.id as never,
+          });
+          expect(noOpReorder.afterCommit).toEqual([]);
 
           const firstClaim = yield* port.claimNextQueuedSurfaceMessage({
             surfacePiSessionId: "surface-runtime-queue-state-port",
