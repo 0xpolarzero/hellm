@@ -1588,7 +1588,7 @@ true })`, and broad sleep/polling helpers in unit tests.
     - [x] Route `svvyx artifacts open` through the real app-owned CLI path, returning a declarative
           inspector-open intent recorded in terminal command facts, successful without an attached
           UI, and consumed by an attached renderer from the committed command-inspector
-          invalidation without a legacy sync callback. Commit(s): `4413a2b4ab`
+          invalidation without a legacy sync callback. Commit(s): `4413a2b4ab`, `e73421bd1e`
 
     - [x] Route `svvyx workflows`, `svvyx extensions`, and user/runtime `svvyx <extension-id> ...`
           dispatch through the real app-owned `svvyx` CLI process with explicit app-owned writable
