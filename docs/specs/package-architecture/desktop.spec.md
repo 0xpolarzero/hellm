@@ -203,6 +203,21 @@ type DesktopBridgeRegistration = {
   dispose(): Promise<void>;
 };
 
+type DesktopRendererCommand =
+  | "command-palette.open"
+  | "quick-open.open"
+  | "settings.open"
+  | "workspace.open"
+  | "workspace.newTab"
+  | "workspace.openInNewTab"
+  | "session.new"
+  | "session.newPane"
+  | "sidebar.toggle"
+  | "surface.logs.open"
+  | "surface.agents.open"
+  | "surface.extensions.open"
+  | "surface.workflows.open";
+
 type DesktopRendererNotification =
   | {
       kind: "read-model-changed";
@@ -227,7 +242,7 @@ type DesktopRendererNotification =
   | { kind: "read-model-rebaseline-required"; reason: string }
   | {
       kind: "renderer-command";
-      command: "command-palette.open" | "quick-open.open" | "settings.open";
+      command: DesktopRendererCommand;
     }
   | { kind: "app-shutdown"; reason: string };
 
@@ -249,9 +264,7 @@ type DesktopWindowHandle = {
 
 type DesktopMenuAdapter = {
   installAppMenu(input: {
-    commandPalette: () => Promise<void>;
-    quickOpen: () => Promise<void>;
-    openSettings: () => Promise<void>;
+    sendRendererCommand: (command: DesktopRendererCommand) => Promise<void>;
   }): Promise<DesktopMenuRegistration>;
 };
 

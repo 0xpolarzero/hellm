@@ -65,7 +65,7 @@ mock.module("electrobun/bun", () => ({
         if (rendererSendFailure) throw rendererSendFailure;
         notifications.push(structuredClone(notification));
       },
-      sendAppMenuAction(payload: unknown) {
+      sendArtifactOpen(payload: unknown) {
         calls.push(`legacy:${JSON.stringify(payload)}`);
       },
     };
@@ -105,7 +105,6 @@ const { createElectrobunDesktopHostAdapter } = await import("./electrobun-deskto
 function createHost(
   overrides: Partial<Parameters<typeof createElectrobunDesktopHostAdapter>[0]> = {},
 ) {
-  const legacyActions: string[] = [];
   const errors: string[] = [];
   const host = createElectrobunDesktopHostAdapter({
     maxRequestTime: 1_000,
@@ -121,13 +120,10 @@ function createHost(
     includeSettingsMenuItem: true,
     platform: "darwin",
     positionTrafficLights: () => calls.push("window.position-traffic-lights"),
-    onLegacyAppMenuAction: (action) => {
-      legacyActions.push(action);
-    },
     onError: (error, context) => errors.push(`${context}:${String(error)}`),
     ...overrides,
   });
-  return { host, legacyActions, errors };
+  return { host, errors };
 }
 
 async function reportRendererReady(): Promise<void> {
@@ -230,15 +226,24 @@ describe("Electrobun desktop host adapter", () => {
 
   it("keeps legacy renderer sends inside the guarded host transport", async () => {
     const { host } = createHost();
-    await expect(
-      host.sendLegacyMessage("sendAppMenuAction", { action: "workspace.open" }),
-    ).rejects.toThrow("not available");
+    const payload = {
+      workspaceId: "workspace_01",
+      workspaceSessionId: "session_01",
+      artifactId: "artifact_01",
+    } as never;
+    await expect(host.sendLegacyMessage("sendArtifactOpen", payload)).rejects.toThrow(
+      "not available",
+    );
     const registration = await host.bridge.exposeRendererApi(rendererApiInput);
-    await host.sendLegacyMessage("sendAppMenuAction", { action: "workspace.open" });
-    expect(calls).not.toContain('legacy:{"action":"workspace.open"}');
+    await host.sendLegacyMessage("sendArtifactOpen", payload);
+    expect(calls).not.toContain(
+      'legacy:{"workspaceId":"workspace_01","workspaceSessionId":"session_01","artifactId":"artifact_01"}',
+    );
     await reportRendererReady();
     await registration.rendererReady;
-    expect(calls).toContain('legacy:{"action":"workspace.open"}');
+    expect(calls).toContain(
+      'legacy:{"workspaceId":"workspace_01","workspaceSessionId":"session_01","artifactId":"artifact_01"}',
+    );
     await registration.dispose();
   });
 
@@ -307,7 +312,11 @@ describe("Electrobun desktop host adapter", () => {
       host.bridge.sendToRenderer({ kind: "renderer-command", command: "settings.open" }),
     ).rejects.toBe(startupError);
     await expect(
-      host.sendLegacyMessage("sendAppMenuAction", { action: "workspace.open" }),
+      host.sendLegacyMessage("sendArtifactOpen", {
+        workspaceId: "workspace_01",
+        workspaceSessionId: "session_01",
+        artifactId: "artifact_01",
+      } as never),
     ).rejects.toBe(startupError);
     await expect(host.bridge.exposeRendererApi(rendererApiInput)).rejects.toBe(startupError);
     await registration.dispose();
@@ -440,18 +449,12 @@ describe("Electrobun desktop host adapter", () => {
     await registration.dispose();
   });
 
-  it("installs renderer-command routes and preserves the explicit legacy menu route", async () => {
-    const { host, legacyActions } = createHost();
+  it("installs typed renderer-command routes for every native app-menu action", async () => {
+    const { host } = createHost();
     const rendererCommands: string[] = [];
     const registration = await host.menus.installAppMenu({
-      commandPalette: async () => {
-        rendererCommands.push("command-palette.open");
-      },
-      quickOpen: async () => {
-        rendererCommands.push("quick-open.open");
-      },
-      openSettings: async () => {
-        rendererCommands.push("settings.open");
+      sendRendererCommand: async (command) => {
+        rendererCommands.push(command);
       },
     });
 
@@ -462,28 +465,26 @@ describe("Electrobun desktop host adapter", () => {
     menuListener?.({ data: { action: "settings.open" } });
     menuListener?.({ data: { action: "workspace.open" } });
     await Promise.resolve();
-    expect(rendererCommands).toEqual(["command-palette.open", "quick-open.open", "settings.open"]);
-    expect(legacyActions).toEqual(["workspace.open"]);
+    expect(rendererCommands).toEqual([
+      "command-palette.open",
+      "quick-open.open",
+      "settings.open",
+      "workspace.open",
+    ]);
 
     await registration.dispose();
     await registration.dispose();
     expect(configuredMenus.at(-1)).toEqual([]);
     menuListener?.({ data: { action: "workspace.newTab" } });
-    expect(legacyActions).toEqual(["workspace.open"]);
+    expect(rendererCommands).toHaveLength(4);
   });
 
   it("reuses one process menu listener while replacing the active registration", async () => {
     const first = createHost();
     const firstActions: string[] = [];
     const firstRegistration = await first.host.menus.installAppMenu({
-      commandPalette: async () => {
-        firstActions.push("command-palette.open");
-      },
-      quickOpen: async () => {
-        firstActions.push("quick-open.open");
-      },
-      openSettings: async () => {
-        firstActions.push("settings.open");
+      sendRendererCommand: async (command) => {
+        firstActions.push(command);
       },
     });
     const listenerCountAfterFirstInstall = menuListenerInstallCount;
@@ -491,14 +492,8 @@ describe("Electrobun desktop host adapter", () => {
     const second = createHost();
     const secondActions: string[] = [];
     const secondRegistration = await second.host.menus.installAppMenu({
-      commandPalette: async () => {
-        secondActions.push("command-palette.open");
-      },
-      quickOpen: async () => {
-        secondActions.push("quick-open.open");
-      },
-      openSettings: async () => {
-        secondActions.push("settings.open");
+      sendRendererCommand: async (command) => {
+        secondActions.push(command);
       },
     });
     menuListener?.({ data: { action: "settings.open" } });
@@ -521,11 +516,9 @@ describe("Electrobun desktop host adapter", () => {
       onError: (error, context) => errors.push(`${context}:${String(error)}`),
     });
     const registration = await host.menus.installAppMenu({
-      commandPalette: () => {
+      sendRendererCommand: () => {
         throw new Error("menu callback failed");
       },
-      quickOpen: async () => {},
-      openSettings: async () => {},
     });
 
     expect(() => menuListener?.({ data: { action: "commandPalette.open" } })).not.toThrow();

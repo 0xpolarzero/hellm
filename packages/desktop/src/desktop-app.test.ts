@@ -90,9 +90,14 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
       menus: {
         installAppMenu: async (menu) => {
           events.push("menu:install");
-          await menu.commandPalette();
-          await menu.quickOpen();
-          await menu.openSettings();
+          for (const command of [
+            "command-palette.open",
+            "quick-open.open",
+            "workspace.open",
+            "settings.open",
+          ] as const) {
+            await menu.sendRendererCommand(command);
+          }
           return {
             dispose: async () => {
               events.push("menu:dispose");
@@ -121,6 +126,8 @@ describe("@svvy/desktop createDesktopApp", () => {
       "renderer-command:command-palette.open",
       "renderer:renderer-command",
       "renderer-command:quick-open.open",
+      "renderer:renderer-command",
+      "renderer-command:workspace.open",
       "renderer:renderer-command",
       "renderer-command:settings.open",
       "menu:dispose",
@@ -283,10 +290,10 @@ describe("@svvy/desktop createDesktopApp", () => {
   it("rejects stale menu callbacks after disposal without sending to the renderer", async () => {
     const events: string[] = [];
     const input = createInput(events);
-    let commandPalette!: () => Promise<void>;
+    let sendCommandPalette!: () => Promise<void>;
     input.host.menus.installAppMenu = async (menu) => {
       events.push("menu:install");
-      commandPalette = menu.commandPalette;
+      sendCommandPalette = () => menu.sendRendererCommand("command-palette.open");
       return {
         dispose: async () => {
           events.push("menu:dispose");
@@ -299,7 +306,7 @@ describe("@svvy/desktop createDesktopApp", () => {
     await app.dispose();
     const beforeStaleCallback = [...events];
 
-    await expect(commandPalette()).rejects.toThrow("after desktop disposal");
+    await expect(sendCommandPalette()).rejects.toThrow("after desktop disposal");
     expect(events).toEqual(beforeStaleCallback);
   });
 

@@ -82,7 +82,20 @@ export interface DesktopBridgeRegistration {
   dispose(): Promise<void>;
 }
 
-export type DesktopRendererCommand = "command-palette.open" | "quick-open.open" | "settings.open";
+export type DesktopRendererCommand =
+  | "command-palette.open"
+  | "quick-open.open"
+  | "settings.open"
+  | "workspace.open"
+  | "workspace.newTab"
+  | "workspace.openInNewTab"
+  | "session.new"
+  | "session.newPane"
+  | "sidebar.toggle"
+  | "surface.logs.open"
+  | "surface.agents.open"
+  | "surface.extensions.open"
+  | "surface.workflows.open";
 
 export type DesktopRendererNotification =
   | {
@@ -157,9 +170,7 @@ export interface DesktopWindowHandle {
 
 export interface DesktopMenuAdapter {
   installAppMenu(input: {
-    commandPalette(): Promise<void>;
-    quickOpen(): Promise<void>;
-    openSettings(): Promise<void>;
+    sendRendererCommand(command: DesktopRendererCommand): Promise<void>;
   }): Promise<DesktopMenuRegistration>;
 }
 
@@ -288,9 +299,7 @@ export function createDesktopApp(input: CreateDesktopAppInput): DesktopApp {
           await Promise.race([bridgeRegistration.rendererReady, startupStopRequested]);
           assertStartupMayContinue();
           menuRegistration = await input.host.menus.installAppMenu({
-            commandPalette: () => sendRendererCommand("command-palette.open"),
-            quickOpen: () => sendRendererCommand("quick-open.open"),
-            openSettings: () => sendRendererCommand("settings.open"),
+            sendRendererCommand,
           });
           assertStartupMayContinue();
           lifecycleState = "started";

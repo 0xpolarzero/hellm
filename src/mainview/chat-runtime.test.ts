@@ -7545,15 +7545,27 @@ describe("createChatRuntime", () => {
     const commands: string[] = [];
     const unsubscribe = runtime.subscribeRendererCommand((command) => commands.push(command));
 
-    for (const command of ["command-palette.open", "quick-open.open", "settings.open"] as const) {
+    for (const command of [
+      "command-palette.open",
+      "quick-open.open",
+      "settings.open",
+      "workspace.open",
+      "surface.workflows.open",
+    ] as const) {
       harness.emitDesktopNotification({ kind: "renderer-command", command });
     }
 
-    expect(commands).toEqual(["command-palette.open", "quick-open.open", "settings.open"]);
+    expect(commands).toEqual([
+      "command-palette.open",
+      "quick-open.open",
+      "settings.open",
+      "workspace.open",
+      "surface.workflows.open",
+    ]);
 
     unsubscribe();
     harness.emitDesktopNotification({ kind: "renderer-command", command: "settings.open" });
-    expect(commands).toHaveLength(3);
+    expect(commands).toHaveLength(5);
     runtime.dispose();
   });
 

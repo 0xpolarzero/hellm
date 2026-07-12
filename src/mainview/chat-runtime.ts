@@ -151,7 +151,6 @@ import {
   type ReasoningEffort,
   type AgentProfileId,
 } from "../shared/agent-settings";
-import type { AppMenuAction } from "../shared/shortcut-registry";
 import {
   addDockviewPanel,
   bindPane,
@@ -912,7 +911,6 @@ export interface ChatRuntime {
   subscribe: (listener: ChatRuntimeListener) => () => void;
   subscribeAppLogUpdate: (listener: (payload: AppLogUpdateMessage) => void) => () => void;
   subscribeRendererCommand: (listener: (command: DesktopRendererCommand) => void) => () => void;
-  subscribeAppMenuAction: (listener: (action: AppMenuAction) => void) => () => void;
   listSessions: () => Promise<WorkspaceSessionSummary[]>;
   getPane: (panelId: string) => ChatPaneState | undefined;
   getPaneController: (panelId: string) => ChatSurfaceController | null;
@@ -4126,15 +4124,6 @@ export async function createChatRuntime(
       rendererCommandListeners.add(listener);
       return () => {
         rendererCommandListeners.delete(listener);
-      };
-    },
-    subscribeAppMenuAction: (listener) => {
-      const appMenuListener = ({ action }: { action: AppMenuAction }) => {
-        listener(action);
-      };
-      rpcClient.addMessageListener("sendAppMenuAction", appMenuListener);
-      return () => {
-        rpcClient.removeMessageListener("sendAppMenuAction", appMenuListener);
       };
     },
     listSessions: refreshSessions,

@@ -792,6 +792,8 @@
       case "settings.open":
         openSettingsPane();
         return;
+      default:
+        handleAppMenuAction(command);
     }
   }
 
@@ -1425,11 +1427,7 @@
     const handleResize = () => {
       windowWidth = window.innerWidth;
     };
-    const handleAppMenuMessage = ({ action }: { action: AppMenuAction }) => {
-      handleAppMenuAction(action);
-    };
     window.addEventListener("resize", handleResize);
-    const unsubscribeAppMenuAction = runtime.subscribeAppMenuAction(handleAppMenuMessage);
     const unsubscribeRendererCommand = runtime.subscribeRendererCommand(handleRendererCommand);
     void runtime
       .markRendererReady()
@@ -1458,7 +1456,6 @@
       setSidebarResizing(false);
       clearCopyTranscriptResetTimer();
       window.removeEventListener("resize", handleResize);
-      unsubscribeAppMenuAction();
       unsubscribeRendererCommand();
     };
   });

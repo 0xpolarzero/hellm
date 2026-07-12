@@ -12,11 +12,7 @@ import type {
   DesktopWindowId,
 } from "@svvy/desktop";
 import type { ChatRPCSchema } from "../shared/workspace-contract";
-import {
-  buildAppMenuConfiguration,
-  routeAppMenuAction,
-  type LegacyAppMenuAction,
-} from "./app-menu";
+import { buildAppMenuConfiguration, routeAppMenuAction } from "./app-menu";
 import { positionNativeTrafficLights } from "./native-window-controls";
 
 type RendererApiInput = Parameters<DesktopBridgeAdapter["exposeRendererApi"]>[0];
@@ -56,7 +52,6 @@ export interface CreateElectrobunDesktopHostOptions {
   readonly rendererReadyTimeoutMs?: number;
   readonly resolveMainWindowUrl: (input: DesktopMainWindowInput) => string | Promise<string>;
   readonly prepareMainWindow?: (window: BrowserWindow<BunRpc>) => void | Promise<void>;
-  readonly onLegacyAppMenuAction: (action: LegacyAppMenuAction) => void | Promise<void>;
   readonly includeSettingsMenuItem?: boolean;
   readonly browserTools?: DesktopBrowserToolsUiAdapter;
   readonly platform?: NodeJS.Platform;
@@ -489,14 +484,7 @@ export function createElectrobunDesktopHostAdapter(
         }
         let dispatched: void | Promise<void>;
         try {
-          dispatched =
-            route.kind === "renderer-command"
-              ? route.command === "command-palette.open"
-                ? input.commandPalette()
-                : route.command === "quick-open.open"
-                  ? input.quickOpen()
-                  : input.openSettings()
-              : options.onLegacyAppMenuAction(route.action);
+          dispatched = input.sendRendererCommand(route.command);
         } catch (error) {
           reportError(error, "electrobun-desktop-host.menu-action");
           return;

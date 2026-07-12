@@ -5,7 +5,7 @@ import type {
   SurfaceStreamPatchInput,
   WorkspaceId,
 } from "@svvy/core";
-import type { StateReadModelResult } from "../shared/workspace-contract";
+import type { DesktopRendererCommand, StateReadModelResult } from "../shared/workspace-contract";
 
 export type DesktopRendererNotificationForRefetcher =
   | {
@@ -31,7 +31,7 @@ export type DesktopRendererNotificationForRefetcher =
   | { readonly kind: "read-model-rebaseline-required"; readonly reason: string }
   | {
       readonly kind: "renderer-command";
-      readonly command: "command-palette.open" | "quick-open.open" | "settings.open";
+      readonly command: DesktopRendererCommand;
     }
   | { readonly kind: "app-shutdown"; readonly reason: string };
 

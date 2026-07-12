@@ -1,15 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-const REMAINING_LEGACY_SYNC_CHANNELS = [
-  {
-    channel: "sendAppMenuAction",
-    retiresInIncrement: 10,
-    reason: "legacy workspace, session, sidebar, and surface menu routes retire in increment 10",
-  },
-] as const;
-
 describe("legacy sync seam", () => {
-  it("pins remaining legacy renderer sync channels to their retirement increment", async () => {
+  it("pins artifact open as the only remaining legacy renderer sync channel", async () => {
     const contractSource = await Bun.file(
       `${import.meta.dir}/../shared/workspace-contract.ts`,
     ).text();
@@ -22,13 +14,9 @@ describe("legacy sync seam", () => {
       expect(source).not.toContain("sendWorkspaceSync");
     }
 
-    for (const entry of REMAINING_LEGACY_SYNC_CHANNELS) {
-      expect(entry.retiresInIncrement).toBe(10);
-      expect(contractSource).toContain(entry.channel);
-      expect(indexSource).toContain(entry.channel);
-      expect(runtimeSource).toContain(entry.channel);
-    }
-
+    expect(contractSource).not.toContain("sendAppMenuAction");
+    expect(indexSource).not.toContain("sendAppMenuAction");
+    expect(runtimeSource).not.toContain("sendAppMenuAction");
     expect(contractSource).not.toContain("sendAppLogUpdate");
     expect(indexSource).not.toContain("sendAppLogUpdate");
     expect(runtimeSource).not.toContain("sendAppLogUpdate");

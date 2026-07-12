@@ -30,7 +30,6 @@ import type {
 } from "@svvy/core";
 import type { ComposerSnippetMention, SentSnippetProvenance } from "./snippets";
 import type { GeneratedAgentContextExternalSource } from "./generated-agent-context";
-import type { AppMenuAction } from "./shortcut-registry";
 import type {
   AnswerRequestInputResult,
   AnswerRuntimeApprovalResult,
@@ -414,7 +413,20 @@ export type DesktopRendererNotificationScope =
   | { kind: "workspace"; workspaceId: WorkspaceId }
   | { kind: "surface"; workspaceId: WorkspaceId; surfacePiSessionId: SurfacePiSessionId };
 
-export type DesktopRendererCommand = "command-palette.open" | "quick-open.open" | "settings.open";
+export type DesktopRendererCommand =
+  | "command-palette.open"
+  | "quick-open.open"
+  | "settings.open"
+  | "workspace.open"
+  | "workspace.newTab"
+  | "workspace.openInNewTab"
+  | "session.new"
+  | "session.newPane"
+  | "sidebar.toggle"
+  | "surface.logs.open"
+  | "surface.agents.open"
+  | "surface.extensions.open"
+  | "surface.workflows.open";
 
 export type DesktopRendererNotification =
   | {
@@ -2141,7 +2153,6 @@ export interface ChatRPCSchema {
     messages: {
       sendArtifactOpen: ArtifactOpenMessage;
       sendDesktopNotification: DesktopRendererNotification;
-      sendAppMenuAction: { action: AppMenuAction };
     };
   };
 }

@@ -1,13 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { readFile } from "node:fs/promises";
-import {
-  buildAppMenuConfiguration,
-  routeAppMenuAction,
-  type AppMenuActionRoute,
-  type LegacyAppMenuAction,
-} from "./app-menu";
+import { buildAppMenuConfiguration, routeAppMenuAction, type AppMenuActionRoute } from "./app-menu";
 
-const legacyActions = [
+const remainingAppMenuActions = [
   "workspace.open",
   "workspace.newTab",
   "workspace.openInNewTab",
@@ -18,7 +13,7 @@ const legacyActions = [
   "surface.agents.open",
   "surface.extensions.open",
   "surface.workflows.open",
-] as const satisfies readonly LegacyAppMenuAction[];
+] as const;
 
 describe("native app menu configuration", () => {
   it("expresses the current native menu structure with shortcut-owned action metadata", () => {
@@ -164,9 +159,9 @@ describe("native app menu action routing", () => {
     ]);
   });
 
-  it("keeps every remaining menu action on the explicit legacy renderer route", () => {
-    expect(legacyActions.map((action) => routeAppMenuAction(action))).toEqual(
-      legacyActions.map((action) => ({ kind: "legacy-app-menu-action", action })),
+  it("routes every remaining menu action to its typed renderer command", () => {
+    expect(remainingAppMenuActions.map((action) => routeAppMenuAction(action))).toEqual(
+      remainingAppMenuActions.map((command) => ({ kind: "renderer-command", command })),
     );
     expect(routeAppMenuAction("not-an-app-menu-action")).toBeNull();
     expect(routeAppMenuAction(undefined)).toBeNull();

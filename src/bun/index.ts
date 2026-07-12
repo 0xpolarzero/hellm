@@ -2336,12 +2336,6 @@ desktopHost = createElectrobunDesktopHostAdapter({
     };
   },
   includeSettingsMenuItem: true,
-  onLegacyAppMenuAction: (action) =>
-    sendLegacyRendererMessage(
-      "sendAppMenuAction",
-      { action },
-      "Unable to send an app menu action to the main view.",
-    ),
   onBeforeQuit: shutdownDesktopApp,
   onError: (error, context) => {
     recordDevBrowserToolsError(
