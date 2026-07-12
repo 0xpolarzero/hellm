@@ -27,6 +27,13 @@ type BufferedRendererDelivery = {
 
 const MAX_RENDERER_HANDOFF_QUEUE_SIZE = 64;
 
+function isCommandInvalidation(delivery: BufferedRendererDelivery): boolean {
+  return (
+    delivery.notification.kind === "read-model-changed" &&
+    delivery.notification.invalidation.invalidation.model === "commandInspector"
+  );
+}
+
 let activeApplicationMenuDispatch: ((event: ApplicationMenuClickEvent) => void) | null = null;
 let applicationMenuDispatcherInstalled = false;
 
@@ -171,9 +178,6 @@ export function createElectrobunDesktopHostAdapter(
   };
 
   const bufferRendererDelivery = (delivery: BufferedRendererDelivery): void => {
-    const isCommandInvalidation = (candidate: BufferedRendererDelivery): boolean =>
-      candidate.notification.kind === "read-model-changed" &&
-      candidate.notification.invalidation.invalidation.model === "commandInspector";
     if (
       bufferedRendererDeliveries.some(
         (candidate) => candidate.notification.kind === "read-model-rebaseline-required",
