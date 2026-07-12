@@ -2013,7 +2013,6 @@ function createFakeRpc(input: {
         }),
         stateExtensionEnvSetOverride: async () => stateCommandResult(),
         stateExtensionEnvRemoveOverride: async () => stateCommandResult(),
-        getOpenWorkspaces: async () => [structuredClone(TEST_WORKSPACE_INFO)],
         stateAppPreferencesUpdate: async (request) => {
           const externalEditor = request.patch.externalEditor;
           persistedAppPreferences = {

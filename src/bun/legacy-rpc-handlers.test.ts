@@ -91,7 +91,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "setExtensionEnvSecret",
   "removeExtensionEnvSecret",
   "openWorkspace",
-  "getOpenWorkspaces",
   "getDefaultWorkspace",
   "closeWorkspace",
   "listWorkspaceBranches",

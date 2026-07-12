@@ -1476,9 +1476,6 @@ function buildDesktopRpcHandlers(
         recordDevBrowserToolsEvent("workspace.opened", { workspaceId: runtime.workspaceId });
         return { workspace: addWorkspaceBranch(runtime.getInfo()) };
       },
-      getOpenWorkspaces: async () => {
-        return workspaceRuntimeRegistry.listOpenWorkspaces().map(addWorkspaceBranch);
-      },
       getDefaultWorkspace: async () => {
         return addWorkspaceBranch((await workspaceRuntimeRegistry.getDefaultWorkspace()).getInfo());
       },

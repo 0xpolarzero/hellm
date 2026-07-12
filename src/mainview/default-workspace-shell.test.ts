@@ -33,7 +33,8 @@ describe("default workspace renderer shell", () => {
   it("uses the initially opened user workspace before falling back to the default workspace", async () => {
     const appSource = await readFile(new URL("./App.svelte", import.meta.url), "utf8");
 
-    expect(appSource).toContain("const openWorkspaces = await rpc.request.getOpenWorkspaces();");
+    expect(appSource).toContain("...(restoreState?.knownWorkspaces ?? [])");
+    expect(appSource).not.toContain("rpc.request.getOpenWorkspaces");
     expect(appSource).toContain('openWorkspaces.find((workspace) => workspace.kind === "user")');
     expect(appSource).toContain("await rpc.request.getDefaultWorkspace()");
   });

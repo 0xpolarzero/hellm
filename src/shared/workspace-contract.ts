@@ -1935,10 +1935,6 @@ export interface ChatRPCSchema {
         params: OpenWorkspaceRequest;
         response: OpenWorkspaceResponse;
       };
-      getOpenWorkspaces: {
-        params: undefined;
-        response: WorkspaceInfoResponse[];
-      };
       getDefaultWorkspace: {
         params: undefined;
         response: WorkspaceInfoResponse;

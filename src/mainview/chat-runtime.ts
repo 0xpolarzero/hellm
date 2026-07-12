@@ -816,7 +816,6 @@ export interface ChatRuntimeRpcClient {
     stateAppPreferencesUpdate: typeof rpc.request.stateAppPreferencesUpdate;
     setRequestInputVariant: typeof rpc.request.setRequestInputVariant;
     setRequestInputBlockingTimeout: typeof rpc.request.setRequestInputBlockingTimeout;
-    getOpenWorkspaces: typeof rpc.request.getOpenWorkspaces;
     stateWorkspaceLayoutSaveSlot: typeof rpc.request.stateWorkspaceLayoutSaveSlot;
     listWorkspaceBranches: typeof rpc.request.listWorkspaceBranches;
     switchWorkspaceBranch: typeof rpc.request.switchWorkspaceBranch;
@@ -980,7 +979,6 @@ export interface ChatRuntime {
     scroll: ChatPaneLayoutState["panels"][number]["localState"]["scroll"],
   ) => void;
   sendPromptToTarget: (target: PromptTarget, input: string) => Promise<void>;
-  listOpenWorkspaces: () => Promise<WorkspaceInfoResponse[]>;
   listWorkspaceBranches: () => Promise<WorkspaceBranchInfo[]>;
   switchWorkspaceBranch: (branch: string) => Promise<void>;
   listWorkspacePaths: (options?: { refresh?: boolean }) => Promise<WorkspacePathIndexEntry[]>;
@@ -4610,7 +4608,6 @@ export async function createChatRuntime(
       }
       await controller.sendPrompt({ text, attachments: [] });
     },
-    listOpenWorkspaces: () => rpcClient.request.getOpenWorkspaces(),
     listWorkspaceBranches: async () => {
       const result = await rpcClient.request.listWorkspaceBranches(scoped());
       return result.branches;

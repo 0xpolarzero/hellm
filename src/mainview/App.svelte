@@ -477,7 +477,10 @@
 
 			tabs = restoredTabs;
 			if (!tabs.length) {
-				const openWorkspaces = await rpc.request.getOpenWorkspaces();
+				const openWorkspaces = [
+					...(restoreState?.tabs ?? []),
+					...(restoreState?.knownWorkspaces ?? []),
+				].map((workspace) => toWorkspaceTabInfo(workspace));
 				const initialWorkspace =
 					openWorkspaces.find((workspace) => workspace.kind === "user") ??
 					(await rpc.request.getDefaultWorkspace());
