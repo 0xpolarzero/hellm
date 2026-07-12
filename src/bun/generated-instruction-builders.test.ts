@@ -14,7 +14,6 @@ import {
   validateTinyFishGeneratedMarkdown,
   validateTinyFishPackageMetadata,
 } from "../../scripts/generate-tinyfish-cli";
-import { buildGeneratedAgentContextEntries, buildSystemPrompt } from "./default-system-prompt";
 
 describe("generated CLI instruction builders", () => {
   it("validates the committed cx skill as upstream-only generated content", () => {
@@ -144,44 +143,4 @@ describe("generated CLI instruction builders", () => {
     expect(markdown).not.toContain("npm install -g @tiny-fish/cli");
     expect(markdown).not.toContain("sk-tinyfish-");
   });
-
-  it("includes generated instruction content only in loaded and eligible actor context", () => {
-    expect(buildSystemPrompt("handler")).toContain(CX_SKILL_INSTRUCTIONS.trim());
-    expect(buildSystemPrompt("handler")).toContain(TINYFISH_CLI_INSTRUCTIONS.trim());
-
-    const withoutWeb = buildSystemPrompt("handler", { networkAccess: false });
-    expect(withoutWeb).toContain(CX_SKILL_INSTRUCTIONS.trim());
-    expect(withoutWeb).not.toContain(TINYFISH_CLI_INSTRUCTIONS.trim());
-
-    const generatedEntries = buildGeneratedAgentContextEntries("handler", createTestState(), {
-      networkAccess: false,
-    });
-    expect(generatedEntries.map((entry) => entry.id)).not.toContain("web-context");
-  });
 });
-
-function createTestState() {
-  return {
-    version: 1 as const,
-    revision: 0,
-    updatedAt: "2026-06-09T00:00:00.000Z",
-    instructionBlocks: {},
-    actorRecipes: {
-      orchestrator: {
-        actor: "orchestrator" as const,
-        instructionBlockIds: [],
-        generatedSectionIds: [],
-      },
-      handler: {
-        actor: "handler" as const,
-        instructionBlockIds: [],
-        generatedSectionIds: [],
-      },
-      "workflow-task": {
-        actor: "workflow-task" as const,
-        instructionBlockIds: [],
-        generatedSectionIds: [],
-      },
-    },
-  };
-}

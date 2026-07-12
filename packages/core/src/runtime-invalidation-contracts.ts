@@ -43,6 +43,7 @@ export const WorkspaceReadModelInvalidationSchema = Schema.Union([
     model: Schema.Literal("snippets"),
     ids: Schema.optionalKey(Schema.Array(SnippetId)),
   }),
+  Schema.Struct({ model: Schema.Literal("externalInstructions") }),
 ]);
 
 export type WorkspaceReadModelInvalidation = typeof WorkspaceReadModelInvalidationSchema.Type;

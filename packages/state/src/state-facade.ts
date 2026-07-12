@@ -29,8 +29,13 @@ import {
   type AppLogWritePort,
   type AppLogWritePortService,
   type ExtensionId,
+  type ExtensionDependencyReadiness,
+  type ExtensionDependencyReadinessStatus,
+  type ExtensionRegistryObservation,
+  type ExtensionSourceBuildObservation,
   type ExtensionUsageState,
   type ExternalInstructionsSettings,
+  type ExternalInstructionsProjection,
   type ExtensionStatePort,
   type JsonValue as JsonValueType,
   type MessageId,
@@ -63,6 +68,7 @@ import {
   type RuntimeEpisodeStatePort,
   type RuntimeExtensionContextImpactStatePort,
   type RuntimeExtensionStatePort,
+  RuntimeExternalInstructionStatePort,
   type RuntimeGeneratedPackageStatePort,
   type RuntimePromptDefaultsStatePort,
   type RuntimeQueueStatePort,
@@ -76,6 +82,9 @@ import {
   type RuntimeTurnStatePort,
   type RuntimeWorkspaceStatePort,
   type SandboxPolicySource,
+  SecretStoreMutationPort,
+  type SecretStoreMutationPortService,
+  type SecretStorePortError,
   SessionNavigationSummarySchema,
   type SessionNavigationReadModel as CoreSessionNavigationReadModel,
   type SessionNavigationSummary as CoreSessionNavigationSummary,
@@ -115,6 +124,7 @@ import {
 import { appLogWritePortFromAppLogState } from "./app-log-write-port";
 import { layerAppLogWritePort } from "./app-log-write-port";
 import { mutationResult } from "./state-mutation-result";
+import { readExternalInstructionsProjectionWithActorUsage } from "./runtime-external-instruction-state-port";
 import { structuredSessionStatePortsLayerWithSandboxPolicyConfig } from "./structured-session-state-ports-layer";
 import { buildWorkspaceSessionNavigation } from "./session-navigation";
 import {
@@ -143,6 +153,9 @@ import {
   type StructuredSessionStateStore,
   type StructuredAgentProfileRecord,
   type StructuredSnippetRecord,
+  type StructuredExtensionEnvSecretReceiptRecord,
+  type StructuredExtensionEnvDeclarationRecord,
+  type StructuredExtensionEnvSecretRecord,
 } from "./structured-session-state";
 import type { StateLayerConfig } from "./state-layer-config";
 import type { WorkspaceStateRouter } from "./workspace-state-router";
@@ -158,6 +171,7 @@ import {
   decodeUnknownPromoteProfileExtensionDefaultCommandInputEffect,
   decodeUnknownRecordProviderAuthStatusCommandInputEffect,
   decodeUnknownRemoveExtensionEnvOverrideCommandInputEffect,
+  decodeUnknownRemoveExtensionEnvSecretCommandInputEffect,
   decodeUnknownReorderOrchestratorProfilesCommandInputEffect,
   decodeUnknownResetActorExtensionDefaultsCommandInputEffect,
   decodeUnknownSetAgentActorExtensionDefaultsCommandInputEffect,
@@ -166,6 +180,7 @@ import {
   decodeUnknownSelectWorkspaceTabCommandInputEffect,
   decodeUnknownSetExternalInstructionActorUsageCommandInputEffect,
   decodeUnknownSetExtensionEnvOverrideCommandInputEffect,
+  decodeUnknownSetExtensionEnvSecretCommandInputEffect,
   decodeUnknownSetProfileExtensionUsageCommandInputEffect,
   decodeUnknownSetSessionArchivedCommandInputEffect,
   decodeUnknownSetSessionNavigationSectionStateCommandInputEffect,
@@ -189,6 +204,7 @@ import {
   type PromoteProfileExtensionDefaultCommandInput,
   type RecordProviderAuthStatusCommandInput,
   type RemoveExtensionEnvOverrideCommandInput,
+  type RemoveExtensionEnvSecretCommandInput,
   type ReorderOrchestratorProfilesCommandInput,
   type ResetActorExtensionDefaultsCommandInput,
   type SetAgentActorExtensionDefaultsCommandInput,
@@ -197,6 +213,7 @@ import {
   type SelectWorkspaceTabCommandInput,
   type SetExternalInstructionActorUsageCommandInput,
   type SetExtensionEnvOverrideCommandInput,
+  type SetExtensionEnvSecretCommandInput,
   type SetProfileExtensionUsageCommandInput,
   type SetSessionArchivedCommandInput,
   type SetSessionNavigationSectionStateCommandInput,
@@ -250,7 +267,8 @@ export type StateReadModelRequest =
   | HandlerInspectorReadModelRequest
   | WorkflowTaskAttemptInspectorReadModelRequest
   | WorkspaceChromeReadModelRequest
-  | WorkspaceLayoutReadModelRequest;
+  | WorkspaceLayoutReadModelRequest
+  | ExternalInstructionsReadModelRequest;
 
 export type StateReadModelResult =
   | { kind: "appLogs"; value: AppLogReadModel }
@@ -275,7 +293,8 @@ export type StateReadModelResult =
   | { kind: "handlerInspector"; value: HandlerInspectorReadModel | null }
   | { kind: "workflowTaskAttemptInspector"; value: WorkflowTaskAttemptInspectorReadModel | null }
   | { kind: "workspaceChrome"; value: WorkspaceChromeReadModel }
-  | { kind: "workspaceLayout"; value: WorkspaceLayoutReadModel };
+  | { kind: "workspaceLayout"; value: WorkspaceLayoutReadModel }
+  | { kind: "externalInstructions"; value: ExternalInstructionsProjection };
 
 export interface AppPreferencesReadModel {
   appearance: AppPreferenceAppearance;
@@ -306,6 +325,11 @@ export interface ProviderAuthReadModel {
 export interface ProviderAuthReadModelRequest {
   kind: "providerAuth";
   workspaceId?: WorkspaceIdType;
+}
+
+export interface ExternalInstructionsReadModelRequest {
+  kind: "externalInstructions";
+  workspaceId: WorkspaceIdType;
 }
 
 export const StateReadModelRequestSchema = Schema.Union([
@@ -398,6 +422,10 @@ export const StateReadModelRequestSchema = Schema.Union([
     kind: Schema.Literal("workspaceLayout"),
     workspaceId: WorkspaceId,
   }),
+  Schema.Struct({
+    kind: Schema.Literal("externalInstructions"),
+    workspaceId: WorkspaceId,
+  }),
 ]);
 
 export const StateReadModelResultSchema = Schema.Union([
@@ -427,6 +455,7 @@ export const StateReadModelResultSchema = Schema.Union([
   }),
   Schema.Struct({ kind: Schema.Literal("workspaceChrome"), value: WorkspaceChromeReadModelSchema }),
   Schema.Struct({ kind: Schema.Literal("workspaceLayout"), value: WorkspaceLayoutReadModelSchema }),
+  Schema.Struct({ kind: Schema.Literal("externalInstructions"), value: Schema.Json }),
 ]);
 
 export interface SessionNavigationReadModelRequest {
@@ -758,17 +787,65 @@ export interface GeneratedContextPreviewReadModelRecord {
 }
 
 export interface ExtensionsReadModel {
+  aggregateFingerprint: string | null;
+  diagnostics: readonly SourceDiagnostic[];
+  observedAt: IsoDateTimeString | null;
   records: readonly ExtensionReadModelRecord[];
-  dependencyReadiness: readonly unknown[];
+  dependencyReadiness: readonly ExtensionDependencyReadiness[];
 }
 
-export interface ExtensionReadModelRecord {
-  extensionId: ExtensionId;
+export interface ExtensionCliReadinessReadModel {
+  requirementId: string;
+  requirementFingerprint: string;
+  required: boolean;
+  authorityStatus:
+    | "current"
+    | "missing"
+    | "requirement-fingerprint-mismatch"
+    | "registry-fingerprint-mismatch";
+  status: ExtensionDependencyReadinessStatus | "unknown";
+  readiness: ExtensionDependencyReadiness | null;
+  usable: boolean;
+  blocking: boolean;
+}
+
+export type ExtensionReadModelRecord = ExtensionRegistryObservation & {
+  buildAuthorityStatus:
+    | "current"
+    | "missing"
+    | "registry-fingerprint-mismatch"
+    | "build-requirement-mismatch"
+    | "source-fingerprint-mismatch";
+  buildObservation: ExtensionSourceBuildObservation | null;
+  buildRequired: boolean;
+  contextReady: boolean;
+  runtimeReady: boolean;
   readiness: "ready" | "not-ready" | "unknown";
   loadedByProfileIds: readonly (AgentProfileId | string)[];
   availableByProfileIds: readonly (AgentProfileId | string)[];
   generatedPackageStatus: "ready" | "failed" | "refresh-needed" | "unknown";
-}
+  cliReadiness: readonly ExtensionCliReadinessReadModel[];
+  dependencyRequirements: readonly {
+    kind: "dependency" | "trusted_dependency";
+    name: string;
+    version: string;
+    packageManager: "bun";
+    source: "npm";
+    integrity: null;
+    resolution: null;
+    approval: "approved" | "needs_user_confirmation";
+    install: "installed" | "unknown";
+  }[];
+  env?: readonly {
+    envName: string;
+    required: boolean;
+    secret: boolean;
+    description: string | null;
+    hasDefault: boolean;
+    configured: boolean;
+    status: "configured" | "defaulted" | "missing" | "not-configured";
+  }[];
+};
 
 export interface SnippetsReadModel {
   managed: readonly SnippetReadModelRecord[];
@@ -909,6 +986,18 @@ export interface ExtensionEnvStateCommands {
   removeOverride(
     input: RemoveExtensionEnvOverrideCommandInput,
   ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  setSecret(
+    input: SetExtensionEnvSecretCommandInput,
+  ): Effect.Effect<
+    StateMutationResult<StateCommandResult<{ configured: true }>>,
+    StateContractError
+  >;
+  removeSecret(
+    input: RemoveExtensionEnvSecretCommandInput,
+  ): Effect.Effect<
+    StateMutationResult<StateCommandResult<{ configured: false }>>,
+    StateContractError
+  >;
 }
 
 export interface AgentProfileStateCommands {
@@ -1071,6 +1160,14 @@ export interface StateCommandsFacade {
       input: RemoveExtensionEnvOverrideCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
+    setSecret(
+      input: SetExtensionEnvSecretCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult<{ configured: true }>>;
+    removeSecret(
+      input: RemoveExtensionEnvSecretCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult<{ configured: false }>>;
   };
   agentProfiles: {
     updateOrchestrator(
@@ -1182,6 +1279,7 @@ type StateLayerProvidedPortServices =
   | RuntimeActorExtensionBindingStatePort
   | RuntimeEpisodeStatePort
   | RuntimeExtensionStatePort
+  | RuntimeExternalInstructionStatePort
   | RuntimeExtensionContextImpactStatePort
   | RuntimeGeneratedPackageStatePort
   | RuntimePromptDefaultsStatePort
@@ -1464,6 +1562,26 @@ export function createStateCommandsFacade(
           input.clientSubmission,
           callOptions,
         ),
+      setSecret: (input, callOptions) =>
+        run(
+          "stateCommands.extensionEnv.setSecret",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.extensionEnv.setSecret(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
+      removeSecret: (input, callOptions) =>
+        run(
+          "stateCommands.extensionEnv.removeSecret",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.extensionEnv.removeSecret(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
     },
     agentProfiles: {
       updateOrchestrator: (input, callOptions) =>
@@ -1663,6 +1781,7 @@ export function stateCommandsFromRouter(input: {
   router: WorkspaceStateRouter;
   appLogs: AppLogState["Service"];
   resolveAppLogs?: AppLogStateResolver;
+  secretStoreMutation: SecretStoreMutationPortService;
 }): StateCommands["Service"] {
   return stateCommandsFromState({
     appLogs: input.resolveAppLogs ?? appLogStateResolver(input.appLogs),
@@ -1670,6 +1789,7 @@ export function stateCommandsFromRouter(input: {
       workspaceId
         ? input.router.resolveWorkspaceStructuredSession(workspaceId)
         : Effect.succeed(input.router.appGlobalStructuredSession),
+    secretStoreMutation: input.secretStoreMutation,
   });
 }
 
@@ -1678,9 +1798,11 @@ const layerStateReadModels = Layer.effect(StateReadModels, makeStateReadModels()
 const makeStateCommands = Effect.fn("@svvy/state/makeStateCommands")(function* () {
   const appLogs = yield* AppLogState;
   const structuredSession = yield* StructuredSessionState;
+  const secretStoreMutation = yield* SecretStoreMutationPort;
   return stateCommandsFromState({
     appLogs: appLogStateResolver(appLogs),
     structuredSession: () => Effect.succeed(structuredSession),
+    secretStoreMutation,
   });
 });
 
@@ -1691,7 +1813,7 @@ export const layer = (
 ): Layer.Layer<
   StateReadModels | StateCommands | AppLogWritePort | StateLayerProvidedPortServices,
   StateContractError,
-  FileSystem.FileSystem | Path.Path
+  FileSystem.FileSystem | Path.Path | SecretStoreMutationPort
 > => {
   const structuredSessionLayer = layerRootStructuredSessionState(input);
   const packageStateLayer = Layer.mergeAll(
@@ -1921,6 +2043,17 @@ function stateReadModelsFromState(state: {
               kind: "workspaceLayout",
               value: yield* buildWorkspaceLayoutReadModel(structuredSession, request.workspaceId),
             };
+          case "externalInstructions": {
+            const appState = yield* state.structuredSession(undefined);
+            return {
+              kind: "externalInstructions",
+              value: yield* buildExternalInstructionsReadModel(
+                structuredSession,
+                appState,
+                request.workspaceId,
+              ),
+            };
+          }
         }
       }),
     refetchInvalidation: (request) =>
@@ -2088,6 +2221,18 @@ function stateReadModelsFromState(state: {
                 value: yield* buildExtensionsReadModel(structuredSession, { kind: "extensions" }),
               },
             ];
+          case "externalInstructions":
+            if (request.descriptor.scope !== "workspace") return [];
+            return [
+              {
+                kind: "externalInstructions",
+                value: yield* buildExternalInstructionsReadModel(
+                  structuredSession,
+                  yield* state.structuredSession(undefined),
+                  request.descriptor.workspaceId,
+                ),
+              },
+            ];
           default:
             return [];
         }
@@ -2143,6 +2288,14 @@ function stateReadModelsFromState(state: {
                   {
                     kind: "workspaceLayout",
                     value: yield* buildWorkspaceLayoutReadModel(workspaceState, workspaceId),
+                  },
+                  {
+                    kind: "externalInstructions",
+                    value: yield* buildExternalInstructionsReadModel(
+                      workspaceState,
+                      appState,
+                      workspaceId,
+                    ),
                   },
                 ] satisfies StateReadModelResult[],
                 revision: workspaceStateRevision,
@@ -2203,6 +2356,7 @@ function readModelWorkspaceId(request: StateReadModelRequest): WorkspaceIdType |
     case "handlerInspector":
     case "workflowTaskAttemptInspector":
     case "workspaceLayout":
+    case "externalInstructions":
       return request.workspaceId;
     default:
       return undefined;
@@ -2265,6 +2419,16 @@ function buildPromptHistoryReadModel(
       })),
     })),
   );
+}
+
+function buildExternalInstructionsReadModel(
+  workspaceState: StructuredSessionState["Service"],
+  appState: StructuredSessionState["Service"],
+  workspaceId: WorkspaceIdType,
+): Effect.Effect<ExternalInstructionsProjection, StateContractError> {
+  return readExternalInstructionsProjectionWithActorUsage(workspaceState, appState, {
+    workspaceId,
+  });
 }
 
 function sessionNavigationSummary(snapshot: StructuredSessionSnapshot, composerDraftText: string) {
@@ -2357,7 +2521,18 @@ function sessionNavigationProvisionalTitle(
   }
 
   const firstTurnSummary = snapshot.turns[0]?.requestSummary?.trim() ?? "";
-  const sourceText = composerDraftText.trim() || firstTurnSummary;
+  const firstQueuedPrompt = (snapshot.queuedMessages ?? [])
+    .filter(
+      (message) =>
+        message.surfacePiSessionId === snapshot.session.orchestratorPiSessionId &&
+        message.kind === "user_message" &&
+        message.status !== "cancelled",
+    )
+    .toSorted((left, right) => left.sequence - right.sequence)[0];
+  const sourceText =
+    composerDraftText.trim() ||
+    firstTurnSummary ||
+    (firstQueuedPrompt ? queuedMessageText(firstQueuedPrompt).trim() : "");
   if (!sourceText) {
     return null;
   }
@@ -2638,17 +2813,162 @@ function buildExtensionsReadModel(
     const usage = extensionUsageFromConfiguredAgentRecords(
       persistedProfiles.map(configuredAgentProfileRecord),
     );
-    const records = [...usage.entries()]
-      .filter(([extensionId]) => (request.extensionId ? extensionId === request.extensionId : true))
-      .map(([extensionId, value]) => ({
-        extensionId: extensionId as ExtensionId,
-        readiness: extensionPackage?.status === "ready" ? ("ready" as const) : ("unknown" as const),
-        loadedByProfileIds: [...value.loadedByProfileIds],
-        availableByProfileIds: [...value.availableByProfileIds],
-        generatedPackageStatus: generatedPackageStatusForReadModel(extensionPackage?.status),
-      }))
+    const registry = yield* state.readExtensionRegistryObservation();
+    const buildEvidence = yield* state.readExtensionSourceBuildEvidence();
+    const dependencyBatch = yield* state.readExtensionDependencyReadinessBatch();
+    const declarations = yield* state.listExtensionEnvDeclarations();
+    const secrets = yield* state.listExtensionEnvSecrets();
+    const overrides = yield* state.listExtensionEnvOverrides();
+    const declaredTargets = new Set(
+      declarations.map((declaration) => `${declaration.extensionId}\0${declaration.envName}`),
+    );
+    const records = (registry?.observation.observations ?? [])
+      .filter((observation) =>
+        request.extensionId ? observation.extensionId === request.extensionId : true,
+      )
+      .map((observation) => {
+        const extensionId = observation.extensionId;
+        const value = usage.get(extensionId) ?? {
+          loadedByProfileIds: new Set<AgentProfileId | string>(),
+          availableByProfileIds: new Set<AgentProfileId | string>(),
+        };
+        const env = observation.envDeclarations
+          .filter((declaration) => declaredTargets.has(`${extensionId}\0${declaration.name}`))
+          .map((declaration) => {
+            const configured = declaration.secret
+              ? secrets.some(
+                  (secret) =>
+                    secret.extensionId === extensionId &&
+                    secret.envName === declaration.name &&
+                    secret.status === "configured",
+                )
+              : overrides.some(
+                  (override) =>
+                    override.extensionId === extensionId && override.envName === declaration.name,
+                );
+            return {
+              envName: declaration.name,
+              required: declaration.required,
+              secret: declaration.secret,
+              description: declaration.description,
+              hasDefault: declaration.hasDefault,
+              configured,
+              status: configured
+                ? ("configured" as const)
+                : declaration.hasDefault
+                  ? ("defaulted" as const)
+                  : declaration.required
+                    ? ("missing" as const)
+                    : ("not-configured" as const),
+            };
+          });
+        const dependencyByRequirement = new Map(
+          (dependencyBatch?.readiness ?? [])
+            .filter((fact) => fact.extensionId === extensionId)
+            .map((fact) => [fact.requirementId, fact] as const),
+        );
+        const registryFingerprintMatches =
+          dependencyBatch?.registryAggregateFingerprint ===
+          registry?.observation.aggregateFingerprint;
+        const cliReadiness = observation.cliDeclarations.map((declaration) => {
+          const candidate = dependencyByRequirement.get(declaration.id) ?? null;
+          const authorityStatus = !dependencyBatch
+            ? ("missing" as const)
+            : !registryFingerprintMatches
+              ? ("registry-fingerprint-mismatch" as const)
+              : !candidate
+                ? ("missing" as const)
+                : candidate.requirementFingerprint !== declaration.requirementFingerprint
+                  ? ("requirement-fingerprint-mismatch" as const)
+                  : ("current" as const);
+          const readiness = authorityStatus === "current" ? candidate : null;
+          const usable =
+            readiness?.status === "ready" ||
+            readiness?.status === "available" ||
+            readiness?.status === "update-available";
+          return {
+            requirementId: declaration.id,
+            requirementFingerprint: declaration.requirementFingerprint,
+            required: declaration.required,
+            authorityStatus,
+            status: readiness?.status ?? ("unknown" as const),
+            readiness,
+            usable,
+            blocking: declaration.required && !usable,
+          };
+        });
+        const hasEnvBlocker = env.some(
+          (declaration) => declaration.required && declaration.status === "missing",
+        );
+        const hasCliBlocker = cliReadiness.some((readiness) => readiness.blocking);
+        const buildCandidate =
+          buildEvidence?.observations.find(
+            (candidate) => candidate.extensionId === observation.extensionId,
+          ) ?? null;
+        const buildAuthorityStatus = !buildEvidence
+          ? ("missing" as const)
+          : buildEvidence.registryAggregateFingerprint !==
+              registry?.observation.aggregateFingerprint
+            ? ("registry-fingerprint-mismatch" as const)
+            : !buildCandidate
+              ? ("missing" as const)
+              : buildCandidate.buildRequirement !== observation.buildRequirement
+                ? ("build-requirement-mismatch" as const)
+                : buildCandidate.sourceStatus === "materialized" &&
+                    buildCandidate.sourceFingerprint !== observation.sourceFingerprint
+                  ? ("source-fingerprint-mismatch" as const)
+                  : ("current" as const);
+        const buildObservation = buildAuthorityStatus === "current" ? buildCandidate : null;
+        const buildRequired =
+          observation.buildRequirement === "required"
+            ? (buildObservation?.buildRequired ?? true)
+            : false;
+        const contextReady =
+          buildObservation?.buildRequirement === "not-required"
+            ? buildObservation.sourceStatus === "materialized"
+            : buildObservation?.currentBuildStatus === "current" &&
+              buildObservation.currentBuild !== null &&
+              buildObservation.currentBuild.sourceFingerprint === observation.sourceFingerprint;
+        const dependencyRequirements = observation.dependencyDeclarations.map((dependency) => {
+          const approved = state.readExtensionDependencyApproval({ dependency });
+          return {
+            ...dependency,
+            approval: approved ? ("approved" as const) : ("needs_user_confirmation" as const),
+            install:
+              approved && buildObservation?.currentBuildStatus === "current"
+                ? ("installed" as const)
+                : ("unknown" as const),
+          };
+        });
+        const hasDependencyBlocker = dependencyRequirements.some(
+          (dependency) => dependency.approval !== "approved" || dependency.install !== "installed",
+        );
+        const runtimeReady =
+          contextReady && !hasEnvBlocker && !hasCliBlocker && !hasDependencyBlocker;
+        return {
+          ...observation,
+          buildAuthorityStatus,
+          buildObservation,
+          buildRequired,
+          contextReady,
+          runtimeReady,
+          readiness: runtimeReady ? ("ready" as const) : ("not-ready" as const),
+          loadedByProfileIds: [...value.loadedByProfileIds],
+          availableByProfileIds: [...value.availableByProfileIds],
+          generatedPackageStatus: generatedPackageStatusForReadModel(extensionPackage?.status),
+          cliReadiness,
+          dependencyRequirements,
+          ...(env.length > 0 ? { env } : {}),
+        };
+      })
       .toSorted((left, right) => left.extensionId.localeCompare(right.extensionId));
-    return { records, dependencyReadiness: [] };
+    return {
+      aggregateFingerprint: registry?.observation.aggregateFingerprint ?? null,
+      diagnostics: registry?.observation.diagnostics ?? [],
+      observedAt: registry?.observedAt ?? null,
+      records,
+      dependencyReadiness: dependencyBatch?.readiness ?? [],
+    };
   });
 }
 
@@ -3239,6 +3559,7 @@ function bindingReasoning(
 function stateCommandsFromState(state: {
   appLogs: AppLogStateResolver;
   structuredSession: StructuredSessionStateResolver;
+  secretStoreMutation: SecretStoreMutationPortService;
 }): StateCommands["Service"] {
   const receipts = new Map<string, StateMutationResult<StateCommandResult>>();
 
@@ -3536,6 +3857,127 @@ function stateCommandsFromState(state: {
             () => structuredSession.removeExtensionEnvOverride(decoded),
             extensionEnvStateInvalidations(decoded.extensionId),
           );
+        }),
+      setSecret: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSetExtensionEnvSecretInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          const commandState = yield* structuredSession.readExtensionEnvSecretCommandState({
+            operation: "set",
+            ...(decoded.clientSubmission?.clientRequestId
+              ? { clientRequestId: decoded.clientSubmission.clientRequestId }
+              : {}),
+            extensionId: decoded.extensionId,
+            envName: decoded.envName,
+          });
+          if (commandState.receipt) {
+            return duplicateExtensionEnvSecretResult(commandState.receipt, true);
+          }
+          validateSecretDeclaration(
+            "set",
+            commandState.declaration,
+            decoded.extensionId,
+            decoded.envName,
+          );
+          validateExpectedSecretRevision(
+            "set",
+            decoded.expectedRevisionFingerprint,
+            commandState.current?.revisionFingerprint,
+          );
+          const secretStore = state.secretStoreMutation;
+          const written = yield* secretStore
+            .writeSecretValue({
+              target: {
+                kind: "extension-env",
+                extensionId: decoded.extensionId,
+                envName: decoded.envName,
+              },
+              value: decoded.secretValue,
+              ...(commandState.current
+                ? {
+                    replaces: {
+                      ref: commandState.current.ref,
+                      expectedRevisionFingerprint: commandState.current.revisionFingerprint,
+                    },
+                  }
+                : {}),
+            })
+            .pipe(Effect.mapError(secretStoreStateError("set")));
+          const receipt = yield* structuredSession
+            .commitExtensionEnvSecretSet({
+              command: decoded,
+              ref: written.ref,
+              revisionFingerprint: written.revisionFingerprint,
+              previous: commandState.current,
+            })
+            .pipe(
+              Effect.catch((error) =>
+                secretStore
+                  .removeSecretValue({
+                    ref: written.ref,
+                    expectedRevisionFingerprint: written.revisionFingerprint,
+                  })
+                  .pipe(
+                    Effect.catch(() =>
+                      structuredSession
+                        .recordExtensionEnvSecretOrphanCleanup({
+                          ref: written.ref,
+                          revisionFingerprint: written.revisionFingerprint,
+                        })
+                        .pipe(Effect.ignore),
+                    ),
+                    Effect.andThen(Effect.fail(error)),
+                  ),
+              ),
+            );
+          if (commandState.current) {
+            yield* cleanupCommittedExtensionEnvSecret(
+              structuredSession,
+              secretStore,
+              commandState.current,
+            );
+          }
+          return appliedExtensionEnvSecretResult(receipt, true, decoded.extensionId);
+        }),
+      removeSecret: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeRemoveExtensionEnvSecretInput(commandInput);
+          const structuredSession = yield* state.structuredSession(undefined);
+          const commandState = yield* structuredSession.readExtensionEnvSecretCommandState({
+            operation: "remove",
+            ...(decoded.clientSubmission?.clientRequestId
+              ? { clientRequestId: decoded.clientSubmission.clientRequestId }
+              : {}),
+            extensionId: decoded.extensionId,
+            envName: decoded.envName,
+          });
+          if (commandState.receipt) {
+            return duplicateExtensionEnvSecretResult(commandState.receipt, false);
+          }
+          validateSecretDeclaration(
+            "remove",
+            commandState.declaration,
+            decoded.extensionId,
+            decoded.envName,
+          );
+          validateExpectedSecretRevision(
+            "remove",
+            decoded.expectedRevisionFingerprint,
+            commandState.current?.revisionFingerprint,
+          );
+          const receipt = yield* structuredSession.commitExtensionEnvSecretRemove({
+            command: decoded,
+            previous: commandState.current,
+          });
+          if (commandState.current) {
+            const secretStore = state.secretStoreMutation;
+            yield* cleanupCommittedExtensionEnvSecret(
+              structuredSession,
+              secretStore,
+              commandState.current,
+            );
+          }
+          return appliedExtensionEnvSecretResult(receipt, false, decoded.extensionId);
         }),
     },
     agentProfiles: {
@@ -3856,6 +4298,96 @@ function extensionEnvStateInvalidations(
   return [{ scope: "app", invalidation: { model: "extensions", ids: [extensionId] } }];
 }
 
+function validateSecretDeclaration(
+  operation: "set" | "remove",
+  declaration: StructuredExtensionEnvDeclarationRecord | null,
+  extensionId: ExtensionId,
+  envName: string,
+): asserts declaration is StructuredExtensionEnvDeclarationRecord {
+  if (declaration?.secret) return;
+  throw new StateContractError({
+    operation: `stateCommands.extensionEnv.${operation}Secret`,
+    reason: "invalid-input",
+    message: `Extension ${extensionId} does not declare ${envName} as a secret environment value.`,
+  });
+}
+
+function validateExpectedSecretRevision(
+  operation: "set" | "remove",
+  expected: string | undefined,
+  current: string | undefined,
+): void {
+  if (expected === undefined || expected === current) return;
+  throw new StateContractError({
+    operation: `stateCommands.extensionEnv.${operation}Secret`,
+    reason: "stale-state",
+    message: "The extension env secret changed since it was observed.",
+  });
+}
+
+function secretStoreStateError(operation: "set" | "remove") {
+  return (error: SecretStorePortError) =>
+    new StateContractError({
+      operation: `stateCommands.extensionEnv.${operation}Secret`,
+      reason: error.reason === "state-conflict" ? "stale-state" : "transaction-failed",
+      message: "The extension env secret operation could not be completed.",
+    });
+}
+
+function cleanupCommittedExtensionEnvSecret(
+  structuredSession: StructuredSessionState["Service"],
+  secretStore: SecretStoreMutationPortService,
+  record: StructuredExtensionEnvSecretRecord,
+): Effect.Effect<void, never> {
+  return secretStore
+    .removeSecretValue({
+      ref: record.ref,
+      expectedRevisionFingerprint: record.revisionFingerprint,
+    })
+    .pipe(
+      Effect.flatMap(() => structuredSession.completeExtensionEnvSecretCleanup(record.ref)),
+      Effect.asVoid,
+      Effect.catch(() => Effect.void),
+    );
+}
+
+function appliedExtensionEnvSecretResult<Configured extends boolean>(
+  receipt: StructuredExtensionEnvSecretReceiptRecord,
+  configured: Configured,
+  extensionId: ExtensionId,
+): StateMutationResult<StateCommandResult<{ configured: Configured }>> {
+  return mutationResult(
+    {
+      configured,
+      receipt: {
+        clientRequestId: receipt.clientRequestId || null,
+        outcome: "applied",
+        committedAt: receipt.committedAt as StateCommandReceipt["committedAt"],
+        stateRevision: receipt.stateRevision,
+      },
+    },
+    extensionEnvStateInvalidations(extensionId),
+  );
+}
+
+function duplicateExtensionEnvSecretResult<Configured extends boolean>(
+  receipt: StructuredExtensionEnvSecretReceiptRecord,
+  configured: Configured,
+): StateMutationResult<StateCommandResult<{ configured: Configured }>> {
+  return mutationResult(
+    {
+      configured,
+      receipt: {
+        clientRequestId: receipt.clientRequestId,
+        outcome: "duplicate",
+        committedAt: receipt.committedAt as StateCommandReceipt["committedAt"],
+        stateRevision: receipt.stateRevision,
+      },
+    },
+    [],
+  );
+}
+
 function agentsStateInvalidations(
   profileId?: AgentProfileId | string,
 ): readonly StateInvalidationDescriptor[] {
@@ -4154,6 +4686,16 @@ const decodeSetExtensionEnvOverrideInput = (input: unknown) =>
 const decodeRemoveExtensionEnvOverrideInput = (input: unknown) =>
   decodeUnknownRemoveExtensionEnvOverrideCommandInputEffect(input).pipe(
     Effect.mapError(commandDecodeError("stateCommands.extensionEnv.removeOverride")),
+  );
+
+const decodeSetExtensionEnvSecretInput = (input: unknown) =>
+  decodeUnknownSetExtensionEnvSecretCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.extensionEnv.setSecret")),
+  );
+
+const decodeRemoveExtensionEnvSecretInput = (input: unknown) =>
+  decodeUnknownRemoveExtensionEnvSecretCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.extensionEnv.removeSecret")),
   );
 
 const decodeUpdateOrchestratorProfileInput = (input: unknown) =>

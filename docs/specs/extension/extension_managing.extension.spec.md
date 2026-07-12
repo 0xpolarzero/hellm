@@ -542,10 +542,18 @@ File-level revert rules:
 Build behavior:
 
 - Ordinary agent file edits do not auto-build.
-- `BUILD_REQUIRED` is based on the current source fingerprint differing from the last successful
-  current build fingerprint, not on whether the source differs from packaged defaults. A restored
-  source may match packaged defaults, but `buildRequired: true` remains until a successful build
-  activates that source as the current generated context.
+- The registry declares `buildRequirement: "required" | "not-required"`. Builtin/user records with
+  generated instruction, declaration, command, or runtime contributors are required; direct-source
+  builtin/user records with no generated contributor and every external instruction are
+  not-required. Missing required builtin source is materialized before build. Removed records have
+  no usable build evidence.
+- For required records, `BUILD_REQUIRED` is based on the exact canonical editable-source
+  fingerprint differing from validated current-build evidence, not on whether source differs from
+  packaged defaults. Canonical inputs are the manifest, editable instruction sources, referenced
+  generator scripts, and regular files under editable `source/`. Generated outputs, build roots,
+  aggregate caches, generated packages, installs/locks, env/secrets, CLI/dependency readiness,
+  bindings, trash, and snapshots are excluded. A restored source may match packaged defaults, but
+  `buildRequired: true` remains until a successful build promotes that fingerprint.
 - User/product-triggered source or config changes may auto-build immediately after the action. This
   includes revert, reset when it changes build inputs, and loading a snapshot.
 - Auto-builds use the same `build` implementation and dependency approval gate as a normal explicit
@@ -563,6 +571,13 @@ Build behavior:
 - Only a successful context-ready generated agent context can make affected surfaces stale by
   fingerprint mismatch. Runtime readiness blockers such as missing required env values block load or
   invocation, not generated context activation.
+- The current manifest is the sole active successful build. State retains one current-evidence row
+  and one last-attempt summary, not build history. A failed, blocked, or interrupted attempt updates
+  only `lastBuild` and leaves current files/evidence untouched. Observation can report current
+  evidence missing, stale, or invalid without inventing an attempt; `never` means no attempt row.
+- `contextReady` comes only from validated current build evidence. `ready` is runtime-derived by
+  joining it with current CLI, env, and dependency facts. Aggregate `@svvyx/extensions` package
+  status is separate and cannot satisfy either fact.
 - After a successful build changes an extension context fingerprint, affected orchestrator
   sessions, handler-thread surfaces, and workflow task-agent attempts follow automatic fingerprint
   staleness and pre-dispatch refresh according to `docs/specs/extensions-and-tools.spec.md` and
@@ -632,7 +647,10 @@ Normal workflow:
 svvyx extensions inspect <extension-id> --json
 ```
 
-Read the returned editable paths. Edit extension source, manifest, instruction files, or package.json with `apply_patch`.
+Read the returned package-owned source handles and state-backed readiness facts. Open an editable
+source through the product source-edit action, then edit the returned path with `apply_patch`.
+Inspection is answered by the parent Runtime/state authority; the `svvyx` child never probes PATH,
+ambient env, dependency install directories, build directories, or a filesystem approval ledger.
 
 After the edit batch is complete:
 
@@ -1434,7 +1452,7 @@ type InspectExtensionState = {
   draftChanged: boolean;
   buildRequired: boolean;
   currentBuild: null | {
-    status: "ready" | "missing" | "invalid";
+    status: "current" | "missing" | "stale" | "invalid" | "not-required";
   };
   lastBuild?: {
     status: "success" | "failed" | "blocked" | "never";
@@ -1604,7 +1622,7 @@ Prompt-only builtin example:
       "draftChanged": false,
       "buildRequired": false,
       "currentBuild": {
-        "status": "ready"
+        "status": "current"
       },
       "lastBuild": {
         "status": "success"
@@ -1705,7 +1723,7 @@ Incur-backed user example:
       "draftChanged": true,
       "buildRequired": true,
       "currentBuild": {
-        "status": "ready"
+        "status": "stale"
       },
       "lastBuild": {
         "status": "success"
@@ -2223,6 +2241,13 @@ rollback command. A build writes to `builds/extensions/<id>/staging/<build-run-i
 running; after validation succeeds, `svvy` atomically replaces `builds/extensions/<id>/current/`
 with that staged output. Failed or blocked builds must not replace `current/`.
 
+Desktop build actions cross the renderer bridge with `BuildRuntimeExtensionInput` and receive only
+`BuildRuntimeExtensionResult`. Bun delegates directly to `Runtime.extensions.build(...)`; it does
+not run the legacy `svvyx extensions build` inventory handler. After the receipt resolves, the
+Extensions pane refetches the authoritative state-backed extensions read model. A build receipt is
+never an `ExtensionsInventoryReadModel`, and successful build handling does not refresh temporary
+detail-only inventory content.
+
 Build results split context readiness from runtime readiness:
 
 - `contextReady` means the extension source, instructions, manifest, generated docs, command
@@ -2597,11 +2622,12 @@ for any agent profile, not only the profile currently bound to that actor sessio
 management command: Extension Managing validates intent and produces a closed state-change request.
 `@svvy/runtime` applies that request through the appropriate core-owned profile/actor-usage state
 contract implemented by `@svvy/state`. When called through Shell `exec_command`,
-`svvyx extensions` is ordinary app-owned CLI input. The accepted command is routed back through
-`@svvy/runtime`, which invokes the Extension Managing handler and applies the returned
-`ExtensionRuntimeOperation` items through runtime-owned lanes and core-owned state ports. The CLI
-subprocess never emits runtime-effect transport intents, opens the state database, constructs state
-ports, or decides which live sessions are affected.
+`svvyx extensions` is ordinary app-owned CLI input. The child process only parses `set-usage` or a
+usage-change `revert` into the strict response-bearing
+`SvvyxExtensionManagementRuntimeRequest`; the parent applies it through `@svvy/runtime` and replaces
+the placeholder child output and facts with the committed result. The CLI subprocess never opens
+the state database, constructs state ports, writes a `.svvy/changes` journal, mutates an
+`AgentProfileMutationStore`, or decides which live sessions are affected.
 
 The applied request changes the target agent profile's persistent extension usage state and reports
 existing sessions or task attempts that are bound to the affected profile and whose generated agent
@@ -2617,7 +2643,10 @@ current binding use `load_extension`; agents that want to change profile default
 
 Reverting a usage change uses the same affected-surface path. The revert command restores the
 recorded previous profile usage value, and the parent runtime process derives affected surfaces,
-command facts, and read-model invalidations from the committed state change.
+command facts, and read-model invalidations from the committed state change. Usage changes and
+their reversal records are state-owned, client-request-idempotent, state-revision CAS guarded, and
+durable across app restarts. A revert additionally compares the current explicit usage value with
+the recorded post-change value and fails on intervening edits.
 
 Fixed app-native control extensions cannot be changed by `set-usage`. Extension Loading is
 fixed `loaded` and attempts to set it to any state must fail with a clear error.

@@ -22,6 +22,11 @@ import {
   type WorkspaceId,
   type AuthenticatedRunTaskAgentInput,
   type RunTaskAgentResult,
+  type SvvyxRuntimeEffectTransportRequest,
+  type SvvyxExtensionManagementRuntimeRequest,
+  type SvvyxExtensionManagementRuntimeResponse,
+  type SvvyxWorkflowsRuntimeRequest,
+  type SvvyxWorkflowsRuntimeResponse,
 } from "@svvy/core";
 import {
   type HostProcessReferencePortService,
@@ -82,6 +87,18 @@ export function createRuntimeBackedWorkspaceSessionCatalog(
     workflowsExtensionsGeneratedPackagePath?: string;
     workflowsGeneratedPackagePath?: string;
     workflowsSourceRoot?: string;
+    applyExtensionLifecycleRuntimeEffect?: (
+      request: Extract<
+        SvvyxRuntimeEffectTransportRequest,
+        { readonly type: "extension_build.request" | "extension_source.reconcile" }
+      >,
+    ) => Promise<void>;
+    applyExtensionManagementRuntimeRequest?: (
+      request: SvvyxExtensionManagementRuntimeRequest,
+    ) => Promise<SvvyxExtensionManagementRuntimeResponse>;
+    applyWorkflowsRuntimeRequest?: (
+      request: SvvyxWorkflowsRuntimeRequest,
+    ) => Promise<SvvyxWorkflowsRuntimeResponse>;
     acquireExecuteTypescriptLaunch?: (
       input: Omit<BuildLaunchPolicyInput, "launchKind">,
     ) => Promise<{

@@ -368,9 +368,9 @@
 						preferences={appPreferences}
 						workspaceKey={workspaceId ?? ""}
 						externalInstructionSources={externalInstructionSources}
-						onOpenExternalInstructionSource={async (path) => {
+						onOpenExternalInstructionSource={async (sourceId) => {
 							if (!workspaceId && !runtime.workspaceId) return false;
-							return runtime.openGeneratedAgentContextExternalSourceInEditor(path);
+							return runtime.openExternalInstructionSourceInEditor(sourceId);
 						}}
 						onSave={saveAppPreferences}
 					/>

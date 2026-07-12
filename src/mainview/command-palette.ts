@@ -927,8 +927,9 @@ export async function executePaletteFallbackPrompt(input: {
     return false;
   }
 
-  await input.runtime.createSession({}, input.paneId);
-  const pane = input.runtime.getPane(input.paneId);
+  await input.runtime.createSession({ title: prompt }, input.paneId);
+  const pane =
+    input.runtime.getPane(input.paneId) ?? input.runtime.getPane(PRIMARY_COMMAND_PANE_ID);
   const target = pane?.target ?? null;
   if (isPromptTarget(target)) {
     await input.onCreatedTarget?.(target);
@@ -942,7 +943,8 @@ async function executeInitialPrompt(input: {
   paneId: string;
   prompt: string;
 }): Promise<void> {
-  const pane = input.runtime.getPane(input.paneId);
+  const pane =
+    input.runtime.getPane(input.paneId) ?? input.runtime.getPane(PRIMARY_COMMAND_PANE_ID);
   const target = pane?.target ?? null;
   if (!isPromptTarget(target)) {
     throw new Error("Expected a newly opened command palette target before sending a prompt.");

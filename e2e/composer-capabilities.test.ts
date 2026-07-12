@@ -124,32 +124,38 @@ async function waitForModelLabel(
 }
 
 test("typing @ opens the workspace mention picker without arrow-key recovery", async () => {
-  await runApp(createEnv(), async ({ page }) => {
-    await page.getByRole("button", { name: "Create a new orchestrator" }).click({ force: true });
-    const composer = page.locator(
-      'textarea[placeholder="Ask svvy to inspect the repo, make a change, or delegate work."]',
-    );
-    await composer.waitFor({ state: "visible" });
+  await runApp(
+    createEnv({
+      OPENAI_API_KEY: "svvy-e2e-openai-key",
+      ZAI_API_KEY: "svvy-e2e-zai-key",
+    }),
+    async ({ page }) => {
+      await page.getByRole("button", { name: "Create a new orchestrator" }).click({ force: true });
+      const composer = page.locator(
+        'textarea[placeholder="Ask svvy to inspect the repo, make a change, or delegate work."]',
+      );
+      await composer.waitFor({ state: "visible" });
 
-    await composer.focus();
-    await composer.press("@");
+      await composer.focus();
+      await composer.press("@");
 
-    const composerSnapshot = await composer.resolve();
-    expect(composerSnapshot.first?.value).toBe("@");
-    expect(composerSnapshot.first?.selectionStart).toBe(1);
-    expect(composerSnapshot.first?.selectionEnd).toBe(1);
+      const composerSnapshot = await composer.resolve();
+      expect(composerSnapshot.first?.value).toBe("@");
+      expect(composerSnapshot.first?.selectionStart).toBe(1);
+      expect(composerSnapshot.first?.selectionEnd).toBe(1);
 
-    const mentionPicker = page.getByRole("listbox", { name: "Workspace paths" });
-    await mentionPicker.waitFor({ state: "visible", timeout: 5_000 });
-    await page.getByText("Indexing workspace paths...").waitFor({
-      state: "hidden",
-      timeout: 15_000,
-    });
-    await Bun.sleep(250);
+      const mentionPicker = page.getByRole("listbox", { name: "Workspace paths" });
+      await mentionPicker.waitFor({ state: "visible", timeout: 5_000 });
+      await page.getByText("Indexing workspace paths...").waitFor({
+        state: "hidden",
+        timeout: 15_000,
+      });
+      await Bun.sleep(250);
 
-    expect(await mentionPicker.isVisible()).toBe(true);
-    expect(await page.locator(".mention-picker .mention-option").count()).toBeGreaterThan(0);
-  });
+      expect(await mentionPicker.isVisible()).toBe(true);
+      expect(await page.locator(".mention-picker .mention-option").count()).toBeGreaterThan(0);
+    },
+  );
 });
 
 test("model picker stays scoped to configured providers and updates the composer model label", async () => {

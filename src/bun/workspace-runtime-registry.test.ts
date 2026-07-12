@@ -25,6 +25,8 @@ import type {
   RuntimeClientRequestId,
   RuntimeEvent,
   RuntimeOwnerId,
+  SecretStoreMutationPortService,
+  SecretStorePortService,
   SubmitMessageInput,
   WorkspaceId,
 } from "@svvy/core";
@@ -98,6 +100,8 @@ describe("WorkspaceRuntimeRegistry", () => {
     ]);
     expect(Object.keys(facades.runtimeActions).toSorted()).toEqual([
       "approvals",
+      "extensions",
+      "generatedContext",
       "messages",
       "queues",
       "requestInput",
@@ -108,6 +112,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     ]);
     expect(Object.keys(facades.appActions).toSorted()).toEqual([
       "artifacts",
+      "externalInstructions",
       "git",
       "telemetry",
       "workspaceFiles",
@@ -126,6 +131,10 @@ describe("WorkspaceRuntimeRegistry", () => {
       "materializeSelectedAttachments",
       "importComposerAttachments",
       "resolvePathTarget",
+    ]);
+    expect(Object.keys(facades.appActions.externalInstructions)).toEqual([
+      "resolveEditorTarget",
+      "recordEditorResult",
     ]);
     expect(Object.keys(facades.appActions.telemetry)).toEqual(["recordRenderer"]);
     expect("events" in facades.runtimeActions).toBeFalse();
@@ -343,7 +352,7 @@ describe("WorkspaceRuntimeRegistry", () => {
 
   it("opens the initial cwd when startup opening is requested", async () => {
     const cwd = tempWorkspace("startup-open");
-    const registry = createRegistry(cwd, tempWorkspace("agent-dir"), {
+    const registry = createRegistry(cwd, tempAgentDir(), {
       openInitialWorkspace: true,
     });
     await registry.ready();
@@ -355,13 +364,32 @@ describe("WorkspaceRuntimeRegistry", () => {
 
     expect(workspace?.cwd).toBe(realpathSync.native(cwd));
     expect(registry.getActiveWorkspaceId()).toBe(workspace.workspaceId);
+    const chrome = await (
+      await registry.getRendererStateFacade()
+    ).readModels.fetch({
+      kind: "workspaceChrome",
+    });
+    expect(chrome).toMatchObject({
+      kind: "workspaceChrome",
+      value: {
+        tabs: [
+          {
+            workspaceId: workspace.workspaceId,
+            cwd: realpathSync.native(cwd),
+            workspaceLabel: basename(cwd),
+            kind: "user",
+            activeLayoutId: "A",
+          },
+        ],
+      },
+    });
   });
 
   it("reaches app-runtime readiness before opening the initial workspace", async () => {
     const events: string[] = [];
     const registry = createRegistry(
       tempWorkspace("readiness-before-startup-open"),
-      tempWorkspace("agent-dir"),
+      tempAgentDir(),
       { openInitialWorkspace: true },
     );
     const createAppRuntimeBootstrap = registry["createAppRuntimeBootstrap"].bind(registry);
@@ -443,7 +471,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     const cwd = tempWorkspace("workspace-startup-source-reconcile");
     writeFileSync(join(cwd, "AGENTS.md"), "# Workspace instructions\n");
     const bridgeWarnings: string[] = [];
-    const registry = createRegistry(cwd, tempWorkspace("agent-dir"), {
+    const registry = createRegistry(cwd, tempAgentDir(), {
       forwardBridgeLog: (level, message, source) => {
         if (level === "warn") bridgeWarnings.push(`${source}:${message}`);
       },
@@ -468,7 +496,7 @@ describe("WorkspaceRuntimeRegistry", () => {
 
   it("rejects workspace readiness and records a durable diagnostic when startup source reaction fails", async () => {
     const cwd = tempWorkspace("workspace-startup-source-reaction-failure");
-    const agentDir = tempWorkspace("agent-dir");
+    const agentDir = tempAgentDir();
     writeFileSync(join(cwd, "AGENTS.md"), "# Workspace instructions\n");
     const registry = createRegistry(cwd, agentDir);
     await registry.ready();
@@ -551,7 +579,7 @@ describe("WorkspaceRuntimeRegistry", () => {
     const generatedPackagePath = tempWorkspace("generated-workflows-package");
     const extensionsGeneratedPackagePath = tempWorkspace("generated-extensions-package");
     mkdirSync(join(cwd, ".smithers"), { recursive: true });
-    const registry = createRegistry(cwd, tempWorkspace("agent-dir"), {
+    const registry = createRegistry(cwd, tempAgentDir(), {
       workflowsExtensionsGeneratedPackagePath: extensionsGeneratedPackagePath,
       workflowsGeneratedPackagePath: generatedPackagePath,
     });
@@ -609,7 +637,7 @@ describe("WorkspaceRuntimeRegistry", () => {
 
   it("shares the durable session catalog across duplicate tabs for the same cwd", async () => {
     const cwd = tempWorkspace("shared-session-cwd");
-    const agentDir = tempWorkspace("agent-dir");
+    const agentDir = tempAgentDir();
     const registry = createRegistry(cwd, agentDir);
 
     const first = await registry.acquireWorkspace(cwd);
@@ -846,7 +874,7 @@ describe("WorkspaceRuntimeRegistry", () => {
 
   it("keeps cwd-scoped app logs shared without a renderer push callback", async () => {
     const cwd = tempWorkspace("shared-app-log-updates");
-    const registry = createRegistry(cwd, tempWorkspace("agent-dir"));
+    const registry = createRegistry(cwd, tempAgentDir());
     const first = await registry.acquireWorkspace(cwd);
     const second = await registry.acquireWorkspace(join(cwd, "."));
     const subscription = await registry.getRuntimeEventSubscription(first.workspaceId, {
@@ -889,7 +917,7 @@ describe("WorkspaceRuntimeRegistry", () => {
 
   it("persists workspace app logs across runtime release and reacquire", async () => {
     const cwd = tempWorkspace("persisted-app-logs");
-    const registry = createRegistry(cwd, tempWorkspace("agent-dir"));
+    const registry = createRegistry(cwd, tempAgentDir());
     const first = await registry.acquireWorkspace(cwd);
     const workspaceId = first.workspaceId;
 
@@ -925,7 +953,7 @@ describe("WorkspaceRuntimeRegistry", () => {
       tempWorkspace("generated-extensions-refresh-package-parent"),
       "package",
     );
-    const registry = createRegistry(cwd, tempWorkspace("agent-dir"), {
+    const registry = createRegistry(cwd, tempAgentDir(), {
       workflowsExtensionsGeneratedPackagePath: generatedExtensionsPackagePath,
     });
     await registry.ready();
@@ -966,7 +994,7 @@ describe("WorkspaceRuntimeRegistry", () => {
   it("records repair-needed rows and recovery work for recoverable unopened workspaces", async () => {
     const ownerCwd = tempWorkspace("runtime-generated-owner-refresh");
     const unopenedCwd = tempWorkspace("runtime-generated-unopened-repair");
-    const agentDir = tempWorkspace("generated-unopened-agent-dir");
+    const agentDir = tempAgentDir("generated-unopened-agent-root");
     const generatedExtensionsPackagePath = join(
       tempWorkspace("generated-unopened-extensions-package-parent"),
       "package",
@@ -1116,7 +1144,7 @@ describe("WorkspaceRuntimeRegistry", () => {
   it("records acquired workspace link repair status in the owning workspace store", async () => {
     const firstCwd = tempWorkspace("runtime-generated-link-owner-a");
     const secondCwd = tempWorkspace("runtime-generated-link-owner-b");
-    const agentDir = tempWorkspace("generated-link-owner-agent-dir");
+    const agentDir = tempAgentDir("generated-link-owner-agent-root");
     const generatedExtensionsPackagePath = tempWorkspace("generated-link-owner-extensions-package");
     mkdirSync(join(secondCwd, ".smithers"), { recursive: true });
     const registry = createRegistry(firstCwd, agentDir, {
@@ -1141,7 +1169,7 @@ describe("WorkspaceRuntimeRegistry", () => {
   it("scopes workspace-routed event subscriptions to that workspace plus app events", async () => {
     const firstCwd = tempWorkspace("runtime-events-workspace-a");
     const secondCwd = tempWorkspace("runtime-events-workspace-b");
-    const agentDir = tempWorkspace("runtime-events-agent-dir");
+    const agentDir = tempAgentDir("runtime-events-agent-root");
     const generatedExtensionsPackagePath = tempWorkspace("runtime-events-extensions-package");
     mkdirSync(join(secondCwd, ".smithers"), { recursive: true });
     const registry = createRegistry(firstCwd, agentDir, {
@@ -1249,7 +1277,7 @@ describe("WorkspaceRuntimeRegistry", () => {
   it("restores late-workspace blocking waits before activating startup queue replay", async () => {
     const initialCwd = tempWorkspace("late-wait-recovery-initial");
     const lateCwd = realpathSync.native(tempWorkspace("late-wait-recovery-workspace"));
-    const agentDir = tempWorkspace("late-wait-recovery-agent");
+    const agentDir = tempAgentDir("late-wait-recovery-agent-root");
     const sessionDir = getSvvySessionDir(lateCwd, agentDir);
     mkdirSync(sessionDir, { recursive: true });
     const store = createStructuredSessionStateStore({
@@ -1331,7 +1359,7 @@ describe("WorkspaceRuntimeRegistry", () => {
   it("registers late workspace state before flushing retained recovery invalidations", async () => {
     const initialCwd = tempWorkspace("recovery-publication-order-initial");
     const lateCwd = realpathSync.native(tempWorkspace("recovery-publication-order-late"));
-    const agentDir = tempWorkspace("recovery-publication-order-agent");
+    const agentDir = tempAgentDir("recovery-publication-order-agent-root");
     const sessionDir = getSvvySessionDir(lateCwd, agentDir);
     mkdirSync(sessionDir, { recursive: true });
     const store = createStructuredSessionStateStore({
@@ -2226,7 +2254,10 @@ describe("WorkspaceRuntimeRegistry", () => {
 
   it("opens and saves extension source edits through the production runtime facade", async () => {
     const cwd = tempWorkspace("source-edits");
-    const registry = createRegistry(cwd);
+    const agentRoot = tempWorkspace("source-edit-agent-root");
+    const agentDir = join(agentRoot, "agent");
+    mkdirSync(agentDir, { recursive: true });
+    const registry = createRegistry(cwd, agentDir);
     const runtime = await registry.acquireWorkspace(cwd);
     const runtimeOperations = getWorkspaceRuntimeOperationsForRequest(registry, {
       workspaceId: runtime.workspaceId,
@@ -2253,7 +2284,7 @@ describe("WorkspaceRuntimeRegistry", () => {
       sourceId: "base-common#minimal",
     });
 
-    expect(opened.path).toEndWith("base-common/instructions/minimal.md");
+    expect(opened.path).toEndWith("base-common/instructions/minimal.mdx");
     expect(saved).toMatchObject({
       status: "saved",
       reconcileRequired: true,
@@ -2267,7 +2298,7 @@ describe("WorkspaceRuntimeRegistry", () => {
   it("applies workflow-agent CLI upserts through runtime source create and CAS authority", async () => {
     const cwd = tempWorkspace("workflow-agent-cli-source-authority");
     const workflowsSourceRoot = tempWorkspace("workflow-agent-cli-source-root");
-    const registry = createRegistry(cwd, tempWorkspace("agent-dir"), { workflowsSourceRoot });
+    const registry = createRegistry(cwd, tempAgentDir(), { workflowsSourceRoot });
     const workspace = await registry.acquireWorkspace(cwd);
     const initialText = `${JSON.stringify(
       {
@@ -2354,7 +2385,7 @@ describe("WorkspaceRuntimeRegistry", () => {
 
   it("records lifecycle logs when workspace scopes open and close", async () => {
     const cwd = tempWorkspace("lifecycle-app-logs");
-    const registry = createRegistry(cwd, tempWorkspace("agent-dir"));
+    const registry = createRegistry(cwd, tempAgentDir());
     const runtime = await registry.acquireWorkspace(cwd);
     const workspaceId = runtime.workspaceId;
 
@@ -2682,7 +2713,7 @@ describe("WorkspaceRuntimeRegistry", () => {
 
   it("creates a stable default workspace scope under the svvy app data dir", async () => {
     const initialCwd = tempWorkspace("initial-cwd");
-    const agentDir = tempWorkspace("agent-dir");
+    const agentDir = tempAgentDir();
     const appDataDir = tempWorkspace("app-data-dir");
     const registry = createRegistry(initialCwd, agentDir, { appDataDir });
 
@@ -2858,6 +2889,45 @@ describe("WorkspaceRuntimeRegistry", () => {
     expect(reasons).toEqual(["app-preferences:external-instructions-updated"]);
   });
 
+  it("uses state-owned root configuration without legacy path controls as scan authority", async () => {
+    const cwd = tempWorkspace("external-instruction-scan-authority");
+    const agentsPath = join(cwd, "AGENTS.md");
+    writeFileSync(agentsPath, "# Workspace instructions\n");
+    const registry = createRegistry(cwd);
+    const stateCommands = await registry.getStateCommandsFacade();
+    await stateCommands.appPreferences.update({
+      patch: {
+        externalInstructions: {
+          globalRoots: [],
+          globalControls: {},
+          workspaceControls: {
+            [cwd]: {
+              [agentsPath]: { enabled: false, actors: [] },
+            },
+          },
+        },
+      },
+      clientSubmission: {
+        clientRequestId: "external-instruction-scan-authority" as RuntimeClientRequestId,
+        source: "test" as RuntimeClientSubmissionSource,
+      },
+    });
+
+    const runtime = await registry.acquireWorkspace(cwd);
+    const projection = workspaceStateStore(runtime).readExternalInstructionsProjection({
+      workspaceId: runtime.workspaceId as WorkspaceId,
+    });
+
+    expect(projection.sources).toHaveLength(1);
+    expect(projection.sources[0]).toMatchObject({
+      canonicalPath: realpathSync(agentsPath),
+      defaultControl: {
+        enabled: true,
+        eligibleActors: ["orchestrator", "handler", "workflow-task"],
+      },
+    });
+  });
+
   it("hydrates authoritative security preferences before a new workspace becomes ready", async () => {
     const initialCwd = tempWorkspace("state-owned-preferences-bootstrap");
     const nextCwd = tempWorkspace("state-owned-preferences-new-workspace");
@@ -2900,7 +2970,7 @@ describe("WorkspaceRuntimeRegistry", () => {
 
 function createRegistry(
   initialCwd: string,
-  agentDir = tempWorkspace("agent-dir"),
+  agentDir: string | undefined = undefined,
   options: {
     openInitialWorkspace?: boolean;
     appDataDir?: string;
@@ -2908,17 +2978,44 @@ function createRegistry(
     workflowsExtensionsGeneratedPackagePath?: string;
     workflowsGeneratedPackagePath?: string;
     workflowsSourceRoot?: string;
+    packagedExtensionTemplatesRoot?: string;
     forwardBridgeLog?: ConstructorParameters<
       typeof WorkspaceRuntimeRegistry
     >[0]["forwardBridgeLog"];
   } = {},
 ): WorkspaceRuntimeRegistry {
+  const isolatedAgentDir = agentDir ?? join(tempWorkspace("agent-root"), "agent");
+  const packagedExtensionTemplatesRoot =
+    options.packagedExtensionTemplatesRoot ??
+    join(import.meta.dir, "../../packages/extensions/src/builtin");
   const registry = new WorkspaceRuntimeRegistry({
     initialCwd,
-    agentDir,
+    agentDir: isolatedAgentDir,
     sourceWatchEnabled: false,
     runtimeLayerConfig: defaultRuntimeLayerConfig,
     sandboxHostSupport: createTestSandboxHostSupport(),
+    extensionBuildProcess: {
+      run: () => Effect.succeed({ status: "failed" as const }),
+    },
+    extensionCliRequirementProbe: {
+      probe: (plan) =>
+        Effect.succeed(
+          plan.probeKind === "resolve-executable"
+            ? ({ status: "resolved" } as const)
+            : ({
+                status: "completed",
+                exitCode: 0,
+                stdout: "registry-test-cli 1.0.0",
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              } as const),
+        ),
+    },
+    secretStore: testSecretStore,
+    secretStoreMutation: testSecretStoreMutation,
+    appDataDir: options.appDataDir ?? tempWorkspace("app-data"),
+    packagedExtensionTemplatesRoot,
     coreTypeContractPackagePath:
       options.coreTypeContractPackagePath ?? tempWorkspace("generated-core-type-contract"),
     workflowsSourceRoot: options.workflowsSourceRoot ?? tempWorkspace("workflows-source"),
@@ -2928,10 +3025,33 @@ function createRegistry(
   return registry;
 }
 
+const testSecretStore: SecretStorePortService = {
+  getStatus: (ref) => Effect.succeed({ ref, configured: false }),
+  listStatus: ({ refs }) =>
+    Effect.succeed(refs.map((ref) => ({ ref, configured: false as const }))),
+  resolveInvocationValue: () => Effect.die("unused registry test secret resolution"),
+};
+
+const testSecretStoreMutation: SecretStoreMutationPortService = {
+  writeSecretValue: () => Effect.die("unused registry test secret write"),
+  removeSecretValue: ({ ref, expectedRevisionFingerprint }) =>
+    Effect.succeed({
+      ref,
+      removed: true,
+      revisionFingerprint: expectedRevisionFingerprint ?? "registry-test-secret-revision",
+    }),
+};
+
 function tempWorkspace(name: string): string {
   const dir = mkdtempSync(join(tmpdir(), `svvy-${name}-`));
   tempDirs.push(dir);
   return dir;
+}
+
+function tempAgentDir(name = "agent-root"): string {
+  const agentDir = join(tempWorkspace(name), "agent");
+  mkdirSync(agentDir, { recursive: true });
+  return agentDir;
 }
 
 function runGit(cwd: string, args: readonly string[]) {

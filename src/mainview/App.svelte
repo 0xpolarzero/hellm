@@ -317,9 +317,7 @@
 				initialLayoutId: workspaceTab.activeLayoutId,
 				awaitWorkspaceChromeMutations: () => workspaceChromeMutations.drain(),
 				selectWorkspaceLayoutSlot: (layoutId) =>
-					workspaceChromeMutations.runTracked(() =>
-						selectWorkspaceLayoutSlot(workspaceTab.workspaceTabId, layoutId),
-					),
+					selectWorkspaceLayoutSlot(workspaceTab.workspaceTabId, layoutId),
 			},
 		);
 		tab = {

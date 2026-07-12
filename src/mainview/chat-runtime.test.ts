@@ -183,6 +183,8 @@ type FakeRpcHarness = {
   cancelRequests: PromptTarget[];
   requestCounts: {
     agents: number;
+    extensions: number;
+    extensionSnapshots: number;
     sessionNavigation: number;
     listProviderAuths: number;
     fetchProviderAuth: number;
@@ -245,6 +247,9 @@ type FakeRpcHarness = {
   >;
   openWorkflowsGeneratedExportRequests: Array<
     Parameters<ChatRuntimeRpcClient["request"]["openWorkflowsGeneratedExportInEditor"]>[0]
+  >;
+  openExternalInstructionSourceRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["openExternalInstructionSourceInEditor"]>[0]
   >;
   workspaceLayoutSaveRequests: Array<
     Parameters<ChatRuntimeRpcClient["request"]["stateWorkspaceLayoutSaveSlot"]>[0]
@@ -1181,6 +1186,8 @@ function createFakeRpc(input: {
     [];
   const openWorkflowsGeneratedExportRequests: FakeRpcHarness["openWorkflowsGeneratedExportRequests"] =
     [];
+  const openExternalInstructionSourceRequests: FakeRpcHarness["openExternalInstructionSourceRequests"] =
+    [];
   const workspaceLayoutSaveRequests: FakeRpcHarness["workspaceLayoutSaveRequests"] = [];
   let workspaceLayoutSaveHandler:
     | ((request: FakeRpcHarness["workspaceLayoutSaveRequests"][number]) => Promise<void>)
@@ -1260,6 +1267,36 @@ function createFakeRpc(input: {
       updatedAt: null as string | null,
     },
   ];
+  const externalInstructionsReadModel = {
+    workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+    sources: [
+      {
+        id: "external-source-test" as never,
+        source: {
+          sourceKind: "external-instruction" as const,
+          sourceId: "external-source-test" as never,
+        },
+        fileName: "AGENTS.md" as const,
+        title: "Workspace AGENTS.md",
+        canonicalPath: "/workspace/AGENTS.md" as never,
+        sourceGroup: "workspace_chain" as const,
+        order: 0 as never,
+        defaultControl: {
+          enabled: true,
+          eligibleActors: ["orchestrator" as const],
+        },
+        readOnly: true as const,
+        contentHash: "external-content-hash",
+        fingerprint: "external-fingerprint",
+        readStatus: { status: "readable" as const },
+        content: "Workspace instructions",
+      },
+    ],
+    diagnostics: [],
+    actorUsage: [],
+    observedAt: new Date(0).toISOString() as never,
+    revision: 0 as StateRevision,
+  } satisfies Extract<StateReadModelResult, { kind: "externalInstructions" }>["value"];
   let snippetRows: StateSnippetsReadModel["snippets"] = [];
   let workflowsGeneratedReadModel: WorkflowsGeneratedReadModel = {
     packageName: "@svvyx/workflows",
@@ -1277,6 +1314,8 @@ function createFakeRpc(input: {
   };
   const requestCounts = {
     agents: 0,
+    extensions: 0,
+    extensionSnapshots: 0,
     sessionNavigation: 0,
     listProviderAuths: 0,
     fetchProviderAuth: 0,
@@ -1530,19 +1569,44 @@ function createFakeRpc(input: {
           requestCounts.rendererReady += 1;
           return { ok: true as const };
         },
-        getAgentContextPreview: async () => ({
-          actor: "orchestrator",
-          profileId: "default-orchestrator",
-          profileName: "Default orchestrator",
-          provider: "openai",
-          model: "gpt-4o",
-          reasoningEffort: "medium",
-          loadedExtensionIds: [],
-          availableExtensionIds: [],
-          systemPrompt: "Generated context preview",
-          tokenCount: { tokens: 3, accuracy: "estimated" },
-          extensions: [],
-        }),
+        previewGeneratedContext: async () =>
+          ({
+            subject: {
+              kind: "configured-profile",
+              actorKind: "orchestrator",
+              profileId: "default-orchestrator",
+            },
+            profileId: "default-orchestrator",
+            profileName: "Default orchestrator",
+            providerId: "openai",
+            modelId: "gpt-4o",
+            reasoningEffort: "medium",
+            actorBinding: {
+              actorKind: "orchestrator",
+              loadedExtensionIds: [],
+              availableExtensionIds: [],
+              unavailableExtensionIds: [],
+              instructionOrder: [],
+              source: "profile-default",
+            },
+            systemPrompt: "Generated context preview",
+            tokenEstimate: 3,
+            extensions: [],
+            generatedContext: {
+              fingerprint: "generated-context-test",
+              promptBlocks: [],
+              externalInstructionBlocks: [],
+              nativeToolDeclarations: [],
+              svvyxGuidanceBlocks: [],
+              executeTypescriptFacadeDeclarations: {
+                text: "",
+                emittedExtensionIds: [],
+              },
+              tokenEstimate: 3,
+              sourceFingerprints: {},
+              diagnostics: [],
+            },
+          }) as never,
         listModelMetadata: async ({ workspaceId }) => [
           {
             providerId: "openai" as ProviderId,
@@ -1558,11 +1622,13 @@ function createFakeRpc(input: {
             },
           },
         ],
-        getExtensionsInventory: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
-        }),
+        getExtensionSnapshots: async () => {
+          requestCounts.extensionSnapshots += 1;
+          return {
+            revision: 0 as never,
+            snapshots: [],
+          };
+        },
         fetchStateReadModel: async (request) => {
           switch (request.kind) {
             case "workspaceChrome": {
@@ -1668,6 +1734,69 @@ function createFakeRpc(input: {
                   actorExtensionDefaults: structuredClone(agentActorExtensionDefaults),
                   bindings: [],
                   generatedContextPreviews: [],
+                },
+              };
+            case "externalInstructions":
+              return {
+                kind: "externalInstructions",
+                value: structuredClone(externalInstructionsReadModel),
+              };
+            case "extensions":
+              requestCounts.extensions += 1;
+              return {
+                kind: "extensions",
+                value: {
+                  aggregateFingerprint: "extensions-test-fingerprint",
+                  diagnostics: [],
+                  observedAt: new Date(0).toISOString() as never,
+                  records: [
+                    {
+                      extensionId: "shell",
+                      category: "builtin",
+                      title: "Shell",
+                      description: "Run shell commands.",
+                      interfaceKind: "native_tool",
+                      svvyxImplementation: null,
+                      buildRequirement: "not-required",
+                      customized: false,
+                      materializationPlan: null,
+                      capabilities: {
+                        resettable: true,
+                        deletable: false,
+                        typescriptApiEnabled: false,
+                        materializationRequired: false,
+                      },
+                      contributors: [],
+                      tooling: [],
+                      cliDeclarations: [],
+                      envDeclarations: [],
+                      dependencyDeclarations: [],
+                      sourceFingerprint: "sha256:test",
+                      diagnostics: [],
+                      buildAuthorityStatus: "current",
+                      buildObservation: null,
+                      buildRequired: false,
+                      contextReady: true,
+                      runtimeReady: true,
+                      readiness: "ready",
+                      loadedByProfileIds: [],
+                      availableByProfileIds: [],
+                      generatedPackageStatus: "ready",
+                      cliReadiness: [],
+                      usagePolicy: {
+                        canonicalOrder: 0,
+                        baselineUsage: {
+                          orchestrator: "loaded",
+                          handler: "loaded",
+                          "workflow-task": "loaded",
+                        },
+                        networkAccess: "not-required",
+                        configurable: true,
+                        fixedReason: null,
+                      },
+                    } as never,
+                  ],
+                  dependencyReadiness: [],
                 },
               };
             case "sessionNavigation":
@@ -1797,6 +1926,15 @@ function createFakeRpc(input: {
               return [await harness.client.request.fetchStateReadModel({ kind: "providerAuth" })];
             case "agents":
               return [await harness.client.request.fetchStateReadModel({ kind: "agents" })];
+            case "externalInstructions":
+              return [
+                await harness.client.request.fetchStateReadModel({
+                  kind: "externalInstructions",
+                  workspaceId: descriptorWorkspaceId,
+                }),
+              ];
+            case "extensions":
+              return [await harness.client.request.fetchStateReadModel({ kind: "extensions" })];
             case "workspaceChrome":
               return [
                 await harness.client.request.fetchStateReadModel({ kind: "workspaceChrome" }),
@@ -1903,80 +2041,117 @@ function createFakeRpc(input: {
           requestCounts.rebaselineStateReadModels += 1;
           return structuredClone(rebaselineResult);
         },
-        saveExtensionSnapshot: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        saveExtensionSnapshot: async (request) => ({
+          snapshotId: request.snapshotId,
+          name: request.name,
+          createdAt: request.capturedAt,
+          updatedAt: request.capturedAt,
+          revision: 1,
+          extensionCount: 0,
+          secretState: "not-present" as const,
+          status: "available" as const,
         }),
-        renameExtensionSnapshot: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        renameExtensionSnapshot: async (request) => ({
+          snapshotId: request.snapshotId,
+          name: request.name,
+          createdAt: request.renamedAt,
+          updatedAt: request.renamedAt,
+          revision: request.expectedRevision + 1,
+          extensionCount: 0,
+          secretState: "not-present" as const,
+          status: "available" as const,
         }),
-        deleteExtensionSnapshot: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        deleteExtensionSnapshot: async (request) => ({
+          snapshotId: request.snapshotId,
+          deleted: true as const,
         }),
-        loadExtensionSnapshot: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        loadExtensionSnapshot: async (request) => ({
+          snapshotId: request.snapshotId,
+          attemptId: request.attemptId,
+          status: "completed" as const,
+          builds: [],
         }),
-        createExtension: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        createExtension: async (request) => ({
+          action: "created",
+          mutationId: `extension-source-mutation:${request.id}:${"a".repeat(64)}` as never,
+          extensionId: request.id,
+          changed: true,
         }),
-        duplicateExtension: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        duplicateExtension: async (request) => ({
+          action: "duplicated",
+          mutationId:
+            `extension-source-mutation:${request.targetExtensionId}:${"a".repeat(64)}` as never,
+          sourceExtensionId: request.sourceExtensionId,
+          extensionId: request.targetExtensionId,
+          changed: true,
         }),
-        deleteExtension: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        deleteExtension: async (request) => ({
+          action: "deleted",
+          mutationId: `extension-source-mutation:${request.extensionId}:${"a".repeat(64)}` as never,
+          extensionId: request.extensionId,
+          changed: true,
         }),
-        resetExtension: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        configureExtensionTypescriptApi: async (request) => ({
+          extensionId: request.extensionId,
+          enabled: request.enabled,
+          changed: true,
+          reconcileRequired: true,
         }),
-        buildExtension: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        addExtensionInstructionFile: async (request) => ({
+          action: "instruction-added",
+          mutationId: `extension-source-mutation:${request.extensionId}:${"a".repeat(64)}` as never,
+          extensionId: request.extensionId,
+          name: request.name,
+          changed: true,
         }),
-        setExtensionTypescriptApi: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        removeExtensionInstructionFile: async (request) => ({
+          action: "instruction-removed",
+          mutationId: `extension-source-mutation:${request.extensionId}:${"a".repeat(64)}` as never,
+          extensionId: request.extensionId,
+          name: request.name,
+          changed: true,
         }),
-        addExtensionInstructionFile: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        configureExtensionInstructionFile: async (request) => ({
+          action: "instruction-configured",
+          mutationId: `extension-source-mutation:${request.extensionId}:${"a".repeat(64)}` as never,
+          extensionId: request.extensionId,
+          name: request.name,
+          bypassed: request.bypassed,
+          changed: true,
         }),
-        removeExtensionInstructionFile: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        resetExtension: async (request) => ({
+          source: {
+            action: "reset",
+            mutationId: null,
+            extensionId: request.extensionId,
+            scope: "instructions",
+            changed: false,
+          },
+          automaticBuild: { status: "skipped", reason: "source-unchanged" },
         }),
-        configureExtensionInstructionFile: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        buildExtension: async (request) => ({
+          attemptId: `extension-build-attempt:${request.extensionId}:${"a".repeat(64)}` as never,
+          registryAggregateFingerprint: "registry-build-extension-test",
+          manifest: {
+            schemaVersion: 1,
+            buildId: `extension-build:${request.extensionId}:${"b".repeat(64)}` as never,
+            extensionId: request.extensionId,
+            interfaceKind: "svvyx",
+            sourceFingerprint: `sha256:${"c".repeat(64)}` as never,
+            contextFingerprint: `sha256:${"d".repeat(64)}` as never,
+            outputFingerprint: `sha256:${"e".repeat(64)}` as never,
+            contextReady: true,
+            generatedFiles: [],
+            builtAt: "2026-07-12T12:00:00.000Z" as never,
+          },
         }),
-        setExtensionEnvSecret: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        stateExtensionEnvSetSecret: async () => ({
+          ...stateCommandResult(),
+          configured: true,
         }),
-        removeExtensionEnvSecret: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
+        stateExtensionEnvRemoveSecret: async () => ({
+          ...stateCommandResult(),
+          configured: false,
         }),
         stateExtensionEnvSetOverride: async () => stateCommandResult(),
         stateExtensionEnvRemoveOverride: async () => stateCommandResult(),
@@ -2125,12 +2300,17 @@ function createFakeRpc(input: {
                 : generatedExport?.generatedPath) ?? "",
           };
         },
-        openGeneratedAgentContextExternalSourceInEditor: async ({ path }) => ({
-          opened: true,
-          editor: "system",
-          path,
-        }),
-        getGeneratedAgentContextExternalSources: async () => [],
+        openExternalInstructionSourceInEditor: async (request) => {
+          openExternalInstructionSourceRequests.push(structuredClone(request));
+          const source = externalInstructionsReadModel.sources.find(
+            (candidate) => candidate.id === request.sourceId,
+          );
+          return {
+            opened: source?.readStatus.status === "readable",
+            editor: "system",
+            path: source?.canonicalPath ?? "",
+          };
+        },
         stateSnippetsCreateManaged: async (request) => {
           snippetCreateRequests.push(structuredClone(request));
           const snippetId = "snippet-1" as SnippetId;
@@ -2221,6 +2401,7 @@ function createFakeRpc(input: {
           sourceEditSaveRequests.push(structuredClone(request));
           return {
             status: "saved",
+            path: `/tmp/${request.source.sourceId}.agent.json` as AbsolutePath,
             sourceVersion: "sha256:saved-version",
             fingerprint: "sha256:saved-version",
             diagnostics: [],
@@ -3181,6 +3362,7 @@ function createFakeRpc(input: {
     requestInputVariantRequests,
     requestInputBlockingTimeoutRequests,
     openWorkflowsGeneratedExportRequests,
+    openExternalInstructionSourceRequests,
     workspaceLayoutSaveRequests,
     appLogSeenRequests,
     branchListRequests,
@@ -3328,6 +3510,7 @@ describe("createChatRuntime", () => {
     });
 
     const runtime = await createRuntime(harness);
+
     const controller = runtime.getPaneController(runtime.primaryPaneId);
 
     expect(runtime.sessions).toHaveLength(1);
@@ -8021,6 +8204,207 @@ describe("createChatRuntime", () => {
     await expect(runtime.getSnippets()).rejects.toThrow(
       "Managed snippet managed-with-path unexpectedly has an external source path.",
     );
+    runtime.dispose();
+  });
+
+  it("maps authoritative external instruction state into the existing renderer cache shape", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "External instructions", "done")],
+      surfaces: [
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+
+    const rawExternalInstructions = await runtime.getExternalInstructions();
+    expect(rawExternalInstructions.sources[0]).toMatchObject({
+      id: "external-source-test",
+      canonicalPath: "/workspace/AGENTS.md",
+      defaultControl: { enabled: true, eligibleActors: ["orchestrator"] },
+      content: "Workspace instructions",
+    });
+    expect(runtime.externalInstructionsSnapshot).toEqual(rawExternalInstructions);
+
+    expect(await runtime.getGeneratedAgentContextExternalSources()).toEqual([
+      {
+        id: "external-source-test",
+        kind: "AGENTS.md",
+        title: "Workspace AGENTS.md",
+        path: "/workspace/AGENTS.md",
+        content: "Workspace instructions",
+        contentHash: "external-content-hash",
+        order: 0,
+        enabled: true,
+        actors: ["orchestrator"],
+        sourceGroup: "workspace_chain",
+        readStatus: { status: "readable" },
+      },
+    ]);
+    expect(runtime.externalInstructionSourcesSnapshot).toEqual(
+      await runtime.getGeneratedAgentContextExternalSources(),
+    );
+    expect(await runtime.openExternalInstructionSourceInEditor("external-source-test")).toBe(true);
+    expect(harness.openExternalInstructionSourceRequests).toEqual([
+      {
+        workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+        sourceId: "external-source-test",
+      },
+    ]);
+    expect(harness.openExternalInstructionSourceRequests[0]).not.toHaveProperty("path");
+  });
+
+  it("exposes the state-native extension catalog for Agents without legacy inventory fields", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "Agent extensions", "done")],
+      surfaces: [
+        createSurfaceFixture({ target: createOrchestratorTarget("session-1"), messages: [] }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+
+    const rawExtensions = await runtime.getExtensions();
+    expect(rawExtensions.records[0]).toMatchObject({
+      extensionId: "shell",
+      interfaceKind: "native_tool",
+      capabilities: { resettable: true, deletable: false },
+      runtimeReady: true,
+    });
+    expect(runtime.extensionsSnapshot).toEqual(rawExtensions);
+
+    expect(await runtime.getAgentExtensionsCatalog()).toEqual({
+      records: [
+        {
+          extensionId: "shell",
+          category: "builtin",
+          title: "Shell",
+          description: "Run shell commands.",
+          usagePolicy: {
+            canonicalOrder: 0,
+            baselineUsage: {
+              orchestrator: "loaded",
+              handler: "loaded",
+              "workflow-task": "loaded",
+            },
+            networkAccess: "not-required",
+            configurable: true,
+            fixedReason: null,
+          },
+        },
+      ],
+    });
+    expect(runtime.agentExtensionsCatalogSnapshot).toEqual(
+      await runtime.getAgentExtensionsCatalog(),
+    );
+    expect("extensions" in runtime.agentExtensionsCatalogSnapshot!).toBe(false);
+    const readsBeforeInvalidation = harness.requestCounts.extensions;
+    harness.emitDesktopNotification({
+      kind: "read-model-changed",
+      eventGenerationId: "extensions-catalog-generation" as never,
+      sequence: 1 as never,
+      scope: { kind: "app" },
+      invalidation: { scope: "app", invalidation: { model: "extensions" } },
+    });
+    await waitFor(() => harness.requestCounts.extensions > readsBeforeInvalidation);
+  });
+
+  it("refreshes state-native extensions without coupling secret commands to snapshots", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    const runtime = await createRuntime(harness);
+    const extensionReadsBefore = harness.requestCounts.extensions;
+    const snapshotReadsBefore = harness.requestCounts.extensionSnapshots;
+
+    await runtime.setExtensionEnvSecret({
+      extensionId: "github",
+      envName: "GITHUB_TOKEN",
+      value: "renderer-secret-entry",
+    });
+    await runtime.removeExtensionEnvSecret({
+      extensionId: "github",
+      envName: "GITHUB_TOKEN",
+    });
+
+    expect(harness.requestCounts.extensions).toBe(extensionReadsBefore + 2);
+    expect(harness.requestCounts.extensionSnapshots).toBe(snapshotReadsBefore);
+    runtime.dispose();
+  });
+
+  it("generates durable snapshot command identities and caches the narrow read model", async () => {
+    const harness = createFakeRpc({ sessions: [], surfaces: [] });
+    const now = "2026-07-12T10:00:00.000Z" as never;
+    const snapshot = {
+      snapshotId: "extension-snapshot:checkpoint" as never,
+      name: "Checkpoint",
+      createdAt: now,
+      updatedAt: now,
+      revision: 3,
+      extensionCount: 2,
+      secretState: "captured" as const,
+      status: "available" as const,
+    };
+    const saveRequests: unknown[] = [];
+    const renameRequests: unknown[] = [];
+    const deleteRequests: unknown[] = [];
+    const loadRequests: unknown[] = [];
+    const snapshotsReadModel = {
+      revision: 7 as never,
+      snapshots: [snapshot],
+    };
+    harness.client.request.getExtensionSnapshots = async () => snapshotsReadModel;
+    harness.client.request.saveExtensionSnapshot = async (request) => {
+      saveRequests.push(request);
+      return { ...snapshot, snapshotId: request.snapshotId, name: request.name };
+    };
+    harness.client.request.renameExtensionSnapshot = async (request) => {
+      renameRequests.push(request);
+      return { ...snapshot, name: request.name, updatedAt: request.renamedAt };
+    };
+    harness.client.request.deleteExtensionSnapshot = async (request) => {
+      deleteRequests.push(request);
+      return { snapshotId: request.snapshotId, deleted: true };
+    };
+    harness.client.request.loadExtensionSnapshot = async (request) => {
+      loadRequests.push(request);
+      return {
+        snapshotId: request.snapshotId,
+        attemptId: request.attemptId,
+        status: "completed",
+        builds: [],
+      };
+    };
+
+    const runtime = await createRuntime(harness);
+    expect(await runtime.getExtensionSnapshots()).toEqual(snapshotsReadModel);
+    expect(runtime.extensionSnapshotsSnapshot).toEqual(snapshotsReadModel);
+
+    await runtime.saveExtensionSnapshot("Checkpoint");
+    await runtime.renameExtensionSnapshot(snapshot, "Renamed");
+    await runtime.deleteExtensionSnapshot(snapshot);
+    await runtime.loadExtensionSnapshot(snapshot);
+
+    expect(saveRequests[0]).toMatchObject({
+      name: "Checkpoint",
+      snapshotId: expect.stringMatching(/^extension-snapshot:[a-z0-9-]+$/),
+      clientRequestId: expect.stringMatching(/^desktop-submit:/),
+      capturedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+    });
+    expect(renameRequests[0]).toMatchObject({
+      snapshotId: snapshot.snapshotId,
+      expectedRevision: snapshot.revision,
+      name: "Renamed",
+      clientRequestId: expect.stringMatching(/^desktop-submit:/),
+    });
+    expect(deleteRequests[0]).toMatchObject({
+      snapshotId: snapshot.snapshotId,
+      expectedRevision: snapshot.revision,
+      cleanupId: expect.stringMatching(/^extension-snapshot-cleanup:[a-z0-9-]+$/),
+      clientRequestId: expect.stringMatching(/^desktop-submit:/),
+    });
+    expect(loadRequests[0]).toMatchObject({
+      snapshotId: snapshot.snapshotId,
+      expectedRevision: snapshot.revision,
+      attemptId: expect.stringMatching(/^extension-snapshot-restore:[a-z0-9-]+$/),
+      clientRequestId: expect.stringMatching(/^desktop-submit:/),
+    });
     runtime.dispose();
   });
 

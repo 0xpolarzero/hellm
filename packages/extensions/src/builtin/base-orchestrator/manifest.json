@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"base-orchestrator","interface":"instructions","title":"Base Orchestrator","description":"Top-level orchestration and delegation instructions.","typescriptApiEnabled":false,"instructionFiles":[{"file":"010-base-orchestrator.mdx","bypassed":false}]}

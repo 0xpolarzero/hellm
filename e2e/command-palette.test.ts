@@ -187,7 +187,7 @@ async function waitForSessionRows(
 }
 
 async function waitForMainTitle(page: SvvyApp["page"], expected: string): Promise<void> {
-  const title = page.locator("[data-testid=active-surface-title]");
+  const title = page.locator('.session-main[aria-current="true"] strong');
   const deadline = Date.now() + 15_000;
   let lastText = "";
 
@@ -200,6 +200,15 @@ async function waitForMainTitle(page: SvvyApp["page"], expected: string): Promis
   }
 
   throw new Error(`Timed out waiting for main title "${expected}". Last text was "${lastText}".`);
+}
+
+async function waitForChatRequest(stub: PaletteChatStub): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    if (stub.requests.length > 0) return;
+    await Bun.sleep(100);
+  }
+  throw new Error("Timed out waiting for the palette fallback prompt request.");
 }
 
 async function openSession(page: SvvyApp["page"], title: string): Promise<void> {
@@ -298,7 +307,9 @@ test("unmatched command-mode text creates a normal prompted session", async () =
         await page.locator("[data-cmdk-input]").press("Enter");
 
         await waitForSessionRows(page, 3);
-        await waitForMainTitle(page, "New orchestrator");
+        await waitForMainTitle(page, "zzzzzzzzzz palette fallback prompt");
+        await waitForChatRequest(stub);
+        expect(stub.requests.length).toBeGreaterThan(0);
       },
     );
   } finally {

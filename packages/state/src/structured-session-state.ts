@@ -24,6 +24,7 @@ import {
   type ArtifactMaterializationStatus,
   type ArtifactMetadataRecord,
   decodeUnknownExtensionDependencyApprovalIdentityExit,
+  ExtensionRegistryObservationResultSchema,
   decodeUnknownRequestUserInputAnswerQueuePayloadExit,
   decodeUnknownRequestInputSettingsExit,
   PiHistoryEntryRefSchema,
@@ -36,6 +37,7 @@ import {
   type AcceptEditedCommittedRuntimeSurfaceMessageInput,
   type AcceptEditedCommittedRuntimeSurfaceMessageResult,
   type ApplyRuntimeExtensionSnapshotContextImpactInput,
+  type BindRuntimeGeneratedContextInput,
   type ComposerAttachment,
   type ComposerSnippetMention,
   type DiscoveredSnippetScope,
@@ -43,14 +45,62 @@ import {
   type CommandId,
   type ExtensionDependencyApprovalIdentity,
   type ExtensionDependencyReadiness,
+  type ExtensionUsageChangeId,
+  type ExtensionUsageChangeRecord,
+  type RevertExtensionUsageInput,
+  type SetExtensionUsageInput,
+  ExtensionBuildAttemptRecordSchema,
+  RecordExtensionBuildFailureInputSchema,
+  RecordExtensionBuildSuccessInputSchema,
+  StartExtensionBuildAttemptInputSchema,
+  type ExtensionBuildAttemptRecord,
+  type RecordExtensionBuildFailureInput,
+  type RecordExtensionBuildSuccessInput,
+  type StartExtensionBuildAttemptInput,
+  ExtensionSourceBuildObservationSchema,
+  type ExtensionSourceBuildObservation,
+  type ExtensionRegistryStateRecord,
+  type ReconcileExtensionRegistryObservationInput,
+  type ReconcileExtensionSourceBuildEvidenceInput,
+  type ReconcileExtensionSourceBuildEvidenceResult,
   type ExtensionId,
+  type ExtensionEnvSecretRef,
+  ExtensionSnapshotPayloadRefSchema,
+  ExtensionSnapshotRestoreAttemptSchema,
+  ExtensionSnapshotStateRecordSchema,
+  type AdvanceExtensionSnapshotRestoreAttemptCommand,
+  type AdvanceExtensionSnapshotRestoreAttemptReceipt,
+  type ApplyExtensionSnapshotSettingsCommand,
+  type ApplyExtensionSnapshotSettingsReceipt,
+  type CompleteExtensionSnapshotCleanupCommand,
+  type CompleteExtensionSnapshotCleanupReceipt,
+  type DeleteExtensionSnapshotCommand,
+  type DeleteExtensionSnapshotReceipt,
+  type ExtensionSnapshotCleanupRecord,
+  type ExtensionSnapshotId,
+  type ExtensionSnapshotRestoreAttempt,
+  type ExtensionSnapshotRestoreAttemptId,
+  type ExtensionSnapshotsReadModel,
+  type ExtensionSnapshotStateRecord,
+  type ExtensionSnapshotSettingsCaptureFacts,
+  type LoadExtensionSnapshotCommand,
+  type LoadExtensionSnapshotReceipt,
+  type RenameExtensionSnapshotCommand,
+  type RenameExtensionSnapshotReceipt,
+  type SaveExtensionSnapshotCommand,
+  type SaveExtensionSnapshotReceipt,
   type ExtensionUsageState,
   type ExternalInstructionsSettings,
+  type ExternalInstructionObservationProjection,
+  type ExternalInstructionProjectedSource,
+  type ReconcileExternalInstructionsInput,
+  type ReconcileExternalInstructionsResult,
   type GeneratedPackageBuildId,
   type GeneratedPackageName,
   type GeneratedWorkflowsExportBuildEvidence,
   type HandlerInheritedHistoryBlock,
   type JsonValue,
+  type IsoDateTimeString,
   type CompactWorkspaceSurface,
   type DeletePiSessionReferenceInput,
   type MarkGeneratedPackageRefreshNeededInput,
@@ -106,6 +156,8 @@ import {
   type ReleaseWorkspaceResult,
   type RenameOrchestratorSurfaceResult,
   type RecordExtensionDependencyReadinessInput,
+  type ReconcileExtensionDependencyReadinessInput,
+  type ReconcileExtensionDependencyReadinessResult,
   type RecordGeneratedPackageBuildInput,
   type RecordGeneratedPackageFailureInput,
   type RecordGeneratedPackageWorkspaceLinkInput,
@@ -150,6 +202,7 @@ import {
   normalizeExternalInstructionsSettings,
   normalizeRuntimeClientSubmissionMetadata,
   type RuntimeClientSubmissionInput,
+  type StateCommandReceipt,
 } from "@svvy/core";
 import type {
   CreateManagedSnippetCommandInput,
@@ -157,6 +210,7 @@ import type {
   DeleteOrchestratorProfileCommandInput,
   PromoteProfileExtensionDefaultCommandInput,
   RemoveExtensionEnvOverrideCommandInput,
+  RemoveExtensionEnvSecretCommandInput,
   ReorderOrchestratorProfilesCommandInput,
   ResetActorExtensionDefaultsCommandInput,
   SaveWorkspaceLayoutSlotCommandInput,
@@ -164,6 +218,7 @@ import type {
   SelectWorkspaceTabCommandInput,
   SetExternalInstructionActorUsageCommandInput,
   SetExtensionEnvOverrideCommandInput,
+  SetExtensionEnvSecretCommandInput,
   SetProfileExtensionUsageCommandInput,
   SetSnippetEnabledCommandInput,
   SetWorkspaceTabsCommandInput,
@@ -202,6 +257,42 @@ const decodeSnippetMetadataContract = Schema.decodeUnknownSync(
 );
 const decodeSnippetSourceContract = Schema.decodeUnknownSync(
   SnippetSourceSchema,
+  strictBoundaryParseOptions,
+);
+const decodeExtensionRegistryObservationResultContract = Schema.decodeUnknownSync(
+  ExtensionRegistryObservationResultSchema,
+  strictBoundaryParseOptions,
+);
+const decodeExtensionSourceBuildObservationContract = Schema.decodeUnknownSync(
+  ExtensionSourceBuildObservationSchema,
+  strictBoundaryParseOptions,
+);
+const decodeExtensionBuildAttemptRecordContract = Schema.decodeUnknownSync(
+  ExtensionBuildAttemptRecordSchema,
+  strictBoundaryParseOptions,
+);
+const decodeExtensionSnapshotPayloadRefContract = Schema.decodeUnknownSync(
+  ExtensionSnapshotPayloadRefSchema,
+  strictBoundaryParseOptions,
+);
+const decodeExtensionSnapshotStateRecordContract = Schema.decodeUnknownSync(
+  ExtensionSnapshotStateRecordSchema,
+  strictBoundaryParseOptions,
+);
+const decodeExtensionSnapshotRestoreAttemptContract = Schema.decodeUnknownSync(
+  ExtensionSnapshotRestoreAttemptSchema,
+  strictBoundaryParseOptions,
+);
+const decodeStartExtensionBuildAttemptInputContract = Schema.decodeUnknownSync(
+  StartExtensionBuildAttemptInputSchema,
+  strictBoundaryParseOptions,
+);
+const decodeRecordExtensionBuildSuccessInputContract = Schema.decodeUnknownSync(
+  RecordExtensionBuildSuccessInputSchema,
+  strictBoundaryParseOptions,
+);
+const decodeRecordExtensionBuildFailureInputContract = Schema.decodeUnknownSync(
+  RecordExtensionBuildFailureInputSchema,
   strictBoundaryParseOptions,
 );
 const decodeWorkspaceLayoutSlotContentContract = Schema.decodeUnknownSync(
@@ -507,6 +598,63 @@ export interface StructuredExtensionEnvOverrideRecord {
   updatedAt: string;
 }
 
+export interface StructuredExtensionEnvDeclarationRecord {
+  extensionId: string;
+  envName: string;
+  required: boolean;
+  secret: boolean;
+  description: string | null;
+  updatedAt: string;
+}
+
+export interface StructuredExtensionEnvSecretRecord {
+  extensionId: string;
+  envName: string;
+  ref: ExtensionEnvSecretRef;
+  revisionFingerprint: string;
+  status: "configured" | "missing";
+  updatedAt: string;
+}
+
+export interface StructuredExtensionEnvSecretReceiptRecord {
+  operation: "set" | "remove";
+  clientRequestId: string;
+  extensionId: string;
+  envName: string;
+  configured: boolean;
+  committedAt: string;
+  stateRevision: StateRevision;
+}
+
+export interface StructuredExtensionEnvSecretCleanupRecord {
+  ref: ExtensionEnvSecretRef;
+  revisionFingerprint: string;
+  reason: "replaced" | "removed" | "orphaned";
+  createdAt: string;
+}
+
+export interface StructuredExtensionRegistryReconcileResult {
+  record: ExtensionRegistryStateRecord;
+  outcome: "committed" | "no-op";
+  stateRevision: StateRevision;
+}
+
+export interface StructuredExtensionSourceBuildEvidenceBatchRecord {
+  registryAggregateFingerprint: string;
+  observations: readonly ExtensionSourceBuildObservation[];
+  observedAt: IsoDateTimeString;
+}
+
+export interface StructuredExtensionSourceBuildEvidenceReconcileResult extends ReconcileExtensionSourceBuildEvidenceResult {
+  stateRevision: StateRevision;
+}
+
+export interface StructuredExtensionBuildAttemptMutationResult {
+  record: ExtensionBuildAttemptRecord;
+  outcome: "committed" | "no-op";
+  stateRevision: StateRevision;
+}
+
 export interface StructuredSnippetRecord {
   id: string;
   workspaceId: string;
@@ -648,7 +796,6 @@ export interface StructuredGeneratedAgentContextBindingRecord {
   ownerKind: StructuredGeneratedAgentContextBindingOwner;
   ownerId: string;
   actorKind: StructuredGeneratedAgentContextActor;
-  aggregateCacheKey: string;
   systemPrompt: string;
   svvyxGuidance: string;
   commandsDts: string;
@@ -1063,6 +1210,17 @@ export interface ReadGeneratedWorkflowsExportsInput {
 export type StructuredGeneratedPackageWorkspaceLinkRecord =
   RuntimeGeneratedPackageWorkspaceLinkRecord;
 export type StructuredExtensionDependencyReadinessRecord = ExtensionDependencyReadiness;
+
+export interface StructuredExtensionDependencyReadinessBatchRecord {
+  registryAggregateFingerprint: string;
+  readiness: readonly StructuredExtensionDependencyReadinessRecord[];
+  recordedAt: string;
+  sourceCommandId: CommandId | null;
+}
+
+export interface StructuredExtensionDependencyReadinessReconcileResult extends ReconcileExtensionDependencyReadinessResult {
+  stateRevision: StateRevision;
+}
 export type StructuredExtensionDependencyApprovalRecord = {
   readonly dependency: ExtensionDependencyApprovalIdentity;
   readonly approvedAt: string;
@@ -1104,7 +1262,6 @@ export interface StructuredSurfaceQueuedMessageRecord {
 }
 
 export interface StructuredRuntimeHandlerThreadGeneratedContextBindingInput {
-  aggregateCacheKey: string;
   generatedAgentContextFingerprint: string;
   generatedAgentContextRevision: number;
   externalSourceHashes: readonly string[];
@@ -1296,6 +1453,12 @@ export interface StructuredSessionStateStore {
   setExternalInstructionActorUsage(
     input: SetExternalInstructionActorUsageCommandInput,
   ): StructuredMutationCommitRecord;
+  readExternalInstructionsProjection(input: {
+    workspaceId: string;
+  }): ExternalInstructionObservationProjection;
+  reconcileExternalInstructions(
+    input: ReconcileExternalInstructionsInput,
+  ): ReconcileExternalInstructionsResult;
   hasExtensionEnvOverrideRows(): boolean;
   listExtensionEnvOverrides(): StructuredExtensionEnvOverrideRecord[];
   setExtensionEnvOverride(
@@ -1304,6 +1467,85 @@ export interface StructuredSessionStateStore {
   removeExtensionEnvOverride(
     input: RemoveExtensionEnvOverrideCommandInput,
   ): StructuredMutationCommitRecord;
+  readExtensionRegistryObservation(): ExtensionRegistryStateRecord | null;
+  reconcileExtensionRegistryObservation(
+    input: ReconcileExtensionRegistryObservationInput,
+  ): StructuredExtensionRegistryReconcileResult;
+  readExtensionSourceBuildEvidence(): StructuredExtensionSourceBuildEvidenceBatchRecord | null;
+  reconcileExtensionSourceBuildEvidence(
+    input: ReconcileExtensionSourceBuildEvidenceInput,
+  ): StructuredExtensionSourceBuildEvidenceReconcileResult;
+  readExtensionBuildAttempt(
+    attemptId: ExtensionBuildAttemptRecord["attemptId"],
+  ): ExtensionBuildAttemptRecord | null;
+  readExtensionBuildAttemptByClientRequestId(
+    clientRequestId: ExtensionBuildAttemptRecord["clientRequestId"],
+  ): ExtensionBuildAttemptRecord | null;
+  startExtensionBuildAttempt(
+    input: StartExtensionBuildAttemptInput,
+  ): StructuredExtensionBuildAttemptMutationResult;
+  recordExtensionBuildSuccess(
+    input: RecordExtensionBuildSuccessInput,
+  ): StructuredExtensionBuildAttemptMutationResult;
+  recordExtensionBuildFailure(
+    input: RecordExtensionBuildFailureInput,
+  ): StructuredExtensionBuildAttemptMutationResult;
+  listExtensionSnapshots(): ExtensionSnapshotsReadModel;
+  readExtensionSnapshot(snapshotId: ExtensionSnapshotId): ExtensionSnapshotStateRecord | null;
+  saveExtensionSnapshot(input: SaveExtensionSnapshotCommand): SaveExtensionSnapshotReceipt;
+  renameExtensionSnapshot(input: RenameExtensionSnapshotCommand): RenameExtensionSnapshotReceipt;
+  deleteExtensionSnapshot(input: DeleteExtensionSnapshotCommand): DeleteExtensionSnapshotReceipt;
+  loadExtensionSnapshot(input: LoadExtensionSnapshotCommand): LoadExtensionSnapshotReceipt;
+  readExtensionSnapshotRestoreAttempt(
+    attemptId: ExtensionSnapshotRestoreAttemptId,
+  ): ExtensionSnapshotRestoreAttempt | null;
+  listPendingExtensionSnapshotRestoreAttempts(): ExtensionSnapshotRestoreAttempt[];
+  advanceExtensionSnapshotRestoreAttempt(
+    input: AdvanceExtensionSnapshotRestoreAttemptCommand,
+  ): AdvanceExtensionSnapshotRestoreAttemptReceipt;
+  listPendingExtensionSnapshotCleanup(): ExtensionSnapshotCleanupRecord[];
+  completeExtensionSnapshotCleanup(
+    input: CompleteExtensionSnapshotCleanupCommand,
+  ): CompleteExtensionSnapshotCleanupReceipt;
+  readExtensionUsageChange(changeId: ExtensionUsageChangeId): ExtensionUsageChangeRecord | null;
+  resolveExtensionUsageTarget(agentProfile: string): SetExtensionUsageInput["target"];
+  setExtensionUsage(input: SetExtensionUsageInput): ExtensionUsageChangeRecord;
+  revertExtensionUsage(input: RevertExtensionUsageInput): ExtensionUsageChangeRecord;
+  readExtensionSnapshotSettingsCaptureFacts(): ExtensionSnapshotSettingsCaptureFacts;
+  applyExtensionSnapshotSettings(
+    input: ApplyExtensionSnapshotSettingsCommand,
+  ): ApplyExtensionSnapshotSettingsReceipt;
+  reconcileExtensionEnvDeclarations(input: {
+    declarations: readonly Omit<StructuredExtensionEnvDeclarationRecord, "updatedAt">[];
+  }): StructuredMutationCommitRecord;
+  listExtensionEnvDeclarations(): StructuredExtensionEnvDeclarationRecord[];
+  listExtensionEnvSecrets(): StructuredExtensionEnvSecretRecord[];
+  listExtensionEnvSecretCleanupRecords(): StructuredExtensionEnvSecretCleanupRecord[];
+  readExtensionEnvSecretCommandState(input: {
+    operation: "set" | "remove";
+    clientRequestId?: string;
+    extensionId: string;
+    envName: string;
+  }): {
+    declaration: StructuredExtensionEnvDeclarationRecord | null;
+    current: StructuredExtensionEnvSecretRecord | null;
+    receipt: StructuredExtensionEnvSecretReceiptRecord | null;
+  };
+  commitExtensionEnvSecretSet(input: {
+    command: SetExtensionEnvSecretCommandInput;
+    ref: ExtensionEnvSecretRef;
+    revisionFingerprint: string;
+    previous: StructuredExtensionEnvSecretRecord | null;
+  }): StructuredExtensionEnvSecretReceiptRecord;
+  commitExtensionEnvSecretRemove(input: {
+    command: RemoveExtensionEnvSecretCommandInput;
+    previous: StructuredExtensionEnvSecretRecord | null;
+  }): StructuredExtensionEnvSecretReceiptRecord;
+  completeExtensionEnvSecretCleanup(ref: ExtensionEnvSecretRef): void;
+  recordExtensionEnvSecretOrphanCleanup(input: {
+    ref: ExtensionEnvSecretRef;
+    revisionFingerprint: string;
+  }): void;
   hasSnippetRows(workspaceId: string): boolean;
   listSnippets(input: { workspaceId: string }): StructuredSnippetRecord[];
   createManagedSnippet(input: CreateManagedSnippetCommandInput): StructuredSnippetRecord & {
@@ -1379,7 +1621,6 @@ export interface StructuredSessionStateStore {
     ownerKind: StructuredGeneratedAgentContextBindingOwner;
     ownerId: string;
     actorKind: StructuredGeneratedAgentContextActor;
-    aggregateCacheKey: string;
     systemPrompt: string;
     svvyxGuidance: string;
     commandsDts: string;
@@ -1390,6 +1631,9 @@ export interface StructuredSessionStateStore {
     availableExtensionIds: string[];
     externalSourceHashes: string[];
   }): StructuredGeneratedAgentContextBindingRecord;
+  bindRuntimeGeneratedContext(
+    input: BindRuntimeGeneratedContextInput,
+  ): StructuredGeneratedAgentContextBindingRecord;
   getGeneratedAgentContextBinding(input: {
     surfacePiSessionId: string;
     generatedAgentContextFingerprint?: string | null;
@@ -1663,7 +1907,6 @@ export interface StructuredSessionStateStore {
     agentResume?: string | null;
     generatedAgentContextFingerprint?: string | null;
     generatedAgentContextBinding?: {
-      aggregateCacheKey: string;
       systemPrompt: string;
       svvyxGuidance: string;
       commandsDts: string;
@@ -2012,6 +2255,8 @@ export interface StructuredSessionStateStore {
     extensionId: ExtensionId;
     requirementId: string;
   }): StructuredExtensionDependencyReadinessRecord | null;
+  listExtensionDependencyReadiness(): StructuredExtensionDependencyReadinessRecord[];
+  readExtensionDependencyReadinessBatch(): StructuredExtensionDependencyReadinessBatchRecord | null;
   readExtensionDependencyApproval(input: {
     dependency: ExtensionDependencyApprovalIdentity;
   }): boolean;
@@ -2024,6 +2269,9 @@ export interface StructuredSessionStateStore {
   recordExtensionDependencyReadiness(
     input: RecordExtensionDependencyReadinessInput,
   ): StructuredExtensionDependencyReadinessRecord;
+  reconcileExtensionDependencyReadiness(
+    input: ReconcileExtensionDependencyReadinessInput,
+  ): StructuredExtensionDependencyReadinessReconcileResult;
   listProviderAuthStatuses(input: ListProviderStatusesInput): ProviderAuthStatus[];
   recordProviderAuthStatus(input: RecordProviderAuthStatusInput): ProviderAuthStatusWriteResult;
   listRecoveryWork(input?: { scope?: StructuredRecoveryWorkScope }): StructuredRecoveryWorkRecord[];
@@ -2199,6 +2447,15 @@ type WorkspaceRuntimeOwnerRow = {
   updated_at: string;
 };
 
+type ExternalInstructionProjectionRow = {
+  id: number;
+  workspace_id: string;
+  sources_json: string;
+  diagnostics_json: string;
+  observed_at: string;
+  state_revision: number;
+};
+
 type SurfaceLifecycleRow = {
   surface_pi_session_id: string;
   session_id: string;
@@ -2301,6 +2558,7 @@ export interface StructuredWorkflowAgentSourceIndexRecord {
   diagnostics: WorkflowAgentSourceObservation["diagnostics"];
   parameters: WorkflowAgentSourceObservation["parameters"];
   extensionOrder: WorkflowAgentSourceObservation["extensionOrder"];
+  extensionUsage: Readonly<Record<string, ExtensionUsageState>>;
   observedAt: WorkflowAgentSourceObservation["observedAt"];
   createdAt: string;
   updatedAt: string;
@@ -2400,6 +2658,60 @@ type ExtensionEnvOverrideRow = {
   updated_at: string;
 };
 
+type ExtensionEnvDeclarationRow = {
+  extension_id: string;
+  env_name: string;
+  required: number;
+  secret: number;
+  description: string | null;
+  updated_at: string;
+};
+
+type ExtensionRegistryObservationRow = {
+  observation_json: string;
+  observed_at: string;
+};
+
+type ExtensionSourceBuildEvidenceRow = {
+  extension_id: string;
+  registry_aggregate_fingerprint: string;
+  observation_json: string;
+  observed_at: string;
+};
+
+type ExtensionSourceBuildEvidenceBatchRow = {
+  registry_aggregate_fingerprint: string;
+  observed_at: string;
+};
+
+type ExtensionEnvSecretRow = {
+  extension_id: string;
+  env_name: string;
+  material_id: string;
+  revision_fingerprint: string;
+  status: "configured" | "missing";
+  updated_at: string;
+};
+
+type ExtensionEnvSecretReceiptRow = {
+  operation: "set" | "remove";
+  client_request_id: string;
+  extension_id: string;
+  env_name: string;
+  configured: number;
+  committed_at: string;
+  state_revision: number;
+};
+
+type ExtensionEnvSecretCleanupRow = {
+  extension_id: string;
+  env_name: string;
+  material_id: string;
+  revision_fingerprint: string;
+  reason: "replaced" | "removed" | "orphaned";
+  created_at: string;
+};
+
 type SnippetRow = {
   snippet_id: string;
   workspace_id: string;
@@ -2440,7 +2752,6 @@ type GeneratedAgentContextBindingRow = {
   owner_kind: StructuredGeneratedAgentContextBindingOwner;
   owner_id: string;
   actor_kind: StructuredGeneratedAgentContextActor;
-  aggregate_cache_key: string;
   system_prompt: string;
   svvyx_guidance: string;
   commands_dts: string;
@@ -2504,6 +2815,7 @@ type GeneratedPackageWorkspaceLinkRow = {
 type ExtensionDependencyReadinessRow = {
   extension_id: ExtensionId;
   requirement_id: string;
+  requirement_fingerprint: string;
   status: ExtensionDependencyReadiness["status"];
   detected_version: string | null;
   expected_version: string | null;
@@ -2512,6 +2824,26 @@ type ExtensionDependencyReadinessRow = {
   source_command_id: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type ExtensionDependencyReadinessBatchRow = {
+  registry_aggregate_fingerprint: string;
+  readiness_json: string;
+  recorded_at: string;
+  source_command_id: string | null;
+};
+
+type ExtensionBuildAttemptRow = {
+  attempt_id: string;
+  client_request_id: string;
+  extension_id: ExtensionId;
+  registry_aggregate_fingerprint: string;
+  source_fingerprint: string;
+  status: ExtensionBuildAttemptRecord["status"];
+  failure_reason: ExtensionBuildAttemptRecord["failureReason"];
+  successful_build_id: string | null;
+  started_at: string;
+  finished_at: string | null;
 };
 
 type TurnRow = {
@@ -3036,6 +3368,133 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     });
   }
 
+  readExtensionSnapshotSettingsCaptureFacts(): ExtensionSnapshotSettingsCaptureFacts {
+    const actorSettings = this.listAgentActorExtensionDefaults().map((record) => ({
+      actor: record.actor,
+      extensionOrder: record.extensionOrder.map((id) => id as ExtensionId),
+      extensionUsage: Object.entries(record.extensionUsage)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([extensionId, usage]) => ({ extensionId: extensionId as ExtensionId, usage })),
+    }));
+    const profileSettings = this.listAgentProfiles().map((record) => ({
+      actor: record.actor,
+      profileId: record.profileId,
+      extensionOrder: record.extensionOrder.map((id) => id as ExtensionId),
+      extensionUsage: Object.entries(record.extensionUsage)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([extensionId, usage]) => ({ extensionId: extensionId as ExtensionId, usage })),
+    }));
+    const overrides = this.listExtensionEnvOverrides();
+    const declarations = this.listExtensionEnvDeclarations();
+    const secrets = new Map(
+      this.listExtensionEnvSecrets().map((record) => [
+        `${record.extensionId}\0${record.envName}`,
+        record,
+      ]),
+    );
+    return {
+      actorSettings,
+      profileSettings,
+      nonSecretEnvOverrideScopes: [
+        ...new Set([
+          ...declarations.filter((record) => !record.secret).map((record) => record.extensionId),
+          ...overrides.map((record) => record.extensionId),
+        ]),
+      ]
+        .toSorted()
+        .map((id) => id as ExtensionId),
+      nonSecretEnvOverrides: overrides.map((record) => ({
+        extensionId: record.extensionId as ExtensionId,
+        envName: record.envName,
+        value: record.value,
+      })),
+      secretTargets: declarations
+        .filter((record) => record.secret)
+        .map((record) => ({
+          extensionId: record.extensionId as ExtensionId,
+          envName: record.envName,
+          present: secrets.get(`${record.extensionId}\0${record.envName}`)?.status === "configured",
+        })),
+    };
+  }
+
+  applyExtensionSnapshotSettings(
+    input: ApplyExtensionSnapshotSettingsCommand,
+  ): ApplyExtensionSnapshotSettingsReceipt {
+    return this.extensionSnapshotIdempotent(input.clientRequestId, "apply-settings", input, () => {
+      const skippedProfileIds: string[] = [];
+      let appliedProfileCount = 0;
+      for (const actor of input.payload.actorSettings) {
+        this.writeAgentActorExtensionDefaults({
+          actor: actor.actor,
+          extensionOrder: actor.extensionOrder.map(String),
+          extensionUsage: Object.fromEntries(
+            actor.extensionUsage.map((entry) => [entry.extensionId, entry.usage]),
+          ),
+          updatedAt: input.appliedAt,
+        });
+      }
+      for (const profile of input.payload.profileSettings) {
+        const exists = this.db
+          .query(`SELECT 1 AS found FROM agent_profile WHERE actor = ? AND profile_id = ?`)
+          .get(profile.actor, profile.profileId) as { found: number } | undefined;
+        if (!exists) {
+          skippedProfileIds.push(profile.profileId);
+          continue;
+        }
+        this.db
+          .query(
+            `UPDATE agent_profile
+               SET extension_usage_json = ?, extension_order_json = ?, updated_at = ?
+               WHERE actor = ? AND profile_id = ?`,
+          )
+          .run(
+            JSON.stringify(
+              Object.fromEntries(
+                profile.extensionUsage.map((entry) => [entry.extensionId, entry.usage]),
+              ),
+            ),
+            JSON.stringify(profile.extensionOrder),
+            input.appliedAt,
+            profile.actor,
+            profile.profileId,
+          );
+        appliedProfileCount += 1;
+      }
+      for (const extensionId of input.payload.nonSecretEnvOverrideScopes) {
+        this.db.query(`DELETE FROM extension_env_override WHERE extension_id = ?`).run(extensionId);
+      }
+      for (const override of input.payload.nonSecretEnvOverrides) {
+        if (!input.payload.nonSecretEnvOverrideScopes.includes(override.extensionId)) {
+          throw new StateContractError({
+            operation: "structured-session.applyExtensionSnapshotSettings",
+            reason: "invalid-input",
+            message: "Snapshot env override is outside its captured scopes.",
+          });
+        }
+        this.db
+          .query(
+            `INSERT INTO extension_env_override (extension_id, env_name, value, updated_at)
+               VALUES (?, ?, ?, ?)`,
+          )
+          .run(override.extensionId, override.envName, override.value, input.appliedAt);
+      }
+      const stateRevision = this.bumpStateRevision();
+      return {
+        receipt: this.extensionSnapshotReceipt(
+          input.clientRequestId,
+          input.appliedAt,
+          stateRevision,
+        ),
+        appliedActorCount: input.payload.actorSettings.length,
+        appliedProfileCount,
+        skippedProfileIds: skippedProfileIds.toSorted(),
+        appliedOverrideCount: input.payload.nonSecretEnvOverrides.length,
+        deferredSecretTargetCount: input.payload.secretTargets.length,
+      };
+    });
+  }
+
   setRequestInputVariant(input: SetRequestInputVariantInput): RequestInputSettings {
     const current = this.readRequestInputSettings();
     return this.writeRequestInputSettings({ ...current, mode: input.mode });
@@ -3282,6 +3741,734 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     })();
   }
 
+  readExtensionBuildAttempt(
+    attemptId: ExtensionBuildAttemptRecord["attemptId"],
+  ): ExtensionBuildAttemptRecord | null {
+    const row = this.db
+      .query(
+        `SELECT attempt_id, client_request_id, extension_id, registry_aggregate_fingerprint, source_fingerprint,
+                status, failure_reason, successful_build_id, started_at, finished_at
+         FROM extension_build_attempt
+         WHERE attempt_id = ?`,
+      )
+      .get(attemptId) as ExtensionBuildAttemptRow | null;
+    return row ? extensionBuildAttemptRecordFromRow(row) : null;
+  }
+
+  readExtensionBuildAttemptByClientRequestId(
+    clientRequestId: ExtensionBuildAttemptRecord["clientRequestId"],
+  ): ExtensionBuildAttemptRecord | null {
+    const row = this.db
+      .query(
+        `SELECT attempt_id, client_request_id, extension_id, registry_aggregate_fingerprint,
+                source_fingerprint, status, failure_reason, successful_build_id, started_at, finished_at
+         FROM extension_build_attempt WHERE client_request_id = ?`,
+      )
+      .get(clientRequestId) as ExtensionBuildAttemptRow | null;
+    return row ? extensionBuildAttemptRecordFromRow(row) : null;
+  }
+
+  startExtensionBuildAttempt(
+    unsafeInput: StartExtensionBuildAttemptInput,
+  ): StructuredExtensionBuildAttemptMutationResult {
+    const input = decodeStartExtensionBuildAttemptInputContract(unsafeInput);
+    return this.db.transaction(() => {
+      const existing = this.readExtensionBuildAttempt(input.attemptId);
+      if (existing) {
+        if (
+          existing.clientRequestId === input.clientRequestId &&
+          existing.extensionId === input.extensionId &&
+          existing.registryAggregateFingerprint === input.registryAggregateFingerprint &&
+          existing.sourceFingerprint === input.sourceFingerprint &&
+          existing.startedAt === input.startedAt
+        ) {
+          return {
+            record: existing,
+            outcome: "no-op" as const,
+            stateRevision: this.readCurrentStateRevision(),
+          };
+        }
+        throw new StateContractError({
+          operation: "structured-session.startExtensionBuildAttempt",
+          reason: "conflict",
+          message: "Extension build attempt identity was already used for different build work.",
+        });
+      }
+
+      const requestAttempt = this.readExtensionBuildAttemptByClientRequestId(input.clientRequestId);
+      if (requestAttempt) {
+        if (
+          requestAttempt.extensionId === input.extensionId &&
+          requestAttempt.registryAggregateFingerprint === input.registryAggregateFingerprint &&
+          requestAttempt.sourceFingerprint === input.sourceFingerprint
+        ) {
+          return {
+            record: requestAttempt,
+            outcome: "no-op" as const,
+            stateRevision: this.readCurrentStateRevision(),
+          };
+        }
+        throw new StateContractError({
+          operation: "structured-session.startExtensionBuildAttempt",
+          reason: "conflict",
+          message: "Extension build client request id was reused for different build work.",
+        });
+      }
+
+      const registry = this.readExtensionRegistryObservation();
+      const registryObservation = registry?.observation.observations.find(
+        (observation) => observation.extensionId === input.extensionId,
+      );
+      const evidence = this.readExtensionSourceBuildEvidence();
+      const sourceObservation = evidence?.observations.find(
+        (observation) => observation.extensionId === input.extensionId,
+      );
+      if (
+        !registry ||
+        registry.observation.aggregateFingerprint !== input.registryAggregateFingerprint ||
+        !registryObservation ||
+        registryObservation.buildRequirement !== "required" ||
+        registryObservation.sourceFingerprint !== input.sourceFingerprint ||
+        !evidence ||
+        evidence.registryAggregateFingerprint !== input.registryAggregateFingerprint ||
+        !sourceObservation ||
+        sourceObservation.buildRequirement !== "required" ||
+        sourceObservation.sourceStatus !== "materialized" ||
+        sourceObservation.sourceFingerprint !== input.sourceFingerprint
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.startExtensionBuildAttempt",
+          reason: "conflict",
+          message: "Extension build attempt does not match current registry and source authority.",
+        });
+      }
+
+      const record = decodeExtensionBuildAttemptRecordContract({
+        ...input,
+        status: "running",
+        failureReason: null,
+        successfulBuildId: null,
+        finishedAt: null,
+      });
+      this.db
+        .query(
+          `INSERT INTO extension_build_attempt (
+             attempt_id, client_request_id, extension_id, registry_aggregate_fingerprint, source_fingerprint,
+             status, failure_reason, successful_build_id, started_at, finished_at
+           ) VALUES (?, ?, ?, ?, ?, 'running', NULL, NULL, ?, NULL)`,
+        )
+        .run(
+          record.attemptId,
+          record.clientRequestId,
+          record.extensionId,
+          record.registryAggregateFingerprint,
+          record.sourceFingerprint,
+          record.startedAt,
+        );
+      return {
+        record,
+        outcome: "committed" as const,
+        stateRevision: this.bumpStateRevision(),
+      };
+    })();
+  }
+
+  recordExtensionBuildSuccess(
+    unsafeInput: RecordExtensionBuildSuccessInput,
+  ): StructuredExtensionBuildAttemptMutationResult {
+    const input = decodeRecordExtensionBuildSuccessInputContract(unsafeInput);
+    return this.db.transaction(() => {
+      const existing = this.readExtensionBuildAttempt(input.attemptId);
+      if (!existing) {
+        throw new StateContractError({
+          operation: "structured-session.recordExtensionBuildSuccess",
+          reason: "not-found",
+          message: "Extension build attempt was not found.",
+        });
+      }
+      if (existing.status !== "running") {
+        if (
+          existing.status === "succeeded" &&
+          existing.clientRequestId === input.clientRequestId &&
+          existing.extensionId === input.extensionId &&
+          existing.registryAggregateFingerprint === input.registryAggregateFingerprint &&
+          existing.sourceFingerprint === input.sourceFingerprint &&
+          existing.successfulBuildId === input.manifest.buildId &&
+          existing.finishedAt === input.finishedAt
+        ) {
+          return {
+            record: existing,
+            outcome: "no-op" as const,
+            stateRevision: this.readCurrentStateRevision(),
+          };
+        }
+        throw new StateContractError({
+          operation: "structured-session.recordExtensionBuildSuccess",
+          reason: "conflict",
+          message: "Extension build attempt already has a different terminal outcome.",
+        });
+      }
+      if (
+        existing.clientRequestId !== input.clientRequestId ||
+        existing.extensionId !== input.extensionId ||
+        existing.registryAggregateFingerprint !== input.registryAggregateFingerprint ||
+        existing.sourceFingerprint !== input.sourceFingerprint ||
+        input.finishedAt < existing.startedAt
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.recordExtensionBuildSuccess",
+          reason: "conflict",
+          message: "Extension build success does not match the running attempt identity.",
+        });
+      }
+
+      const registry = this.readExtensionRegistryObservation();
+      const registryObservation = registry?.observation.observations.find(
+        (observation) => observation.extensionId === input.extensionId,
+      );
+      const evidence = this.readExtensionSourceBuildEvidence();
+      const sourceObservation = evidence?.observations.find(
+        (observation) => observation.extensionId === input.extensionId,
+      );
+      if (
+        !registry ||
+        registry.observation.aggregateFingerprint !== input.registryAggregateFingerprint ||
+        !registryObservation ||
+        registryObservation.buildRequirement !== "required" ||
+        registryObservation.sourceFingerprint !== input.sourceFingerprint ||
+        input.manifest.extensionId !== input.extensionId ||
+        input.manifest.interfaceKind !== registryObservation.interfaceKind ||
+        input.manifest.sourceFingerprint !== input.sourceFingerprint ||
+        !evidence ||
+        evidence.registryAggregateFingerprint !== input.registryAggregateFingerprint ||
+        !sourceObservation ||
+        sourceObservation.buildRequirement !== "required" ||
+        sourceObservation.sourceStatus !== "materialized" ||
+        sourceObservation.sourceFingerprint !== input.sourceFingerprint
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.recordExtensionBuildSuccess",
+          reason: "conflict",
+          message: "Extension build success does not match current registry and source authority.",
+        });
+      }
+
+      const promotedObservation = decodeExtensionSourceBuildObservationContract({
+        ...sourceObservation,
+        currentBuildStatus: "current",
+        currentBuild: input.manifest,
+        buildRequired: false,
+        diagnostics: [],
+      });
+      this.db
+        .query(
+          `UPDATE extension_source_build_evidence
+           SET observation_json = ?, observed_at = ?
+           WHERE extension_id = ? AND registry_aggregate_fingerprint = ?`,
+        )
+        .run(
+          JSON.stringify(promotedObservation),
+          input.finishedAt,
+          input.extensionId,
+          input.registryAggregateFingerprint,
+        );
+      this.db
+        .query(
+          `UPDATE extension_source_build_evidence_batch
+           SET observed_at = ?
+           WHERE singleton_id = 1 AND registry_aggregate_fingerprint = ?`,
+        )
+        .run(input.finishedAt, input.registryAggregateFingerprint);
+      this.db
+        .query(
+          `UPDATE extension_build_attempt
+           SET status = 'succeeded', successful_build_id = ?, finished_at = ?
+           WHERE attempt_id = ? AND status = 'running'`,
+        )
+        .run(input.manifest.buildId, input.finishedAt, input.attemptId);
+      const record = this.readExtensionBuildAttempt(input.attemptId)!;
+      return {
+        record,
+        outcome: "committed" as const,
+        stateRevision: this.bumpStateRevision(),
+      };
+    })();
+  }
+
+  recordExtensionBuildFailure(
+    unsafeInput: RecordExtensionBuildFailureInput,
+  ): StructuredExtensionBuildAttemptMutationResult {
+    const input = decodeRecordExtensionBuildFailureInputContract(unsafeInput);
+    return this.db.transaction(() => {
+      const existing = this.readExtensionBuildAttempt(input.attemptId);
+      if (!existing) {
+        throw new StateContractError({
+          operation: "structured-session.recordExtensionBuildFailure",
+          reason: "not-found",
+          message: "Extension build attempt was not found.",
+        });
+      }
+      if (existing.status !== "running") {
+        if (
+          existing.status === "failed" &&
+          existing.clientRequestId === input.clientRequestId &&
+          existing.extensionId === input.extensionId &&
+          existing.registryAggregateFingerprint === input.registryAggregateFingerprint &&
+          existing.sourceFingerprint === input.sourceFingerprint &&
+          existing.failureReason === input.failureReason &&
+          existing.finishedAt === input.finishedAt
+        ) {
+          return {
+            record: existing,
+            outcome: "no-op" as const,
+            stateRevision: this.readCurrentStateRevision(),
+          };
+        }
+        throw new StateContractError({
+          operation: "structured-session.recordExtensionBuildFailure",
+          reason: "conflict",
+          message: "Extension build attempt already has a different terminal outcome.",
+        });
+      }
+      if (
+        existing.clientRequestId !== input.clientRequestId ||
+        existing.extensionId !== input.extensionId ||
+        existing.registryAggregateFingerprint !== input.registryAggregateFingerprint ||
+        existing.sourceFingerprint !== input.sourceFingerprint ||
+        input.finishedAt < existing.startedAt
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.recordExtensionBuildFailure",
+          reason: "conflict",
+          message: "Extension build failure does not match the running attempt identity.",
+        });
+      }
+      this.db
+        .query(
+          `UPDATE extension_build_attempt
+           SET status = 'failed', failure_reason = ?, finished_at = ?
+           WHERE attempt_id = ? AND status = 'running'`,
+        )
+        .run(input.failureReason, input.finishedAt, input.attemptId);
+      const record = this.readExtensionBuildAttempt(input.attemptId)!;
+      return {
+        record,
+        outcome: "committed" as const,
+        stateRevision: this.bumpStateRevision(),
+      };
+    })();
+  }
+
+  listExtensionSnapshots(): ExtensionSnapshotsReadModel {
+    const rows = this.db
+      .query(`SELECT * FROM extension_snapshot ORDER BY updated_at DESC, snapshot_id ASC`)
+      .all() as Array<Record<string, unknown>>;
+    return {
+      revision: this.readCurrentStateRevision(),
+      snapshots: rows.map((row) => {
+        const record = this.mapExtensionSnapshotRow(row);
+        return this.publicExtensionSnapshot(record);
+      }),
+    };
+  }
+
+  readExtensionSnapshot(snapshotId: ExtensionSnapshotId): ExtensionSnapshotStateRecord | null {
+    const row = this.db
+      .query(`SELECT * FROM extension_snapshot WHERE snapshot_id = ?`)
+      .get(snapshotId) as Record<string, unknown> | undefined;
+    return row ? this.mapExtensionSnapshotRow(row) : null;
+  }
+
+  saveExtensionSnapshot(input: SaveExtensionSnapshotCommand): SaveExtensionSnapshotReceipt {
+    return this.extensionSnapshotIdempotent(input.clientRequestId, "save", input, () => {
+      if (this.readExtensionSnapshot(input.snapshotId)) {
+        throw new StateContractError({
+          operation: "structured-session.saveExtensionSnapshot",
+          reason: "conflict",
+          message: "Extension snapshot id already exists.",
+        });
+      }
+      const stateRevision = this.bumpStateRevision();
+      this.db
+        .query(
+          `INSERT INTO extension_snapshot
+         (snapshot_id, name, created_at, updated_at, revision, payload_ref_json,
+          secret_payload_ref, extension_count, secret_state, status)
+         VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'available')`,
+        )
+        .run(
+          input.snapshotId,
+          input.name,
+          input.capturedAt,
+          input.capturedAt,
+          JSON.stringify(input.payloadRef),
+          input.secretPayloadRef,
+          input.extensionCount,
+          input.secretPayloadRef === null ? "not-present" : "captured",
+        );
+      const snapshot = this.readExtensionSnapshot(input.snapshotId)!;
+      return {
+        receipt: this.extensionSnapshotReceipt(
+          input.clientRequestId,
+          input.capturedAt,
+          stateRevision,
+        ),
+        snapshot: this.publicExtensionSnapshot(snapshot),
+      };
+    });
+  }
+
+  renameExtensionSnapshot(input: RenameExtensionSnapshotCommand): RenameExtensionSnapshotReceipt {
+    return this.extensionSnapshotIdempotent(input.clientRequestId, "rename", input, () => {
+      const snapshot = this.requireExtensionSnapshot(input.snapshotId, "renameExtensionSnapshot");
+      if (snapshot.revision !== input.expectedRevision) {
+        throw this.extensionSnapshotStale("renameExtensionSnapshot");
+      }
+      let stateRevision = this.readCurrentStateRevision();
+      if (snapshot.name !== input.name) {
+        this.db
+          .query(
+            `UPDATE extension_snapshot SET name = ?, updated_at = ?, revision = revision + 1
+           WHERE snapshot_id = ?`,
+          )
+          .run(input.name, input.renamedAt, input.snapshotId);
+        stateRevision = this.bumpStateRevision();
+      }
+      return {
+        receipt: this.extensionSnapshotReceipt(
+          input.clientRequestId,
+          input.renamedAt,
+          stateRevision,
+        ),
+        snapshot: this.publicExtensionSnapshot(this.readExtensionSnapshot(input.snapshotId)!),
+      };
+    });
+  }
+
+  deleteExtensionSnapshot(input: DeleteExtensionSnapshotCommand): DeleteExtensionSnapshotReceipt {
+    return this.extensionSnapshotIdempotent(input.clientRequestId, "delete", input, () => {
+      const snapshot = this.requireExtensionSnapshot(input.snapshotId, "deleteExtensionSnapshot");
+      if (snapshot.revision !== input.expectedRevision) {
+        throw this.extensionSnapshotStale("deleteExtensionSnapshot");
+      }
+      const cleanup: ExtensionSnapshotCleanupRecord = {
+        cleanupId: input.cleanupId,
+        snapshotId: snapshot.snapshotId,
+        payloadRef: snapshot.payloadRef,
+        secretPayloadRef: snapshot.secretPayloadRef,
+        requestedAt: input.deletedAt,
+      };
+      this.db
+        .query(
+          `INSERT INTO extension_snapshot_cleanup
+         (cleanup_id, snapshot_id, payload_ref_json, secret_payload_ref, requested_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          cleanup.cleanupId,
+          cleanup.snapshotId,
+          JSON.stringify(cleanup.payloadRef),
+          cleanup.secretPayloadRef,
+          cleanup.requestedAt,
+        );
+      this.db.query(`DELETE FROM extension_snapshot WHERE snapshot_id = ?`).run(input.snapshotId);
+      const stateRevision = this.bumpStateRevision();
+      return {
+        receipt: this.extensionSnapshotReceipt(
+          input.clientRequestId,
+          input.deletedAt,
+          stateRevision,
+        ),
+        snapshotId: input.snapshotId,
+        cleanup,
+      };
+    });
+  }
+
+  loadExtensionSnapshot(input: LoadExtensionSnapshotCommand): LoadExtensionSnapshotReceipt {
+    return this.extensionSnapshotIdempotent(input.clientRequestId, "load", input, () => {
+      const snapshot = this.requireExtensionSnapshot(input.snapshotId, "loadExtensionSnapshot");
+      if (snapshot.revision !== input.expectedRevision) {
+        throw this.extensionSnapshotStale("loadExtensionSnapshot");
+      }
+      this.db
+        .query(
+          `INSERT INTO extension_snapshot_restore_attempt
+         (attempt_id, snapshot_id, client_request_id, snapshot_revision, payload_ref_json,
+          secret_payload_ref, status, started_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?, ?)`,
+        )
+        .run(
+          input.attemptId,
+          input.snapshotId,
+          input.clientRequestId,
+          snapshot.revision,
+          JSON.stringify(snapshot.payloadRef),
+          snapshot.secretPayloadRef,
+          input.startedAt,
+          input.startedAt,
+        );
+      const stateRevision = this.bumpStateRevision();
+      return {
+        receipt: this.extensionSnapshotReceipt(
+          input.clientRequestId,
+          input.startedAt,
+          stateRevision,
+        ),
+        attempt: this.readExtensionSnapshotRestoreAttempt(input.attemptId)!,
+      };
+    });
+  }
+
+  readExtensionSnapshotRestoreAttempt(
+    attemptId: ExtensionSnapshotRestoreAttemptId,
+  ): ExtensionSnapshotRestoreAttempt | null {
+    const row = this.db
+      .query(`SELECT * FROM extension_snapshot_restore_attempt WHERE attempt_id = ?`)
+      .get(attemptId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return decodeExtensionSnapshotRestoreAttemptContract({
+      attemptId: row.attempt_id,
+      snapshotId: row.snapshot_id,
+      clientRequestId: row.client_request_id,
+      snapshotRevision: row.snapshot_revision,
+      payloadRef: decodeExtensionSnapshotPayloadRefContract(
+        JSON.parse(String(row.payload_ref_json)),
+      ),
+      secretPayloadRef: row.secret_payload_ref,
+      status: row.status,
+      startedAt: row.started_at,
+      updatedAt: row.updated_at,
+      finishedAt: row.finished_at,
+      failureReason: row.failure_reason,
+    });
+  }
+
+  listPendingExtensionSnapshotRestoreAttempts(): ExtensionSnapshotRestoreAttempt[] {
+    const rows = this.db
+      .query(
+        `SELECT attempt_id FROM extension_snapshot_restore_attempt
+         WHERE status NOT IN ('completed', 'failed')
+         ORDER BY started_at ASC, attempt_id ASC`,
+      )
+      .all() as Array<{ attempt_id: string }>;
+    return rows.map(
+      (row) =>
+        this.readExtensionSnapshotRestoreAttempt(
+          row.attempt_id as ExtensionSnapshotRestoreAttemptId,
+        )!,
+    );
+  }
+
+  advanceExtensionSnapshotRestoreAttempt(
+    input: AdvanceExtensionSnapshotRestoreAttemptCommand,
+  ): AdvanceExtensionSnapshotRestoreAttemptReceipt {
+    return this.extensionSnapshotIdempotent(input.clientRequestId, "advance-restore", input, () => {
+      const attempt = this.readExtensionSnapshotRestoreAttempt(input.attemptId);
+      if (!attempt) {
+        throw new StateContractError({
+          operation: "structured-session.advanceExtensionSnapshotRestoreAttempt",
+          reason: "not-found",
+          message: "Extension snapshot restore attempt was not found.",
+        });
+      }
+      if (attempt.status !== input.expectedStatus) {
+        throw this.extensionSnapshotStale("advanceExtensionSnapshotRestoreAttempt");
+      }
+      const allowed: Record<string, readonly string[]> = {
+        prepared: ["payload-applied", "failed"],
+        "payload-applied": ["state-committed", "failed"],
+        "state-committed": ["building", "failed"],
+        building: ["completed", "failed"],
+        completed: [],
+        failed: [],
+      };
+      if (!allowed[attempt.status]?.includes(input.status)) {
+        throw new StateContractError({
+          operation: "structured-session.advanceExtensionSnapshotRestoreAttempt",
+          reason: "conflict",
+          message: `Invalid extension snapshot restore transition: ${attempt.status} -> ${input.status}.`,
+        });
+      }
+      const terminal = input.status === "completed" || input.status === "failed";
+      if ((input.status === "failed") !== (input.failureReason !== null)) {
+        throw new StateContractError({
+          operation: "structured-session.advanceExtensionSnapshotRestoreAttempt",
+          reason: "invalid-input",
+          message: "Only failed restore attempts may carry a failure reason.",
+        });
+      }
+      this.db
+        .query(
+          `UPDATE extension_snapshot_restore_attempt
+         SET status = ?, updated_at = ?, finished_at = ?, failure_reason = ?
+         WHERE attempt_id = ?`,
+        )
+        .run(
+          input.status,
+          input.updatedAt,
+          terminal ? input.updatedAt : null,
+          input.failureReason,
+          input.attemptId,
+        );
+      const stateRevision = this.bumpStateRevision();
+      return {
+        receipt: this.extensionSnapshotReceipt(
+          input.clientRequestId,
+          input.updatedAt,
+          stateRevision,
+        ),
+        attempt: this.readExtensionSnapshotRestoreAttempt(input.attemptId)!,
+      };
+    });
+  }
+
+  listPendingExtensionSnapshotCleanup(): ExtensionSnapshotCleanupRecord[] {
+    const rows = this.db
+      .query(
+        `SELECT * FROM extension_snapshot_cleanup WHERE completed_at IS NULL
+       ORDER BY requested_at ASC, cleanup_id ASC`,
+      )
+      .all() as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      cleanupId: row.cleanup_id as ExtensionSnapshotCleanupRecord["cleanupId"],
+      snapshotId: row.snapshot_id as ExtensionSnapshotCleanupRecord["snapshotId"],
+      payloadRef: decodeExtensionSnapshotPayloadRefContract(
+        JSON.parse(String(row.payload_ref_json)),
+      ),
+      secretPayloadRef:
+        row.secret_payload_ref as ExtensionSnapshotCleanupRecord["secretPayloadRef"],
+      requestedAt: row.requested_at as ExtensionSnapshotCleanupRecord["requestedAt"],
+    }));
+  }
+
+  completeExtensionSnapshotCleanup(
+    input: CompleteExtensionSnapshotCleanupCommand,
+  ): CompleteExtensionSnapshotCleanupReceipt {
+    return this.extensionSnapshotIdempotent(
+      input.clientRequestId,
+      "complete-cleanup",
+      input,
+      () => {
+        const result = this.db
+          .query(
+            `UPDATE extension_snapshot_cleanup SET completed_at = ?
+         WHERE cleanup_id = ? AND completed_at IS NULL`,
+          )
+          .run(input.completedAt, input.cleanupId);
+        if (result.changes === 0) {
+          throw new StateContractError({
+            operation: "structured-session.completeExtensionSnapshotCleanup",
+            reason: "not-found",
+            message: "Pending extension snapshot cleanup was not found.",
+          });
+        }
+        const stateRevision = this.bumpStateRevision();
+        return {
+          receipt: this.extensionSnapshotReceipt(
+            input.clientRequestId,
+            input.completedAt,
+            stateRevision,
+          ),
+          cleanupId: input.cleanupId,
+        };
+      },
+    );
+  }
+
+  private mapExtensionSnapshotRow(row: Record<string, unknown>): ExtensionSnapshotStateRecord {
+    return decodeExtensionSnapshotStateRecordContract({
+      snapshotId: row.snapshot_id,
+      name: row.name,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      revision: row.revision,
+      payloadRef: decodeExtensionSnapshotPayloadRefContract(
+        JSON.parse(String(row.payload_ref_json)),
+      ),
+      secretPayloadRef: row.secret_payload_ref,
+      extensionCount: row.extension_count,
+      secretState: row.secret_state,
+      status: row.status,
+    });
+  }
+
+  private publicExtensionSnapshot(snapshot: ExtensionSnapshotStateRecord) {
+    const { payloadRef: _payloadRef, secretPayloadRef: _secretPayloadRef, ...summary } = snapshot;
+    return summary;
+  }
+
+  private requireExtensionSnapshot(snapshotId: ExtensionSnapshotId, operation: string) {
+    const snapshot = this.readExtensionSnapshot(snapshotId);
+    if (!snapshot) {
+      throw new StateContractError({
+        operation: `structured-session.${operation}`,
+        reason: "not-found",
+        message: "Extension snapshot was not found.",
+      });
+    }
+    return snapshot;
+  }
+
+  private extensionSnapshotStale(operation: string) {
+    return new StateContractError({
+      operation: `structured-session.${operation}`,
+      reason: "stale-state",
+      message: "Extension snapshot revision no longer matches.",
+    });
+  }
+
+  private extensionSnapshotReceipt(
+    clientRequestId: string,
+    committedAt: IsoDateTimeString,
+    stateRevision: StateRevision,
+  ): StateCommandReceipt {
+    return {
+      clientRequestId,
+      outcome: "applied",
+      committedAt: committedAt as StateCommandReceipt["committedAt"],
+      stateRevision,
+    };
+  }
+
+  private extensionSnapshotIdempotent<T extends { receipt: { outcome: "applied" | "duplicate" } }>(
+    clientRequestId: string,
+    operation: string,
+    input: unknown,
+    apply: () => T,
+  ): T {
+    return this.db.transaction(() => {
+      const inputJson = JSON.stringify(input);
+      const existing = this.db
+        .query(
+          `SELECT operation, input_json, result_json FROM extension_snapshot_client_request
+         WHERE client_request_id = ?`,
+        )
+        .get(clientRequestId) as
+        | { operation: string; input_json: string; result_json: string }
+        | undefined;
+      if (existing) {
+        if (existing.operation !== operation || existing.input_json !== inputJson) {
+          throw new StateContractError({
+            operation: `structured-session.${operation}ExtensionSnapshot`,
+            reason: "conflict",
+            message: "Client request id was already used with different snapshot input.",
+          });
+        }
+        const result = JSON.parse(existing.result_json) as T;
+        return { ...result, receipt: { ...result.receipt, outcome: "duplicate" } };
+      }
+      const result = apply();
+      this.db
+        .query(
+          `INSERT INTO extension_snapshot_client_request
+         (client_request_id, operation, input_json, result_json) VALUES (?, ?, ?, ?)`,
+        )
+        .run(clientRequestId, operation, inputJson, JSON.stringify(result));
+      return result;
+    })();
+  }
+
   selectWorkspaceTab(
     input: SelectWorkspaceTabCommandInput,
   ): StructuredWorkspaceChromeMutationRecord {
@@ -3386,6 +4573,581 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       return this.bumpStateRevision();
     })();
     return { updatedAt, stateRevision };
+  }
+
+  readExtensionRegistryObservation(): ExtensionRegistryStateRecord | null {
+    const row = this.db
+      .query(
+        `SELECT observation_json, observed_at
+         FROM extension_registry_observation
+         WHERE singleton_id = 1`,
+      )
+      .get() as ExtensionRegistryObservationRow | null;
+    if (!row) return null;
+    return {
+      observation: decodeStoredExtensionRegistryObservation(row.observation_json),
+      observedAt: row.observed_at as ExtensionRegistryStateRecord["observedAt"],
+    };
+  }
+
+  reconcileExtensionRegistryObservation(
+    input: ReconcileExtensionRegistryObservationInput,
+  ): StructuredExtensionRegistryReconcileResult {
+    const observation = decodeExtensionRegistryObservationResultContract(input.observation);
+    const observationJson = JSON.stringify(observation);
+    return this.db.transaction(() => {
+      const currentRow = this.db
+        .query(
+          `SELECT observation_json, observed_at
+           FROM extension_registry_observation
+           WHERE singleton_id = 1`,
+        )
+        .get() as ExtensionRegistryObservationRow | null;
+      if (currentRow?.observation_json === observationJson) {
+        return {
+          record: {
+            observation: decodeStoredExtensionRegistryObservation(currentRow.observation_json),
+            observedAt: currentRow.observed_at as ExtensionRegistryStateRecord["observedAt"],
+          },
+          outcome: "no-op" as const,
+          stateRevision: this.readCurrentStateRevision(),
+        };
+      }
+
+      const acceptedSecretTargets = new Set(
+        observation.observations.flatMap((extension) =>
+          extension.envDeclarations
+            .filter((declaration) => declaration.secret)
+            .map((declaration) => `${extension.extensionId}\0${declaration.name}`),
+        ),
+      );
+      const invalidatedSecrets = this.listExtensionEnvSecrets().filter(
+        (record) => !acceptedSecretTargets.has(`${record.extensionId}\0${record.envName}`),
+      );
+      for (const record of invalidatedSecrets) {
+        this.insertExtensionEnvSecretCleanup(
+          record.ref,
+          record.revisionFingerprint,
+          "removed",
+          input.observedAt,
+        );
+        this.db
+          .query(`DELETE FROM extension_env_secret WHERE extension_id = ? AND env_name = ?`)
+          .run(record.extensionId, record.envName);
+      }
+
+      this.db.query(`DELETE FROM extension_env_declaration`).run();
+      const insertDeclaration = this.db.query(
+        `INSERT INTO extension_env_declaration
+           (extension_id, env_name, required, secret, description, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      );
+      for (const extension of observation.observations) {
+        for (const declaration of extension.envDeclarations) {
+          insertDeclaration.run(
+            extension.extensionId,
+            declaration.name,
+            declaration.required ? 1 : 0,
+            declaration.secret ? 1 : 0,
+            declaration.description,
+            input.observedAt,
+          );
+        }
+      }
+
+      this.db
+        .query(
+          `INSERT INTO extension_registry_observation
+             (singleton_id, observation_json, observed_at)
+           VALUES (1, ?, ?)
+           ON CONFLICT(singleton_id) DO UPDATE SET
+             observation_json = excluded.observation_json,
+             observed_at = excluded.observed_at`,
+        )
+        .run(observationJson, input.observedAt);
+      return {
+        record: { observation, observedAt: input.observedAt },
+        outcome: "committed" as const,
+        stateRevision: this.bumpStateRevision(),
+      };
+    })();
+  }
+
+  readExtensionSourceBuildEvidence(): StructuredExtensionSourceBuildEvidenceBatchRecord | null {
+    const batch = this.db
+      .query(
+        `SELECT registry_aggregate_fingerprint, observed_at
+         FROM extension_source_build_evidence_batch
+         WHERE singleton_id = 1`,
+      )
+      .get() as ExtensionSourceBuildEvidenceBatchRow | null;
+    if (!batch) return null;
+    const rows = this.db
+      .query(
+        `SELECT extension_id, registry_aggregate_fingerprint, observation_json, observed_at
+         FROM extension_source_build_evidence
+         WHERE registry_aggregate_fingerprint = ?
+         ORDER BY extension_id`,
+      )
+      .all(batch.registry_aggregate_fingerprint) as ExtensionSourceBuildEvidenceRow[];
+    return {
+      registryAggregateFingerprint: batch.registry_aggregate_fingerprint,
+      observations: rows.map((row) =>
+        decodeStoredExtensionSourceBuildObservation(row.observation_json),
+      ),
+      observedAt: batch.observed_at as IsoDateTimeString,
+    };
+  }
+
+  reconcileExtensionSourceBuildEvidence(
+    input: ReconcileExtensionSourceBuildEvidenceInput,
+  ): StructuredExtensionSourceBuildEvidenceReconcileResult {
+    return this.db.transaction(() => {
+      const registry = this.readExtensionRegistryObservation();
+      if (
+        !registry ||
+        registry.observation.aggregateFingerprint !== input.registryAggregateFingerprint
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.reconcileExtensionSourceBuildEvidence",
+          reason: "conflict",
+          message:
+            "Extension source/build evidence was observed against a stale registry fingerprint.",
+        });
+      }
+
+      const observations = input.observations.map((observation) =>
+        decodeExtensionSourceBuildObservationContract(observation),
+      );
+      const sortedIds = observations
+        .map((observation) => observation.extensionId as string)
+        .toSorted((left, right) => left.localeCompare(right));
+      if (
+        observations.some((observation, index) => observation.extensionId !== sortedIds[index]) ||
+        new Set(sortedIds).size !== sortedIds.length
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.reconcileExtensionSourceBuildEvidence",
+          reason: "invalid-input",
+          message: "Extension source/build evidence must be a unique extension-id-sorted batch.",
+        });
+      }
+
+      const registryById = new Map(
+        registry.observation.observations.map((observation) => [
+          observation.extensionId as string,
+          observation,
+        ]),
+      );
+      if (
+        observations.length !== registryById.size ||
+        observations.some((observation) => !registryById.has(observation.extensionId))
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.reconcileExtensionSourceBuildEvidence",
+          reason: "invalid-input",
+          message: "Extension source/build evidence must be complete for the current registry.",
+        });
+      }
+      for (const observation of observations) {
+        const registryObservation = registryById.get(observation.extensionId)!;
+        if (observation.category !== registryObservation.category) {
+          throw new StateContractError({
+            operation: "structured-session.reconcileExtensionSourceBuildEvidence",
+            reason: "invalid-input",
+            message: `Extension source/build category does not match the registry for ${observation.extensionId}.`,
+          });
+        }
+        if (observation.buildRequirement !== registryObservation.buildRequirement) {
+          throw new StateContractError({
+            operation: "structured-session.reconcileExtensionSourceBuildEvidence",
+            reason: "invalid-input",
+            message: `Extension source/build requirement does not match the registry for ${observation.extensionId}.`,
+          });
+        }
+        if (
+          observation.sourceStatus === "materialized" &&
+          observation.sourceFingerprint !== registryObservation.sourceFingerprint
+        ) {
+          throw new StateContractError({
+            operation: "structured-session.reconcileExtensionSourceBuildEvidence",
+            reason: "invalid-input",
+            message: `Extension source fingerprint does not match the registry for ${observation.extensionId}.`,
+          });
+        }
+        if (
+          observation.currentBuild &&
+          (observation.currentBuild.extensionId !== observation.extensionId ||
+            observation.currentBuild.interfaceKind !== registryObservation.interfaceKind ||
+            observation.currentBuild.sourceFingerprint !== observation.sourceFingerprint)
+        ) {
+          throw new StateContractError({
+            operation: "structured-session.reconcileExtensionSourceBuildEvidence",
+            reason: "invalid-input",
+            message: `Extension current build does not match current source authority for ${observation.extensionId}.`,
+          });
+        }
+      }
+
+      const currentRows = this.db
+        .query(
+          `SELECT extension_id, registry_aggregate_fingerprint, observation_json, observed_at
+           FROM extension_source_build_evidence
+           ORDER BY extension_id`,
+        )
+        .all() as ExtensionSourceBuildEvidenceRow[];
+      const currentBatch = this.db
+        .query(
+          `SELECT registry_aggregate_fingerprint, observed_at
+           FROM extension_source_build_evidence_batch
+           WHERE singleton_id = 1`,
+        )
+        .get() as ExtensionSourceBuildEvidenceBatchRow | null;
+      const nextById = new Map(
+        observations.map((observation) => [
+          observation.extensionId as string,
+          JSON.stringify(observation),
+        ]),
+      );
+      const currentById = new Map(
+        currentRows.map((row) => [row.extension_id, row.observation_json]),
+      );
+      let changedExtensionIds = [...new Set([...currentById.keys(), ...nextById.keys()])]
+        .filter((extensionId) => currentById.get(extensionId) !== nextById.get(extensionId))
+        .toSorted((left, right) => left.localeCompare(right)) as ExtensionId[];
+      if (
+        currentBatch &&
+        currentBatch.registry_aggregate_fingerprint !== input.registryAggregateFingerprint
+      ) {
+        changedExtensionIds = [...new Set([...currentById.keys(), ...nextById.keys()])].toSorted(
+          (left, right) => left.localeCompare(right),
+        ) as ExtensionId[];
+      }
+      if (
+        currentBatch?.registry_aggregate_fingerprint === input.registryAggregateFingerprint &&
+        changedExtensionIds.length === 0
+      ) {
+        return {
+          changed: false,
+          changedExtensionIds: [],
+          stateRevision: this.readCurrentStateRevision(),
+        };
+      }
+
+      const observedAt = input.observedAt;
+      this.db.query(`DELETE FROM extension_source_build_evidence`).run();
+      const insert = this.db.query(
+        `INSERT INTO extension_source_build_evidence (
+           extension_id, registry_aggregate_fingerprint, observation_json, observed_at
+         ) VALUES (?, ?, ?, ?)`,
+      );
+      for (const observation of observations) {
+        insert.run(
+          observation.extensionId,
+          input.registryAggregateFingerprint,
+          nextById.get(observation.extensionId)!,
+          observedAt,
+        );
+      }
+      this.db
+        .query(
+          `INSERT INTO extension_source_build_evidence_batch (
+             singleton_id, registry_aggregate_fingerprint, observed_at
+           ) VALUES (1, ?, ?)
+           ON CONFLICT(singleton_id) DO UPDATE SET
+             registry_aggregate_fingerprint = excluded.registry_aggregate_fingerprint,
+             observed_at = excluded.observed_at`,
+        )
+        .run(input.registryAggregateFingerprint, observedAt);
+      return {
+        changed: true,
+        changedExtensionIds,
+        stateRevision: this.bumpStateRevision(),
+      };
+    })();
+  }
+
+  reconcileExtensionEnvDeclarations(input: {
+    declarations: readonly Omit<StructuredExtensionEnvDeclarationRecord, "updatedAt">[];
+  }): StructuredMutationCommitRecord {
+    const updatedAt = this.now();
+    const stateRevision = this.db.transaction(() => {
+      const acceptedSecretTargets = new Set(
+        input.declarations
+          .filter((declaration) => declaration.secret)
+          .map((declaration) => `${declaration.extensionId}\0${declaration.envName}`),
+      );
+      const invalidatedSecrets = this.listExtensionEnvSecrets().filter(
+        (record) => !acceptedSecretTargets.has(`${record.extensionId}\0${record.envName}`),
+      );
+      for (const record of invalidatedSecrets) {
+        this.insertExtensionEnvSecretCleanup(
+          record.ref,
+          record.revisionFingerprint,
+          "removed",
+          updatedAt,
+        );
+        this.db
+          .query(`DELETE FROM extension_env_secret WHERE extension_id = ? AND env_name = ?`)
+          .run(record.extensionId, record.envName);
+      }
+      this.db.query(`DELETE FROM extension_env_declaration`).run();
+      const insert = this.db.query(
+        `INSERT INTO extension_env_declaration
+           (extension_id, env_name, required, secret, description, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      );
+      for (const declaration of input.declarations) {
+        insert.run(
+          declaration.extensionId,
+          declaration.envName,
+          declaration.required ? 1 : 0,
+          declaration.secret ? 1 : 0,
+          declaration.description,
+          updatedAt,
+        );
+      }
+      return this.bumpStateRevision();
+    })();
+    return { updatedAt, stateRevision };
+  }
+
+  listExtensionEnvDeclarations(): StructuredExtensionEnvDeclarationRecord[] {
+    return (
+      this.db
+        .query(`SELECT * FROM extension_env_declaration ORDER BY extension_id, env_name`)
+        .all() as ExtensionEnvDeclarationRow[]
+    ).map(extensionEnvDeclarationRecord);
+  }
+
+  listExtensionEnvSecrets(): StructuredExtensionEnvSecretRecord[] {
+    return (
+      this.db
+        .query(`SELECT * FROM extension_env_secret ORDER BY extension_id, env_name`)
+        .all() as ExtensionEnvSecretRow[]
+    ).map(extensionEnvSecretRecord);
+  }
+
+  listExtensionEnvSecretCleanupRecords(): StructuredExtensionEnvSecretCleanupRecord[] {
+    return (
+      this.db
+        .query(`SELECT * FROM extension_env_secret_cleanup ORDER BY created_at, material_id`)
+        .all() as ExtensionEnvSecretCleanupRow[]
+    ).map((row) => ({
+      ref: {
+        kind: "extension-env" as const,
+        extensionId: row.extension_id as ExtensionId,
+        envName: row.env_name as ExtensionEnvSecretRef["envName"],
+        materialId: row.material_id as ExtensionEnvSecretRef["materialId"],
+      },
+      revisionFingerprint: row.revision_fingerprint,
+      reason: row.reason,
+      createdAt: row.created_at,
+    }));
+  }
+
+  readExtensionEnvSecretCommandState(input: {
+    operation: "set" | "remove";
+    clientRequestId?: string;
+    extensionId: string;
+    envName: string;
+  }): {
+    declaration: StructuredExtensionEnvDeclarationRecord | null;
+    current: StructuredExtensionEnvSecretRecord | null;
+    receipt: StructuredExtensionEnvSecretReceiptRecord | null;
+  } {
+    const declaration = this.db
+      .query(`SELECT * FROM extension_env_declaration WHERE extension_id = ? AND env_name = ?`)
+      .get(input.extensionId, input.envName) as ExtensionEnvDeclarationRow | null;
+    const current = this.db
+      .query(`SELECT * FROM extension_env_secret WHERE extension_id = ? AND env_name = ?`)
+      .get(input.extensionId, input.envName) as ExtensionEnvSecretRow | null;
+    const receipt = input.clientRequestId
+      ? (this.db
+          .query(
+            `SELECT * FROM extension_env_secret_receipt
+             WHERE client_request_id = ?`,
+          )
+          .get(input.clientRequestId) as ExtensionEnvSecretReceiptRow | null)
+      : null;
+    if (
+      receipt &&
+      (receipt.operation !== input.operation ||
+        receipt.extension_id !== input.extensionId ||
+        receipt.env_name !== input.envName)
+    ) {
+      throw new StateContractError({
+        operation: `structured-session.extension-env-secret.${input.operation}`,
+        reason: "conflict",
+        message:
+          "The client request id already identifies a different extension env secret command.",
+      });
+    }
+    return {
+      declaration: declaration ? extensionEnvDeclarationRecord(declaration) : null,
+      current: current ? extensionEnvSecretRecord(current) : null,
+      receipt: receipt ? extensionEnvSecretReceiptRecord(receipt) : null,
+    };
+  }
+
+  commitExtensionEnvSecretSet(input: {
+    command: SetExtensionEnvSecretCommandInput;
+    ref: ExtensionEnvSecretRef;
+    revisionFingerprint: string;
+    previous: StructuredExtensionEnvSecretRecord | null;
+  }): StructuredExtensionEnvSecretReceiptRecord {
+    const committedAt = this.now();
+    return this.db.transaction(() => {
+      const current = this.db
+        .query(`SELECT * FROM extension_env_secret WHERE extension_id = ? AND env_name = ?`)
+        .get(input.command.extensionId, input.command.envName) as ExtensionEnvSecretRow | null;
+      if ((current?.material_id ?? null) !== (input.previous?.ref.materialId ?? null)) {
+        throw new StateContractError({
+          operation: "structured-session.extension-env-secret.set",
+          reason: "stale-state",
+          message: "The extension env secret changed while its replacement was being committed.",
+        });
+      }
+      this.db
+        .query(
+          `INSERT INTO extension_env_secret
+             (extension_id, env_name, material_id, revision_fingerprint, status, updated_at)
+           VALUES (?, ?, ?, ?, 'configured', ?)
+           ON CONFLICT(extension_id, env_name) DO UPDATE SET
+             material_id = excluded.material_id,
+             revision_fingerprint = excluded.revision_fingerprint,
+             status = excluded.status,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          input.command.extensionId,
+          input.command.envName,
+          input.ref.materialId,
+          input.revisionFingerprint,
+          committedAt,
+        );
+      if (input.previous) {
+        this.insertExtensionEnvSecretCleanup(
+          input.previous.ref,
+          input.previous.revisionFingerprint,
+          "replaced",
+          committedAt,
+        );
+      }
+      const stateRevision = this.bumpStateRevision();
+      const receipt = {
+        operation: "set" as const,
+        clientRequestId: input.command.clientSubmission?.clientRequestId ?? "",
+        extensionId: input.command.extensionId,
+        envName: input.command.envName,
+        configured: true,
+        committedAt,
+        stateRevision,
+      };
+      if (receipt.clientRequestId) this.insertExtensionEnvSecretReceipt(receipt);
+      return receipt;
+    })();
+  }
+
+  commitExtensionEnvSecretRemove(input: {
+    command: RemoveExtensionEnvSecretCommandInput;
+    previous: StructuredExtensionEnvSecretRecord;
+  }): StructuredExtensionEnvSecretReceiptRecord {
+    const committedAt = this.now();
+    return this.db.transaction(() => {
+      if (input.previous) {
+        const result = this.db
+          .query(
+            `DELETE FROM extension_env_secret
+             WHERE extension_id = ? AND env_name = ? AND material_id = ?`,
+          )
+          .run(input.command.extensionId, input.command.envName, input.previous.ref.materialId);
+        if (result.changes !== 1) {
+          throw new StateContractError({
+            operation: "structured-session.extension-env-secret.remove",
+            reason: "stale-state",
+            message: "The extension env secret changed while its removal was being committed.",
+          });
+        }
+        this.insertExtensionEnvSecretCleanup(
+          input.previous.ref,
+          input.previous.revisionFingerprint,
+          "removed",
+          committedAt,
+        );
+      }
+      const stateRevision = this.bumpStateRevision();
+      const receipt = {
+        operation: "remove" as const,
+        clientRequestId: input.command.clientSubmission?.clientRequestId ?? "",
+        extensionId: input.command.extensionId,
+        envName: input.command.envName,
+        configured: false,
+        committedAt,
+        stateRevision,
+      };
+      if (receipt.clientRequestId) this.insertExtensionEnvSecretReceipt(receipt);
+      return receipt;
+    })();
+  }
+
+  completeExtensionEnvSecretCleanup(ref: ExtensionEnvSecretRef): void {
+    this.db
+      .query(
+        `DELETE FROM extension_env_secret_cleanup
+         WHERE extension_id = ? AND env_name = ? AND material_id = ?`,
+      )
+      .run(ref.extensionId, ref.envName, ref.materialId);
+  }
+
+  recordExtensionEnvSecretOrphanCleanup(input: {
+    ref: ExtensionEnvSecretRef;
+    revisionFingerprint: string;
+  }): void {
+    this.db.transaction(() => {
+      this.insertExtensionEnvSecretCleanup(
+        input.ref,
+        input.revisionFingerprint,
+        "orphaned",
+        this.now(),
+      );
+    })();
+  }
+
+  private insertExtensionEnvSecretCleanup(
+    ref: ExtensionEnvSecretRef,
+    revisionFingerprint: string,
+    reason: "replaced" | "removed" | "orphaned",
+    createdAt: string,
+  ): void {
+    this.db
+      .query(
+        `INSERT INTO extension_env_secret_cleanup
+           (extension_id, env_name, material_id, revision_fingerprint, reason, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(extension_id, env_name, material_id) DO NOTHING`,
+      )
+      .run(ref.extensionId, ref.envName, ref.materialId, revisionFingerprint, reason, createdAt);
+  }
+
+  private insertExtensionEnvSecretReceipt(
+    receipt: StructuredExtensionEnvSecretReceiptRecord,
+  ): void {
+    this.db
+      .query(
+        `INSERT INTO extension_env_secret_receipt
+           (operation, client_request_id, extension_id, env_name, configured, committed_at, state_revision)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        receipt.operation,
+        receipt.clientRequestId,
+        receipt.extensionId,
+        receipt.envName,
+        receipt.configured ? 1 : 0,
+        receipt.committedAt,
+        receipt.stateRevision,
+      );
   }
 
   hasAgentProfileRows(): boolean {
@@ -3530,6 +5292,267 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     });
   }
 
+  readExtensionUsageChange(changeId: ExtensionUsageChangeId): ExtensionUsageChangeRecord | null {
+    const row = this.db
+      .query(`SELECT * FROM extension_usage_change WHERE change_id = ?`)
+      .get(changeId) as Record<string, unknown> | undefined;
+    return row ? this.mapExtensionUsageChange(row) : null;
+  }
+
+  resolveExtensionUsageTarget(agentProfile: string): SetExtensionUsageInput["target"] {
+    const alias = agentProfile === "threadHandler" ? "thread-handler" : agentProfile;
+    const profile = this.db
+      .query(
+        `SELECT actor, profile_id FROM agent_profile WHERE profile_id = ? ORDER BY CASE actor WHEN 'orchestrator' THEN 0 ELSE 1 END LIMIT 1`,
+      )
+      .get(alias) as { actor: "orchestrator" | "handler"; profile_id: string } | undefined;
+    if (profile)
+      return {
+        actor: profile.actor,
+        agentProfile: profile.actor === "handler" ? "threadHandler" : profile.profile_id,
+        profileId: profile.profile_id,
+      };
+    const workflow = this.db
+      .query(
+        `SELECT source_id FROM workflow_agent_source_index WHERE source_id = ? AND deleted_at IS NULL`,
+      )
+      .get(agentProfile) as { source_id: string } | undefined;
+    if (workflow)
+      return {
+        actor: "workflow-task",
+        agentProfile: workflow.source_id,
+        profileId: workflow.source_id,
+      };
+    throw new StateContractError({
+      operation: "structured-session.resolveExtensionUsageTarget",
+      reason: "not-found",
+      message: "Agent profile was not found.",
+    });
+  }
+
+  setExtensionUsage(input: SetExtensionUsageInput): ExtensionUsageChangeRecord {
+    return this.db.transaction(() => {
+      const replay = this.db
+        .query(`SELECT * FROM extension_usage_change WHERE client_request_id = ?`)
+        .get(input.clientRequestId) as Record<string, unknown> | undefined;
+      if (replay) {
+        const existing = this.mapExtensionUsageChange(replay);
+        if (
+          existing.extensionId !== input.extensionId ||
+          existing.target.actor !== input.target.actor ||
+          existing.target.agentProfile !== input.target.agentProfile ||
+          existing.target.profileId !== input.target.profileId ||
+          existing.after !== input.usage ||
+          existing.revertedChangeId !== null
+        ) {
+          throw new StateContractError({
+            operation: "structured-session.setExtensionUsage",
+            reason: "conflict",
+            message: "Client request id was already used for a different extension usage mutation.",
+          });
+        }
+        return existing;
+      }
+      this.assertExtensionUsageRevision(input.expectedStateRevision, "setExtensionUsage");
+      const before = this.readExplicitExtensionUsage(input.target, input.extensionId);
+      this.writeExplicitExtensionUsage(input.target, input.extensionId, input.usage);
+      const stateRevision = this.bumpStateRevision();
+      const createdAt = this.now();
+      const changeId =
+        `extension-usage-change:${String(input.clientRequestId)}` as ExtensionUsageChangeId;
+      this.db
+        .query(
+          `INSERT INTO extension_usage_change
+          (change_id, client_request_id, extension_id, actor, agent_profile, profile_id, before_usage, after_usage,
+           reverted_change_id, created_at, state_revision)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+        )
+        .run(
+          changeId,
+          input.clientRequestId,
+          input.extensionId,
+          input.target.actor,
+          input.target.agentProfile,
+          input.target.profileId,
+          before,
+          input.usage,
+          createdAt,
+          stateRevision,
+        );
+      return this.readExtensionUsageChange(changeId)!;
+    })();
+  }
+
+  revertExtensionUsage(input: RevertExtensionUsageInput): ExtensionUsageChangeRecord {
+    return this.db.transaction(() => {
+      const replay = this.db
+        .query(`SELECT * FROM extension_usage_change WHERE client_request_id = ?`)
+        .get(input.clientRequestId) as Record<string, unknown> | undefined;
+      if (replay) {
+        const existing = this.mapExtensionUsageChange(replay);
+        if (existing.revertedChangeId !== input.changeId) {
+          throw new StateContractError({
+            operation: "structured-session.revertExtensionUsage",
+            reason: "conflict",
+            message: "Client request id was already used for a different extension usage revert.",
+          });
+        }
+        return existing;
+      }
+      this.assertExtensionUsageRevision(input.expectedStateRevision, "revertExtensionUsage");
+      const original = this.readExtensionUsageChange(input.changeId);
+      if (!original)
+        throw new StateContractError({
+          operation: "structured-session.revertExtensionUsage",
+          reason: "not-found",
+          message: "Extension usage change was not found.",
+        });
+      const current = this.readExplicitExtensionUsage(original.target, original.extensionId);
+      if (current !== original.after)
+        throw new StateContractError({
+          operation: "structured-session.revertExtensionUsage",
+          reason: "conflict",
+          message: "Extension usage changed after the requested change was recorded.",
+        });
+      this.writeExplicitExtensionUsage(original.target, original.extensionId, original.before);
+      const stateRevision = this.bumpStateRevision();
+      const createdAt = this.now();
+      const changeId =
+        `extension-usage-change:${String(input.clientRequestId)}` as ExtensionUsageChangeId;
+      this.db
+        .query(
+          `INSERT INTO extension_usage_change
+          (change_id, client_request_id, extension_id, actor, agent_profile, profile_id, before_usage, after_usage,
+           reverted_change_id, created_at, state_revision)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          changeId,
+          input.clientRequestId,
+          original.extensionId,
+          original.target.actor,
+          original.target.agentProfile,
+          original.target.profileId,
+          current,
+          original.before,
+          original.changeId,
+          createdAt,
+          stateRevision,
+        );
+      return this.readExtensionUsageChange(changeId)!;
+    })();
+  }
+
+  private assertExtensionUsageRevision(
+    expected: SetExtensionUsageInput["expectedStateRevision"],
+    operation: string,
+  ): void {
+    if (expected !== undefined && expected !== this.readStateRevision()) {
+      throw new StateContractError({
+        operation: `structured-session.${operation}`,
+        reason: "conflict",
+        message: "Extension usage state revision is stale.",
+      });
+    }
+  }
+
+  private readExplicitExtensionUsage(
+    target: SetExtensionUsageInput["target"],
+    extensionId: string,
+  ): ExtensionUsageState | null {
+    if (target.actor === "workflow-task") {
+      const row = this.db
+        .query(
+          `SELECT usage FROM workflow_agent_extension_usage WHERE profile_id = ? AND extension_id = ?`,
+        )
+        .get(target.profileId, extensionId) as { usage: ExtensionUsageState } | undefined;
+      return row?.usage ?? null;
+    }
+    const row = this.db
+      .query(`SELECT extension_usage_json FROM agent_profile WHERE actor = ? AND profile_id = ?`)
+      .get(target.actor, target.profileId) as { extension_usage_json: string } | undefined;
+    if (!row)
+      throw new StateContractError({
+        operation: "structured-session.extensionUsage",
+        reason: "not-found",
+        message: "Agent profile was not found.",
+      });
+    return (
+      (fromJson<Record<string, ExtensionUsageState>>(row.extension_usage_json) ?? {})[
+        extensionId
+      ] ?? null
+    );
+  }
+
+  private writeExplicitExtensionUsage(
+    target: SetExtensionUsageInput["target"],
+    extensionId: string,
+    usage: ExtensionUsageState | null,
+  ): void {
+    if (target.actor === "workflow-task") {
+      if (
+        !this.db
+          .query(
+            `SELECT 1 AS found FROM workflow_agent_source_index WHERE source_id = ? AND deleted_at IS NULL`,
+          )
+          .get(target.profileId)
+      )
+        throw new StateContractError({
+          operation: "structured-session.extensionUsage",
+          reason: "not-found",
+          message: "Workflow task-agent profile was not found.",
+        });
+      if (usage === null)
+        this.db
+          .query(
+            `DELETE FROM workflow_agent_extension_usage WHERE profile_id = ? AND extension_id = ?`,
+          )
+          .run(target.profileId, extensionId);
+      else
+        this.db
+          .query(
+            `INSERT INTO workflow_agent_extension_usage (profile_id, extension_id, usage, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(profile_id, extension_id) DO UPDATE SET usage = excluded.usage, updated_at = excluded.updated_at`,
+          )
+          .run(target.profileId, extensionId, usage, this.now());
+      return;
+    }
+    const row = this.db
+      .query(`SELECT extension_usage_json FROM agent_profile WHERE actor = ? AND profile_id = ?`)
+      .get(target.actor, target.profileId) as { extension_usage_json: string } | undefined;
+    if (!row)
+      throw new StateContractError({
+        operation: "structured-session.extensionUsage",
+        reason: "not-found",
+        message: "Agent profile was not found.",
+      });
+    const values = fromJson<Record<string, ExtensionUsageState>>(row.extension_usage_json) ?? {};
+    if (usage === null) delete values[extensionId];
+    else values[extensionId] = usage;
+    this.db
+      .query(
+        `UPDATE agent_profile SET extension_usage_json = ?, updated_at = ? WHERE actor = ? AND profile_id = ?`,
+      )
+      .run(JSON.stringify(values), this.now(), target.actor, target.profileId);
+  }
+
+  private mapExtensionUsageChange(row: Record<string, unknown>): ExtensionUsageChangeRecord {
+    return {
+      changeId: row.change_id as ExtensionUsageChangeId,
+      clientRequestId: row.client_request_id as ExtensionUsageChangeRecord["clientRequestId"],
+      extensionId: row.extension_id as ExtensionUsageChangeRecord["extensionId"],
+      target: {
+        actor: row.actor as ExtensionUsageChangeRecord["target"]["actor"],
+        agentProfile: String(row.agent_profile),
+        profileId: String(row.profile_id),
+      },
+      before: (row.before_usage as ExtensionUsageState | null) ?? null,
+      after: (row.after_usage as ExtensionUsageState | null) ?? null,
+      revertedChangeId: (row.reverted_change_id as ExtensionUsageChangeId | null) ?? null,
+      createdAt: String(row.created_at),
+      stateRevision: row.state_revision as ExtensionUsageChangeRecord["stateRevision"],
+    };
+  }
+
   promoteProfileExtensionDefault(
     input: PromoteProfileExtensionDefaultCommandInput,
   ): StructuredMutationCommitRecord {
@@ -3579,6 +5602,144 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         [input.sourceId]: usage,
       },
     );
+  }
+
+  readExternalInstructionsProjection(input: {
+    workspaceId: string;
+  }): ExternalInstructionObservationProjection {
+    this.assertExternalInstructionWorkspace(
+      input.workspaceId,
+      "structured-session.readExternalInstructionsProjection",
+    );
+    const row = this.db
+      .query(`SELECT * FROM external_instruction_projection WHERE id = 1`)
+      .get() as ExternalInstructionProjectionRow | undefined;
+    const sources = row
+      ? (fromJson<ExternalInstructionProjectedSource[]>(row.sources_json) ?? [])
+      : [];
+    const diagnostics = row
+      ? (fromJson<ExternalInstructionObservationProjection["diagnostics"]>(row.diagnostics_json) ??
+        [])
+      : [];
+    return {
+      workspaceId: input.workspaceId as ExternalInstructionObservationProjection["workspaceId"],
+      sources,
+      diagnostics,
+      observedAt: (row?.observed_at ??
+        null) as ExternalInstructionObservationProjection["observedAt"],
+      revision: (row?.state_revision ?? 0) as StateRevision,
+    };
+  }
+
+  reconcileExternalInstructions(
+    input: ReconcileExternalInstructionsInput,
+  ): ReconcileExternalInstructionsResult {
+    this.assertExternalInstructionWorkspace(
+      input.workspaceId,
+      "structured-session.reconcileExternalInstructions",
+    );
+    const contentBySourceId = new Map<string, string>();
+    for (const content of input.scan.contents) {
+      if (contentBySourceId.has(content.sourceId)) {
+        throw new StateContractError({
+          operation: "structured-session.reconcileExternalInstructions",
+          reason: "invalid-input",
+          message: `External instruction scan contains duplicate content for ${content.sourceId}.`,
+        });
+      }
+      contentBySourceId.set(content.sourceId, content.content);
+    }
+    const seenSourceIds = new Set<string>();
+    const sources = input.scan.sources.map((observation): ExternalInstructionProjectedSource => {
+      if (seenSourceIds.has(observation.id)) {
+        throw new StateContractError({
+          operation: "structured-session.reconcileExternalInstructions",
+          reason: "invalid-input",
+          message: `External instruction scan contains duplicate source ${observation.id}.`,
+        });
+      }
+      seenSourceIds.add(observation.id);
+      const content = contentBySourceId.get(observation.id) ?? null;
+      contentBySourceId.delete(observation.id);
+      if (observation.readStatus.status === "readable" && content === null) {
+        throw new StateContractError({
+          operation: "structured-session.reconcileExternalInstructions",
+          reason: "invalid-input",
+          message: `Readable external instruction ${observation.id} is missing content.`,
+        });
+      }
+      if (observation.readStatus.status === "unreadable" && content !== null) {
+        throw new StateContractError({
+          operation: "structured-session.reconcileExternalInstructions",
+          reason: "invalid-input",
+          message: `Unreadable external instruction ${observation.id} cannot include content.`,
+        });
+      }
+      return {
+        id: observation.id,
+        source: observation.source,
+        fileName: observation.fileName,
+        title: observation.title,
+        canonicalPath: observation.canonicalPath,
+        sourceGroup: observation.sourceGroup,
+        ...(observation.rootId === undefined ? {} : { rootId: observation.rootId }),
+        ...(observation.rootLabel === undefined ? {} : { rootLabel: observation.rootLabel }),
+        order: observation.order,
+        defaultControl: {
+          enabled: observation.enabled,
+          eligibleActors: [...observation.eligibleActors],
+        },
+        readOnly: true,
+        contentHash: observation.contentHash,
+        fingerprint: observation.fingerprint,
+        readStatus: observation.readStatus,
+        content,
+      };
+    });
+    if (contentBySourceId.size > 0) {
+      throw new StateContractError({
+        operation: "structured-session.reconcileExternalInstructions",
+        reason: "invalid-input",
+        message: `External instruction scan contains content for an unknown source: ${contentBySourceId.keys().next().value}.`,
+      });
+    }
+    const sourcesJson = JSON.stringify(sources);
+    const diagnosticsJson = JSON.stringify(input.scan.diagnostics);
+    const existing = this.db
+      .query(`SELECT * FROM external_instruction_projection WHERE id = 1`)
+      .get() as ExternalInstructionProjectionRow | undefined;
+    if (
+      existing?.workspace_id === input.workspaceId &&
+      existing.sources_json === sourcesJson &&
+      existing.diagnostics_json === diagnosticsJson
+    ) {
+      return {
+        changed: false,
+        projection: this.readExternalInstructionsProjection({ workspaceId: input.workspaceId }),
+      };
+    }
+
+    const observedAt = this.now();
+    this.db.transaction(() => {
+      const stateRevision = this.bumpStateRevision();
+      this.db
+        .query(
+          `INSERT INTO external_instruction_projection (
+             id, workspace_id, sources_json, diagnostics_json, observed_at, state_revision
+           ) VALUES (1, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             workspace_id = excluded.workspace_id,
+             sources_json = excluded.sources_json,
+             diagnostics_json = excluded.diagnostics_json,
+             observed_at = excluded.observed_at,
+             state_revision = excluded.state_revision`,
+        )
+        .run(input.workspaceId, sourcesJson, diagnosticsJson, observedAt, stateRevision);
+    })();
+    return {
+      changed: true,
+      projection: this.readExternalInstructionsProjection({ workspaceId: input.workspaceId }),
+    };
   }
 
   hasExtensionEnvOverrideRows(): boolean {
@@ -3821,11 +5982,25 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     const timestamp = this.now();
     const sessionId = this.createId("session");
     const title = input.title?.trim() || "New orchestrator";
+    const profileId = input.profileId ?? ("default-orchestrator" as AgentProfileId);
+    const profile = this.findAgentProfileRow("orchestrator", profileId);
+    if (!profile || !profile.provider_id || !profile.model_id) {
+      throw new StateContractError({
+        operation: "structured-session.createOrchestratorSurface",
+        reason: "not-found",
+        message: `Orchestrator profile ${profileId} does not have complete prompt defaults.`,
+      });
+    }
+    const reasoning = fromJson<{ effort?: unknown }>(profile.reasoning_json);
+    const reasoningEffort = typeof reasoning?.effort === "string" ? reasoning.effort : "medium";
     const stateRevision = this.db.transaction(() => {
       this.upsertPiSession({
         sessionId,
         title,
-        ...(input.profileId ? { orchestratorAgentProfileId: input.profileId } : {}),
+        provider: profile.provider_id,
+        model: profile.model_id,
+        reasoningEffort,
+        orchestratorAgentProfileId: profileId,
         messageCount: 0,
         status: "idle",
         createdAt: timestamp,
@@ -5178,6 +7353,15 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       extensionOrder: JSON.parse(
         row.extension_order_json,
       ) as WorkflowAgentSourceObservation["extensionOrder"],
+      extensionUsage: Object.fromEntries(
+        (
+          this.db
+            .query(
+              `SELECT extension_id, usage FROM workflow_agent_extension_usage WHERE profile_id = ? ORDER BY extension_id ASC`,
+            )
+            .all(row.source_id) as Array<{ extension_id: string; usage: ExtensionUsageState }>
+        ).map((entry) => [entry.extension_id, entry.usage]),
+      ),
       observedAt: row.observed_at as WorkflowAgentSourceObservation["observedAt"],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -5681,7 +7865,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     ownerKind: StructuredGeneratedAgentContextBindingOwner;
     ownerId: string;
     actorKind: StructuredGeneratedAgentContextActor;
-    aggregateCacheKey: string;
     systemPrompt: string;
     svvyxGuidance: string;
     commandsDts: string;
@@ -5709,7 +7892,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            SET owner_kind = ?,
                owner_id = ?,
                actor_kind = ?,
-               aggregate_cache_key = ?,
                system_prompt = ?,
                svvyx_guidance = ?,
                commands_dts = ?,
@@ -5725,7 +7907,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           input.ownerKind,
           input.ownerId,
           input.actorKind,
-          input.aggregateCacheKey,
           input.systemPrompt,
           input.svvyxGuidance,
           input.commandsDts,
@@ -5751,7 +7932,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            owner_kind,
            owner_id,
            actor_kind,
-           aggregate_cache_key,
            system_prompt,
            svvyx_guidance,
            commands_dts,
@@ -5763,7 +7943,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            external_source_hashes_json,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -5771,7 +7951,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         input.ownerKind,
         input.ownerId,
         input.actorKind,
-        input.aggregateCacheKey,
         input.systemPrompt,
         input.svvyxGuidance,
         input.commandsDts,
@@ -5785,6 +7964,108 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         timestamp,
       );
     return this.mapGeneratedAgentContextBinding(this.mustFindGeneratedAgentContextBindingRow(id));
+  }
+
+  bindRuntimeGeneratedContext(
+    input: BindRuntimeGeneratedContextInput,
+  ): StructuredGeneratedAgentContextBindingRecord {
+    return this.db.transaction((bindingInput: BindRuntimeGeneratedContextInput) => {
+      const latest = this.db
+        .query(
+          `SELECT MAX(generated_agent_context_revision) AS revision
+           FROM generated_agent_context_binding
+           WHERE surface_pi_session_id = ?`,
+        )
+        .get(bindingInput.target.surfacePiSessionId) as { revision: number | null };
+      const generatedAgentContextRevision = (latest.revision ?? 0) + 1;
+      let ownerKind: StructuredGeneratedAgentContextBindingOwner;
+      let ownerId: string;
+      if (bindingInput.target.surface === "orchestrator") {
+        const session = this.mustFindSessionRow(bindingInput.target.workspaceSessionId);
+        if (session.orchestrator_pi_session_id !== bindingInput.target.surfacePiSessionId) {
+          throw new StateContractError({
+            operation: "structured-session.bindRuntimeGeneratedContext",
+            reason: "not-found",
+            message: `Orchestrator surface ${bindingInput.target.surfacePiSessionId} was not found.`,
+          });
+        }
+        ownerKind = "session";
+        ownerId = bindingInput.target.workspaceSessionId;
+        this.db
+          .query(
+            `UPDATE session SET generated_agent_context_fingerprint = ?,
+               update_extension_context_before_next_turn = 0,
+               loaded_extension_ids_json = ?, available_extension_ids_json = ?, updated_at = ?
+             WHERE session_id = ?`,
+          )
+          .run(
+            bindingInput.fingerprint,
+            toJson(normalizeStringList(bindingInput.loadedExtensionIds)),
+            toJson(normalizeStringList(bindingInput.availableExtensionIds)),
+            this.now(),
+            bindingInput.target.workspaceSessionId,
+          );
+      } else if (bindingInput.target.surface === "handler") {
+        const thread = this.mustFindThreadRow(bindingInput.target.threadId);
+        if (thread.surface_pi_session_id !== bindingInput.target.surfacePiSessionId) {
+          throw new StateContractError({
+            operation: "structured-session.bindRuntimeGeneratedContext",
+            reason: "not-found",
+            message: `Handler surface ${bindingInput.target.surfacePiSessionId} was not found.`,
+          });
+        }
+        ownerKind = "thread";
+        ownerId = bindingInput.target.threadId;
+        this.db
+          .query(
+            `UPDATE thread SET generated_agent_context_fingerprint = ?,
+               update_extension_context_before_next_turn = 0,
+               loaded_extension_ids_json = ?, available_extension_ids_json = ?, updated_at = ?
+             WHERE id = ?`,
+          )
+          .run(
+            bindingInput.fingerprint,
+            toJson(normalizeStringList(bindingInput.loadedExtensionIds)),
+            toJson(normalizeStringList(bindingInput.availableExtensionIds)),
+            this.now(),
+            bindingInput.target.threadId,
+          );
+      } else {
+        const attempt = this.mustFindWorkflowTaskAttemptRecord(
+          bindingInput.target.workflowTaskAttemptId,
+        );
+        if (attempt.surfacePiSessionId !== bindingInput.target.surfacePiSessionId) {
+          throw new StateContractError({
+            operation: "structured-session.bindRuntimeGeneratedContext",
+            reason: "not-found",
+            message: `Workflow-task surface ${bindingInput.target.surfacePiSessionId} was not found.`,
+          });
+        }
+        ownerKind = "workflow-task-attempt";
+        ownerId = bindingInput.target.workflowTaskAttemptId;
+        this.db
+          .query(
+            `UPDATE workflow_task_attempt SET generated_agent_context_fingerprint = ?, updated_at = ?
+             WHERE id = ?`,
+          )
+          .run(bindingInput.fingerprint, this.now(), bindingInput.target.workflowTaskAttemptId);
+      }
+      return this.upsertGeneratedAgentContextBinding({
+        surfacePiSessionId: bindingInput.target.surfacePiSessionId,
+        ownerKind,
+        ownerId,
+        actorKind: bindingInput.actorKind,
+        systemPrompt: bindingInput.systemPrompt,
+        svvyxGuidance: bindingInput.svvyxGuidance,
+        commandsDts: bindingInput.commandsDts,
+        nativeToolSchemasJson: bindingInput.nativeToolSchemasJson,
+        generatedAgentContextFingerprint: bindingInput.fingerprint,
+        generatedAgentContextRevision,
+        loadedExtensionIds: [...bindingInput.loadedExtensionIds],
+        availableExtensionIds: [...bindingInput.availableExtensionIds],
+        externalSourceHashes: [...bindingInput.externalSourceHashes],
+      });
+    })(input);
   }
 
   getGeneratedAgentContextBinding(input: {
@@ -7479,7 +9760,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
             ownerKind: "thread",
             ownerId: thread.id,
             actorKind: "handler",
-            aggregateCacheKey: bindingInput.aggregateCacheKey,
             systemPrompt: "",
             svvyxGuidance: "",
             commandsDts: "",
@@ -8860,7 +11140,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     agentResume?: string | null;
     generatedAgentContextFingerprint?: string | null;
     generatedAgentContextBinding?: {
-      aggregateCacheKey: string;
       systemPrompt: string;
       svvyxGuidance: string;
       commandsDts: string;
@@ -8974,7 +11253,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           ownerKind: "workflow-task-attempt",
           ownerId: existing.id,
           actorKind: "workflow-task",
-          aggregateCacheKey: input.generatedAgentContextBinding.aggregateCacheKey,
           systemPrompt: input.generatedAgentContextBinding.systemPrompt,
           svvyxGuidance: input.generatedAgentContextBinding.svvyxGuidance,
           commandsDts: input.generatedAgentContextBinding.commandsDts,
@@ -9068,7 +11346,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         ownerKind: "workflow-task-attempt",
         ownerId: workflowTaskAttemptId,
         actorKind: "workflow-task",
-        aggregateCacheKey: input.generatedAgentContextBinding.aggregateCacheKey,
         systemPrompt: input.generatedAgentContextBinding.systemPrompt,
         svvyxGuidance: input.generatedAgentContextBinding.svvyxGuidance,
         commandsDts: input.generatedAgentContextBinding.commandsDts,
@@ -11780,6 +14057,34 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return row ? this.mapExtensionDependencyReadiness(row) : null;
   }
 
+  listExtensionDependencyReadiness(): StructuredExtensionDependencyReadinessRecord[] {
+    return (
+      this.db
+        .query(
+          `SELECT * FROM extension_dependency_readiness
+           ORDER BY extension_id, requirement_id`,
+        )
+        .all() as ExtensionDependencyReadinessRow[]
+    ).map((row) => this.mapExtensionDependencyReadiness(row));
+  }
+
+  readExtensionDependencyReadinessBatch(): StructuredExtensionDependencyReadinessBatchRecord | null {
+    const row = this.db
+      .query(
+        `SELECT registry_aggregate_fingerprint, readiness_json, recorded_at, source_command_id
+         FROM extension_dependency_readiness_batch
+         WHERE singleton_id = 1`,
+      )
+      .get() as ExtensionDependencyReadinessBatchRow | null;
+    if (!row) return null;
+    return {
+      registryAggregateFingerprint: row.registry_aggregate_fingerprint,
+      readiness: this.listExtensionDependencyReadiness(),
+      recordedAt: row.recorded_at,
+      sourceCommandId: row.source_command_id as CommandId | null,
+    };
+  }
+
   readExtensionDependencyApproval(input: {
     dependency: ExtensionDependencyApprovalIdentity;
   }): boolean {
@@ -11827,6 +14132,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
   recordExtensionDependencyReadiness(
     input: RecordExtensionDependencyReadinessInput,
   ): StructuredExtensionDependencyReadinessRecord {
+    this.db.query(`DELETE FROM extension_dependency_readiness_batch`).run();
     const existing = this.findExtensionDependencyReadinessRow(
       input.readiness.extensionId,
       input.readiness.requirementId,
@@ -11836,6 +14142,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         `INSERT INTO extension_dependency_readiness (
            extension_id,
            requirement_id,
+           requirement_fingerprint,
            status,
            detected_version,
            expected_version,
@@ -11844,8 +14151,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
            source_command_id,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(extension_id, requirement_id) DO UPDATE SET
+           requirement_fingerprint = excluded.requirement_fingerprint,
            status = excluded.status,
            detected_version = excluded.detected_version,
            expected_version = excluded.expected_version,
@@ -11857,6 +14165,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       .run(
         input.readiness.extensionId,
         input.readiness.requirementId,
+        input.readiness.requirementFingerprint,
         input.readiness.status,
         input.readiness.detectedVersion,
         input.readiness.expectedVersion,
@@ -11870,6 +14179,131 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       input.readiness.extensionId,
       input.readiness.requirementId,
     );
+  }
+
+  reconcileExtensionDependencyReadiness(
+    input: ReconcileExtensionDependencyReadinessInput,
+  ): StructuredExtensionDependencyReadinessReconcileResult {
+    return this.db.transaction(() => {
+      const registry = this.readExtensionRegistryObservation();
+      if (
+        !registry ||
+        registry.observation.aggregateFingerprint !== input.registryAggregateFingerprint
+      ) {
+        throw new StateContractError({
+          operation: "structured-session.reconcileExtensionDependencyReadiness",
+          reason: "conflict",
+          message:
+            "Extension dependency readiness was observed against a stale registry fingerprint.",
+        });
+      }
+
+      const expected = new Map<string, string>();
+      for (const extension of registry.observation.observations) {
+        for (const declaration of extension.cliDeclarations) {
+          const key = `${extension.extensionId}\0${declaration.id}`;
+          if (expected.has(key)) {
+            throw new StateContractError({
+              operation: "structured-session.reconcileExtensionDependencyReadiness",
+              reason: "invalid-input",
+              message: `Registry contains duplicate CLI requirement ${extension.extensionId}/${declaration.id}.`,
+            });
+          }
+          expected.set(key, declaration.requirementFingerprint);
+        }
+      }
+
+      const seen = new Set<string>();
+      for (const readiness of input.readiness) {
+        const key = `${readiness.extensionId}\0${readiness.requirementId}`;
+        if (seen.has(key) || expected.get(key) !== readiness.requirementFingerprint) {
+          throw new StateContractError({
+            operation: "structured-session.reconcileExtensionDependencyReadiness",
+            reason: "invalid-input",
+            message: `CLI readiness does not match registry requirement ${readiness.extensionId}/${readiness.requirementId}.`,
+          });
+        }
+        seen.add(key);
+      }
+      if (seen.size !== expected.size || [...expected.keys()].some((key) => !seen.has(key))) {
+        throw new StateContractError({
+          operation: "structured-session.reconcileExtensionDependencyReadiness",
+          reason: "invalid-input",
+          message: "CLI readiness must be a complete batch for the current extension registry.",
+        });
+      }
+
+      const readiness = [...input.readiness].toSorted(
+        (left, right) =>
+          left.extensionId.localeCompare(right.extensionId) ||
+          left.requirementId.localeCompare(right.requirementId),
+      );
+      const readinessJson = JSON.stringify(readiness);
+      const current = this.db
+        .query(
+          `SELECT registry_aggregate_fingerprint, readiness_json, recorded_at, source_command_id
+           FROM extension_dependency_readiness_batch
+           WHERE singleton_id = 1`,
+        )
+        .get() as ExtensionDependencyReadinessBatchRow | null;
+      if (
+        current?.registry_aggregate_fingerprint === input.registryAggregateFingerprint &&
+        current.readiness_json === readinessJson
+      ) {
+        return {
+          changed: false,
+          readiness,
+          stateRevision: this.readCurrentStateRevision(),
+        };
+      }
+
+      this.db.query(`DELETE FROM extension_dependency_readiness`).run();
+      const insert = this.db.query(
+        `INSERT INTO extension_dependency_readiness (
+           extension_id, requirement_id, requirement_fingerprint, status,
+           detected_version, expected_version, diagnostics_json, checked_at,
+           source_command_id, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const fact of readiness) {
+        insert.run(
+          fact.extensionId,
+          fact.requirementId,
+          fact.requirementFingerprint,
+          fact.status,
+          fact.detectedVersion,
+          fact.expectedVersion,
+          toJson(fact.diagnostics),
+          fact.checkedAt,
+          input.sourceCommandId ?? null,
+          input.recordedAt,
+          input.recordedAt,
+        );
+      }
+      this.db
+        .query(
+          `INSERT INTO extension_dependency_readiness_batch (
+             singleton_id, registry_aggregate_fingerprint, readiness_json,
+             recorded_at, source_command_id
+           ) VALUES (1, ?, ?, ?, ?)
+           ON CONFLICT(singleton_id) DO UPDATE SET
+             registry_aggregate_fingerprint = excluded.registry_aggregate_fingerprint,
+             readiness_json = excluded.readiness_json,
+             recorded_at = excluded.recorded_at,
+             source_command_id = excluded.source_command_id`,
+        )
+        .run(
+          input.registryAggregateFingerprint,
+          readinessJson,
+          input.recordedAt,
+          input.sourceCommandId ?? null,
+        );
+      return {
+        changed: true,
+        readiness,
+        stateRevision: this.bumpStateRevision(),
+      };
+    })();
   }
 
   ensureRecoveryWork(input: {
@@ -12804,6 +15238,16 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     }
   }
 
+  private assertExternalInstructionWorkspace(workspaceId: string, operation: string): void {
+    if (workspaceId !== this.workspace.id) {
+      throw new StateContractError({
+        operation,
+        reason: "invalid-input",
+        message: `Workspace ${workspaceId} is not managed by this state store.`,
+      });
+    }
+  }
+
   private mustFindSnippet(
     workspaceId: string,
     snippetId: string,
@@ -13624,7 +16068,6 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       ownerKind: row.owner_kind,
       ownerId: row.owner_id,
       actorKind: row.actor_kind,
-      aggregateCacheKey: row.aggregate_cache_key,
       systemPrompt: row.system_prompt,
       svvyxGuidance: row.svvyx_guidance,
       commandsDts: row.commands_dts,
@@ -13936,6 +16379,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     return {
       extensionId: row.extension_id,
       requirementId: row.requirement_id,
+      requirementFingerprint: row.requirement_fingerprint,
       status: row.status,
       detectedVersion: row.detected_version,
       expectedVersion: row.expected_version,
@@ -15024,6 +17468,15 @@ function initializeSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS provider_auth_status_workspace_idx
       ON provider_auth_status(workspace_key);
 
+    CREATE TABLE IF NOT EXISTS external_instruction_projection (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      workspace_id TEXT NOT NULL,
+      sources_json TEXT NOT NULL,
+      diagnostics_json TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      state_revision INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS workspace_runtime_owner (
       workspace_id TEXT NOT NULL,
       owner_id TEXT NOT NULL,
@@ -15148,6 +17601,139 @@ function initializeSchema(db: Database): void {
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       PRIMARY KEY(extension_id, env_name)
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_env_declaration (
+      extension_id TEXT NOT NULL,
+      env_name TEXT NOT NULL,
+      required INTEGER NOT NULL CHECK (required IN (0, 1)),
+      secret INTEGER NOT NULL CHECK (secret IN (0, 1)),
+      description TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(extension_id, env_name)
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_registry_observation (
+      singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+      observation_json TEXT NOT NULL,
+      observed_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_source_build_evidence (
+      extension_id TEXT PRIMARY KEY,
+      registry_aggregate_fingerprint TEXT NOT NULL,
+      observation_json TEXT NOT NULL,
+      observed_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_source_build_evidence_batch (
+      singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+      registry_aggregate_fingerprint TEXT NOT NULL,
+      observed_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_build_attempt (
+      attempt_id TEXT PRIMARY KEY,
+      client_request_id TEXT NOT NULL UNIQUE,
+      extension_id TEXT NOT NULL,
+      registry_aggregate_fingerprint TEXT NOT NULL,
+      source_fingerprint TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+      failure_reason TEXT CHECK (failure_reason IS NULL OR failure_reason IN (
+        'validation', 'process-failed', 'timed-out', 'cancelled', 'stale-state',
+        'output-invalid', 'unknown'
+      )),
+      successful_build_id TEXT,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      CHECK (
+        (status = 'running' AND failure_reason IS NULL AND successful_build_id IS NULL AND finished_at IS NULL)
+        OR (status = 'succeeded' AND failure_reason IS NULL AND successful_build_id IS NOT NULL AND finished_at IS NOT NULL)
+        OR (status = 'failed' AND failure_reason IS NOT NULL AND successful_build_id IS NULL AND finished_at IS NOT NULL)
+      )
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_snapshot (
+      snapshot_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      revision INTEGER NOT NULL CHECK (revision > 0),
+      payload_ref_json TEXT NOT NULL,
+      secret_payload_ref TEXT,
+      extension_count INTEGER NOT NULL CHECK (extension_count >= 0),
+      secret_state TEXT NOT NULL CHECK (secret_state IN ('not-present', 'captured')),
+      status TEXT NOT NULL CHECK (status = 'available'),
+      CHECK ((secret_payload_ref IS NULL AND secret_state = 'not-present') OR
+             (secret_payload_ref IS NOT NULL AND secret_state = 'captured'))
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_snapshot_restore_attempt (
+      attempt_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      client_request_id TEXT NOT NULL UNIQUE,
+      snapshot_revision INTEGER NOT NULL CHECK (snapshot_revision > 0),
+      payload_ref_json TEXT NOT NULL,
+      secret_payload_ref TEXT,
+      status TEXT NOT NULL CHECK (status IN (
+        'prepared', 'payload-applied', 'state-committed', 'building', 'completed', 'failed'
+      )),
+      started_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      finished_at TEXT,
+      failure_reason TEXT,
+      CHECK ((status IN ('completed', 'failed') AND finished_at IS NOT NULL) OR
+             (status NOT IN ('completed', 'failed') AND finished_at IS NULL)),
+      CHECK ((status = 'failed' AND failure_reason IS NOT NULL) OR
+             (status != 'failed' AND failure_reason IS NULL))
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_snapshot_cleanup (
+      cleanup_id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL,
+      payload_ref_json TEXT NOT NULL,
+      secret_payload_ref TEXT,
+      requested_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_snapshot_client_request (
+      client_request_id TEXT PRIMARY KEY,
+      operation TEXT NOT NULL,
+      input_json TEXT NOT NULL,
+      result_json TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_env_secret (
+      extension_id TEXT NOT NULL,
+      env_name TEXT NOT NULL,
+      material_id TEXT NOT NULL,
+      revision_fingerprint TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('configured', 'missing')),
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(extension_id, env_name),
+      UNIQUE(extension_id, env_name, material_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_env_secret_cleanup (
+      extension_id TEXT NOT NULL,
+      env_name TEXT NOT NULL,
+      material_id TEXT NOT NULL,
+      revision_fingerprint TEXT NOT NULL,
+      reason TEXT NOT NULL CHECK (reason IN ('replaced', 'removed', 'orphaned')),
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(extension_id, env_name, material_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_env_secret_receipt (
+      operation TEXT NOT NULL CHECK (operation IN ('set', 'remove')),
+      client_request_id TEXT NOT NULL,
+      extension_id TEXT NOT NULL,
+      env_name TEXT NOT NULL,
+      configured INTEGER NOT NULL CHECK (configured IN (0, 1)),
+      committed_at TEXT NOT NULL,
+      state_revision INTEGER NOT NULL,
+      PRIMARY KEY(client_request_id)
     );
 
     CREATE TABLE IF NOT EXISTS snippet (
@@ -15332,7 +17918,6 @@ function initializeSchema(db: Database): void {
       owner_kind TEXT NOT NULL,
       owner_id TEXT NOT NULL,
       actor_kind TEXT NOT NULL,
-      aggregate_cache_key TEXT NOT NULL,
       system_prompt TEXT NOT NULL,
       svvyx_guidance TEXT NOT NULL,
       commands_dts TEXT NOT NULL,
@@ -15429,6 +18014,28 @@ function initializeSchema(db: Database): void {
       deleted_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS workflow_agent_extension_usage (
+      profile_id TEXT NOT NULL,
+      extension_id TEXT NOT NULL,
+      usage TEXT NOT NULL CHECK (usage IN ('loaded', 'available', 'unavailable')),
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(profile_id, extension_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_usage_change (
+      change_id TEXT PRIMARY KEY,
+      client_request_id TEXT NOT NULL UNIQUE,
+      extension_id TEXT NOT NULL,
+      actor TEXT NOT NULL CHECK (actor IN ('orchestrator', 'handler', 'workflow-task')),
+      agent_profile TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      before_usage TEXT CHECK (before_usage IS NULL OR before_usage IN ('loaded', 'available', 'unavailable')),
+      after_usage TEXT CHECK (after_usage IS NULL OR after_usage IN ('loaded', 'available', 'unavailable')),
+      reverted_change_id TEXT,
+      created_at TEXT NOT NULL,
+      state_revision INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS runtime_source_scan_fact (
       scope_kind TEXT NOT NULL,
       scope_workspace_id TEXT,
@@ -15461,6 +18068,7 @@ function initializeSchema(db: Database): void {
     CREATE TABLE IF NOT EXISTS extension_dependency_readiness (
       extension_id TEXT NOT NULL,
       requirement_id TEXT NOT NULL,
+      requirement_fingerprint TEXT NOT NULL,
       status TEXT NOT NULL,
       detected_version TEXT,
       expected_version TEXT,
@@ -15470,6 +18078,14 @@ function initializeSchema(db: Database): void {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       PRIMARY KEY(extension_id, requirement_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS extension_dependency_readiness_batch (
+      singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+      registry_aggregate_fingerprint TEXT NOT NULL,
+      readiness_json TEXT NOT NULL,
+      recorded_at TEXT NOT NULL,
+      source_command_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS extension_dependency_approval (
@@ -15836,6 +18452,11 @@ function initializeSchema(db: Database): void {
   ensureColumn(db, "artifact", "updated_at", "TEXT");
   ensureColumn(db, "artifact", "deleted_at", "TEXT");
   ensureColumn(db, "artifact", "last_recovery_work_id", "TEXT");
+  ensureColumn(db, "extension_build_attempt", "client_request_id", "TEXT");
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS extension_build_attempt_client_request_idx
+     ON extension_build_attempt(client_request_id) WHERE client_request_id IS NOT NULL`,
+  );
   db.exec(`UPDATE artifact SET updated_at = created_at WHERE updated_at IS NULL`);
   ensureColumn(db, "command", "arguments_json", "TEXT");
   db.exec(
@@ -15887,6 +18508,13 @@ function initializeSchema(db: Database): void {
   ensureColumn(db, "agent_profile", "extension_order_json", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, "agent_profile", "position", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "extension_env_override", "value", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(
+    db,
+    "extension_dependency_readiness",
+    "requirement_fingerprint",
+    "TEXT NOT NULL DEFAULT ''",
+  );
+  db.query(`DELETE FROM extension_dependency_readiness WHERE requirement_fingerprint = ''`).run();
   ensureColumn(db, "snippet", "enabled", "INTEGER NOT NULL DEFAULT 1");
   ensureColumn(db, "snippet", "path", "TEXT");
   ensureColumn(db, "snippet", "discovery_scope", "TEXT");
@@ -16310,6 +18938,96 @@ function decodeStoredSnippetMetadata(value: string): SnippetMetadata {
       cause,
     });
   }
+}
+
+function decodeStoredExtensionRegistryObservation(
+  value: string,
+): ExtensionRegistryStateRecord["observation"] {
+  try {
+    return decodeExtensionRegistryObservationResultContract(JSON.parse(value));
+  } catch (cause) {
+    throw new StateContractError({
+      operation: "structured-session.extension-registry.decode",
+      reason: "decode-failed",
+      message: "Persisted extension registry observation does not match its core contract.",
+      cause,
+    });
+  }
+}
+
+function decodeStoredExtensionSourceBuildObservation(
+  value: string,
+): ExtensionSourceBuildObservation {
+  try {
+    return decodeExtensionSourceBuildObservationContract(JSON.parse(value));
+  } catch (cause) {
+    throw new StateContractError({
+      operation: "structured-session.extension-source-build-evidence.decode",
+      reason: "decode-failed",
+      message: "Persisted extension source/build evidence does not match its core contract.",
+      cause,
+    });
+  }
+}
+
+function extensionBuildAttemptRecordFromRow(
+  row: ExtensionBuildAttemptRow,
+): ExtensionBuildAttemptRecord {
+  return decodeExtensionBuildAttemptRecordContract({
+    attemptId: row.attempt_id,
+    clientRequestId: row.client_request_id,
+    extensionId: row.extension_id,
+    registryAggregateFingerprint: row.registry_aggregate_fingerprint,
+    sourceFingerprint: row.source_fingerprint,
+    status: row.status,
+    failureReason: row.failure_reason,
+    successfulBuildId: row.successful_build_id,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+  });
+}
+
+function extensionEnvDeclarationRecord(
+  row: ExtensionEnvDeclarationRow,
+): StructuredExtensionEnvDeclarationRecord {
+  return {
+    extensionId: row.extension_id,
+    envName: row.env_name,
+    required: row.required === 1,
+    secret: row.secret === 1,
+    description: row.description,
+    updatedAt: row.updated_at,
+  };
+}
+
+function extensionEnvSecretRecord(row: ExtensionEnvSecretRow): StructuredExtensionEnvSecretRecord {
+  return {
+    extensionId: row.extension_id,
+    envName: row.env_name,
+    ref: {
+      kind: "extension-env",
+      extensionId: row.extension_id as ExtensionId,
+      envName: row.env_name as ExtensionEnvSecretRef["envName"],
+      materialId: row.material_id as ExtensionEnvSecretRef["materialId"],
+    },
+    revisionFingerprint: row.revision_fingerprint,
+    status: row.status,
+    updatedAt: row.updated_at,
+  };
+}
+
+function extensionEnvSecretReceiptRecord(
+  row: ExtensionEnvSecretReceiptRow,
+): StructuredExtensionEnvSecretReceiptRecord {
+  return {
+    operation: row.operation,
+    clientRequestId: row.client_request_id,
+    extensionId: row.extension_id,
+    envName: row.env_name,
+    configured: row.configured === 1,
+    committedAt: row.committed_at,
+    stateRevision: row.state_revision as StateRevision,
+  };
 }
 
 function decodeStoredSnippetSource(value: string): SnippetSource {

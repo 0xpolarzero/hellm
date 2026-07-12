@@ -36,14 +36,21 @@ import {
   SandboxPolicyError,
   StateContractError,
   type AbsolutePath,
+  type BuildRuntimeExtensionInput,
+  type ExtensionSnapshotCleanupId,
+  type ExtensionSnapshotId,
+  type ExtensionSnapshotRestoreAttemptId,
   type CommandId,
   type ExtensionId,
+  type ExternalInstructionScanInput,
   type ExtensionStatePortService,
   type GeneratedPackageWorkspaceLinkRepairInput,
   type IsoDateTimeString,
   type PromptTarget as RuntimePromptTarget,
   type RefreshGeneratedContextRequest,
   type RuntimeGeneratedPackageStatePortService,
+  type SecretStoreMutationPortService,
+  type SecretStorePortService,
   type RuntimeSourceStatePortService,
   type SourceEditSession,
   type RuntimeOwnerId,
@@ -51,9 +58,18 @@ import {
   type ReleaseWorkspaceResult,
   type WorkspaceId,
   type WorkspaceSessionId,
+  type SvvyxExtensionManagementRuntimeRequest,
+  type SvvyxExtensionManagementRuntimeResponse,
+  type SvvyxWorkflowsRuntimeRequest,
+  type SvvyxWorkflowsRuntimeResponse,
   type WorkflowAgentSourceExportName,
 } from "@svvy/core";
-import type { ExtensionSourceRoots, GeneratedPackageRoots } from "@svvy/extensions";
+import type {
+  ExtensionBuildProcessPortService,
+  ExtensionCliRequirementProbePortService,
+  ExtensionSourceRoots,
+  GeneratedPackageRoots,
+} from "@svvy/extensions";
 import type { WorkspaceInfoResponse, WorkspaceKind } from "../shared/workspace-contract";
 import { appendAppLoggerEvent, createAppLogger, type BridgeLogLevel } from "./app-logger";
 import { createStateAppLogsFacade, type StateAppLogsFacade } from "@svvy/state";
@@ -74,12 +90,12 @@ import {
   type TitleGenerationLogEvent,
   type WorkflowsGeneratedPackageLogEvent,
 } from "./session-catalog";
-import { extensionsRootForAgentDir } from "./generated-agent-context-aggregate-cache";
+import { extensionsRootForAgentDir } from "./extension-paths";
 import {
-  getWorkflowsGeneratedPackagePath,
-  getWorkflowsSourceRoot,
-} from "./smithers-runtime/workflow-library";
-import { effectiveExtensionsGeneratedPackagePath } from "./generated-extensions-package";
+  extensionsGeneratedPackagePath,
+  workflowsGeneratedPackagePath,
+  workflowsSourceRoot,
+} from "./extension-paths";
 import {
   getCoreTypeContractPackagePath,
   materializeGeneratedCoreTypeContractPackage,
@@ -114,6 +130,394 @@ type WorkspaceGeneratedPackageBoundaryHost = RuntimeGeneratedPackageRefreshBound
   readonly extensionStatePort: ExtensionStatePortService;
   generatedPackageLinkPath(input: GeneratedPackageWorkspaceLinkRepairInput): Promise<AbsolutePath>;
 };
+
+async function applyExtensionManagementRuntimeRequest(
+  runtime: AppRuntimeBootstrap,
+  request: SvvyxExtensionManagementRuntimeRequest,
+  workspaceId?: WorkspaceId,
+): Promise<SvvyxExtensionManagementRuntimeResponse> {
+  if (request.operation === "inspect") {
+    if (request.input.extensionId.startsWith("external_instruction:") && workspaceId) {
+      const result = await runtime.state.readModels.fetch({
+        kind: "externalInstructions",
+        workspaceId,
+      });
+      if (result.kind !== "externalInstructions") {
+        throw new Error("External-instruction read-model authority returned the wrong projection.");
+      }
+      const source = result.value.sources.find(
+        (candidate) =>
+          `external_instruction:${candidate.fileName}:${candidate.canonicalPath}` ===
+          request.input.extensionId,
+      );
+      if (!source) throw new Error(`Extension not found: ${request.input.extensionId}`);
+      const readable = source.readStatus.status === "readable";
+      const usage = result.value.actorUsage.filter((row) => row.sourceId === source.id);
+      return {
+        output: {
+          ok: true,
+          extension: {
+            id: request.input.extensionId,
+            category: "external_instruction",
+            interface: "instructions",
+            title: source.title,
+            description: `Read-only ${source.fileName} external instruction file.`,
+            resettable: false,
+            deletable: false,
+            typescriptApiEnabled: false,
+            externalInstruction: {
+              sourceId: source.id,
+              sourceGroup: source.sourceGroup,
+              ...(source.rootId === undefined ? {} : { rootId: source.rootId }),
+              ...(source.rootLabel === undefined ? {} : { rootLabel: source.rootLabel }),
+              path: source.canonicalPath,
+              content: "",
+              contentHash: source.contentHash,
+              order: source.order,
+              readStatus: source.readStatus,
+            },
+            usage,
+            requirements: {
+              cliRequirements: [],
+              env: [],
+              dependencies: [],
+              trustedDependencies: [],
+            },
+            state: { readiness: readable ? "ready" : "not-ready", runtimeReady: readable },
+          },
+        },
+        commandFacts: {
+          extensionId: request.input.extensionId,
+          extensionReady: readable,
+          externalInstructionPath: source.canonicalPath,
+          externalInstructionReadStatus: source.readStatus.status,
+          cliRequirementCount: 0,
+          envRequirementCount: 0,
+        },
+      };
+    }
+    const result = await runtime.state.readModels.fetch({
+      kind: "extensions",
+      extensionId: request.input.extensionId,
+    });
+    if (result.kind !== "extensions") {
+      throw new Error("Extensions read-model authority returned the wrong projection.");
+    }
+    const extension = result.value.records[0];
+    if (!extension) {
+      throw new Error(`Extension not found: ${request.input.extensionId}`);
+    }
+    const issues = [
+      ...(extension.buildRequired
+        ? [{ code: "BUILD_REQUIRED", message: `${extension.title} requires a current build.` }]
+        : []),
+      ...extension.cliReadiness
+        .filter((requirement) => requirement.blocking)
+        .map((requirement) => ({
+          code: requirement.status === "missing" ? "CLI_MISSING" : "CLI_STATUS_UNKNOWN",
+          message: `${requirement.requirementId} is not currently usable.`,
+        })),
+      ...(extension.env ?? [])
+        .filter((declaration) => declaration.required && declaration.status === "missing")
+        .map((declaration) => ({
+          code: "EXTENSION_ENV_MISSING",
+          message: `${extension.title} requires ${declaration.envName}.`,
+        })),
+      ...extension.dependencyRequirements
+        .filter((dependency) => dependency.approval !== "approved")
+        .map((dependency) => ({
+          code: "DEPENDENCY_APPROVAL_REQUIRED",
+          message: `${extension.title} dependency ${dependency.name} requires approval.`,
+        })),
+      ...extension.dependencyRequirements
+        .filter(
+          (dependency) => dependency.approval === "approved" && dependency.install !== "installed",
+        )
+        .map((dependency) => ({
+          code: "DEPENDENCY_INSTALL_UNKNOWN",
+          message: `${extension.title} dependency ${dependency.name} has no current install evidence.`,
+        })),
+    ];
+    const cliRequirements = extension.cliDeclarations.map((declaration) => {
+      const readiness = extension.cliReadiness.find(
+        (candidate) => candidate.requirementId === declaration.id,
+      );
+      return {
+        id: declaration.id,
+        binary: declaration.binary,
+        package: declaration.package,
+        required: declaration.required,
+        defaultVersion: declaration.defaultVersion,
+        status: readiness?.status ?? "unknown",
+        detectedVersion: readiness?.readiness?.detectedVersion ?? null,
+        expectedVersion: readiness?.readiness?.expectedVersion ?? declaration.defaultVersion,
+        authorityStatus: readiness?.authorityStatus ?? "missing",
+        usable: readiness?.usable ?? false,
+        blocking: readiness?.blocking ?? declaration.required,
+        versionCommand: declaration.versionCommand,
+        installCommand: declaration.installCommand,
+      };
+    });
+    return {
+      output: {
+        ok: true,
+        extension: {
+          id: extension.extensionId,
+          category: extension.category,
+          interface: extension.interfaceKind,
+          title: extension.title,
+          description: extension.description,
+          resettable: extension.capabilities.resettable,
+          deletable: extension.capabilities.deletable,
+          typescriptApiEnabled: extension.capabilities.typescriptApiEnabled,
+          customized: extension.customized,
+          sources: {
+            contributors: extension.contributors,
+            tooling: extension.tooling,
+          },
+          usage: {
+            loadedByProfileIds: extension.loadedByProfileIds,
+            availableByProfileIds: extension.availableByProfileIds,
+            policy: extension.usagePolicy,
+          },
+          requirements: {
+            cliRequirements,
+            env: extension.env ?? [],
+            dependencies: extension.dependencyRequirements.filter(
+              (dependency) => dependency.kind === "dependency",
+            ),
+            trustedDependencies: extension.dependencyRequirements.filter(
+              (dependency) => dependency.kind === "trusted_dependency",
+            ),
+          },
+          state: {
+            buildAuthorityStatus: extension.buildAuthorityStatus,
+            buildRequired: extension.buildRequired,
+            contextReady: extension.contextReady,
+            runtimeReady: extension.runtimeReady,
+            readiness: extension.readiness,
+            generatedPackageStatus: extension.generatedPackageStatus,
+            issues,
+          },
+          observation: {
+            aggregateFingerprint: result.value.aggregateFingerprint,
+            observedAt: result.value.observedAt,
+            sourceFingerprint: extension.sourceFingerprint,
+          },
+        },
+      },
+      commandFacts: {
+        extensionId: extension.extensionId,
+        extensionReady: extension.runtimeReady,
+        cliRequirementCount: cliRequirements.length,
+        envRequirementCount: extension.env?.length ?? 0,
+        extensionIssueCodes: issues.map((issue) => issue.code),
+      },
+    };
+  }
+  if (request.operation === "build") {
+    const result = await runtime.facade.extensions.build(request.input);
+    return {
+      output: {
+        ok: true,
+        extensionId: request.input.extensionId,
+        attemptId: result.attemptId,
+        build: { status: "success", contextReady: result.manifest.contextReady },
+      },
+      commandFacts: {
+        extensionBuildOk: true,
+        extensionId: request.input.extensionId,
+        extensionBuildAttemptId: result.attemptId,
+      },
+    };
+  }
+  if (request.operation === "usage.set") {
+    const result = await runtime.facade.extensions.setUsage({
+      clientRequestId: request.input.clientRequestId,
+      extensionId: request.input.extensionId,
+      agentProfile: request.input.agentProfile,
+      usage: request.input.usage,
+    });
+    return {
+      output: {
+        ok: true,
+        changeId: result.change.changeId,
+        extensionId: result.change.extensionId,
+        agentProfile: request.input.agentProfile,
+        before: { state: result.change.before },
+        after: { state: result.change.after },
+        agentContextImpact: {
+          affectsNewTurns: true,
+          activeRunsChangeAtNextSafeBoundary: true,
+          affectedSurfaces: result.affectedSurfaceCount,
+        },
+      },
+      commandFacts: {
+        extensionUsageChanged: true,
+        extensionId: result.change.extensionId,
+        agentProfile: request.input.agentProfile,
+        beforeUsageState: result.change.before,
+        afterUsageState: result.change.after,
+        affectedAgentContextSurfaces: result.affectedSurfaceCount,
+      },
+    };
+  }
+  if (request.operation === "usage.revert") {
+    const result = await runtime.facade.extensions.revertUsage(request.input);
+    return {
+      output: {
+        ok: true,
+        reverted: request.input.changeId,
+        changeId: result.change.changeId,
+        extensionId: result.change.extensionId,
+        after: { state: result.change.after },
+        agentContextImpact: {
+          affectsNewTurns: true,
+          activeRunsChangeAtNextSafeBoundary: true,
+          affectedSurfaces: result.affectedSurfaceCount,
+        },
+      },
+      commandFacts: {
+        extensionUsageReverted: true,
+        extensionId: result.change.extensionId,
+        revertedExtensionChangeId: request.input.changeId,
+        extensionChangeId: result.change.changeId,
+        affectedAgentContextSurfaces: result.affectedSurfaceCount,
+      },
+    };
+  }
+  if (request.operation === "snapshots.list") {
+    const result = await runtime.facade.extensions.snapshots.list({});
+    return {
+      output: { ok: true, snapshots: result.snapshots },
+      commandFacts: {
+        extensionSnapshotsListed: true,
+        extensionSnapshotCount: result.snapshots.length,
+      },
+    };
+  }
+  const snapshots = await runtime.facade.extensions.snapshots.list({});
+  const requestedSnapshotId = "snapshotId" in request.input ? request.input.snapshotId : null;
+  const current = requestedSnapshotId
+    ? snapshots.snapshots.find((snapshot) => snapshot.snapshotId === requestedSnapshotId)
+    : undefined;
+  if (requestedSnapshotId && !current) {
+    throw new Error(`Extension snapshot not found: ${requestedSnapshotId}`);
+  }
+  const now = new Date().toISOString() as IsoDateTimeString;
+  if (request.operation === "snapshots.save") {
+    const snapshot = await runtime.facade.extensions.snapshots.save({
+      ...request.input,
+      snapshotId: `extension-snapshot:${randomUUID()}` as ExtensionSnapshotId,
+      capturedAt: now as never,
+    });
+    return {
+      output: { ok: true, snapshot },
+      commandFacts: { extensionSnapshotSaved: true, snapshotId: snapshot.snapshotId },
+    };
+  }
+  if (request.operation === "snapshots.rename") {
+    const snapshot = await runtime.facade.extensions.snapshots.rename({
+      ...request.input,
+      expectedRevision: current!.revision,
+      renamedAt: now as never,
+    });
+    return {
+      output: { ok: true, snapshot },
+      commandFacts: { extensionSnapshotRenamed: true, snapshotId: snapshot.snapshotId },
+    };
+  }
+  if (request.operation === "snapshots.delete") {
+    const result = await runtime.facade.extensions.snapshots.delete({
+      ...request.input,
+      expectedRevision: current!.revision,
+      deletedAt: now as never,
+      cleanupId: `extension-snapshot-cleanup:${randomUUID()}` as ExtensionSnapshotCleanupId,
+    });
+    return {
+      output: { ok: true, ...result },
+      commandFacts: { extensionSnapshotDeleted: true, snapshotId: result.snapshotId },
+    };
+  }
+  const result = await runtime.facade.extensions.snapshots.load({
+    ...request.input,
+    expectedRevision: current!.revision,
+    attemptId: `extension-snapshot-restore:${randomUUID()}` as ExtensionSnapshotRestoreAttemptId,
+    startedAt: now as never,
+  });
+  return {
+    output: { ok: result.status === "completed", ...result },
+    commandFacts: {
+      extensionSnapshotLoaded: result.status === "completed",
+      snapshotId: result.snapshotId,
+      extensionSnapshotLoadStatus: result.status,
+    },
+  };
+}
+
+async function applyWorkflowsRuntimeRequest(
+  runtime: AppRuntimeBootstrap,
+  request: SvvyxWorkflowsRuntimeRequest,
+): Promise<SvvyxWorkflowsRuntimeResponse> {
+  const refresh = await runtime.internal.sourceInvalidation.refreshGeneratedPackages({
+    scope: "app-global",
+    packages: ["@svvyx/workflows"],
+    reason: "explicit-build",
+    ...(request.input.sourceCommandId ? { sourceCommandId: request.input.sourceCommandId } : {}),
+  });
+  const status = refresh.packages.find((candidate) => candidate.packageName === "@svvyx/workflows");
+  if (!status || status.action === "failed" || !status.buildId) {
+    const diagnostics = (status?.diagnostics ?? ["Workflows generated package build failed."]).map(
+      (message) => ({
+        code: message.includes("current successful build")
+          ? "extension_build_required"
+          : "generated_package_build_failed",
+        message,
+      }),
+    );
+    return {
+      output: {
+        ok: false,
+        error: { code: "build_failed", message: "Workflows build failed.", diagnostics },
+      },
+      commandFacts: {
+        workflowBuildOk: false,
+        workflowDiagnosticCount: diagnostics.length,
+      },
+    };
+  }
+  const readModel = await runtime.state.readModels.fetch({
+    kind: "workflowsGenerated",
+    buildId: status.buildId,
+  });
+  if (readModel.kind !== "workflowsGenerated") {
+    throw new Error("Workflows generated-package state projection was unavailable after build.");
+  }
+  const items = readModel.value.exports.map((item) => ({
+    kind: item.kind,
+    namespace: item.namespace,
+    exportName: item.exportName,
+    qualifiedName: item.qualifiedName,
+    sourcePath: item.sourcePath,
+    generatedPath: item.generatedPath,
+  }));
+  return {
+    output: {
+      ok: true,
+      generatedPackagePath: status.manifestPath
+        ? status.manifestPath.slice(0, status.manifestPath.lastIndexOf("/"))
+        : null,
+      diagnostics: status.diagnostics ?? [],
+      items,
+    },
+    commandFacts: {
+      workflowBuildOk: true,
+      workflowExportCount: items.length,
+      workflowDiagnosticCount: status.diagnostics?.length ?? 0,
+      workflowGeneratedPackageBuildId: status.buildId,
+    },
+  };
+}
 
 type RuntimeFacade = AppRuntimeBootstrap["facade"];
 type RuntimeSourceInvalidationReactionInput =
@@ -240,6 +644,10 @@ type WorkspaceRuntimeRegistryOptions = {
   runtimeDependencies?: Partial<RuntimeProviderAuthDependencies>;
   runtimeLayerConfig: RuntimeLayerConfig;
   sandboxHostSupport: PackagedSandboxHostSupportServices;
+  extensionCliRequirementProbe: ExtensionCliRequirementProbePortService;
+  extensionBuildProcess: ExtensionBuildProcessPortService;
+  secretStore: SecretStorePortService;
+  secretStoreMutation: SecretStoreMutationPortService;
   sourceInvalidationHost?: RuntimeSourceInvalidationHost;
   sourceWatchEnabled?: boolean;
   workflowsGeneratedPackagePath?: string;
@@ -354,7 +762,7 @@ export class WorkspaceRuntimeRegistry {
         buildAppGlobalSourceWatchInputs({
           extensionsRoot: extensionsRootForAgentDir(this.agentDir),
           host: this.sourceInvalidationHost,
-          workflowsSourceRoot: this.options.workflowsSourceRoot ?? getWorkflowsSourceRoot(),
+          workflowsSourceRoot: this.options.workflowsSourceRoot ?? workflowsSourceRoot(),
         }),
       onDomainsChanged: (event) =>
         Effect.promise(async () => {
@@ -412,6 +820,30 @@ export class WorkspaceRuntimeRegistry {
       await this.getAppRuntimeBootstrap();
       const runtime = await this.acquireWorkspace(options.initialCwd);
       this.activeWorkspaceId = runtime.workspaceId;
+      const state = await this.getRendererStateFacade();
+      const chrome = await state.readModels.fetch({ kind: "workspaceChrome" });
+      if (chrome.kind === "workspaceChrome" && chrome.value.tabs.length === 0) {
+        const commands = await this.getStateCommandsFacade();
+        type InitialWorkspaceTab = Parameters<
+          typeof commands.workspaceChrome.setTabs
+        >[0]["tabs"][number];
+        const workspaceTabId =
+          `workspace-tab-${randomUUID()}` as InitialWorkspaceTab["workspaceTabId"];
+        const tab: InitialWorkspaceTab = {
+          workspaceTabId,
+          workspaceId: runtime.workspaceId as WorkspaceId,
+          cwd: runtime.cwd as AbsolutePath,
+          workspaceLabel: runtime.label,
+          kind: runtime.kind,
+          openedAt: runtime.openedAt as InitialWorkspaceTab["openedAt"],
+          activeLayoutId: "A" as const,
+        };
+        await commands.workspaceChrome.setTabs({
+          activeWorkspaceTabId: workspaceTabId,
+          tabs: [tab],
+          knownWorkspaces: [tab],
+        });
+      }
     });
   }
 
@@ -815,6 +1247,78 @@ export class WorkspaceRuntimeRegistry {
                 return resolveWorkspacePathTarget({ cwd: host.cwd, workspaceRelativePath });
               },
             },
+            externalInstructions: {
+              resolveEditorTarget: async ({ workspaceId, sourceId }) => {
+                const host = this.getRuntime(workspaceId);
+                const readModelResult = await runtime.state.readModels.fetch({
+                  kind: "externalInstructions",
+                  workspaceId: workspaceId as WorkspaceId,
+                });
+                if (readModelResult.kind !== "externalInstructions") {
+                  throw new Error(
+                    `Expected state read model externalInstructions; received ${readModelResult.kind}.`,
+                  );
+                }
+                const source = readModelResult.value.sources.find(
+                  (candidate) => candidate.id === sourceId,
+                );
+                if (
+                  !source ||
+                  source.readStatus.status !== "readable" ||
+                  !existsSync(source.canonicalPath)
+                ) {
+                  host.appLog.warning(
+                    "external-editor",
+                    "Prompt standards source does not exist.",
+                    { sourceId },
+                  );
+                  throw new Error(`Prompt standards source is not readable: ${sourceId}`);
+                }
+                const preferences = host.agentSettingsStore.getState().appPreferences;
+                return {
+                  sourceId: source.id,
+                  path: source.canonicalPath,
+                  cwd: host.cwd,
+                  editor: preferences.preferredExternalEditor,
+                  customCommand: preferences.customExternalEditorCommand,
+                };
+              },
+              recordEditorResult: async (input) => {
+                const host = this.getRuntime(input.workspaceId);
+                if (input.failure?.kind === "app-launch") {
+                  host.appLog.warning("external-editor", "External editor app launch failed.", {
+                    sourceId: input.sourceId,
+                    editor: input.editor,
+                    path: input.path,
+                    message: input.failure.message,
+                  });
+                } else if (input.failure?.kind === "custom-command-empty") {
+                  host.appLog.warning(
+                    "external-editor",
+                    "Custom external editor command is empty.",
+                    { sourceId: input.sourceId, path: input.path },
+                  );
+                } else if (input.failure?.kind === "custom-command-launch") {
+                  host.appLog.warning("external-editor", "Custom external editor command failed.", {
+                    sourceId: input.sourceId,
+                    command: input.failure.command,
+                    path: input.path,
+                    message: input.failure.message,
+                  });
+                }
+                host.appLog.info(
+                  "external-editor",
+                  "Prompt standards source opened in external editor.",
+                  {
+                    sourceId: input.sourceId,
+                    path: input.path,
+                    editor: input.editor,
+                    opened: input.opened,
+                  },
+                );
+                return { ok: true };
+              },
+            },
             telemetry: {
               recordRenderer: async (input) => {
                 const host = this.getRuntime(input.workspaceId);
@@ -849,7 +1353,9 @@ export class WorkspaceRuntimeRegistry {
             messages: runtime.facade.messages,
             queues: runtime.facade.queues,
             requestInput: runtime.facade.requestInput,
+            generatedContext: runtime.facade.generatedContext,
             approvals: runtime.facade.approvals,
+            extensions: runtime.facade.extensions,
             sourceEdits: runtime.facade.sourceEdits,
             sourceInvalidation: runtime.facade.sourceInvalidation,
           },
@@ -861,7 +1367,7 @@ export class WorkspaceRuntimeRegistry {
         };
       });
     }
-    return this.desktopAppFacades;
+    return this.desktopAppFacades!;
   }
 
   getActiveRuntime(): WorkspaceRuntime {
@@ -1106,6 +1612,30 @@ export class WorkspaceRuntimeRegistry {
         runAcceptedLoadExtension: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();
           return runtime.internal.acceptedNativeTools.runLoadExtension(request);
+        },
+        applyExtensionLifecycleRuntimeEffect: async (request) => {
+          const runtime = await this.getAppRuntimeBootstrap();
+          if (request.type === "extension_source.reconcile") {
+            await runtime.facade.extensions.reconcileMutation(request.input);
+          } else {
+            await runtime.facade.extensions.build({
+              extensionId: request.input.extensionId,
+              clientRequestId:
+                `extension-build:${request.input.mutationId}` as BuildRuntimeExtensionInput["clientRequestId"],
+            });
+          }
+        },
+        applyExtensionManagementRuntimeRequest: async (request) => {
+          const runtime = await this.getAppRuntimeBootstrap();
+          return applyExtensionManagementRuntimeRequest(
+            runtime,
+            request,
+            requestedWorkspaceId as WorkspaceId,
+          );
+        },
+        applyWorkflowsRuntimeRequest: async (request) => {
+          const runtime = await this.getAppRuntimeBootstrap();
+          return applyWorkflowsRuntimeRequest(runtime, request);
         },
         requestDirectToolApproval: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();
@@ -2026,6 +2556,30 @@ export class WorkspaceRuntimeRegistry {
           const runtime = await this.getAppRuntimeBootstrap();
           return runtime.internal.acceptedNativeTools.runLoadExtension(request);
         },
+        applyExtensionLifecycleRuntimeEffect: async (request) => {
+          const runtime = await this.getAppRuntimeBootstrap();
+          if (request.type === "extension_source.reconcile") {
+            await runtime.facade.extensions.reconcileMutation(request.input);
+          } else {
+            await runtime.facade.extensions.build({
+              extensionId: request.input.extensionId,
+              clientRequestId:
+                `extension-build:${request.input.mutationId}` as BuildRuntimeExtensionInput["clientRequestId"],
+            });
+          }
+        },
+        applyExtensionManagementRuntimeRequest: async (request) => {
+          const runtime = await this.getAppRuntimeBootstrap();
+          return applyExtensionManagementRuntimeRequest(
+            runtime,
+            request,
+            workspaceId as WorkspaceId,
+          );
+        },
+        applyWorkflowsRuntimeRequest: async (request) => {
+          const runtime = await this.getAppRuntimeBootstrap();
+          return applyWorkflowsRuntimeRequest(runtime, request);
+        },
         requestDirectToolApproval: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();
           return runtime.internal.acceptedNativeTools.requestDirectToolApproval(request);
@@ -2108,6 +2662,11 @@ export class WorkspaceRuntimeRegistry {
       packagedExtensionTemplatesRoot,
       generatedPackageRoots: generatedPackageBoundaryHost.generatedPackageRoots,
       extensionStatePort: generatedPackageBoundaryHost.extensionStatePort,
+      extensionBuildProcess: this.options.extensionBuildProcess,
+      extensionCliRequirementProbe: this.options.extensionCliRequirementProbe,
+      secretStore: this.options.secretStore,
+      secretStoreMutation: this.options.secretStoreMutation,
+      snapshotStorageRoot: join(this.appDataDir, "extension-snapshots") as AbsolutePath,
       generatedPackageLinkPath: generatedPackageBoundaryHost.generatedPackageLinkPath,
       sandboxPolicySource,
       appLogs: appGlobal.appLogs,
@@ -2151,6 +2710,42 @@ export class WorkspaceRuntimeRegistry {
         workspaceLinkFileHost: generatedPackageBoundaryHost.workspaceLinkFileHost,
         materializeCoreTypeContractPackage:
           generatedPackageBoundaryHost.materializeCoreTypeContractPackage,
+      },
+      externalInstructionScanInput: {
+        resolve: (workspaceId) =>
+          Effect.try({
+            try: () => {
+              const workspace = this.getWorkspaceHostRecord(workspaceId);
+              if (!workspace) {
+                throw new Error(`Workspace is not open: ${workspaceId}`);
+              }
+              const canonicalCwd = canonicalizeWorkspaceCwd(workspace.cwd) as AbsolutePath;
+              const settings = appGlobal.catalog
+                .workspaceStateRouterRegistration()
+                .store.readAppPreferences().externalInstructions;
+              return {
+                workspaceId,
+                workspaceRoot: canonicalCwd,
+                cwd: canonicalCwd,
+                homeDirectory: this.sourceInvalidationHost.homeDir as AbsolutePath,
+                settings: {
+                  globalRoots: settings.globalRoots.map((root) => ({ ...root })),
+                  globalControls: {},
+                  workspaceControls: {},
+                },
+              } satisfies ExternalInstructionScanInput;
+            },
+            catch: (cause) =>
+              new RuntimeContractError({
+                operation: "workspace-runtime-registry.externalInstructions.scanInput",
+                reason: "target-not-found",
+                message:
+                  cause instanceof Error
+                    ? cause.message
+                    : `External instruction scan input could not resolve workspace ${workspaceId}.`,
+                cause,
+              }),
+          }),
       },
       generatedPackageStatePort,
       sourceInvalidation: {
@@ -2355,15 +2950,15 @@ export class WorkspaceRuntimeRegistry {
       sourceRoots: {
         extensionsRoot: extensionsRoot as AbsolutePath,
         workflowsSourceRoot: (this.options.workflowsSourceRoot ??
-          getWorkflowsSourceRoot()) as AbsolutePath,
+          workflowsSourceRoot()) as AbsolutePath,
       },
       generatedPackageRoots: {
-        extensionsPackageRoot: effectiveExtensionsGeneratedPackagePath({
+        extensionsPackageRoot: extensionsGeneratedPackagePath({
           extensionsGeneratedPackagePath: this.options.workflowsExtensionsGeneratedPackagePath,
           generatedPackagePath: this.options.workflowsGeneratedPackagePath,
         }) as AbsolutePath,
         workflowsPackageRoot: (this.options.workflowsGeneratedPackagePath ??
-          getWorkflowsGeneratedPackagePath()) as AbsolutePath,
+          workflowsGeneratedPackagePath()) as AbsolutePath,
         coreTypeContractPackageRoot: (this.options.coreTypeContractPackagePath ??
           getCoreTypeContractPackagePath()) as AbsolutePath,
       },

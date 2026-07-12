@@ -8,6 +8,7 @@ import {
   ThreadId,
   WorkflowTaskAttemptId,
   WorkspaceSessionId,
+  WorkspaceId,
 } from "./ids";
 import { NativeToolDeclarationSchema } from "./native-tool-contracts";
 import { SourceDiagnosticSchema } from "./runtime-source-edit-contracts";
@@ -71,6 +72,10 @@ export type SourceFingerprint = typeof SourceFingerprintSchema.Type;
 
 export const BuildGeneratedContextTargetSchema = Schema.Union([
   Schema.Struct({
+    kind: Schema.Literal("profile-preview"),
+    workspaceId: WorkspaceId,
+  }),
+  Schema.Struct({
     kind: Schema.Literal("orchestrator"),
     workspaceSessionId: WorkspaceSessionId,
   }),
@@ -125,6 +130,21 @@ export const GeneratedContextPromptBlockSchema = Schema.Struct({
 });
 export type GeneratedContextPromptBlock = typeof GeneratedContextPromptBlockSchema.Type;
 
+export const GeneratedContextExternalInstructionBlockSchema = Schema.Struct({
+  sourceRecordId: Schema.String.check(Schema.isNonEmpty()),
+  sourceVersion: SourceFingerprintSchema,
+  sourcePath: AbsolutePath,
+  sourceFingerprint: SourceFingerprintSchema,
+  text: Schema.String,
+  tokenEstimate: Schema.Number.check(
+    Schema.isFinite(),
+    Schema.isInt(),
+    Schema.isGreaterThanOrEqualTo(0),
+  ),
+});
+export type GeneratedContextExternalInstructionBlock =
+  typeof GeneratedContextExternalInstructionBlockSchema.Type;
+
 export const GeneratedContextExecuteTypescriptFacadeDeclarationsSchema = Schema.Struct({
   text: Schema.String,
   emittedExtensionIds: Schema.Array(ExtensionId),
@@ -140,6 +160,7 @@ export type ExecuteTypescriptFacadeDeclarations =
 export const GeneratedContextSchema = Schema.Struct({
   fingerprint: GeneratedContextFingerprint,
   promptBlocks: Schema.Array(GeneratedContextPromptBlockSchema),
+  externalInstructionBlocks: Schema.Array(GeneratedContextExternalInstructionBlockSchema),
   nativeToolDeclarations: Schema.Array(NativeToolDeclarationSchema),
   svvyxGuidanceBlocks: Schema.Array(GeneratedContextPromptBlockSchema),
   executeTypescriptFacadeDeclarations: GeneratedContextExecuteTypescriptFacadeDeclarationsSchema,

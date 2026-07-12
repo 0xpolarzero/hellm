@@ -38,6 +38,7 @@ export {
   RuntimeGeneratedPackageRefreshHostPort,
   RuntimeLayerModelResolverPort,
   RuntimeLayerProviderAuthPort,
+  RuntimeExternalInstructionScanInputPort,
   RuntimeSourceInvalidationScanPort,
 } from "./runtime-layer";
 export type {
@@ -47,6 +48,7 @@ export type {
   RuntimeGeneratedPackageRefreshHostPortService,
   RuntimeLayerModelResolverPortService,
   RuntimeLayerProviderAuthPortService,
+  RuntimeExternalInstructionScanInputPortService,
   RuntimeSourceInvalidationScanPortService,
 } from "./runtime-layer";
 export type { RuntimeGeneratedPackageWorkspaceLinkFileHost } from "./generated-package-refresh";

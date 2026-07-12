@@ -4,9 +4,7 @@
   import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";
   import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
   import type { Snippet } from "svelte";
-  import type {
-    ExtensionInstructionFileReadModel,
-  } from "../shared/workspace-contract";
+  import type { OpenExtensionSourceEditInput, SourceEditSession } from "@svvy/core";
   import type { ChatRuntime } from "./chat-runtime";
   import { formatTokenCount } from "./chat-format";
   import FileBackedConflictActions from "./ui/FileBackedConflictActions.svelte";
@@ -18,10 +16,12 @@
   type Props = {
     disabled?: boolean;
     editor?: string;
-    extensionId: string;
+    bypassed: boolean;
+    editable: boolean;
     footerControls?: Snippet;
-    file: ExtensionInstructionFileReadModel;
-    kind?: "full" | "minimal" | "script";
+    name: string;
+    openable: boolean;
+    source: OpenExtensionSourceEditInput;
     showTokenCount?: boolean;
     runtime: ChatRuntime;
     onSaved: () => void;
@@ -32,10 +32,12 @@
   let {
     disabled = false,
     editor = "system",
-    extensionId,
+    bypassed,
+    editable,
     footerControls,
-    file,
-    kind = "full",
+    name,
+    openable,
+    source,
     showTokenCount = true,
     runtime,
     onSaved,
@@ -45,42 +47,55 @@
   let draft = $state("");
   let savedContent = $state("");
   let baseSourceVersion = $state<string | undefined>(undefined);
-  let conflictFile = $state<ExtensionInstructionFileReadModel | null>(null);
+  let session = $state<SourceEditSession | null>(null);
+  let conflictSession = $state<SourceEditSession | null>(null);
   let errorMessage = $state("");
-  let loadedFileKey = $state("");
+  let loading = $state(false);
+  let loadGeneration = 0;
   let saving = $state(false);
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   const dirty = $derived(draft !== savedContent);
   const status = $derived<AutosaveStatus>(
-    conflictFile ? "conflict" : errorMessage ? "error" : saving ? "saving" : dirty ? "unsaved" : "saved",
+    conflictSession
+      ? "conflict"
+      : errorMessage
+        ? "error"
+        : saving || loading
+          ? "saving"
+          : dirty
+            ? "unsaved"
+            : "saved",
   );
+  const tokenCount = $derived(Math.ceil(draft.length / 4));
 
   $effect(() => {
-    const fileKey = `${extensionId}:${kind}:${file.name}`;
-    if (loadedFileKey !== fileKey) {
-      loadedFileKey = fileKey;
-      draft = file.content;
-      savedContent = file.content;
-      baseSourceVersion = file.sourceVersion;
-      conflictFile = null;
-      errorMessage = "";
-      return;
-    }
-    if (file.sourceVersion === baseSourceVersion) return;
-    if (dirty) {
-      conflictFile = file;
-      return;
-    }
-    savedContent = file.content;
-    draft = file.content;
-    baseSourceVersion = file.sourceVersion;
-    conflictFile = null;
+    const sourceKind = source.sourceKind;
+    const sourceId = source.sourceId;
+    const generation = ++loadGeneration;
+    loading = true;
     errorMessage = "";
+    void runtime
+      .openSourceEdit({ sourceKind, sourceId })
+      .then((nextSession) => {
+        if (generation !== loadGeneration) return;
+        session = nextSession;
+        draft = nextSession.text;
+        savedContent = nextSession.text;
+        baseSourceVersion = nextSession.sourceVersion;
+        conflictSession = null;
+      })
+      .catch((error) => {
+        if (generation !== loadGeneration) return;
+        errorMessage = error instanceof Error ? error.message : "Unable to load extension source.";
+      })
+      .finally(() => {
+        if (generation === loadGeneration) loading = false;
+      });
   });
 
   $effect(() => {
-    if (!dirty || conflictFile || saving || disabled || !file.editable) return;
+    if (!dirty || conflictSession || saving || loading || disabled || !editable) return;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => void save("compare-and-swap"), AUTOSAVE_DELAY_MS);
     return () => {
@@ -90,32 +105,28 @@
   });
 
   async function save(mode: "compare-and-swap" | "overwrite") {
-    if (!file.editable || disabled) return;
+    if (!editable || disabled) return;
     saving = true;
     errorMessage = "";
     try {
-      if (!file.source || !baseSourceVersion) {
-        throw new Error(`Editable extension source identity is unavailable: ${file.name}`);
+      if (!baseSourceVersion) {
+        throw new Error(`Editable extension source version is unavailable: ${name}`);
       }
       const result = await runtime.saveSourceEdit({
-        ...file.source,
+        ...source,
         expectedSourceVersion: baseSourceVersion,
         text: draft,
         saveMode: mode,
       });
       if (result.status === "stale") {
-        conflictFile = {
-          ...file,
-          path: result.current.path,
-          content: result.current.text,
-          sourceVersion: result.current.sourceVersion,
-        };
+        conflictSession = result.current;
         baseSourceVersion = result.current.sourceVersion;
         return;
       }
       savedContent = draft;
       baseSourceVersion = result.sourceVersion;
-      conflictFile = null;
+      session = session ? { ...session, text: draft, sourceVersion: result.sourceVersion } : session;
+      conflictSession = null;
       onSaved();
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : "Unable to save instruction file.";
@@ -125,17 +136,19 @@
   }
 
   function discardLocalChanges() {
-    const current = conflictFile ?? file;
-    draft = current.content;
-    savedContent = current.content;
+    const current = conflictSession ?? session;
+    if (!current) return;
+    draft = current.text;
+    savedContent = current.text;
     baseSourceVersion = current.sourceVersion;
-    conflictFile = null;
+    session = current;
+    conflictSession = null;
     errorMessage = "";
   }
 
   async function openExternal() {
-    if (!file.source) throw new Error(`Extension source identity is unavailable: ${file.name}`);
-    await runtime.openSourceInEditor(file.source);
+    if (!openable) return;
+    await runtime.openSourceInEditor(source);
   }
 
   function autosaveStatusLabel(input: AutosaveStatus): string {
@@ -147,16 +160,16 @@
   }
 </script>
 
-<div class={`extension-instruction-editor ${file.bypassed ? "is-bypassed" : ""}`.trim()}>
+<div class={`extension-instruction-editor ${bypassed ? "is-bypassed" : ""}`.trim()}>
   <SourceMetadataTextArea
     value={draft}
     status={status}
-    aria-label={`${file.name} instruction content`}
-    disabled={disabled || !file.editable}
+    aria-label={`${name} instruction content`}
+    disabled={disabled || !editable || loading}
     showTokenCount={showTokenCount}
-    tokenCountLabel={showTokenCount ? `~${formatTokenCount(file.tokenCount.tokens)} tokens` : null}
-    sourceLabel={file.name}
-    sourceDisabled={disabled}
+    tokenCountLabel={showTokenCount ? `~${formatTokenCount(tokenCount)} tokens` : null}
+    sourceLabel={name}
+    sourceDisabled={disabled || loading || !session || !openable}
     sourceEditor={editor as never}
     oninput={(event) => (draft = event.currentTarget.value)}
     onOpenSource={openExternal}
@@ -196,13 +209,22 @@
       {#if footerControls}
         {@render footerControls()}
       {/if}
-      {#if file.bypassed}
+      {#if bypassed}
         <span class="extension-bypassed-chip">Bypassed</span>
       {/if}
     {/snippet}
   </SourceMetadataTextArea>
   {#if errorMessage}
     <p class="extension-instruction-error" role="alert">{errorMessage}</p>
+  {/if}
+  {#if (conflictSession ?? session)?.diagnostics.length}
+    <div class="extension-source-diagnostics" aria-label={`${name} diagnostics`}>
+      {#each (conflictSession ?? session)?.diagnostics ?? [] as diagnostic, index (`${diagnostic.code ?? "diagnostic"}:${index}`)}
+        <p class={`extension-instruction-error ${diagnostic.severity}`.trim()}>
+          {diagnostic.message}
+        </p>
+      {/each}
+    </div>
   {/if}
 </div>
 

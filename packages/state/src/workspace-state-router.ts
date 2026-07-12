@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import {
   RuntimeActorExtensionBindingStatePort,
+  GeneratedContextPreviewSubjectStatePort,
   RuntimeApprovalStatePort,
   RuntimeCommandStatePort,
   RuntimeComposerDraftStatePort,
@@ -25,6 +26,7 @@ import {
   type PromptTarget,
   type RuntimeSurfaceTarget,
   type RuntimeActorExtensionBindingStatePortService,
+  type GeneratedContextPreviewSubjectStatePortService,
   type RuntimeApprovalRecord,
   type RuntimeApprovalStatePortService,
   type RuntimeCommandStatePortService,
@@ -52,6 +54,7 @@ import {
   type WorkspaceId,
 } from "@svvy/core";
 import { runtimeActorExtensionBindingStatePortFromStructuredSessionState } from "./runtime-actor-extension-binding-state-port";
+import { generatedContextPreviewSubjectStatePortFromStructuredSessionState } from "./generated-context-preview-subject-state-port";
 import { runtimeApprovalStatePortFromStructuredSessionState } from "./runtime-approval-state-port";
 import { runtimeCommandStatePortFromStructuredSessionState } from "./runtime-command-state-port";
 import { runtimeComposerDraftStatePortFromStructuredSessionState } from "./runtime-composer-draft-state-port";
@@ -96,6 +99,7 @@ export interface WorkspaceStateRouter {
   readonly source: RuntimeSourceStatePortService;
   readonly generatedPackage: RuntimeGeneratedPackageStatePortService;
   readonly actorExtensionBinding: RuntimeActorExtensionBindingStatePortService;
+  readonly generatedContextPreviewSubject: GeneratedContextPreviewSubjectStatePortService;
   readonly queue: RuntimeQueueStatePortService;
   readonly request: RuntimeRequestStatePortService;
   readonly approval: RuntimeApprovalStatePortService;
@@ -130,6 +134,7 @@ interface RegisteredStore {
     readonly source: RuntimeSourceStatePortService;
     readonly generatedPackage: RuntimeGeneratedPackageStatePortService;
     readonly actorExtensionBinding: RuntimeActorExtensionBindingStatePortService;
+    readonly generatedContextPreviewSubject: GeneratedContextPreviewSubjectStatePortService;
     readonly queue: RuntimeQueueStatePortService;
     readonly request: RuntimeRequestStatePortService;
     readonly approval: RuntimeApprovalStatePortService;
@@ -163,6 +168,8 @@ function registerStore(store: StructuredSessionStateStore): RegisteredStore {
         runtimeGeneratedPackageStatePortFromStructuredSessionState(structuredSession),
       actorExtensionBinding:
         runtimeActorExtensionBindingStatePortFromStructuredSessionState(structuredSession),
+      generatedContextPreviewSubject:
+        generatedContextPreviewSubjectStatePortFromStructuredSessionState(structuredSession),
       queue: runtimeQueueStatePortFromStructuredSessionState(structuredSession),
       request: runtimeRequestStatePortFromStructuredSessionState(structuredSession),
       approval: runtimeApprovalStatePortFromStructuredSessionState(structuredSession),
@@ -596,6 +603,16 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
       via(locateRuntimeSurfaceTarget("readRuntimePromptBinding", request.target), (registered) =>
         registered.ports.actorExtensionBinding.readRuntimePromptBinding(request),
       ),
+    readGeneratedContextBuildSubject: (request) =>
+      via(
+        locateRuntimeSurfaceTarget("readGeneratedContextBuildSubject", request.target),
+        (registered) =>
+          registered.ports.actorExtensionBinding.readGeneratedContextBuildSubject(request),
+      ),
+    bindGeneratedContext: (request) =>
+      via(locateRuntimeSurfaceTarget("bindGeneratedContext", request.target), (registered) =>
+        registered.ports.actorExtensionBinding.bindGeneratedContext(request),
+      ),
     updateActorExtensionBinding: (request) =>
       via(locatePromptTarget("updateActorExtensionBinding", request.target), (registered) =>
         registered.ports.actorExtensionBinding.updateActorExtensionBinding(request),
@@ -603,6 +620,13 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
     setActorExtensionBinding: (request) =>
       via(locatePromptTarget("setActorExtensionBinding", request.target), (registered) =>
         registered.ports.actorExtensionBinding.setActorExtensionBinding(request),
+      ),
+  };
+
+  const generatedContextPreviewSubject: GeneratedContextPreviewSubjectStatePortService = {
+    readSubject: (request) =>
+      via(resolveWorkspace("readGeneratedContextPreviewSubject", request.workspaceId), () =>
+        appGlobal.ports.generatedContextPreviewSubject.readSubject(request),
       ),
   };
 
@@ -1181,6 +1205,7 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
     source,
     generatedPackage,
     actorExtensionBinding,
+    generatedContextPreviewSubject,
     queue,
     request,
     approval,
@@ -1215,6 +1240,7 @@ export function layerWorkspaceStateRouter(
   | RuntimeSourceStatePort
   | RuntimeGeneratedPackageStatePort
   | RuntimeActorExtensionBindingStatePort
+  | GeneratedContextPreviewSubjectStatePort
   | RuntimeQueueStatePort
   | RuntimeRequestStatePort
   | RuntimeApprovalStatePort
@@ -1236,6 +1262,7 @@ export function layerWorkspaceStateRouter(
     Layer.succeed(RuntimeSourceStatePort, router.source),
     Layer.succeed(RuntimeGeneratedPackageStatePort, router.generatedPackage),
     Layer.succeed(RuntimeActorExtensionBindingStatePort, router.actorExtensionBinding),
+    Layer.succeed(GeneratedContextPreviewSubjectStatePort, router.generatedContextPreviewSubject),
     Layer.succeed(RuntimeQueueStatePort, router.queue),
     Layer.succeed(RuntimeRequestStatePort, router.request),
     Layer.succeed(RuntimeApprovalStatePort, router.approval),

@@ -242,7 +242,7 @@ describe("default workspace renderer shell", () => {
     const bunIndexSource = await readFile(new URL("../bun/index.ts", import.meta.url), "utf8");
 
     expect(runtimeSource).toContain(
-      "const scoped = <T extends object>(request?: T): T & { workspaceId: string } => ({",
+      "const scoped = <T extends object>(request?: T): T & { workspaceId: WorkspaceId } => ({",
     );
     expect(runtimeSource).toContain("workspaceId: workspaceInfo.workspaceId");
     expect(runtimeSource).toContain('kind: "workspaceLayout"');
@@ -456,7 +456,7 @@ describe("default workspace renderer shell", () => {
     expect(agentsPaneSource).not.toContain('systemPrompt: ""');
     expect(agentsPaneSource).not.toContain("Profiles used by orchestrators");
     expect(agentsPaneSource).not.toContain("agents-header");
-    expect(agentsPaneSource).toContain("{preview.actor}");
+    expect(agentsPaneSource).toContain("{preview.actorBinding.actorKind}");
     expect(agentsPaneSource).toContain("extensionUsageItems({");
     expect(agentsPaneSource).toContain("WorkflowAgentRowForm");
     expect(agentsPaneSource).toContain("invalidWorkflowAgentRowContent");
@@ -530,7 +530,8 @@ describe("default workspace renderer shell", () => {
       agentsPaneSource.indexOf("function openExtension"),
     );
 
-    expect(agentsPaneSource).toContain("runtime.getExtensionsInventory()");
+    expect(agentsPaneSource).toContain("runtime.getAgentExtensionsCatalog()");
+    expect(agentsPaneSource).not.toContain("runtime.getExtensionsInventory()");
     expect(agentsPaneSource).not.toContain("runtime.setAgentProfileExtensionUsage");
     expect(agentsPaneSource).toContain("saveWorkflowAgent(record");
     expect(profileExtensionUsageSaveSource).not.toContain("savingProfileId =");
@@ -544,8 +545,8 @@ describe("default workspace renderer shell", () => {
     expect(agentsPaneSource).toContain("resetProfileExtensionSelection");
     expect(agentsPaneSource).toContain("resetProfileExtensionOrder");
     expect(agentsPaneSource).toContain("buildExtensionUsageItems");
-    expect(extensionUsageHelperSource).toContain("inventoryDefaults?.usage");
-    expect(extensionUsageHelperSource).toContain('extension.id !== "extension-loading"');
+    expect(extensionUsageHelperSource).toContain("extension.usagePolicy.baselineUsage");
+    expect(extensionUsageHelperSource).toContain("extension.usagePolicy.configurable");
     expect(agentProfileFormSource).toContain("ExtensionUsageControl");
     expect(workflowAgentFormSource).toContain("ExtensionUsageControl");
     expect(agentProfileFormSource).toContain("onOpenExtension={onOpenExtension}");
@@ -876,12 +877,12 @@ describe("default workspace renderer shell", () => {
     expect(commandPaletteSource).toContain('view: "generated-context-preview"');
     expect(dockviewSource).toContain("targetView={pane.target.view}");
     expect(dockviewSource).toContain("targetExtensionId={pane.target.targetExtensionId}");
-    expect(runtimeSource).toContain("getAgentContextPreview");
+    expect(runtimeSource).toContain("previewGeneratedContext");
     expect(extensionsPaneSource).toContain("Generated Context Preview");
-    expect(extensionsPaneSource).toContain("runtime.getAgentContextPreview");
+    expect(extensionsPaneSource).toContain("runtime.previewGeneratedContext");
     expect(extensionsPaneSource).toContain("targetExtensionId");
-    expect(extensionsPaneSource).toContain("data-extension-id={extension.id}");
-    expect(extensionsPaneSource).toContain("target={extension.id === targetExtensionId}");
+    expect(extensionsPaneSource).toContain("data-extension-id={extension.extensionId}");
+    expect(extensionsPaneSource).toContain("target={extension.extensionId === targetExtensionId}");
     expect(extensionsPaneSource).not.toContain(
       "TODO: expanded profile prompt, extension, and generated contract preview.",
     );
@@ -927,25 +928,23 @@ describe("default workspace renderer shell", () => {
       "utf8",
     );
 
-    expect(contractSource).toContain("ExtensionCliRequirementReadinessStatus");
-    expect(contractSource).toContain("ExtensionEnvRequirementReadinessStatus");
-    expect(contractSource).toContain("ExtensionChangeCardReadModel");
-    expect(contractSource).toContain("ExtensionSnapshotReadModel");
-    expect(contractSource).toContain("externalInstruction?:");
-    expect(contractSource).toContain("EXTERNAL_INSTRUCTION_UNREADABLE");
-    expect(contractSource).toContain("getExtensionsInventory");
+    expect(contractSource).not.toContain("ExtensionsInventoryReadModel");
+    expect(contractSource).not.toContain("ExtensionChangeCardReadModel");
+    expect(contractSource).not.toContain("ExtensionSnapshotReadModel");
+    expect(contractSource).toContain("getExtensionSnapshots");
+    expect(contractSource).not.toContain("getExtensionsInventory:");
     expect(contractSource).not.toContain("revertExtensionChange");
     expect(contractSource).toContain("saveExtensionSnapshot");
     expect(contractSource).toContain("renameExtensionSnapshot");
     expect(contractSource).toContain("deleteExtensionSnapshot");
     expect(contractSource).toContain("loadExtensionSnapshot");
-    expect(contractSource).toContain("setExtensionEnvSecret");
-    expect(contractSource).toContain("removeExtensionEnvSecret");
+    expect(contractSource).toContain("stateExtensionEnvSetSecret");
+    expect(contractSource).toContain("stateExtensionEnvRemoveSecret");
     expect(contractSource).toContain("stateExtensionEnvSetOverride");
     expect(contractSource).toContain("stateExtensionEnvRemoveOverride");
     for (const requestName of [
-      "SetExtensionEnvSecretRequest",
-      "RemoveExtensionEnvSecretRequest",
+      "StateExtensionEnvSetSecretRequest",
+      "StateExtensionEnvRemoveSecretRequest",
       "SetExtensionEnvOverrideRequest",
       "RemoveExtensionEnvOverrideRequest",
     ]) {
@@ -956,8 +955,9 @@ describe("default workspace renderer shell", () => {
       expect(block).not.toContain("name: string;");
     }
     expect(contractSource).toContain("SetExtensionTypescriptApiRequest");
-    expect(contractSource).toContain("setExtensionTypescriptApi");
-    expect(runtimeSource).toContain("getExtensionsInventory");
+    expect(contractSource).toContain("configureExtensionTypescriptApi");
+    expect(runtimeSource).toContain("getExtensionSnapshots");
+    expect(runtimeSource).not.toContain("getExtensionsInventory");
     expect(runtimeSource).toContain("getAppPreferences");
     expect(runtimeSource).toContain("updateAppPreferences");
     expect(runtimeSource).not.toContain("revertExtensionChange");
@@ -970,7 +970,8 @@ describe("default workspace renderer shell", () => {
     expect(runtimeSource).toContain("setExtensionEnvOverride");
     expect(runtimeSource).toContain("removeExtensionEnvOverride");
     expect(runtimeSource).toContain("setExtensionTypescriptApi");
-    expect(extensionsPaneSource).toContain("runtime.getExtensionsInventory");
+    expect(extensionsPaneSource).toContain("runtime.getExtensionSnapshots");
+    expect(extensionsPaneSource).not.toContain("runtime.getExtensionsInventory");
     expect(extensionsPaneSource).toContain("External Instructions");
     expect(extensionsPaneSource).toContain("external-instruction-readonly");
     expect(extensionsPaneSource).toContain("external-instruction-controls");
@@ -978,7 +979,7 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("setExternalInstructionActor");
     expect(extensionsPaneSource).toContain("runtime.getAppPreferences");
     expect(extensionsPaneSource).toContain("runtime.updateAppPreferences");
-    expect(extensionsPaneSource).toContain("openGeneratedAgentContextExternalSourceInEditor");
+    expect(extensionsPaneSource).toContain("openExternalInstructionSourceInEditor");
     expect(extensionsPaneSource).not.toContain("runtime.revertExtensionChange");
     expect(extensionsPaneSource).toContain("runtime.saveExtensionSnapshot");
     expect(extensionsPaneSource).toContain("runtime.renameExtensionSnapshot");
@@ -1008,7 +1009,7 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("ExtensionListRow");
     expect(extensionsPaneSource).not.toContain("ExtensionStateButtons");
     expect(extensionsPaneSource).toContain("footerControls");
-    expect(extensionsPaneSource).toContain("ExtensionGeneratedFileViewer");
+    expect(extensionsPaneSource).not.toContain("ExtensionGeneratedFileViewer");
     expect(extensionsPaneSource).toContain("extension-tooling-files");
     expect(extensionsPaneSource).toContain("showDragHandle={false}");
     expect(extensionsPaneSource).toContain("showLeading={false}");
@@ -1026,8 +1027,33 @@ describe("default workspace renderer shell", () => {
     expect(extensionInstructionEditorSource).not.toContain("read-only loaded");
     expect(extensionInstructionEditorSource).toContain("Bypassed");
     expect(extensionInstructionEditorSource).toContain("SourceMetadataTextArea");
+    expect(extensionInstructionEditorSource).toContain(".openSourceEdit({ sourceKind, sourceId })");
+    expect(extensionInstructionEditorSource).toContain("nextSession.text");
+    expect(extensionInstructionEditorSource).toContain("nextSession.sourceVersion");
+    expect(extensionInstructionEditorSource).toContain("(conflictSession ?? session)?.diagnostics");
+    expect(extensionInstructionEditorSource).toContain("runtime.openSourceInEditor(source)");
+    expect(extensionInstructionEditorSource).not.toContain("ExtensionInstructionFileReadModel");
+    expect(extensionsPaneSource).toContain("source={minimalContributor.source}");
+    expect(extensionsPaneSource).toContain("source={contributor.source}");
+    expect(extensionsPaneSource).toContain("source={svvyxSource.source}");
+    expect(extensionsPaneSource).toContain("source={commandSchema.source}");
+    expect(extensionsPaneSource).toContain("source={nativeToolSchema.source}");
+    expect(extensionsPaneSource).toContain("source={typescriptDeclaration.source}");
+    expect(extensionsPaneSource).not.toContain("legacyDetail");
+    expect(extensionsPaneSource).not.toContain("extensionSnapshotsInventory?.extensions");
     expect(sourceMetadataTextAreaSource).toContain("footerLeading");
     expect(extensionsPaneSource).toContain("runtime.setExtensionTypescriptApi");
+    expect(extensionsPaneSource).toContain("runtime.getExtensions()");
+    expect(extensionsPaneSource).toContain("runtime.getExternalInstructions()");
+    expect(extensionsPaneSource).toContain("runtime.extensionsSnapshot");
+    expect(extensionsPaneSource).toContain("runtime.externalInstructionsSnapshot");
+    expect(extensionsPaneSource).toContain("extension.interfaceKind");
+    expect(extensionsPaneSource).toContain("extension.capabilities");
+    expect(extensionsPaneSource).toContain("extension.usagePolicy");
+    expect(extensionsPaneSource).toContain("extension.cliReadiness");
+    expect(extensionsPaneSource).toContain("extension.contributors");
+    expect(extensionsPaneSource).toContain("externalInstructions?.sources");
+    expect(extensionsPaneSource).toContain("runtime.extensionSnapshotsSnapshot");
     expect(extensionsPaneSource).toContain("function extensionCanBuild");
     expect(extensionsPaneSource).toContain(
       "return extensionNeedsBuild(extension) && !extensionHasCliIssue(extension);",
@@ -1038,8 +1064,8 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("runtime.removeExtensionEnvSecret");
     expect(extensionsPaneSource).toContain("runtime.setExtensionEnvOverride");
     expect(extensionsPaneSource).toContain("runtime.removeExtensionEnvOverride");
-    expect(extensionsPaneSource).toContain("envName: requirement.name");
-    expect(extensionsPaneSource).not.toContain("name: requirement.name");
+    expect(extensionsPaneSource).toContain("envName: requirement.envName");
+    expect(extensionsPaneSource).not.toContain("name: requirement.envName");
     expect(extensionsPaneSource).toContain("pendingRequestUserInputSetting");
     expect(extensionsPaneSource).toContain("request-input-timeout-controls");
     expect(extensionsPaneSource).toContain('pendingRequestUserInputSetting === "mode"');
@@ -1058,12 +1084,12 @@ describe("default workspace renderer shell", () => {
     expect(extensionsPaneSource).toContain("cliRequirementTone");
     expect(extensionsPaneSource).toContain("envRequirementTone");
     expect(extensionEnvFormSource).toContain('type={secret ? "password" : "text"}');
-    expect(extensionsPaneSource).toContain("currentVersion");
+    expect(extensionsPaneSource).toContain("readiness?.detectedVersion");
     expect(extensionsPaneSource).toContain("detectedVersion");
-    expect(extensionsPaneSource).toContain("latestVersion");
-    expect(extensionsPaneSource).toContain("updateAvailable");
+    expect(extensionsPaneSource).toContain("readiness?.expectedVersion");
+    expect(extensionsPaneSource).toContain('status === "update-available"');
     expect(extensionsPaneSource).toContain("installCommand");
-    expect(extensionsPaneSource).toContain("updateCommand");
+    expect(extensionsPaneSource).not.toContain("updateCommand");
     expect(contractSource).not.toContain("runExtensionCliRequirementAction");
     expect(contractSource).not.toContain("ExtensionCliRequirementActionUpdateMessage");
     expect(contractSource).not.toContain("sendExtensionCliRequirementActionUpdate");
@@ -1436,7 +1462,7 @@ describe("default workspace renderer shell", () => {
     expect(settingsSource).toContain("<AppPreferencesForm");
     expect(settingsSource).toContain("externalInstructions: preferences.externalInstructions");
     expect(settingsSource).toContain("getGeneratedAgentContextExternalSources");
-    expect(settingsSource).toContain("openGeneratedAgentContextExternalSourceInEditor");
+    expect(settingsSource).toContain("openExternalInstructionSourceInEditor");
     expect(settingsSource).toContain("ambientAgentResources: preferences.ambientAgentResources");
     expect(settingsSource).toContain("runtime.appPreferencesSnapshot");
     expect(settingsSource).toContain("await runtime.getAppPreferences()");
@@ -1513,7 +1539,12 @@ describe("default workspace renderer shell", () => {
     expect(runtimeSource).toContain("modelMetadataSnapshot");
     expect(runtimeSource).toContain("providerAuthsSnapshot");
     expect(runtimeSource).toContain("externalInstructionSourcesSnapshot");
-    expect(runtimeSource).toContain("getExtensionsInventory: refreshExtensionsInventory");
+    expect(runtimeSource).toContain('kind: "externalInstructions"');
+    expect(runtimeSource).toContain("externalInstructionSourcesFromStateReadModel");
+    expect(runtimeSource).not.toContain(
+      "rpcClient.request.getGeneratedAgentContextExternalSources",
+    );
+    expect(runtimeSource).toContain("getExtensionSnapshots: refreshExtensionSnapshots");
     expect(runtimeSource).toContain("getSnippets: refreshSnippets");
     expect(runtimeSource).toContain("getWorkflowsGenerated: refreshWorkflowsGenerated");
     expect(runtimeSource).toContain("listProviderAuths: refreshProviderAuths");
@@ -1522,11 +1553,12 @@ describe("default workspace renderer shell", () => {
     expect(agentsPaneSource).not.toContain("runtime.agentSettingsSnapshot");
     expect(agentsPaneSource).toContain("runtime.agentsSnapshot");
     expect(agentsPaneSource).toContain("runtime.modelMetadataSnapshot");
-    expect(agentsPaneSource).toContain("runtime.extensionsInventorySnapshot");
+    expect(agentsPaneSource).toContain("runtime.agentExtensionsCatalogSnapshot");
+    expect(agentsPaneSource).not.toContain("runtime.extensionsInventorySnapshot");
     expect(agentsPaneSource).toContain("runtime.subscribe(syncRuntimeSnapshots)");
     expect(agentsPaneSource).not.toContain("rpc.request");
 
-    expect(extensionsPaneSource).toContain("runtime.extensionsInventorySnapshot");
+    expect(extensionsPaneSource).toContain("runtime.extensionSnapshotsSnapshot");
     expect(extensionsPaneSource).toContain("runtime.appPreferencesSnapshot");
     expect(extensionsPaneSource).toContain("runtime.settingsSnapshot");
     expect(extensionsPaneSource).toContain("runtime.subscribe(syncRuntimeSnapshots)");

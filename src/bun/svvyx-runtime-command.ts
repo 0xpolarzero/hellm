@@ -1,22 +1,35 @@
-import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import * as Exit from "effect/Exit";
+import {
+  decodeUnknownExtensionCurrentBuildManifestExit,
+  type ExtensionCurrentBuildManifest,
+} from "@svvy/core";
 import type { ExtensionEnvSecretStore } from "./extension-env-secret-store";
 import { isSvvyxCommandManifest, type SvvyxCommandManifest } from "./svvyx-typescript-declarations";
 
 type CurrentBuildManifest = {
-  schemaVersion: 1;
   extensionId: string;
-  interface: "instructions" | "svvyx";
-  module: string | null;
-  commandManifest: SvvyxCommandManifest | null;
+  interfaceKind: "instructions" | "svvyx" | "native_tool";
+  module: string;
+  commandManifest: SvvyxCommandManifest;
+  env: RuntimeEnvDeclaration[];
+  dependencies: RuntimeDependencyDeclaration[];
+};
+
+export type SvvyxRuntimeExtensionPlan = {
+  extensionId: string;
+  interfaceKind: "instructions" | "svvyx" | "native_tool";
+  sourceFingerprint: string;
   env: RuntimeEnvDeclaration[];
   dependencies: RuntimeDependencyDeclaration[];
 };
 
 type RuntimeEnvDeclaration = {
-  default?: string;
   description: string;
+  hasDefault: boolean;
   name: string;
   required: boolean;
   secret: boolean;
@@ -40,6 +53,7 @@ export async function runSvvyxRuntimeCommand(input: {
   envSecretStore?: ExtensionEnvSecretStore;
   envValues?: SvvyxRuntimeEnvValues;
   extensionsRoot?: string;
+  extensionRuntimePlans?: readonly SvvyxRuntimeExtensionPlan[];
 }): Promise<SvvyxRuntimeCommandResult> {
   const words = splitCommandLine(input.command);
   if (words[0] !== "svvyx") {
@@ -67,6 +81,7 @@ export async function runSvvyxRuntimeCommand(input: {
     extensionArgv: words.slice(2),
     extensionId,
     extensionsRoot: input.extensionsRoot,
+    extensionRuntimePlans: input.extensionRuntimePlans,
   });
 }
 
@@ -77,21 +92,20 @@ export async function runSvvyxRuntimeGeneratedClientCommand(input: {
   envValues?: SvvyxRuntimeEnvValues;
   extensionId: string;
   extensionsRoot?: string;
+  extensionRuntimePlans?: readonly SvvyxRuntimeExtensionPlan[];
 }): Promise<unknown> {
   let extensionArgv: string[] = [];
   try {
     assertActiveUserSource(input.extensionId, input.extensionsRoot);
-    const currentBuild = readCurrentBuild(input.extensionId, input.extensionsRoot);
-    if (currentBuild.interface !== "svvyx") {
+    const currentBuild = readCurrentBuild(
+      input.extensionId,
+      input.extensionsRoot,
+      input.extensionRuntimePlans,
+    );
+    if (currentBuild.interfaceKind !== "svvyx") {
       throw runtimeCommandError(
         "extension_not_dispatchable",
         `${input.extensionId} current build is not a svvyx extension.`,
-      );
-    }
-    if (!currentBuild.module) {
-      throw runtimeCommandError(
-        "invalid_current_build",
-        `${input.extensionId} current build has no module.`,
       );
     }
     const currentBuildRoot = currentBuildPath(input.extensionId, input.extensionsRoot);
@@ -317,21 +331,20 @@ async function runSvvyxRuntimeInvocation(input: {
   extensionArgv?: string[];
   extensionId: string;
   extensionsRoot?: string;
+  extensionRuntimePlans?: readonly SvvyxRuntimeExtensionPlan[];
 }): Promise<SvvyxRuntimeCommandResult> {
   let extensionArgv = input.extensionArgv ?? [];
   try {
     assertActiveUserSource(input.extensionId, input.extensionsRoot);
-    const currentBuild = readCurrentBuild(input.extensionId, input.extensionsRoot);
-    if (currentBuild.interface !== "svvyx") {
+    const currentBuild = readCurrentBuild(
+      input.extensionId,
+      input.extensionsRoot,
+      input.extensionRuntimePlans,
+    );
+    if (currentBuild.interfaceKind !== "svvyx") {
       throw runtimeCommandError(
         "extension_not_dispatchable",
         `${input.extensionId} current build is not a svvyx extension.`,
-      );
-    }
-    if (!currentBuild.module) {
-      throw runtimeCommandError(
-        "invalid_current_build",
-        `${input.extensionId} current build has no module.`,
       );
     }
     extensionArgv = input.buildExtensionArgv?.(currentBuild) ?? extensionArgv;
@@ -534,62 +547,120 @@ function rejectUnknownGeneratedFacadeRecordKeys(
 function readCurrentBuild(
   extensionId: string,
   extensionsRoot: string | undefined,
+  plans: readonly SvvyxRuntimeExtensionPlan[] | undefined,
 ): CurrentBuildManifest {
-  const manifestPath = join(currentBuildPath(extensionId, extensionsRoot), "manifest.json");
+  const currentRoot = currentBuildPath(extensionId, extensionsRoot);
+  const manifestPath = join(currentRoot, "manifest.json");
   if (!existsSync(manifestPath)) {
     throw runtimeCommandError(
       "no_current_build",
       `${extensionId} has no current successful svvyx build.`,
     );
   }
-  let manifest: unknown;
+  let raw: unknown;
   try {
-    manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  } catch (error) {
-    throw runtimeCommandError(
-      "invalid_current_build",
-      error instanceof Error ? error.message : `${extensionId} current build manifest is invalid.`,
-    );
-  }
-  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    raw = JSON.parse(readFileSync(manifestPath, "utf8"));
+  } catch {
     throw runtimeCommandError("invalid_current_build", `${extensionId} current build is invalid.`);
   }
-  const record = manifest as Record<string, unknown>;
+  const decoded = decodeUnknownExtensionCurrentBuildManifestExit(raw);
+  if (!Exit.isSuccess(decoded)) {
+    throw runtimeCommandError("invalid_current_build", `${extensionId} current build is invalid.`);
+  }
+  const manifest: ExtensionCurrentBuildManifest = decoded.value;
   if (
-    record.schemaVersion !== 1 ||
-    record.extensionId !== extensionId ||
-    (record.interface !== "instructions" && record.interface !== "svvyx") ||
-    (record.module !== null && typeof record.module !== "string") ||
-    (record.interface === "svvyx" &&
-      !isRuntimeCommandManifest(extensionId, record.commandManifest)) ||
-    !Array.isArray(record.env) ||
-    !Array.isArray(record.dependencies)
+    manifest.extensionId !== extensionId ||
+    manifest.interfaceKind !== "svvyx" ||
+    manifest.contextReady !== true
   ) {
     throw runtimeCommandError("invalid_current_build", `${extensionId} current build is invalid.`);
   }
+  const plan = plans?.find((candidate) => candidate.extensionId === extensionId);
+  if (
+    !plan ||
+    plan.interfaceKind !== manifest.interfaceKind ||
+    plan.sourceFingerprint !== manifest.sourceFingerprint
+  ) {
+    throw runtimeCommandError(
+      "stale_current_build",
+      `${extensionId} current build does not match the committed extension plan.`,
+    );
+  }
+  const runtimeModule = uniqueBuildFile(manifest, "runtime-module", extensionId);
+  const commandManifest = uniqueBuildFile(manifest, "command-manifest", extensionId);
+  const modulePath = verifiedCurrentBuildFile(currentRoot, runtimeModule, extensionId);
+  const commandManifestPath = verifiedCurrentBuildFile(currentRoot, commandManifest, extensionId);
+  let commandManifestValue: unknown;
+  try {
+    commandManifestValue = JSON.parse(readFileSync(commandManifestPath, "utf8"));
+  } catch {
+    throw runtimeCommandError(
+      "invalid_current_build",
+      `${extensionId} current build command manifest is invalid.`,
+    );
+  }
   return {
-    schemaVersion: 1,
     extensionId,
-    interface: record.interface,
-    module: record.module,
-    commandManifest:
-      record.interface === "svvyx"
-        ? readRuntimeCommandManifest(extensionId, record.commandManifest)
-        : null,
-    env: record.env.map((entry) => readRuntimeEnvDeclaration(extensionId, entry)),
-    dependencies: record.dependencies.map((entry) =>
+    interfaceKind: manifest.interfaceKind,
+    module: relative(currentRoot, modulePath),
+    commandManifest: readRuntimeCommandManifest(extensionId, commandManifestValue),
+    env: plan.env.map((entry) => readRuntimeEnvDeclaration(extensionId, entry)),
+    dependencies: plan.dependencies.map((entry) =>
       readRuntimeDependencyDeclaration(extensionId, entry),
     ),
   };
 }
 
-function isRuntimeCommandManifest(extensionId: string, value: unknown): boolean {
-  try {
-    readRuntimeCommandManifest(extensionId, value);
-    return true;
-  } catch {
-    return false;
+function uniqueBuildFile(
+  manifest: ExtensionCurrentBuildManifest,
+  role: "runtime-module" | "command-manifest",
+  extensionId: string,
+): ExtensionCurrentBuildManifest["generatedFiles"][number] {
+  const matches = manifest.generatedFiles.filter((file) => file.role === role);
+  if (matches.length !== 1) {
+    throw runtimeCommandError(
+      "invalid_current_build",
+      `${extensionId} current build must contain exactly one ${role}.`,
+    );
   }
+  return matches[0]!;
+}
+
+function verifiedCurrentBuildFile(
+  currentRoot: string,
+  evidence: ExtensionCurrentBuildManifest["generatedFiles"][number],
+  extensionId: string,
+): string {
+  if (isAbsolute(evidence.relativePath) || evidence.relativePath.includes("\0")) {
+    throw runtimeCommandError("invalid_current_build", `${extensionId} build path is invalid.`);
+  }
+  const path = resolve(currentRoot, evidence.relativePath);
+  const relativePath = relative(currentRoot, path);
+  if (
+    !relativePath ||
+    relativePath.startsWith("..") ||
+    isAbsolute(relativePath) ||
+    relativePath !== evidence.relativePath
+  ) {
+    throw runtimeCommandError("invalid_current_build", `${extensionId} build path is invalid.`);
+  }
+  let stat;
+  let bytes: Buffer;
+  try {
+    stat = lstatSync(path);
+    bytes = readFileSync(path);
+  } catch {
+    throw runtimeCommandError("invalid_current_build", `${extensionId} build output is missing.`);
+  }
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    bytes.byteLength !== evidence.byteSize ||
+    `sha256:${createHash("sha256").update(bytes).digest("hex")}` !== evidence.contentHash
+  ) {
+    throw runtimeCommandError("invalid_current_build", `${extensionId} build evidence is invalid.`);
+  }
+  return path;
 }
 
 function readRuntimeCommandManifest(extensionId: string, value: unknown): SvvyxCommandManifest {
@@ -615,7 +686,7 @@ function readRuntimeEnvDeclaration(extensionId: string, value: unknown): Runtime
     typeof entry.required !== "boolean" ||
     typeof entry.secret !== "boolean" ||
     typeof entry.description !== "string" ||
-    ("default" in entry && typeof entry.default !== "string")
+    typeof entry.hasDefault !== "boolean"
   ) {
     throw runtimeCommandError(
       "invalid_current_build",
@@ -627,7 +698,7 @@ function readRuntimeEnvDeclaration(extensionId: string, value: unknown): Runtime
     required: entry.required,
     secret: entry.secret,
     description: entry.description,
-    ...(typeof entry.default === "string" ? { default: entry.default } : {}),
+    hasDefault: entry.hasDefault,
   };
 }
 
@@ -684,8 +755,7 @@ function resolveRuntimeEnv(input: {
         continue;
       }
     }
-    if (declaration.default !== undefined) {
-      env[declaration.name] = declaration.default;
+    if (declaration.hasDefault) {
       continue;
     }
     if (declaration.required) {

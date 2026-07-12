@@ -9,6 +9,22 @@ import type {
   AppLogEntryId,
   AttachmentDisplayName,
   Base64String,
+  BuildRuntimeExtensionInput,
+  BuildRuntimeExtensionResult,
+  AddExtensionInstructionResult,
+  ConfigureExtensionInstructionResult,
+  CreateExtensionSourceResult,
+  DeleteExtensionSourceResult,
+  DuplicateExtensionSourceResult,
+  ExtensionSnapshotCleanupId,
+  ExtensionSnapshotId,
+  ExtensionSnapshotRestoreAttemptId,
+  ExtensionSnapshotSummary,
+  ExtensionSnapshotsReadModel,
+  RemoveExtensionInstructionResult,
+  RuntimeDeleteExtensionSnapshotResult,
+  RuntimeLoadExtensionSnapshotResult,
+  RuntimeResetExtensionInstructionsResult,
   CommandId,
   CreateWorkflowAgentSourceInput,
   DeleteWorkflowAgentSourceInput,
@@ -18,6 +34,7 @@ import type {
   JsonValue,
   MimeType,
   ModelInfo,
+  ExtensionId,
   OpenExtensionSourceEditInput,
   RuntimeClientRequestId,
   RuntimeClientSubmissionSource,
@@ -91,26 +108,26 @@ import {
   type WorkspacePaneRecord,
   type AgentContextPreviewRequest,
   type AgentContextPreviewResponse,
+  type AgentExtensionCatalogReadModel,
   type AgentsReadModel,
   type AppPreferencesReadModel,
   type SettingsReadModel,
   type RequestUserInputAnswerResponse,
   type AddExtensionInstructionFileRequest,
-  type BuildExtensionRequest,
   type ConfigureExtensionInstructionFileRequest,
   type CreateExtensionRequest,
   type DeleteExtensionRequest,
   type DesktopRendererCommand,
   type DuplicateExtensionRequest,
-  type ExtensionsInventoryReadModel,
+  type ExtensionsReadModel,
   type ProviderAuthReadModel,
   type ProviderAuthInfo,
   type RemoveExtensionInstructionFileRequest,
   type RemoveExtensionEnvOverrideRequest,
-  type RemoveExtensionEnvSecretRequest,
+  type StateExtensionEnvRemoveSecretRequest,
   type ResetExtensionRequest,
   type SetExtensionEnvOverrideRequest,
-  type SetExtensionEnvSecretRequest,
+  type StateExtensionEnvSetSecretRequest,
   type SetExtensionTypescriptApiRequest,
   type StateReadModelBaseline,
   type StateReadModelResult,
@@ -217,6 +234,8 @@ type AppReadModelCache = {
   appPreferences: AppPreferences | null;
   settings: SettingsReadModel | null;
   agents: AgentsReadModel | null;
+  extensions: ExtensionsReadModel | null;
+  extensionSnapshots: ExtensionSnapshotsReadModel | null;
   workflowsGenerated: WorkflowsGeneratedReadModel | null;
   modelMetadata: readonly ModelInfo[] | null;
   providerAuths: ProviderAuthInfo[] | null;
@@ -224,7 +243,9 @@ type AppReadModelCache = {
 
 type WorkspaceReadModelCache = {
   appLogs: AppLogReadModel | null;
-  extensionsInventory: ExtensionsInventoryReadModel | null;
+  externalInstructions:
+    | Extract<StateReadModelResult, { kind: "externalInstructions" }>["value"]
+    | null;
   externalInstructionSources: GeneratedAgentContextExternalSource[] | null;
   promptHistory: PromptHistoryReadModel | null;
   snippets: SnippetsReadModel | null;
@@ -236,6 +257,8 @@ const appReadModelCache: AppReadModelCache = {
   appPreferences: null,
   settings: null,
   agents: null,
+  extensions: null,
+  extensionSnapshots: null,
   workflowsGenerated: null,
   modelMetadata: null,
   providerAuths: null,
@@ -249,7 +272,7 @@ function workspaceReadModelCache(workspaceId: string): WorkspaceReadModelCache {
   if (existing) return existing;
   const cache: WorkspaceReadModelCache = {
     appLogs: null,
-    extensionsInventory: null,
+    externalInstructions: null,
     externalInstructionSources: null,
     promptHistory: null,
     snippets: null,
@@ -322,6 +345,40 @@ function snippetsFromStateReadModel(readModel: StateSnippetsReadModel): Snippets
       }
       return { ...common, source: record.source, path: record.path };
     }),
+  };
+}
+
+function externalInstructionSourcesFromStateReadModel(
+  readModel: Extract<StateReadModelResult, { kind: "externalInstructions" }>["value"],
+): GeneratedAgentContextExternalSource[] {
+  return readModel.sources.map((source) => ({
+    id: source.id,
+    kind: source.fileName,
+    title: source.title,
+    path: source.canonicalPath,
+    content: source.content ?? "",
+    contentHash: source.contentHash,
+    order: source.order,
+    enabled: source.defaultControl.enabled,
+    actors: [...source.defaultControl.eligibleActors],
+    sourceGroup: source.sourceGroup,
+    ...(source.rootId ? { rootId: source.rootId } : {}),
+    ...(source.rootLabel ? { rootLabel: source.rootLabel } : {}),
+    readStatus: { ...source.readStatus },
+  }));
+}
+
+function agentExtensionCatalogFromStateReadModel(
+  readModel: ExtensionsReadModel,
+): AgentExtensionCatalogReadModel {
+  return {
+    records: readModel.records.map((record) => ({
+      extensionId: record.extensionId,
+      category: record.category,
+      title: record.title,
+      description: record.description,
+      usagePolicy: structuredClone(record.usagePolicy),
+    })),
   };
 }
 
@@ -760,9 +817,9 @@ interface SurfaceReadModelBundle {
 export interface ChatRuntimeRpcClient {
   request: {
     rendererReady: typeof rpc.request.rendererReady;
-    getAgentContextPreview: typeof rpc.request.getAgentContextPreview;
+    previewGeneratedContext: typeof rpc.request.previewGeneratedContext;
     listModelMetadata: typeof rpc.request.listModelMetadata;
-    getExtensionsInventory: typeof rpc.request.getExtensionsInventory;
+    getExtensionSnapshots: typeof rpc.request.getExtensionSnapshots;
     fetchStateReadModel: typeof rpc.request.fetchStateReadModel;
     refetchStateReadModels: typeof rpc.request.refetchStateReadModels;
     refetchStateReadModelInvalidation: typeof rpc.request.refetchStateReadModelInvalidation;
@@ -775,17 +832,16 @@ export interface ChatRuntimeRpcClient {
     createExtension: typeof rpc.request.createExtension;
     duplicateExtension: typeof rpc.request.duplicateExtension;
     deleteExtension: typeof rpc.request.deleteExtension;
-    resetExtension: typeof rpc.request.resetExtension;
-    buildExtension: typeof rpc.request.buildExtension;
-    setExtensionTypescriptApi: typeof rpc.request.setExtensionTypescriptApi;
+    configureExtensionTypescriptApi: typeof rpc.request.configureExtensionTypescriptApi;
     addExtensionInstructionFile: typeof rpc.request.addExtensionInstructionFile;
     removeExtensionInstructionFile: typeof rpc.request.removeExtensionInstructionFile;
     configureExtensionInstructionFile: typeof rpc.request.configureExtensionInstructionFile;
-    setExtensionEnvSecret: typeof rpc.request.setExtensionEnvSecret;
-    removeExtensionEnvSecret: typeof rpc.request.removeExtensionEnvSecret;
+    resetExtension: typeof rpc.request.resetExtension;
+    buildExtension: typeof rpc.request.buildExtension;
+    stateExtensionEnvSetSecret: typeof rpc.request.stateExtensionEnvSetSecret;
+    stateExtensionEnvRemoveSecret: typeof rpc.request.stateExtensionEnvRemoveSecret;
     stateExtensionEnvSetOverride: typeof rpc.request.stateExtensionEnvSetOverride;
     stateExtensionEnvRemoveOverride: typeof rpc.request.stateExtensionEnvRemoveOverride;
-    getGeneratedAgentContextExternalSources: typeof rpc.request.getGeneratedAgentContextExternalSources;
     stateSnippetsCreateManaged: typeof rpc.request.stateSnippetsCreateManaged;
     stateSnippetsUpdateManaged: typeof rpc.request.stateSnippetsUpdateManaged;
     stateSnippetsDeleteManaged: typeof rpc.request.stateSnippetsDeleteManaged;
@@ -817,7 +873,7 @@ export interface ChatRuntimeRpcClient {
     importComposerAttachments: typeof rpc.request.importComposerAttachments;
     openWorkspacePath: typeof rpc.request.openWorkspacePath;
     openWorkflowsGeneratedExportInEditor: typeof rpc.request.openWorkflowsGeneratedExportInEditor;
-    openGeneratedAgentContextExternalSourceInEditor: typeof rpc.request.openGeneratedAgentContextExternalSourceInEditor;
+    openExternalInstructionSourceInEditor: typeof rpc.request.openExternalInstructionSourceInEditor;
     writeCommandStdin: typeof rpc.request.writeCommandStdin;
     getArtifactPreview: typeof rpc.request.getArtifactPreview;
     createOrchestratorSurface: typeof rpc.request.createOrchestratorSurface;
@@ -878,9 +934,14 @@ export interface ChatRuntime {
   appPreferencesSnapshot: AppPreferences | null;
   settingsSnapshot: SettingsReadModel | null;
   agentsSnapshot: AgentsReadModel | null;
+  agentExtensionsCatalogSnapshot: AgentExtensionCatalogReadModel | null;
+  extensionsSnapshot: ExtensionsReadModel | null;
+  externalInstructionsSnapshot:
+    | Extract<StateReadModelResult, { kind: "externalInstructions" }>["value"]
+    | null;
   modelMetadataSnapshot: readonly ModelInfo[] | null;
   providerAuthsSnapshot: ProviderAuthInfo[] | null;
-  extensionsInventorySnapshot: ExtensionsInventoryReadModel | null;
+  extensionSnapshotsSnapshot: ExtensionSnapshotsReadModel | null;
   externalInstructionSourcesSnapshot: GeneratedAgentContextExternalSource[] | null;
   workflowsGeneratedSnapshot: WorkflowsGeneratedReadModel | null;
   promptHistorySnapshot: PromptHistoryReadModel["entries"];
@@ -981,7 +1042,7 @@ export interface ChatRuntime {
     qualifiedName: string;
     target: "source" | "generated";
   }) => Promise<boolean>;
-  openGeneratedAgentContextExternalSourceInEditor: (path: string) => Promise<boolean>;
+  openExternalInstructionSourceInEditor: (sourceId: string) => Promise<boolean>;
   openSourceEdit: (input: OpenExtensionSourceEditInput) => Promise<SourceEditSession>;
   saveSourceEdit: (input: SaveExtensionSourceEditInput) => Promise<SourceEditSaveResult>;
   createWorkflowAgentSource: (
@@ -996,6 +1057,11 @@ export interface ChatRuntime {
   openSourceInEditor: (input: OpenExtensionSourceEditInput) => Promise<boolean>;
   getGeneratedAgentContextExternalSources: () => Promise<GeneratedAgentContextExternalSource[]>;
   getAgents: () => Promise<AgentsReadModel>;
+  getAgentExtensionsCatalog: () => Promise<AgentExtensionCatalogReadModel>;
+  getExtensions: () => Promise<ExtensionsReadModel>;
+  getExternalInstructions: () => Promise<
+    Extract<StateReadModelResult, { kind: "externalInstructions" }>["value"]
+  >;
   updateOrchestratorProfile: (profile: OrchestratorAgentProfileInput) => Promise<AgentsReadModel>;
   updateThreadHandlerProfile: (profile: ThreadHandlerProfileInput) => Promise<AgentsReadModel>;
   deleteOrchestratorProfile: (
@@ -1016,63 +1082,59 @@ export interface ChatRuntime {
   setConfiguredExternalInstructionUsage: (
     input: Omit<SetExternalInstructionActorUsageCommandInput, "clientSubmission">,
   ) => Promise<AgentsReadModel>;
-  getAgentContextPreview: (
-    request?: AgentContextPreviewRequest,
+  previewGeneratedContext: (
+    request: Omit<AgentContextPreviewRequest, "workspaceId">,
   ) => Promise<AgentContextPreviewResponse>;
   listModelMetadata: () => Promise<readonly ModelInfo[]>;
   listProviderAuths: () => Promise<ProviderAuthInfo[]>;
   setProviderApiKey: (request: { providerId: string; apiKey: string }) => Promise<{ ok: boolean }>;
   startOAuth: (request: { providerId: string }) => Promise<{ ok: boolean; error?: string }>;
   removeProviderAuth: (request: { providerId: string }) => Promise<{ ok: boolean }>;
-  getExtensionsInventory: () => Promise<ExtensionsInventoryReadModel>;
+  getExtensionSnapshots: () => Promise<ExtensionSnapshotsReadModel>;
   getAppPreferences: () => Promise<AppPreferences>;
   updateAppPreferences: (preferences: AppPreferences) => Promise<AppPreferences>;
-  saveExtensionSnapshot: (name: string) => Promise<ExtensionsInventoryReadModel>;
+  saveExtensionSnapshot: (name: string) => Promise<ExtensionSnapshotSummary>;
   renameExtensionSnapshot: (
-    snapshotId: string,
+    snapshot: Pick<ExtensionSnapshotSummary, "snapshotId" | "revision">,
     name: string,
-  ) => Promise<ExtensionsInventoryReadModel>;
-  deleteExtensionSnapshot: (snapshotId: string) => Promise<ExtensionsInventoryReadModel>;
-  loadExtensionSnapshot: (snapshotId: string) => Promise<ExtensionsInventoryReadModel>;
-  createExtension: (
-    input: Omit<CreateExtensionRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
-  duplicateExtension: (
-    input: Omit<DuplicateExtensionRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
-  deleteExtension: (
-    input: Omit<DeleteExtensionRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
+  ) => Promise<ExtensionSnapshotSummary>;
+  deleteExtensionSnapshot: (
+    snapshot: Pick<ExtensionSnapshotSummary, "snapshotId" | "revision">,
+  ) => Promise<RuntimeDeleteExtensionSnapshotResult>;
+  loadExtensionSnapshot: (
+    snapshot: Pick<ExtensionSnapshotSummary, "snapshotId" | "revision">,
+  ) => Promise<RuntimeLoadExtensionSnapshotResult>;
+  createExtension: (input: CreateExtensionRequest) => Promise<CreateExtensionSourceResult>;
+  duplicateExtension: (input: DuplicateExtensionRequest) => Promise<DuplicateExtensionSourceResult>;
+  deleteExtension: (input: DeleteExtensionRequest) => Promise<DeleteExtensionSourceResult>;
   resetExtension: (
-    input: Omit<ResetExtensionRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
-  buildExtension: (
-    input: Omit<BuildExtensionRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
+    input: ResetExtensionRequest,
+  ) => Promise<RuntimeResetExtensionInstructionsResult>;
+  buildExtension: (input: BuildRuntimeExtensionInput) => Promise<BuildRuntimeExtensionResult>;
   setExtensionTypescriptApi: (
     input: Omit<SetExtensionTypescriptApiRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
+  ) => Promise<ExtensionsReadModel>;
   addExtensionInstructionFile: (
-    input: Omit<AddExtensionInstructionFileRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
+    input: AddExtensionInstructionFileRequest,
+  ) => Promise<AddExtensionInstructionResult>;
   removeExtensionInstructionFile: (
-    input: Omit<RemoveExtensionInstructionFileRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
+    input: RemoveExtensionInstructionFileRequest,
+  ) => Promise<RemoveExtensionInstructionResult>;
   configureExtensionInstructionFile: (
-    input: Omit<ConfigureExtensionInstructionFileRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
+    input: ConfigureExtensionInstructionFileRequest,
+  ) => Promise<ConfigureExtensionInstructionResult>;
   setExtensionEnvSecret: (
-    input: Omit<SetExtensionEnvSecretRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
+    input: Omit<StateExtensionEnvSetSecretRequest, "workspaceId">,
+  ) => Promise<ExtensionsReadModel>;
   removeExtensionEnvSecret: (
-    input: Omit<RemoveExtensionEnvSecretRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
+    input: Omit<StateExtensionEnvRemoveSecretRequest, "workspaceId">,
+  ) => Promise<ExtensionsReadModel>;
   setExtensionEnvOverride: (
     input: Omit<SetExtensionEnvOverrideRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
+  ) => Promise<ExtensionsReadModel>;
   removeExtensionEnvOverride: (
     input: Omit<RemoveExtensionEnvOverrideRequest, "workspaceId">,
-  ) => Promise<ExtensionsInventoryReadModel>;
+  ) => Promise<ExtensionsReadModel>;
   getSettings: () => Promise<SettingsReadModel>;
   setRequestInputVariant: (input: SetRequestInputVariantInput) => Promise<SettingsReadModel>;
   setRequestInputBlockingTimeout: (
@@ -2103,9 +2165,9 @@ export async function createChatRuntime(
   const runtimeCacheEmitter = { workspaceId: workspaceInfo.workspaceId, emit };
   activeRuntimeEmitters.add(runtimeCacheEmitter);
 
-  const scoped = <T extends object>(request?: T): T & { workspaceId: string } => ({
+  const scoped = <T extends object>(request?: T): T & { workspaceId: WorkspaceId } => ({
     ...(request ?? ({} as T)),
-    workspaceId: workspaceInfo.workspaceId,
+    workspaceId: workspaceInfo.workspaceId as WorkspaceId,
   });
 
   const fetchSurfaceReadModels = async (target: PromptTarget): Promise<SurfaceReadModelBundle> => {
@@ -2183,6 +2245,23 @@ export async function createChatRuntime(
     return setAppCache("agents", result.value)!;
   };
 
+  const refreshAgentExtensionsCatalog = async (): Promise<AgentExtensionCatalogReadModel> => {
+    const result = requireStateReadModel(
+      await rpcClient.request.fetchStateReadModel({ kind: "extensions" }),
+      "extensions",
+    );
+    setAppCache("extensions", result.value);
+    return agentExtensionCatalogFromStateReadModel(result.value);
+  };
+
+  const refreshExtensions = async (): Promise<ExtensionsReadModel> => {
+    const result = requireStateReadModel(
+      await rpcClient.request.fetchStateReadModel({ kind: "extensions" }),
+      "extensions",
+    );
+    return setAppCache("extensions", result.value)!;
+  };
+
   const refreshModelMetadata = async (): Promise<readonly ModelInfo[]> =>
     setAppCache(
       "modelMetadata",
@@ -2194,19 +2273,31 @@ export async function createChatRuntime(
   const refreshProviderAuths = async (): Promise<ProviderAuthInfo[]> =>
     setAppCache("providerAuths", await rpcClient.request.listProviderAuths())!;
 
-  const refreshExtensionsInventory = async (): Promise<ExtensionsInventoryReadModel> =>
-    setWorkspaceCache(
-      "extensionsInventory",
-      await rpcClient.request.getExtensionsInventory(scoped()),
-    )!;
+  const refreshExtensionSnapshots = async (): Promise<ExtensionSnapshotsReadModel> =>
+    setAppCache("extensionSnapshots", await rpcClient.request.getExtensionSnapshots({}))!;
 
   const refreshExternalInstructionSources = async (): Promise<
     GeneratedAgentContextExternalSource[]
-  > =>
-    setWorkspaceCache(
+  > => {
+    const result = await refreshExternalInstructions();
+    return setWorkspaceCache(
       "externalInstructionSources",
-      await rpcClient.request.getGeneratedAgentContextExternalSources(scoped()),
+      externalInstructionSourcesFromStateReadModel(result),
     )!;
+  };
+
+  const refreshExternalInstructions = async (): Promise<
+    Extract<StateReadModelResult, { kind: "externalInstructions" }>["value"]
+  > => {
+    const result = requireStateReadModel(
+      await rpcClient.request.fetchStateReadModel({
+        kind: "externalInstructions",
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+      }),
+      "externalInstructions",
+    );
+    return setWorkspaceCache("externalInstructions", result.value)!;
+  };
 
   const refreshWorkflowsGenerated = async (): Promise<WorkflowsGeneratedReadModel> => {
     const result = requireStateReadModel(
@@ -2290,9 +2381,10 @@ export async function createChatRuntime(
     void refreshAppPreferences().catch(() => undefined);
     void refreshSettings().catch(() => undefined);
     void refreshAgents().catch(() => undefined);
+    void refreshAgentExtensionsCatalog().catch(() => undefined);
     void refreshModelMetadata().catch(() => undefined);
     void refreshProviderAuths().catch(() => undefined);
-    void refreshExtensionsInventory().catch(() => undefined);
+    void refreshExtensionSnapshots().catch(() => undefined);
     void refreshExternalInstructionSources().catch(() => undefined);
     void refreshWorkflowsGenerated().catch(() => undefined);
     void refreshSnippets().catch(() => undefined);
@@ -2599,7 +2691,7 @@ export async function createChatRuntime(
         refreshAll ||
         domains.some((domain) => domain === "extensions" || domain === "external_instructions")
       ) {
-        void refreshExtensionsInventory().catch(() => undefined);
+        void refreshExtensions().catch(() => undefined);
       }
       if (refreshAll || domains.includes("external_instructions")) {
         void refreshExternalInstructionSources().catch(() => undefined);
@@ -2698,6 +2790,16 @@ export async function createChatRuntime(
           break;
         case "agents":
           setAppCache("agents", result.value);
+          break;
+        case "extensions":
+          setAppCache("extensions", result.value);
+          break;
+        case "externalInstructions":
+          setWorkspaceCache("externalInstructions", result.value);
+          setWorkspaceCache(
+            "externalInstructionSources",
+            externalInstructionSourcesFromStateReadModel(result.value),
+          );
           break;
         case "workspaceChrome": {
           setAppCache("workspaceChrome", result.value);
@@ -4037,19 +4139,30 @@ export async function createChatRuntime(
     get agentsSnapshot() {
       return cloneOrNull(appReadModelCache.agents);
     },
+    get agentExtensionsCatalogSnapshot() {
+      return appReadModelCache.extensions
+        ? agentExtensionCatalogFromStateReadModel(appReadModelCache.extensions)
+        : null;
+    },
+    get extensionsSnapshot() {
+      return cloneOrNull(appReadModelCache.extensions);
+    },
     get modelMetadataSnapshot() {
       return cloneOrNull(appReadModelCache.modelMetadata);
     },
     get providerAuthsSnapshot() {
       return cloneOrNull(appReadModelCache.providerAuths);
     },
-    get extensionsInventorySnapshot() {
-      return cloneOrNull(workspaceReadModelCache(workspaceInfo.workspaceId).extensionsInventory);
+    get extensionSnapshotsSnapshot() {
+      return cloneOrNull(appReadModelCache.extensionSnapshots);
     },
     get externalInstructionSourcesSnapshot() {
       return cloneOrNull(
         workspaceReadModelCache(workspaceInfo.workspaceId).externalInstructionSources,
       );
+    },
+    get externalInstructionsSnapshot() {
+      return cloneOrNull(workspaceReadModelCache(workspaceInfo.workspaceId).externalInstructions);
     },
     get workflowsGeneratedSnapshot() {
       return cloneOrNull(appReadModelCache.workflowsGenerated);
@@ -4633,9 +4746,9 @@ export async function createChatRuntime(
       });
       return result.opened;
     },
-    openGeneratedAgentContextExternalSourceInEditor: async (path) => {
-      const result = await rpcClient.request.openGeneratedAgentContextExternalSourceInEditor(
-        scoped({ path }),
+    openExternalInstructionSourceInEditor: async (sourceId) => {
+      const result = await rpcClient.request.openExternalInstructionSourceInEditor(
+        scoped({ sourceId }),
       );
       return result.opened;
     },
@@ -4682,6 +4795,9 @@ export async function createChatRuntime(
       return result.opened;
     },
     getAgents: refreshAgents,
+    getAgentExtensionsCatalog: refreshAgentExtensionsCatalog,
+    getExtensions: refreshExtensions,
+    getExternalInstructions: refreshExternalInstructions,
     updateOrchestratorProfile: async (profile) => {
       await rpcClient.request.stateAgentProfilesUpdateOrchestrator({
         workspaceId: workspaceInfo.workspaceId as WorkspaceId,
@@ -4770,8 +4886,8 @@ export async function createChatRuntime(
       });
       return refreshAgents();
     },
-    getAgentContextPreview: (request = {}) =>
-      rpcClient.request.getAgentContextPreview(scoped(request)),
+    previewGeneratedContext: (request) =>
+      rpcClient.request.previewGeneratedContext(scoped(request)),
     listModelMetadata: refreshModelMetadata,
     listProviderAuths: refreshProviderAuths,
     setProviderApiKey: async (request) => {
@@ -4794,7 +4910,7 @@ export async function createChatRuntime(
       void refreshModelMetadata().catch(() => undefined);
       return result;
     },
-    getExtensionsInventory: refreshExtensionsInventory,
+    getExtensionSnapshots: refreshExtensionSnapshots,
     getAppPreferences: refreshAppPreferences,
     updateAppPreferences: async (preferences) => {
       await rpcClient.request.stateAppPreferencesUpdate({
@@ -4806,92 +4922,102 @@ export async function createChatRuntime(
       });
       const nextPreferences = await refreshAppPreferences();
       void refreshModelMetadata().catch(() => undefined);
-      void refreshExtensionsInventory().catch(() => undefined);
+      void refreshExtensions().catch(() => undefined);
       void refreshExternalInstructionSources().catch(() => undefined);
       return nextPreferences;
     },
-    saveExtensionSnapshot: async (name) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.saveExtensionSnapshot(scoped({ name })),
-      )!,
-    renameExtensionSnapshot: async (snapshotId, name) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.renameExtensionSnapshot(scoped({ snapshotId, name })),
-      )!,
-    deleteExtensionSnapshot: async (snapshotId) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.deleteExtensionSnapshot(scoped({ snapshotId })),
-      )!,
-    loadExtensionSnapshot: async (snapshotId) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.loadExtensionSnapshot(scoped({ snapshotId })),
-      )!,
-    createExtension: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.createExtension(scoped(input)),
-      )!,
-    duplicateExtension: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.duplicateExtension(scoped(input)),
-      )!,
-    deleteExtension: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.deleteExtension(scoped(input)),
-      )!,
-    resetExtension: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.resetExtension(scoped(input)),
-      )!,
-    buildExtension: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.buildExtension(scoped(input)),
-      )!,
-    setExtensionTypescriptApi: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.setExtensionTypescriptApi(scoped(input)),
-      )!,
-    addExtensionInstructionFile: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.addExtensionInstructionFile(scoped(input)),
-      )!,
-    removeExtensionInstructionFile: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.removeExtensionInstructionFile(scoped(input)),
-      )!,
-    configureExtensionInstructionFile: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.configureExtensionInstructionFile(scoped(input)),
-      )!,
-    setExtensionEnvSecret: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.setExtensionEnvSecret(scoped(input)),
-      )!,
-    removeExtensionEnvSecret: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.removeExtensionEnvSecret(scoped(input)),
-      )!,
+    saveExtensionSnapshot: (name) =>
+      rpcClient.request.saveExtensionSnapshot({
+        clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+        snapshotId: `extension-snapshot:${crypto.randomUUID()}` as ExtensionSnapshotId,
+        name,
+        capturedAt: new Date().toISOString() as typeof IsoDateTimeStringSchema.Type,
+      }),
+    renameExtensionSnapshot: (snapshot, name) =>
+      rpcClient.request.renameExtensionSnapshot({
+        clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+        snapshotId: snapshot.snapshotId,
+        name,
+        expectedRevision: snapshot.revision,
+        renamedAt: new Date().toISOString() as typeof IsoDateTimeStringSchema.Type,
+      }),
+    deleteExtensionSnapshot: (snapshot) =>
+      rpcClient.request.deleteExtensionSnapshot({
+        clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+        snapshotId: snapshot.snapshotId,
+        expectedRevision: snapshot.revision,
+        deletedAt: new Date().toISOString() as typeof IsoDateTimeStringSchema.Type,
+        cleanupId:
+          `extension-snapshot-cleanup:${crypto.randomUUID()}` as ExtensionSnapshotCleanupId,
+      }),
+    loadExtensionSnapshot: (snapshot) =>
+      rpcClient.request.loadExtensionSnapshot({
+        clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+        snapshotId: snapshot.snapshotId,
+        expectedRevision: snapshot.revision,
+        attemptId:
+          `extension-snapshot-restore:${crypto.randomUUID()}` as ExtensionSnapshotRestoreAttemptId,
+        startedAt: new Date().toISOString() as typeof IsoDateTimeStringSchema.Type,
+      }),
+    createExtension: async (input) => {
+      const receipt = await rpcClient.request.createExtension(input);
+      await refreshExtensions();
+      return receipt;
+    },
+    duplicateExtension: async (input) => {
+      const receipt = await rpcClient.request.duplicateExtension(input);
+      await refreshExtensions();
+      return receipt;
+    },
+    deleteExtension: async (input) => {
+      const receipt = await rpcClient.request.deleteExtension(input);
+      await refreshExtensions();
+      return receipt;
+    },
+    resetExtension: async (input) => {
+      const receipt = await rpcClient.request.resetExtension(input);
+      await refreshExtensions();
+      return receipt;
+    },
+    buildExtension: (input) => rpcClient.request.buildExtension(input),
+    setExtensionTypescriptApi: async (input) => {
+      await rpcClient.request.configureExtensionTypescriptApi({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        extensionId: input.extensionId as ExtensionId,
+        enabled: input.enabled,
+      });
+      return refreshExtensions();
+    },
+    addExtensionInstructionFile: async (input) => {
+      const receipt = await rpcClient.request.addExtensionInstructionFile(input);
+      await refreshExtensions();
+      return receipt;
+    },
+    removeExtensionInstructionFile: async (input) => {
+      const receipt = await rpcClient.request.removeExtensionInstructionFile(input);
+      await refreshExtensions();
+      return receipt;
+    },
+    configureExtensionInstructionFile: async (input) => {
+      const receipt = await rpcClient.request.configureExtensionInstructionFile(input);
+      await refreshExtensions();
+      return receipt;
+    },
+    setExtensionEnvSecret: async (input) => {
+      await rpcClient.request.stateExtensionEnvSetSecret(scoped(input));
+      return refreshExtensions();
+    },
+    removeExtensionEnvSecret: async (input) => {
+      await rpcClient.request.stateExtensionEnvRemoveSecret(scoped(input));
+      return refreshExtensions();
+    },
     setExtensionEnvOverride: async (input) => {
       await rpcClient.request.stateExtensionEnvSetOverride(scoped(input));
-      return refreshExtensionsInventory();
+      return refreshExtensions();
     },
     removeExtensionEnvOverride: async (input) => {
       await rpcClient.request.stateExtensionEnvRemoveOverride(scoped(input));
-      return refreshExtensionsInventory();
+      return refreshExtensions();
     },
     getSettings: refreshSettings,
     setRequestInputVariant: async (input) => {

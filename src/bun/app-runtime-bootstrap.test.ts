@@ -4,15 +4,20 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import {
   IsoDateTimeStringSchema,
   RuntimeContractError,
+  SecretStorePortError,
   type AbsolutePath,
   type AppLogEntryId,
   type CommandId,
   type CreateOrchestratorSurfaceInput,
+  type ExtensionEnvSecretRef,
+  type ExtensionId,
   type IsoDateTimeString,
   type PromptTarget,
+  type RemoveSecretValueInput,
   type ProviderId,
   type RuntimeEvent,
   type RuntimeClientRequestId,
@@ -42,9 +47,14 @@ import {
   type StructuredSessionStateStore,
 } from "@svvy/state/structured-session-state";
 import { createStateAppLogsFacade, type StateAppLogsFacade } from "@svvy/state";
-import { createAppRuntimeBootstrap, type AppRuntimeBootstrap } from "./app-runtime-bootstrap";
+import {
+  createAppRuntimeBootstrap,
+  createSnapshotSecretValuesPort,
+  type AppRuntimeBootstrap,
+} from "./app-runtime-bootstrap";
 import { createAppLogger } from "./app-logger";
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
+import { createExtensionSnapshotPayloadStore } from "./extension-snapshot-storage";
 import { createTestSandboxHostSupport } from "./sandbox-host-support.test-support";
 import {
   DEFAULT_AGENT_SETTINGS_STATE,
@@ -107,6 +117,195 @@ afterEach(() => {
 });
 
 describe("app runtime bootstrap", () => {
+  it("restores each captured secret target exactly once across receipt replay", async () => {
+    const harness = createBootstrapHarness();
+    const extensionId = "snapshot-secret-test" as ExtensionId;
+    const envName = "TOKEN" as ExtensionEnvSecretRef["envName"];
+    harness.appGlobal.store.reconcileExtensionEnvDeclarations({
+      declarations: [
+        { extensionId, envName, required: true, secret: true, description: "Snapshot token" },
+      ],
+    });
+    let writes = 0;
+    const port = createSnapshotSecretValuesPort({
+      store: harness.appGlobal.store,
+      secretStore: {
+        getStatus: () => Effect.die("unused"),
+        listStatus: () => Effect.die("unused"),
+        resolveInvocationValue: () => Effect.die("unused"),
+      },
+      secretStoreMutation: {
+        writeSecretValue: (input) => {
+          writes += 1;
+          return Effect.succeed({
+            ref: { ...input.target, materialId: input.materialId! },
+            revisionFingerprint: `revision:${input.materialId}`,
+          });
+        },
+        removeSecretValue: (input) =>
+          Effect.succeed({
+            ref: input.ref,
+            removed: true,
+            revisionFingerprint: input.expectedRevisionFingerprint ?? "revision",
+          }),
+      },
+    });
+    const bytes = Redacted.make(
+      new TextEncoder().encode(
+        JSON.stringify({
+          schemaVersion: 1,
+          values: [{ extensionId, envName, value: "snapshot-secret-sentinel" }],
+        }),
+      ),
+    );
+    const request = {
+      targets: [{ extensionId, envName, present: true }],
+      bytes,
+      clientRequestId: "runtime-client:snapshot-secret-replay" as RuntimeClientRequestId,
+    };
+    await Effect.runPromise(port.restore(request));
+    await Effect.runPromise(port.restore(request));
+    expect(writes).toBe(1);
+    expect(harness.appGlobal.store.listExtensionEnvSecrets()).toHaveLength(1);
+  });
+
+  it("creates the fixed Initial snapshot explicitly during startup and reuses it on reopen", async () => {
+    const harness = createBootstrapHarness();
+    expect(harness.appGlobal.store.listExtensionSnapshots().snapshots).toEqual([]);
+
+    const first = await createAppRuntimeBootstrap(harness.input);
+    expect(harness.appGlobal.store.listExtensionSnapshots().snapshots).toMatchObject([
+      { snapshotId: "extension-snapshot:initial", name: "Initial", revision: 1 },
+    ]);
+    await first.dispose();
+
+    const second = await createAppRuntimeBootstrap(harness.input);
+    expect(harness.appGlobal.store.listExtensionSnapshots().snapshots).toHaveLength(1);
+    await second.dispose();
+  });
+
+  it("retains payload material referenced by a nonterminal restore after snapshot deletion", async () => {
+    const harness = createBootstrapHarness();
+    const bootstrap = await createAppRuntimeBootstrap(harness.input);
+    const snapshot = harness.appGlobal.store.readExtensionSnapshot(
+      "extension-snapshot:initial" as never,
+    )!;
+    harness.appGlobal.store.loadExtensionSnapshot({
+      clientRequestId: "runtime-client:pending-restore" as never,
+      snapshotId: snapshot.snapshotId,
+      expectedRevision: snapshot.revision,
+      attemptId: "extension-snapshot-restore:pending-delete" as never,
+      startedAt: "2026-07-12T10:00:00.000Z" as never,
+    });
+
+    await bootstrap.facade.extensions.snapshots.delete({
+      clientRequestId: "runtime-client:delete-pending-snapshot" as never,
+      snapshotId: snapshot.snapshotId,
+      expectedRevision: snapshot.revision,
+      deletedAt: "2026-07-12T10:01:00.000Z" as never,
+      cleanupId: "extension-snapshot-cleanup:pending-delete" as never,
+    });
+
+    const reopenedPayloadStore = createExtensionSnapshotPayloadStore({
+      root: harness.input.snapshotStorageRoot,
+      isReferenced: () => false,
+    });
+    await expect(
+      Effect.runPromise(reopenedPayloadStore.read({ ref: snapshot.payloadRef })),
+    ).resolves.toMatchObject({ ref: snapshot.payloadRef });
+    await bootstrap.dispose();
+  });
+  it("retries durable app-global extension secret cleanup before exposing the runtime", async () => {
+    const harness = createBootstrapHarness();
+    const ref = testExtensionSecretRef("material-success");
+    harness.appGlobal.store.recordExtensionEnvSecretOrphanCleanup({
+      ref,
+      revisionFingerprint: "fingerprint-success",
+    });
+
+    const bootstrap = await createAppRuntimeBootstrap(harness.input);
+    try {
+      expect(harness.secretRemovalCalls).toEqual([
+        { ref, expectedRevisionFingerprint: "fingerprint-success" },
+      ]);
+      expect(harness.appGlobal.store.listExtensionEnvSecretCleanupRecords()).toEqual([]);
+    } finally {
+      await bootstrap.dispose();
+    }
+  });
+
+  it("completes durable cleanup when exact secret material is already absent", async () => {
+    const harness = createBootstrapHarness();
+    const ref = testExtensionSecretRef("material-absent");
+    harness.appGlobal.store.recordExtensionEnvSecretOrphanCleanup({
+      ref,
+      revisionFingerprint: "fingerprint-absent",
+    });
+
+    const bootstrap = await createAppRuntimeBootstrap({
+      ...harness.input,
+      secretStoreMutation: {
+        ...harness.input.secretStoreMutation,
+        removeSecretValue: (request) => {
+          harness.secretRemovalCalls.push(request);
+          return Effect.fail(
+            new SecretStorePortError({
+              operation: "removeSecretValue",
+              reason: "secret-not-found",
+              message: "Secret material is absent.",
+            }),
+          );
+        },
+      },
+    });
+    try {
+      expect(harness.secretRemovalCalls).toEqual([
+        { ref, expectedRevisionFingerprint: "fingerprint-absent" },
+      ]);
+      expect(harness.appGlobal.store.listExtensionEnvSecretCleanupRecords()).toEqual([]);
+    } finally {
+      await bootstrap.dispose();
+    }
+  });
+
+  it("keeps failed secret cleanup durable without logging host error details", async () => {
+    const harness = createBootstrapHarness();
+    const ref = testExtensionSecretRef("material-retry");
+    const sentinel = "raw-secret-host-error-sentinel";
+    harness.appGlobal.store.recordExtensionEnvSecretOrphanCleanup({
+      ref,
+      revisionFingerprint: "fingerprint-retry",
+    });
+
+    const bootstrap = await createAppRuntimeBootstrap({
+      ...harness.input,
+      secretStoreMutation: {
+        ...harness.input.secretStoreMutation,
+        removeSecretValue: (request) => {
+          harness.secretRemovalCalls.push(request);
+          return Effect.fail(
+            new SecretStorePortError({
+              operation: "removeSecretValue",
+              reason: "secret-unavailable",
+              message: sentinel,
+            }),
+          );
+        },
+      },
+    });
+    try {
+      expect(harness.secretRemovalCalls).toEqual([
+        { ref, expectedRevisionFingerprint: "fingerprint-retry" },
+      ]);
+      expect(harness.appGlobal.store.listExtensionEnvSecretCleanupRecords()).toEqual([
+        expect.objectContaining({ ref, revisionFingerprint: "fingerprint-retry" }),
+      ]);
+      expect(JSON.stringify(harness.appLogs.query())).not.toContain(sentinel);
+    } finally {
+      await bootstrap.dispose();
+    }
+  });
+
   it("creates one ready runtime over routed workspace stores and primitive host ports", async () => {
     const harness = createBootstrapHarness();
     const bootstrap = await createAppRuntimeBootstrap(harness.input);
@@ -675,6 +874,15 @@ describe("app runtime bootstrap", () => {
   });
 });
 
+function testExtensionSecretRef(materialId: string): ExtensionEnvSecretRef {
+  return {
+    kind: "extension-env",
+    extensionId: "test-extension",
+    envName: "TEST_TOKEN",
+    materialId,
+  } as ExtensionEnvSecretRef;
+}
+
 function createBootstrapHarness() {
   const appGlobal = makeStore({ id: "workspace_app_global", label: "appglobal" });
   const workspaceAId = "workspace_app_bootstrap_a" as WorkspaceId;
@@ -698,6 +906,25 @@ function createBootstrapHarness() {
   openAppLogs.push(workspaceAAppLogs);
   openAppLogs.push(workspaceBAppLogs);
   const storesBySession = new Map<string, WorkspaceId>();
+  const secretRemovalCalls: RemoveSecretValueInput[] = [];
+  const secretStore = {
+    getStatus: (ref: RemoveSecretValueInput["ref"]) =>
+      Effect.succeed({ ref, configured: false as const }),
+    listStatus: ({ refs }: { refs: readonly RemoveSecretValueInput["ref"][] }) =>
+      Effect.succeed(refs.map((ref) => ({ ref, configured: false as const }))),
+    resolveInvocationValue: () => Effect.die("unused test secret resolution"),
+  };
+  const secretStoreMutation = {
+    writeSecretValue: () => Effect.die("unused test secret write"),
+    removeSecretValue: (request: RemoveSecretValueInput) => {
+      secretRemovalCalls.push(request);
+      return Effect.succeed({
+        ref: request.ref,
+        removed: true,
+        revisionFingerprint: request.expectedRevisionFingerprint ?? "test-secret-revision",
+      });
+    },
+  };
   const commandRegistry = createLiveCommandStdinRegistry();
   commandRegistry.register({
     commandId: "command-bootstrap-test" as CommandId,
@@ -746,6 +973,27 @@ function createBootstrapHarness() {
         readReadiness: () => Effect.succeed(null),
       },
     },
+    extensionBuildProcess: {
+      run: () => Effect.succeed({ status: "failed" as const }),
+    },
+    extensionCliRequirementProbe: {
+      probe: (plan) =>
+        Effect.succeed(
+          plan.probeKind === "resolve-executable"
+            ? ({ status: "resolved" } as const)
+            : ({
+                status: "completed",
+                exitCode: 0,
+                stdout: "test-cli 1.0.0",
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              } as const),
+        ),
+    },
+    secretStore,
+    secretStoreMutation,
+    snapshotStorageRoot: mkdtempTracked("snapshot-storage") as AbsolutePath,
     generatedPackageLinkPath: async ({ packageName, workspaceId }) =>
       join(
         tmpdir(),
@@ -786,6 +1034,22 @@ function createBootstrapHarness() {
       refresh: async () => {},
     },
     generatedPackageRefresh: testGeneratedPackageRefreshHost(),
+    externalInstructionScanInput: {
+      resolve: (workspaceId: WorkspaceId) => {
+        const workspace = workspaceId === workspaceAId ? workspaceA : workspaceB;
+        return Effect.succeed({
+          workspaceId,
+          workspaceRoot: workspace.cwd,
+          cwd: workspace.cwd,
+          homeDirectory: tmpdir() as AbsolutePath,
+          settings: {
+            globalRoots: [],
+            globalControls: {},
+            workspaceControls: {},
+          },
+        });
+      },
+    },
     sourceInvalidation: {
       appGlobalCoordinator: sourceCoordinator("app"),
       listAcquiredWorkspaceIds: () => [workspaceAId, workspaceBId],
@@ -818,6 +1082,7 @@ function createBootstrapHarness() {
     workspaceAAppLogs,
     workspaceB,
     workspaceBId,
+    secretRemovalCalls,
     workspaceBAppLogs,
     sourceCalls,
   };

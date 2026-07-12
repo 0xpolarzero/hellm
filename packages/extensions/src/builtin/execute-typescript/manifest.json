@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"execute-typescript","interface":"native_tool","title":"Execute TypeScript","description":"Typed composition snippets with actor-local generated runtime facades.","typescriptApiEnabled":false,"instructionFiles":[{"file":"010-execute-typescript.mdx","bypassed":false},{"file":"020-incur-typescript-clients.mdx","bypassed":false}]}

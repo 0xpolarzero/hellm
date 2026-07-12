@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"thread-orchestration","interface":"native_tool","title":"Thread Orchestration","description":"Orchestrator controls for delegated handler threads.","typescriptApiEnabled":false,"instructionFiles":[{"file":"010-thread-orchestration.mdx","bypassed":false}]}

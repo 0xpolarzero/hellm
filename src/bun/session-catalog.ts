@@ -70,6 +70,11 @@ import {
   type TurnId,
   type WorkspaceId,
   type WorkspaceSessionId,
+  type SvvyxRuntimeEffectTransportRequest,
+  type SvvyxExtensionManagementRuntimeRequest,
+  type SvvyxExtensionManagementRuntimeResponse,
+  type SvvyxWorkflowsRuntimeRequest,
+  type SvvyxWorkflowsRuntimeResponse,
   SandboxPolicySource,
   type SandboxPolicySourceService,
 } from "@svvy/core";
@@ -80,12 +85,8 @@ import type {
   SurfaceMutationResponse,
   SurfaceOpenResponse,
   WorkspaceMutationResponse,
-  AgentContextPreviewRequest,
-  AgentContextPreviewExtension,
-  AgentContextPreviewResponse,
 } from "../shared/workspace-contract";
 import type { GeneratedAgentContextExternalSource } from "../shared/generated-agent-context";
-import { getGeneratedAgentContextContentKey } from "../shared/generated-agent-context";
 import {
   DEFAULT_AGENT_SETTINGS,
   DEFAULT_ORCHESTRATOR_PROFILE_ID,
@@ -147,47 +148,32 @@ import { createExecuteTypescriptTool } from "./execute-typescript-tool";
 import {
   createListExtensionsTool,
   createLoadExtensionTool,
+  extensionRecordFromRegistryObservation,
   type RunAcceptedLoadExtension,
 } from "./extension-tools";
 import { getCredential, resolveApiKey, resolveAuthState } from "./auth-store";
 import { getOAuthRefreshError, refreshIfNeeded, supportsOAuth } from "./oauth-login";
 import { PiAdapter, layer as PiAdapterLayer } from "@svvy/pi-adapter";
 import { createPiManagedAgentSession } from "@svvy/pi-adapter/session";
-import { countPromptTokens } from "./token-count";
 import { createStartThreadTool } from "./thread-start-tool";
 import { createThreadReportTool, type ThreadReportNotificationRequest } from "./thread-report-tool";
 import {
   createThreadFollowupTool,
   createThreadRequestReportTool,
 } from "./thread-orchestration-tools";
-import { buildSystemPrompt } from "./default-system-prompt";
-import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
-import { buildNativeToolSchemasJson } from "@svvy/extensions";
-import {
-  createExtensionContextFingerprints,
-  createExternalInstructionsFingerprint,
-  createGeneratedAgentContextAggregateCache,
-  extensionsRootForAgentDir,
-  type GeneratedAgentContextAggregateOutputs,
-  type GeneratedAgentContextAggregateResult,
-  GENERATED_AGENT_CONTEXT_AGGREGATE_FORMAT_VERSION,
-} from "./generated-agent-context-aggregate-cache";
+import { extensionsRootForAgentDir } from "./extension-paths";
 import type { SvvyActorKind } from "./actor-capabilities";
 import { createAgentSettingsStore } from "./agent-settings-store";
 import type { LiveCommandStdinRegistry } from "./live-command-stdin-registry";
 import { createSvvyDirectTools, type runTaskAgentBridgeEnvProvider } from "./svvy-direct-tools";
+import type { SvvyxRuntimeExtensionPlan } from "./svvyx-runtime-command";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
-import { resolveActorExtensionState, type ExtensionUsageState } from "@svvy/extensions";
 import {
-  resolveExtensionRecords,
-  setExtensionUsage,
-  type ResolvedExtensionRecord,
-} from "./svvyx-extensions-command";
+  resolveActorExtensionState,
+  type ExtensionRecord,
+  type ExtensionUsageState,
+} from "@svvy/extensions";
 import { discoverExternalInstructionSources } from "./external-instructions";
-import {
-  createGeneratedAgentContextStore,
-  type GeneratedAgentContextStore,
-} from "./generated-agent-context-store";
 import {
   createThreadCurrentTool,
   createThreadEpisodesTool,
@@ -252,8 +238,6 @@ interface ManagedSession {
   thinkingLevel: ThinkingLevel;
   agentProfileId: AgentProfileId;
   systemPrompt: string;
-  generatedAgentContextAggregateKey: string;
-  generatedAgentContextAggregate: GeneratedAgentContextAggregateOutputs;
   generatedAgentContextFingerprint: string;
   generatedAgentContextRevision: number;
   externalContextSources: GeneratedAgentContextExternalSource[];
@@ -319,8 +303,6 @@ interface CreateManagedSessionOptions {
   model?: string;
   thinkingLevel?: ThinkingLevel;
   systemPrompt: string;
-  generatedAgentContextAggregateKey?: string;
-  generatedAgentContextAggregate?: GeneratedAgentContextAggregateOutputs;
   generatedAgentContextFingerprint?: string;
   generatedAgentContextRevision?: number;
   agentProfileId?: AgentProfileId;
@@ -338,6 +320,11 @@ interface CreateManagedSessionOptions {
   runtimeCommandStdin?: LiveCommandStdinRegistry;
   approvalBoundary?: RuntimeApprovalBoundary;
   extensionsRoot?: string;
+  extensionsRuntimePlans?: () => readonly SvvyxRuntimeExtensionPlan[];
+  resolveVisibleExtensionRecords?: (ids: readonly string[]) => Promise<readonly ExtensionRecord[]>;
+  applyExtensionLifecycleRuntimeEffect?: WorkspaceRecoveryOptions["applyExtensionLifecycleRuntimeEffect"];
+  applyExtensionManagementRuntimeRequest?: WorkspaceRecoveryOptions["applyExtensionManagementRuntimeRequest"];
+  applyWorkflowsRuntimeRequest?: WorkspaceRecoveryOptions["applyWorkflowsRuntimeRequest"];
   managedSandbox?: boolean | (() => boolean);
   acquireExecuteTypescriptLaunch?: (input: Omit<BuildLaunchPolicyInput, "launchKind">) => Promise<{
     facts: SandboxLaunchFacts;
@@ -382,6 +369,18 @@ type WorkspaceRecoveryOptions = {
   workflowsExtensionsGeneratedPackagePath?: string;
   workflowsGeneratedPackagePath?: string;
   workflowsSourceRoot?: string;
+  applyExtensionLifecycleRuntimeEffect?: (
+    request: Extract<
+      SvvyxRuntimeEffectTransportRequest,
+      { readonly type: "extension_build.request" | "extension_source.reconcile" }
+    >,
+  ) => Promise<void>;
+  applyExtensionManagementRuntimeRequest?: (
+    request: SvvyxExtensionManagementRuntimeRequest,
+  ) => Promise<SvvyxExtensionManagementRuntimeResponse>;
+  applyWorkflowsRuntimeRequest?: (
+    request: SvvyxWorkflowsRuntimeRequest,
+  ) => Promise<SvvyxWorkflowsRuntimeResponse>;
   acquireExecuteTypescriptLaunch?: (input: Omit<BuildLaunchPolicyInput, "launchKind">) => Promise<{
     facts: SandboxLaunchFacts;
     close(): Promise<void>;
@@ -421,6 +420,10 @@ const missingRuntimeApprovalBoundary: RuntimeApprovalBoundary = async () => ({
   approved: false,
   reason: "Runtime approval admission is not wired for this workspace runtime.",
 });
+
+const missingVisibleExtensionRecordResolver = async (): Promise<readonly ExtensionRecord[]> => {
+  throw new Error("WorkspaceSessionCatalog requires the state-backed extension registry resolver.");
+};
 
 function requiredAcceptedLoadExtensionRunner(
   runAcceptedLoadExtension: WorkspaceRecoveryOptions["runAcceptedLoadExtension"],
@@ -513,10 +516,6 @@ export class WorkspaceSessionCatalog {
   private agentProfileAuthority: CatalogAgentProfileAuthority | null = null;
   private agentProfileAuthoritySnapshot: CatalogAgentProfileAuthoritySnapshot | null = null;
   private requestInputSettingsAuthority: CatalogRequestInputSettingsAuthority | null = null;
-  private readonly generatedAgentContextStore: GeneratedAgentContextStore;
-  private readonly generatedAgentContextAggregateCache: ReturnType<
-    typeof createGeneratedAgentContextAggregateCache
-  >;
   private readonly extensionsRoot: string;
   private readonly approvalBoundary: RuntimeApprovalBoundary;
   private closed = false;
@@ -617,13 +616,6 @@ export class WorkspaceSessionCatalog {
       maxRequestBytes: this.runtimeLayerConfig.workflowTaskAgentBridgeMaxRequestBytes,
       runTaskAgent: (request, bearerToken) => this.runRunTaskAgentInput(request, bearerToken),
     });
-    this.generatedAgentContextStore = createGeneratedAgentContextStore({
-      agentDir: this.sessionDir,
-    });
-    this.generatedAgentContextAggregateCache = createGeneratedAgentContextAggregateCache({
-      extensionsRoot: this.extensionsRoot,
-    });
-    this.generatedAgentContextStore.getState();
     this.recoveryCoordinator = new WorkspaceRecoveryCoordinator(
       this.workspaceId as WorkspaceId,
       this.runtimeRecoveryStatePort,
@@ -980,172 +972,41 @@ export class WorkspaceSessionCatalog {
     this.markOpenSurfacesForPromptRefresh();
   }
 
-  async getAgentContextPreview(
-    request: AgentContextPreviewRequest = {},
-  ): Promise<AgentContextPreviewResponse> {
-    const actor = request.actor ?? "orchestrator";
-    const profileAuthority = await this.refreshAgentProfileAuthority();
-    const externalInstructionSources = await this.buildCurrentExternalContextSources();
-    if (actor === "handler") {
-      const profile = configuredAgentProfileSettings(
-        requireConfiguredAgentProfile(profileAuthority, "handler"),
-      );
-      const extensionState = this.resolveConfiguredProfileExtensionState(
-        "handler",
-        profile,
-        profileAuthority,
-      );
-      const systemPrompt = this.buildPromptFromLibrary("handler", {
-        ...extensionState,
-        externalInstructionSources,
-      });
-      const tokenCount = countPromptTokens({
-        provider: profile.provider,
-        model: profile.model,
-        text: systemPrompt,
-      });
-      return {
-        actor,
-        profileId: profile.id,
-        profileName: profile.name,
-        provider: profile.provider,
-        model: profile.model,
-        reasoningEffort: profile.reasoningEffort,
-        loadedExtensionIds: extensionState.loadedExtensionIds,
-        availableExtensionIds: extensionState.availableExtensionIds,
-        systemPrompt,
-        tokenCount,
-        extensions: this.buildAgentContextPreviewExtensions(
-          actor,
-          extensionState,
-          externalInstructionSources,
-          { provider: profile.provider, model: profile.model },
-        ),
-      };
-    }
-    if (actor === "workflow-task") {
-      const validProfiles = profileAuthority.workflowAgents.filter(
-        (candidate) => candidate.validationStatus === "valid" && candidate.parameters !== null,
-      );
-      const profile =
-        (request.profileId
-          ? validProfiles.find((candidate) => candidate.sourceId === request.profileId)
-          : undefined) ??
-        validProfiles.find((candidate) => candidate.sourceId === "defaultAgent") ??
-        validProfiles[0];
-      if (!profile?.parameters) {
-        throw new Error("No workflow task-agent profile is available.");
-      }
-      const parameters = profile.parameters;
-      const actorDefaults = profileAuthority.actorExtensionDefaults.find(
-        (candidate) => candidate.actor === "workflow-task",
-      );
-      const extensionState = resolveActorExtensionState({
-        actor: "workflow-task",
-        defaultExtensionOrder: actorDefaults?.extensionOrder ?? [],
-        defaultExtensionUsage: actorDefaults
-          ? { "workflow-task": actorDefaults.extensionUsage }
-          : {},
-        profileExtensionUsage: parameters.overrides ?? {},
-        profileExtensionOrder: profile.extensionOrder,
-      });
-      const systemPrompt = this.buildPromptFromLibrary("workflow-task", {
-        ...extensionState,
-        externalInstructionSources,
-        customInstructions: parameters.instructions,
-      });
-      const tokenCount = countPromptTokens({
-        provider: parameters.provider,
-        model: parameters.model,
-        text: systemPrompt,
-      });
-      return {
-        actor,
-        profileId: parameters.id,
-        profileName: parameters.label,
-        provider: parameters.provider,
-        model: parameters.model,
-        reasoningEffort: parameters.reasoning.effort,
-        loadedExtensionIds: extensionState.loadedExtensionIds,
-        availableExtensionIds: extensionState.availableExtensionIds,
-        systemPrompt,
-        tokenCount,
-        extensions: this.buildAgentContextPreviewExtensions(
-          actor,
-          extensionState,
-          externalInstructionSources,
-          { provider: parameters.provider, model: parameters.model },
-        ),
-      };
-    }
-    const profile = configuredAgentProfileSettings(
-      requireConfiguredAgentProfile(profileAuthority, "orchestrator", request.profileId),
-    );
-    const extensionState = this.resolveConfiguredProfileExtensionState(
-      "orchestrator",
-      profile,
-      profileAuthority,
-    );
-    const systemPrompt = this.buildOrchestratorSystemPrompt(
-      extensionState,
-      externalInstructionSources,
-    );
-    const tokenCount = countPromptTokens({
-      provider: profile.provider,
-      model: profile.model,
-      text: systemPrompt,
-    });
-    return {
-      actor,
-      profileId: profile.id,
-      profileName: profile.name,
-      provider: profile.provider,
-      model: profile.model,
-      reasoningEffort: profile.reasoningEffort,
-      loadedExtensionIds: extensionState.loadedExtensionIds,
-      availableExtensionIds: extensionState.availableExtensionIds,
-      systemPrompt,
-      tokenCount,
-      extensions: this.buildAgentContextPreviewExtensions(
-        actor,
-        extensionState,
-        externalInstructionSources,
-        { provider: profile.provider, model: profile.model },
-      ),
-    };
-  }
-
   getExtensionsRoot(): string {
     return this.extensionsRoot;
   }
 
-  async setExtensionUsage(input: {
-    agentProfile: string;
-    extensionId: string;
-    state: ExtensionUsageState;
-  }): Promise<{
-    actor: "orchestrator" | "handler" | "workflow-task";
-    snapshot: CatalogAgentProfileAuthoritySnapshot;
-  }> {
-    const snapshot = await this.refreshAgentProfileAuthority();
-    const configuredProfile = snapshot.configuredProfiles.find(
-      (profile) => profile.profileId === input.agentProfile,
-    );
-    const store = this.newAgentProfileMutationStore();
-    const result = setExtensionUsage({
-      agentProfileStore: store,
-      extensionContextImpactState: this.getRuntimeExtensionContextImpactState(),
-      extensionsRoot: this.extensionsRoot,
-      agentProfile: input.agentProfile,
-      extensionId: input.extensionId,
-      state: input.state,
-      targetActor: configuredProfile?.actor ?? "workflow-task",
-    });
-    await this.applyAgentProfileMutations(store.takeMutations());
-    return {
-      actor: result.actor,
-      snapshot: this.requireAgentProfileAuthoritySnapshot(),
-    };
+  private readSvvyxRuntimeExtensionPlans(): readonly SvvyxRuntimeExtensionPlan[] {
+    const registry = this.structuredSessionStore.readExtensionRegistryObservation();
+    if (!registry) return [];
+    return registry.observation.observations.map((observation) => ({
+      extensionId: observation.extensionId,
+      interfaceKind: observation.interfaceKind,
+      sourceFingerprint: observation.sourceFingerprint,
+      env: observation.envDeclarations.map((declaration) => ({
+        name: declaration.name,
+        required: declaration.required,
+        secret: declaration.secret,
+        description: declaration.description,
+        hasDefault: declaration.hasDefault,
+      })),
+      dependencies: observation.dependencyDeclarations.map((declaration) => ({
+        kind: declaration.kind,
+        name: declaration.name,
+        version: declaration.version,
+      })),
+    }));
+  }
+
+  private async resolveVisibleExtensionRecords(
+    ids: readonly string[],
+  ): Promise<readonly ExtensionRecord[]> {
+    const selected = new Set(ids);
+    return (
+      this.structuredSessionStore.readExtensionRegistryObservation()?.observation.observations ?? []
+    )
+      .filter((record) => selected.has(record.extensionId))
+      .map(extensionRecordFromRegistryObservation);
   }
 
   async getGeneratedAgentContextExternalSources(): Promise<GeneratedAgentContextExternalSource[]> {
@@ -1159,16 +1020,6 @@ export class WorkspaceSessionCatalog {
       cwd: this.cwd,
       settings: this.agentSettingsStore.getState().appPreferences.externalInstructions,
       workspaceKey: this.cwd,
-    });
-  }
-
-  private buildOrchestratorSystemPrompt(
-    extensionState: { loadedExtensionIds: string[]; availableExtensionIds: string[] },
-    externalInstructionSources: readonly GeneratedAgentContextExternalSource[] = [],
-  ): string {
-    return this.buildPromptFromLibrary("orchestrator", {
-      ...extensionState,
-      externalInstructionSources,
     });
   }
 
@@ -1215,20 +1066,13 @@ export class WorkspaceSessionCatalog {
       profileAuthority,
     );
     const externalContextSources = await this.buildCurrentExternalContextSources();
-    const aggregate = this.buildPromptAggregateFromLibrary("orchestrator", {
-      ...extensionState,
-      externalInstructionSources: externalContextSources,
-    });
-
     const session = await this.createManagedSurfaceRecord({
       sessionManager,
       actorKind: "orchestrator",
       provider: configuredProfile.provider,
       model: configuredProfile.model,
       thinkingLevel: configuredProfile.reasoningEffort,
-      systemPrompt: aggregate.outputs.prompt,
-      generatedAgentContextAggregateKey: aggregate.cacheKey,
-      generatedAgentContextAggregate: aggregate.outputs,
+      systemPrompt: "",
       agentProfileId,
       loadedExtensionIds: extensionState.loadedExtensionIds,
       availableExtensionIds: extensionState.availableExtensionIds,
@@ -1240,7 +1084,6 @@ export class WorkspaceSessionCatalog {
       title: request.title?.trim() || "New orchestrator",
       parentSessionId: request.parentSessionId ?? null,
     });
-    this.persistGeneratedAgentContextBinding(target, session);
     this.persistManagedSessionSnapshot(session);
     await this.publishCommittedCatalogMutation("session.create", created, {
       workspaceSessionId: target.workspaceSessionId,
@@ -1323,15 +1166,11 @@ export class WorkspaceSessionCatalog {
   private async retainManagedSurface(target: PromptTarget): Promise<ManagedSession> {
     await this.refreshAgentProfileAuthority();
     const externalContextSources = await this.buildCurrentExternalContextSources();
-    const aggregate = this.buildAggregateForTarget(target, {
-      externalInstructionSources: externalContextSources,
-    });
     const session = await this.loadManagedSurface(
       target.surfacePiSessionId,
       getActorKindForTarget(target),
-      aggregate.outputs.prompt,
+      "",
       externalContextSources,
-      aggregate,
     );
     session.retainCount += 1;
     return session;
@@ -1340,9 +1179,8 @@ export class WorkspaceSessionCatalog {
   private async loadManagedSurface(
     surfacePiSessionId: string,
     actorKind: SvvyActorKind,
-    systemPrompt = this.buildPromptFromLibrary(actorKind),
+    systemPrompt: string,
     externalContextSources: readonly GeneratedAgentContextExternalSource[] = [],
-    aggregate?: GeneratedAgentContextAggregateResult,
   ): Promise<ManagedSession> {
     const existing = this.managedSurfaces.get(surfacePiSessionId);
     if (existing) {
@@ -1352,8 +1190,6 @@ export class WorkspaceSessionCatalog {
       return this.recreateManagedSurface(existing, {
         actorKind,
         systemPrompt,
-        generatedAgentContextAggregateKey: aggregate?.cacheKey,
-        generatedAgentContextAggregate: aggregate?.outputs,
         externalContextSources: [...externalContextSources],
       });
     }
@@ -1378,16 +1214,6 @@ export class WorkspaceSessionCatalog {
       model: promptDefaults.model,
       thinkingLevel: promptDefaults.reasoningEffort,
       systemPrompt: storedGeneratedAgentContextBinding?.systemPrompt ?? systemPrompt,
-      generatedAgentContextAggregateKey:
-        storedGeneratedAgentContextBinding?.aggregateCacheKey ?? aggregate?.cacheKey,
-      generatedAgentContextAggregate: storedGeneratedAgentContextBinding
-        ? {
-            prompt: storedGeneratedAgentContextBinding.systemPrompt,
-            svvyxGuidance: storedGeneratedAgentContextBinding.svvyxGuidance,
-            commandsDts: storedGeneratedAgentContextBinding.commandsDts,
-            nativeToolSchemasJson: storedGeneratedAgentContextBinding.nativeToolSchemasJson,
-          }
-        : aggregate?.outputs,
       agentProfileId:
         actorKind === "handler"
           ? DEFAULT_THREAD_HANDLER_PROFILE_ID
@@ -1426,8 +1252,6 @@ export class WorkspaceSessionCatalog {
         | "model"
         | "thinkingLevel"
         | "systemPrompt"
-        | "generatedAgentContextAggregateKey"
-        | "generatedAgentContextAggregate"
         | "generatedAgentContextRevision"
         | "agentProfileId"
         | "loadedExtensionIds"
@@ -1443,10 +1267,6 @@ export class WorkspaceSessionCatalog {
     const model = overrides.model ?? session.model;
     const thinkingLevel = overrides.thinkingLevel ?? session.thinkingLevel;
     const systemPrompt = overrides.systemPrompt ?? session.systemPrompt;
-    const generatedAgentContextAggregateKey =
-      overrides.generatedAgentContextAggregateKey ?? session.generatedAgentContextAggregateKey;
-    const generatedAgentContextAggregate =
-      overrides.generatedAgentContextAggregate ?? session.generatedAgentContextAggregate;
     const generatedAgentContextRevision =
       overrides.generatedAgentContextRevision ?? session.generatedAgentContextRevision;
     const agentProfileId = overrides.agentProfileId ?? session.agentProfileId;
@@ -1469,8 +1289,6 @@ export class WorkspaceSessionCatalog {
       model,
       thinkingLevel,
       systemPrompt,
-      generatedAgentContextAggregateKey,
-      generatedAgentContextAggregate,
       generatedAgentContextRevision,
       agentProfileId,
       loadedExtensionIds,
@@ -1509,8 +1327,15 @@ export class WorkspaceSessionCatalog {
       acquireExecuteTypescriptLaunch: this.recoveryOptions.acquireExecuteTypescriptLaunch,
       acquireDirectToolLaunch: this.recoveryOptions.acquireDirectToolLaunch,
       runAcceptedLoadExtension: this.recoveryOptions.runAcceptedLoadExtension,
+      applyExtensionLifecycleRuntimeEffect:
+        this.recoveryOptions.applyExtensionLifecycleRuntimeEffect,
+      applyExtensionManagementRuntimeRequest:
+        this.recoveryOptions.applyExtensionManagementRuntimeRequest,
+      applyWorkflowsRuntimeRequest: this.recoveryOptions.applyWorkflowsRuntimeRequest,
       approvalBoundary: this.approvalBoundary,
       extensionsRoot: this.extensionsRoot,
+      extensionsRuntimePlans: () => this.readSvvyxRuntimeExtensionPlans(),
+      resolveVisibleExtensionRecords: this.resolveVisibleExtensionRecords.bind(this),
       workflowsExtensionsGeneratedPackagePath:
         this.recoveryOptions.workflowsExtensionsGeneratedPackagePath,
       workflowsGeneratedPackagePath: this.recoveryOptions.workflowsGeneratedPackagePath,
@@ -1539,9 +1364,7 @@ export class WorkspaceSessionCatalog {
     const session = await createManagedSession({
       ...options,
       workspaceId: this.workspaceId,
-      generatedAgentContextRevision:
-        options.generatedAgentContextRevision ??
-        this.generatedAgentContextStore.getState().revision,
+      generatedAgentContextRevision: options.generatedAgentContextRevision ?? 1,
       agentDir: this.agentDir,
       agentSettingsStore: this.agentSettingsStore,
       agentProfileSnapshot: this.requireAgentProfileAuthoritySnapshot(),
@@ -1564,6 +1387,11 @@ export class WorkspaceSessionCatalog {
       acquireExecuteTypescriptLaunch: this.recoveryOptions.acquireExecuteTypescriptLaunch,
       acquireDirectToolLaunch: this.recoveryOptions.acquireDirectToolLaunch,
       runAcceptedLoadExtension: this.recoveryOptions.runAcceptedLoadExtension,
+      applyExtensionLifecycleRuntimeEffect:
+        this.recoveryOptions.applyExtensionLifecycleRuntimeEffect,
+      applyExtensionManagementRuntimeRequest:
+        this.recoveryOptions.applyExtensionManagementRuntimeRequest,
+      applyWorkflowsRuntimeRequest: this.recoveryOptions.applyWorkflowsRuntimeRequest,
       createHandlerThread: this.createHandlerThread.bind(this),
       queueThreadFollowup: this.queueThreadFollowup.bind(this),
       queueThreadReportRequest: this.queueThreadReportRequest.bind(this),
@@ -1576,6 +1404,8 @@ export class WorkspaceSessionCatalog {
       runtimeCommandStdin: this.runtimeCommandStdin,
       approvalBoundary: this.approvalBoundary,
       extensionsRoot: this.extensionsRoot,
+      extensionsRuntimePlans: () => this.readSvvyxRuntimeExtensionPlans(),
+      resolveVisibleExtensionRecords: this.resolveVisibleExtensionRecords.bind(this),
       workflowsExtensionsGeneratedPackagePath:
         this.recoveryOptions.workflowsExtensionsGeneratedPackagePath,
       workflowsGeneratedPackagePath: this.recoveryOptions.workflowsGeneratedPackagePath,
@@ -1805,278 +1635,6 @@ export class WorkspaceSessionCatalog {
       }
     }
     return null;
-  }
-
-  private persistGeneratedAgentContextBinding(target: PromptTarget, session: ManagedSession): void {
-    this.structuredSessionStore.upsertGeneratedAgentContextBinding({
-      surfacePiSessionId: session.sessionId,
-      ownerKind: target.surface === "handler" && target.threadId ? "thread" : "session",
-      ownerId:
-        target.surface === "handler" && target.threadId
-          ? target.threadId
-          : target.workspaceSessionId,
-      actorKind: target.surface === "handler" ? "handler" : "orchestrator",
-      aggregateCacheKey: session.generatedAgentContextAggregateKey,
-      systemPrompt: session.systemPrompt,
-      svvyxGuidance: session.generatedAgentContextAggregate.svvyxGuidance,
-      commandsDts: session.generatedAgentContextAggregate.commandsDts,
-      nativeToolSchemasJson: session.generatedAgentContextAggregate.nativeToolSchemasJson,
-      generatedAgentContextFingerprint: session.generatedAgentContextFingerprint,
-      generatedAgentContextRevision: session.generatedAgentContextRevision,
-      loadedExtensionIds: session.loadedExtensionIds,
-      availableExtensionIds: session.availableExtensionIds,
-      externalSourceHashes: session.externalSourceHashes,
-    });
-  }
-
-  private resolveCurrentExtensionStateForTarget(
-    target: PromptTarget,
-    managed: ManagedSession | null,
-    options: {
-      includeManagedLoadedExtensions?: boolean;
-    } = {},
-  ): { loadedExtensionIds: string[]; availableExtensionIds: string[] } {
-    if (target.surface === "handler" && target.threadId) {
-      const thread =
-        this.getStructuredSnapshot(target.workspaceSessionId)?.threads.find(
-          (candidate) => candidate.id === target.threadId,
-        ) ?? null;
-      return {
-        loadedExtensionIds: thread?.loadedExtensionIds ?? managed?.loadedExtensionIds ?? [],
-        availableExtensionIds:
-          thread?.availableExtensionIds ?? managed?.availableExtensionIds ?? [],
-      };
-    }
-
-    const snapshot = this.getStructuredSnapshot(target.workspaceSessionId);
-    const profileId = snapshot?.pi.orchestratorAgentProfileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID;
-    const configuredProfile = this.requireAgentProfileAuthoritySnapshot().configuredProfiles.find(
-      (profile) => profile.actor === "orchestrator" && profile.profileId === profileId,
-    );
-    const currentProfile = configuredProfile
-      ? configuredAgentProfileSettings(configuredProfile)
-      : this.resolveOrchestratorProfileSettingsFromSnapshot(snapshot, profileId);
-    const current = this.resolveConfiguredProfileExtensionState(
-      "orchestrator",
-      currentProfile,
-      this.requireAgentProfileAuthoritySnapshot(),
-    );
-    const sessionLoadedExtensionIds =
-      snapshot?.pi.loadedExtensionIds ?? managed?.loadedExtensionIds ?? [];
-    const sessionAvailableExtensionIds =
-      snapshot?.pi.availableExtensionIds ?? managed?.availableExtensionIds ?? [];
-    if (options.includeManagedLoadedExtensions === false) {
-      const baselineProfile = this.resolveOrchestratorProfileSettingsFromSnapshot(
-        snapshot,
-        profileId,
-      );
-      const baseline = this.resolveConfiguredProfileExtensionState(
-        "orchestrator",
-        baselineProfile,
-        this.requireAgentProfileAuthoritySnapshot(),
-      );
-      const baselineLoaded = new Set(baseline.loadedExtensionIds);
-      const dynamicallyLoaded = sessionLoadedExtensionIds.filter((id) => !baselineLoaded.has(id));
-      if (dynamicallyLoaded.length === 0) {
-        return current;
-      }
-      const loaded = new Set([...current.loadedExtensionIds, ...dynamicallyLoaded]);
-      return {
-        loadedExtensionIds: [...loaded],
-        availableExtensionIds: current.availableExtensionIds.filter((id) => !loaded.has(id)),
-      };
-    }
-    if (sessionLoadedExtensionIds.length === 0) {
-      return current;
-    }
-    const loaded = new Set([...current.loadedExtensionIds, ...sessionLoadedExtensionIds]);
-    const available = new Set([...current.availableExtensionIds, ...sessionAvailableExtensionIds]);
-    return {
-      loadedExtensionIds: [...loaded],
-      availableExtensionIds: [...available].filter((id) => !loaded.has(id)),
-    };
-  }
-
-  private buildPromptFromLibrary(
-    actor: SvvyActorKind,
-    options: {
-      loadedExtensionIds?: readonly string[];
-      availableExtensionIds?: readonly string[];
-      externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
-      customInstructions?: string;
-    } = {},
-  ): string {
-    return this.buildPromptAggregateFromLibrary(actor, options).outputs.prompt;
-  }
-
-  private buildAgentContextPreviewExtensions(
-    actor: SvvyActorKind,
-    extensionState: { loadedExtensionIds: string[]; availableExtensionIds: string[] },
-    externalInstructionSources: readonly GeneratedAgentContextExternalSource[],
-    modelContext: { provider: string; model: string },
-  ): AgentContextPreviewExtension[] {
-    const activeIds = [
-      ...extensionState.loadedExtensionIds.map((id) => ({ id, state: "loaded" as const })),
-      ...extensionState.availableExtensionIds.map((id) => ({ id, state: "available" as const })),
-    ];
-    const records = new Map(
-      resolveExtensionRecords(
-        activeIds.map((entry) => entry.id),
-        this.extensionsRoot,
-      ).map((record) => [record.id, record]),
-    );
-    const generatedAgentContextState = this.generatedAgentContextStore.getState();
-    const requestUserInputSettings = this.readCommittedRequestInputSettings();
-    return activeIds.map((entry) => {
-      const record = records.get(entry.id);
-      const extensionRecords = record ? [record] : [];
-      const buildInstruction = (state: "loaded" | "available") =>
-        state === "loaded"
-          ? buildSystemPrompt(actor, {
-              loadedExtensionIds: [entry.id],
-              loadedExtensionRecords: extensionRecords,
-              availableExtensionIds: [],
-              externalInstructionSources,
-              extensionsRoot: this.extensionsRoot,
-              generatedAgentContextState,
-              workspaceKey: this.cwd,
-              requestUserInputSettings,
-            })
-          : buildSystemPrompt(actor, {
-              loadedExtensionIds: [],
-              loadedExtensionRecords: [],
-              availableExtensionIds: [entry.id],
-              availableExtensionRecords: extensionRecords,
-              externalInstructionSources,
-              extensionsRoot: this.extensionsRoot,
-              generatedAgentContextState,
-              workspaceKey: this.cwd,
-              requestUserInputSettings,
-            });
-      const countInstruction = (text: string) =>
-        text.trim()
-          ? countPromptTokens({
-              ...modelContext,
-              text,
-            })
-          : undefined;
-      const instruction =
-        entry.state === "loaded" ? buildInstruction("loaded") : buildInstruction("available");
-      const loadedInstruction =
-        entry.state === "available" ? buildInstruction("loaded") : undefined;
-      return {
-        id: entry.id,
-        title: record?.title ?? entry.id,
-        description: record?.description ?? "",
-        state: entry.state,
-        sourcePath: record?.instructionSourceFiles[0],
-        instruction,
-        tokenCount: countInstruction(instruction),
-        loadedTokenCount: loadedInstruction ? countInstruction(loadedInstruction) : undefined,
-      };
-    });
-  }
-
-  private buildPromptAggregateFromLibrary(
-    actor: SvvyActorKind,
-    options: {
-      loadedExtensionIds?: readonly string[];
-      availableExtensionIds?: readonly string[];
-      externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
-      customInstructions?: string;
-    } = {},
-  ): GeneratedAgentContextAggregateResult {
-    const loadedExtensionIds = options.loadedExtensionIds ?? [];
-    const availableExtensionIds = options.availableExtensionIds ?? [];
-    const loadedExtensionRecords = resolveExtensionRecords(loadedExtensionIds, this.extensionsRoot);
-    const availableExtensionRecords = resolveExtensionRecords(
-      availableExtensionIds,
-      this.extensionsRoot,
-    );
-    const generatedAgentContextState = this.generatedAgentContextStore.getState();
-    const requestUserInputSettings = this.readCommittedRequestInputSettings();
-    const prompt = buildSystemPrompt(actor, {
-      ...options,
-      loadedExtensionRecords,
-      availableExtensionRecords,
-      extensionsRoot: this.extensionsRoot,
-      generatedAgentContextState,
-      workspaceKey: this.cwd,
-      requestUserInputSettings,
-    });
-    const customInstructions =
-      actor === "workflow-task" ? options.customInstructions?.trim() || "" : "";
-    const resolvedPrompt = customInstructions
-      ? `## Custom Instructions\n${customInstructions}\n\n${prompt}`
-      : prompt;
-    return this.generatedAgentContextAggregateCache.getOrCreate(
-      {
-        actorKind: actor,
-        loadedExtensionIds,
-        availableExtensionIds,
-        extensionContextFingerprints: createExtensionContextFingerprints([
-          ...loadedExtensionRecords,
-          ...availableExtensionRecords,
-        ]),
-        generatedAgentContextContentKey: getGeneratedAgentContextContentKey(
-          generatedAgentContextState,
-        ),
-        agentContextFormatVersion: GENERATED_AGENT_CONTEXT_AGGREGATE_FORMAT_VERSION,
-        externalInstructionsFingerprint: createExternalInstructionsFingerprint(
-          options.externalInstructionSources ?? [],
-        ),
-        promptSettingsFingerprint: createPromptSettingsFingerprint({
-          requestUserInputSettings,
-          customInstructions,
-        }),
-        workspaceKey: this.cwd,
-      },
-      () => ({
-        prompt: resolvedPrompt,
-        svvyxGuidance: buildGeneratedSvvyxGuidance(loadedExtensionRecords),
-        commandsDts: buildExecuteTypescriptApiDeclaration(actor, {
-          extensionsRoot: this.extensionsRoot,
-          loadedExtensionIds,
-          loadedExtensionRecords,
-        }),
-        nativeToolSchemasJson: buildNativeToolSchemasJson(
-          loadedExtensionRecords,
-          requestUserInputSettings.mode,
-        ),
-      }),
-    );
-  }
-
-  private buildAggregateForTarget(
-    target: PromptTarget,
-    options: {
-      extensionState?: { loadedExtensionIds: string[]; availableExtensionIds: string[] };
-      externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
-    } = {},
-  ): GeneratedAgentContextAggregateResult {
-    if (target.surface !== "handler" || !target.threadId) {
-      const extensionState =
-        options.extensionState ??
-        this.resolveCurrentExtensionStateForTarget(
-          target,
-          this.managedSurfaces.get(target.surfacePiSessionId) ?? null,
-        );
-      return this.buildPromptAggregateFromLibrary("orchestrator", {
-        ...extensionState,
-        externalInstructionSources: options.externalInstructionSources ?? [],
-      });
-    }
-
-    const thread =
-      this.getStructuredSnapshot(target.workspaceSessionId)?.threads.find(
-        (candidate) => candidate.id === target.threadId,
-      ) ?? null;
-    return this.buildPromptAggregateFromLibrary("handler", {
-      loadedExtensionIds: options.extensionState?.loadedExtensionIds ?? thread?.loadedExtensionIds,
-      availableExtensionIds:
-        options.extensionState?.availableExtensionIds ?? thread?.availableExtensionIds,
-      externalInstructionSources: options.externalInstructionSources ?? [],
-    });
   }
 
   private resolveOrchestratorProfileSettingsFromSnapshot(
@@ -2312,43 +1870,6 @@ export class WorkspaceSessionCatalog {
       loadedExtensionIds: extensionState.loadedExtensionIds,
       availableExtensionIds: extensionState.availableExtensionIds,
       agentProfileJson: JSON.stringify(threadAgentSettings),
-    });
-    const externalContextSources = await this.buildCurrentExternalContextSources();
-    const threadTarget: PromptTarget = {
-      workspaceSessionId: input.sessionId,
-      surface: "handler",
-      surfacePiSessionId: thread.surfacePiSessionId,
-      threadId: thread.id,
-    };
-    const threadAggregate = this.buildAggregateForTarget(threadTarget, {
-      externalInstructionSources: externalContextSources,
-    });
-    const threadSystemPrompt = threadAggregate.outputs.prompt;
-    const threadGeneratedAgentContextFingerprint = createGeneratedAgentContextFingerprint({
-      systemPrompt: threadSystemPrompt,
-      loadedExtensionIds: extensionState.loadedExtensionIds,
-      availableExtensionIds: extensionState.availableExtensionIds,
-      externalContextSources,
-    });
-    this.structuredSessionStore.updateThread({
-      threadId: thread.id,
-      generatedAgentContextFingerprint: threadGeneratedAgentContextFingerprint,
-    });
-    this.structuredSessionStore.upsertGeneratedAgentContextBinding({
-      surfacePiSessionId: thread.surfacePiSessionId,
-      ownerKind: "thread",
-      ownerId: thread.id,
-      actorKind: "handler",
-      aggregateCacheKey: threadAggregate.cacheKey,
-      systemPrompt: threadSystemPrompt,
-      svvyxGuidance: threadAggregate.outputs.svvyxGuidance,
-      commandsDts: threadAggregate.outputs.commandsDts,
-      nativeToolSchemasJson: threadAggregate.outputs.nativeToolSchemasJson,
-      generatedAgentContextFingerprint: threadGeneratedAgentContextFingerprint,
-      generatedAgentContextRevision: this.generatedAgentContextStore.getState().revision,
-      loadedExtensionIds: extensionState.loadedExtensionIds,
-      availableExtensionIds: extensionState.availableExtensionIds,
-      externalSourceHashes: externalSourceHashes(externalContextSources).toSorted(),
     });
     if (input.autoStart !== false) {
       this.enqueueInitialHandlerThreadPrompt({
@@ -3015,6 +2536,7 @@ async function createManagedSession(
     extensionsRoot: options.extensionsRoot,
     agentProfileSnapshot: options.agentProfileSnapshot,
     applyAgentProfileMutations: options.applyAgentProfileMutations,
+    requestWorkflowsRuntime: options.applyWorkflowsRuntimeRequest,
     extensionsEnvValues: () =>
       options.agentSettingsStore.getState().extensionEnv.nonSecretOverrides,
   });
@@ -3026,7 +2548,8 @@ async function createManagedSession(
       actorExtensionBindingState: options.actorExtensionBindingState,
       runState: options.runState,
     },
-    extensionsRoot: options.extensionsRoot,
+    resolveVisibleRecords:
+      options.resolveVisibleExtensionRecords ?? missingVisibleExtensionRecordResolver,
   });
   const loadExtensionTool = createLoadExtensionTool({
     runtime: promptExecutionRuntime,
@@ -3037,7 +2560,8 @@ async function createManagedSession(
       runState: options.runState,
     },
     runAcceptedLoadExtension: requiredAcceptedLoadExtensionRunner(options.runAcceptedLoadExtension),
-    extensionsRoot: options.extensionsRoot,
+    resolveVisibleRecords:
+      options.resolveVisibleExtensionRecords ?? missingVisibleExtensionRecordResolver,
   });
   const directTools = createSvvyDirectTools({
     cwd: options.sessionManager.getCwd(),
@@ -3046,6 +2570,9 @@ async function createManagedSession(
     artifactState: options.artifactState,
     commandState: options.commandState,
     extensionContextImpactState: options.extensionContextImpactState,
+    applyExtensionLifecycleRuntimeEffect: options.applyExtensionLifecycleRuntimeEffect,
+    applyExtensionManagementRuntimeRequest: options.applyExtensionManagementRuntimeRequest,
+    applyWorkflowsRuntimeRequest: options.applyWorkflowsRuntimeRequest,
     readArtifactRootForSession: options.readArtifactRootForSession,
     runState: options.runState,
     agentSettingsStore: options.agentSettingsStore,
@@ -3060,6 +2587,8 @@ async function createManagedSession(
     runTaskAgentBridge: options.runTaskAgentBridge,
     runtimeCommandStdin: options.runtimeCommandStdin,
     acquireDirectToolLaunch: options.acquireDirectToolLaunch,
+    extensionsRoot: options.extensionsRoot,
+    extensionsRuntimePlans: options.extensionsRuntimePlans,
   });
   const threadListTool = createThreadListTool({
     runtime: promptExecutionRuntime,
@@ -3216,24 +2745,7 @@ async function createManagedSession(
     options.externalSourceHashes?.length && options.externalSourceHashes.length > 0
       ? [...options.externalSourceHashes].toSorted()
       : externalSourceHashes(externalContextSources).toSorted();
-  const generatedAgentContextAggregate: GeneratedAgentContextAggregateOutputs =
-    options.generatedAgentContextAggregate ?? {
-      prompt: options.systemPrompt,
-      svvyxGuidance: "",
-      commandsDts: "",
-      nativeToolSchemasJson: "{}",
-    };
-  const generatedAgentContextAggregateKey =
-    options.generatedAgentContextAggregateKey ??
-    createHash("sha256").update(generatedAgentContextAggregate.prompt).digest("hex");
-  const generatedAgentContextFingerprint =
-    options.generatedAgentContextFingerprint ??
-    createGeneratedAgentContextFingerprint({
-      systemPrompt: options.systemPrompt,
-      loadedExtensionIds: extensionState.loadedExtensionIds,
-      availableExtensionIds: extensionState.availableExtensionIds,
-      externalContextSources,
-    });
+  const generatedAgentContextFingerprint = options.generatedAgentContextFingerprint ?? "";
   const restoredDefaults = resolveRestoredSessionDefaults(options.sessionManager, {
     provider: options.provider,
     model: options.model,
@@ -3276,8 +2788,6 @@ async function createManagedSession(
     thinkingLevel: restoredDefaults.thinkingLevel,
     agentProfileId: options.agentProfileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID,
     systemPrompt: options.systemPrompt,
-    generatedAgentContextAggregateKey,
-    generatedAgentContextAggregate,
     generatedAgentContextFingerprint,
     generatedAgentContextRevision: options.generatedAgentContextRevision ?? 1,
     externalContextSources: [...externalContextSources],
@@ -3303,40 +2813,6 @@ async function createManagedSession(
   return managedSession;
 }
 
-function buildGeneratedSvvyxGuidance(records: readonly ResolvedExtensionRecord[]): string {
-  const svvyxRecords = records.filter((record) => record.interface === "svvyx");
-  if (svvyxRecords.length === 0) {
-    return "No loaded svvyx extension command guidance.";
-  }
-  return svvyxRecords
-    .map((record) =>
-      [
-        `Loaded svvyx extension: ${record.title}`,
-        `Extension id: ${record.id}`,
-        record.description,
-        record.minimalLoadingHint,
-      ]
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .join("\n"),
-    )
-    .join("\n\n");
-}
-
-function createPromptSettingsFingerprint(input: {
-  requestUserInputSettings: RequestInputSettings;
-  customInstructions?: string;
-}): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        requestInputVariant: input.requestUserInputSettings.mode,
-        customInstructions: input.customInstructions,
-      }),
-    )
-    .digest("hex");
-}
-
 function externalSourceHashes(sources: readonly GeneratedAgentContextExternalSource[]): string[] {
   return sources.map((source) =>
     JSON.stringify({
@@ -3349,24 +2825,6 @@ function externalSourceHashes(sources: readonly GeneratedAgentContextExternalSou
       sourceGroup: source.sourceGroup,
     }),
   );
-}
-
-function createGeneratedAgentContextFingerprint(input: {
-  systemPrompt: string;
-  loadedExtensionIds: readonly string[];
-  availableExtensionIds: readonly string[];
-  externalContextSources: readonly GeneratedAgentContextExternalSource[];
-}): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        systemPrompt: input.systemPrompt,
-        loadedExtensionIds: [...input.loadedExtensionIds].toSorted(),
-        availableExtensionIds: [...input.availableExtensionIds].toSorted(),
-        externalSourceHashes: externalSourceHashes(input.externalContextSources).toSorted(),
-      }),
-    )
-    .digest("hex");
 }
 
 function requireConfiguredAgentProfile(

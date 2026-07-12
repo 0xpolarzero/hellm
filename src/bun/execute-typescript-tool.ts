@@ -19,10 +19,7 @@ import type { AppLoggerEvent } from "./app-logger";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import { buildExecuteTypescriptApiDeclaration } from "./execute-typescript-api-declaration";
 import { nativeToolParameters } from "./native-tool-parameters";
-import {
-  createMacOsKeychainExtensionEnvSecretStore,
-  type ExtensionEnvSecretStore,
-} from "./extension-env-secret-store";
+import type { ExtensionEnvSecretStore } from "./extension-env-secret-store";
 import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
 import type {
   AbsolutePath,
@@ -63,11 +60,11 @@ import {
   materializeRuntimeArtifact,
 } from "./runtime-artifact-materializer";
 import {
+  assertWorkflowsRuntimeBuildSucceeded,
   formatSvvyxWorkflowsError,
   runSvvyxWorkflowsCommand,
   type SvvyxWorkflowsModelCatalogReader,
 } from "./svvyx-workflows-command";
-import type { SvvyxExtensionsCliProbe } from "./svvyx-extensions-command";
 import type { SvvyxRuntimeEnvValues } from "./svvyx-runtime-command";
 import { resolveExtensionRecords } from "./svvyx-extensions-command";
 import { resolveActorExtensionState } from "@svvy/extensions";
@@ -202,9 +199,11 @@ type ExecuteTypescriptToolOptions = {
   agentSettingsStore?: AgentSettingsStore;
   agentProfileSnapshot?: AgentProfileAuthoritySnapshot;
   applyAgentProfileMutations?: (mutations: readonly AgentProfileMutation[]) => Promise<void>;
+  requestWorkflowsRuntime?: Parameters<
+    typeof runSvvyxWorkflowsCommand
+  >[0]["requestWorkflowsRuntime"];
   env?: NodeJS.ProcessEnv;
   extensionsBuildRoot?: string;
-  extensionsCliProbe?: SvvyxExtensionsCliProbe;
   extensionEnvSecretStore?: ExtensionEnvSecretStore;
   extensionsEnvValues?: SvvyxRuntimeEnvValues | (() => SvvyxRuntimeEnvValues);
   onAppLog?: (event: AppLoggerEvent) => void;
@@ -348,9 +347,9 @@ export function createExecuteTypescriptTool(
         agentSettingsStore: options.agentSettingsStore,
         agentProfileSnapshot: options.agentProfileSnapshot,
         applyAgentProfileMutations: options.applyAgentProfileMutations,
+        requestWorkflowsRuntime: options.requestWorkflowsRuntime,
         env: options.env,
         extensionsBuildRoot: options.extensionsBuildRoot,
-        extensionsCliProbe: options.extensionsCliProbe,
         extensionEnvSecretStore: options.extensionEnvSecretStore,
         extensionsEnvValues: options.extensionsEnvValues,
         onAppLog: options.onAppLog,
@@ -397,9 +396,11 @@ export async function runExecuteTypescript(input: {
   agentSettingsStore?: AgentSettingsStore;
   agentProfileSnapshot?: AgentProfileAuthoritySnapshot;
   applyAgentProfileMutations?: (mutations: readonly AgentProfileMutation[]) => Promise<void>;
+  requestWorkflowsRuntime?: Parameters<
+    typeof runSvvyxWorkflowsCommand
+  >[0]["requestWorkflowsRuntime"];
   env?: NodeJS.ProcessEnv;
   extensionsBuildRoot?: string;
-  extensionsCliProbe?: SvvyxExtensionsCliProbe;
   extensionEnvSecretStore?: ExtensionEnvSecretStore;
   extensionsEnvValues?: SvvyxRuntimeEnvValues | (() => SvvyxRuntimeEnvValues);
   onAppLog?: (event: AppLoggerEvent) => void;
@@ -591,9 +592,9 @@ export async function runExecuteTypescript(input: {
     agentSettingsStore: input.agentSettingsStore,
     agentProfileSnapshot: input.agentProfileSnapshot,
     applyAgentProfileMutations: input.applyAgentProfileMutations,
+    requestWorkflowsRuntime: input.requestWorkflowsRuntime,
     env: input.env,
     extensionsBuildRoot: input.extensionsBuildRoot,
-    extensionsCliProbe: input.extensionsCliProbe,
     extensionEnvSecretStore: input.extensionEnvSecretStore,
     extensionsEnvValues: input.extensionsEnvValues,
     onAppLog: input.onAppLog,
@@ -821,6 +822,36 @@ function compileAndTypecheck(
     lib: ["lib.es2022.d.ts"],
   };
   const defaultHost = ts.createCompilerHost(compilerOptions, true);
+  let loadedExtensionRecords;
+  try {
+    loadedExtensionRecords = resolveExtensionRecords(
+      context.loadedExtensionIds ?? [],
+      input.extensionsRoot,
+    );
+    const resolvedExtensionIds = new Set(loadedExtensionRecords.map((extension) => extension.id));
+    const unresolvedExtensionId = (context.loadedExtensionIds ?? []).find(
+      (extensionId) => !resolvedExtensionIds.has(extensionId),
+    );
+    if (unresolvedExtensionId) {
+      throw new Error(`Extension source cannot be resolved: ${unresolvedExtensionId}`);
+    }
+  } catch (error) {
+    return {
+      javascript: "",
+      errors: [
+        {
+          severity: "error",
+          code: "extension_source_invalid",
+          message:
+            error instanceof Error
+              ? error.message
+              : "A loaded extension source could not be resolved.",
+        },
+      ],
+      warnings: [],
+      stage: "typecheck",
+    };
+  }
   const sourceFiles = new Map<string, string>([
     [SOURCE_FILE, wrappedSource],
     [
@@ -828,10 +859,7 @@ function compileAndTypecheck(
       buildExecuteTypescriptApiDeclaration(context.actor, {
         extensionsRoot: input.extensionsRoot,
         loadedExtensionIds: context.loadedExtensionIds,
-        loadedExtensionRecords: resolveExtensionRecords(
-          context.loadedExtensionIds ?? [],
-          input.extensionsRoot,
-        ),
+        loadedExtensionRecords,
       }),
     ],
   ]);
@@ -1632,9 +1660,11 @@ function createExecuteTypescriptExtensions(input: {
   agentSettingsStore?: AgentSettingsStore;
   agentProfileSnapshot?: AgentProfileAuthoritySnapshot;
   applyAgentProfileMutations?: (mutations: readonly AgentProfileMutation[]) => Promise<void>;
+  requestWorkflowsRuntime?: Parameters<
+    typeof runSvvyxWorkflowsCommand
+  >[0]["requestWorkflowsRuntime"];
   env?: NodeJS.ProcessEnv;
   extensionsBuildRoot?: string;
-  extensionsCliProbe?: SvvyxExtensionsCliProbe;
   extensionEnvSecretStore?: ExtensionEnvSecretStore;
   extensionsEnvValues?: SvvyxRuntimeEnvValues | (() => SvvyxRuntimeEnvValues);
   onAppLog?: (event: AppLoggerEvent) => void;
@@ -1795,20 +1825,16 @@ function createExecuteTypescriptExtensions(input: {
                   input.agentSettingsStore?.getState().appPreferences.networkAccess ?? true,
               })
             : undefined;
-          const result = await runSvvyxWorkflowsCommand({
-            agentSettingsStore: input.agentSettingsStore,
+          let result = await runSvvyxWorkflowsCommand({
             agentProfileStore,
             command,
             cwd: input.cwd,
-            env: input.env,
-            envSecretStore: resolveExecuteTypescriptExtensionEnvSecretStore(input),
-            extensionsBuildRoot: input.extensionsBuildRoot,
-            extensionsCliProbe: input.extensionsCliProbe,
             extensionsRoot: input.extensionsRoot,
             extensionsGeneratedPackagePath: input.workflowsExtensionsGeneratedPackagePath,
             generatedPackagePath: input.workflowsGeneratedPackagePath,
             readModelCatalog: input.workflowsModelCatalog,
             sourceCommandId: childCommand.id,
+            requestWorkflowsRuntime: input.requestWorkflowsRuntime,
             sourceRoot: input.workflowsSourceRoot,
           });
           const agentProfileMutations = agentProfileStore?.takeMutations() ?? [];
@@ -1817,6 +1843,23 @@ function createExecuteTypescriptExtensions(input: {
               throw new Error("Workflow-agent saves require runtime-owned source edit authority.");
             }
             await input.applyAgentProfileMutations(agentProfileMutations);
+          }
+          if (result.commandFacts.workflowSourceSaveRequested === true) {
+            if (!input.requestWorkflowsRuntime) {
+              throw new Error("Workflows Runtime request application is unavailable.");
+            }
+            const built = await input.requestWorkflowsRuntime({
+              operation: "build",
+              input: { sourceCommandId: childCommand.id as CommandId },
+            });
+            assertWorkflowsRuntimeBuildSucceeded(built);
+            result = {
+              output: {
+                ...(built.output as Record<string, unknown>),
+                ...(result.output as Record<string, unknown>),
+              },
+              commandFacts: { ...result.commandFacts, ...built.commandFacts },
+            };
           }
           if (result.commandFacts.workflowBuildOk === true) {
             input.onAppLog?.({
@@ -1974,12 +2017,6 @@ function effectiveLoadedExtensionIds(context: ExecuteTypescriptContext): string[
     ...(context.loadedExtensionIds ??
       resolveActorExtensionState({ actor: context.actor }).loadedExtensionIds),
   ];
-}
-
-function resolveExecuteTypescriptExtensionEnvSecretStore(input: {
-  extensionEnvSecretStore?: ExtensionEnvSecretStore;
-}): ExtensionEnvSecretStore {
-  return input.extensionEnvSecretStore ?? createMacOsKeychainExtensionEnvSecretStore();
 }
 
 function normalizeArtifactsClientOperation(

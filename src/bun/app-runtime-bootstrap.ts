@@ -1,4 +1,5 @@
 import { getModel, getSupportedThinkingLevels } from "@mariozechner/pi-ai";
+import { createHash } from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -7,6 +8,12 @@ import {
   AppLogWritePort,
   ExtensionError as CoreExtensionError,
   ExtensionStatePort,
+  ExtensionSnapshotPayloadStorePort,
+  ExtensionSnapshotSecretStorePort,
+  ExtensionSnapshotSecretValuesPort,
+  ExtensionSnapshotSettingsStatePort,
+  ExtensionSnapshotStatePort,
+  ExtensionUsageStatePort,
   PiAdapterError,
   PiRuntimePathsPort,
   ProviderAuthPort,
@@ -14,8 +21,13 @@ import {
   ProviderAuthPortError,
   RuntimeContractError,
   RuntimeGeneratedPackageStatePort,
+  RuntimeExtensionStatePort,
+  RuntimeExtensionContextImpactStatePort,
+  RuntimeExternalInstructionStatePort,
   RuntimePromptDefaultsStatePort,
   RuntimeRecoveryStatePort,
+  SecretStorePort,
+  SecretStorePortError,
   StateContractError,
   SandboxPolicySource,
   type AbsolutePath,
@@ -32,12 +44,18 @@ import {
   type ModelInfo,
   type ProviderId,
   type RuntimeGeneratedPackageStatePortService,
+  type RuntimeExternalInstructionStatePortService,
   type RuntimeClientRequestId,
+  type ListRuntimeExtensionUsageContextAffectedSurfacesInput,
+  type ApplyRuntimeExtensionSnapshotContextImpactInput,
   type RuntimeClientSubmissionSource,
   type RefreshGeneratedContextRequest,
   type RunTaskAgentResult,
   type SandboxLaunchFacts,
   type SandboxPolicySourceService,
+  type SecretStoreMutationPortService,
+  type SecretStorePortService,
+  type ExtensionSnapshotSecretValuesPortService,
   type SourceInvalidationHint,
   type SourceReconcileRequest,
   type StateInvalidationDescriptor,
@@ -46,9 +64,16 @@ import {
   type PromptTarget,
 } from "@svvy/core";
 import { PiAdapter, layer as PiAdapterLayer } from "@svvy/pi-adapter";
-import type { ExtensionSourceRoots, GeneratedPackageRoots } from "@svvy/extensions";
+import type {
+  ExtensionBuildProcessPortService,
+  ExtensionCliRequirementProbePortService,
+  ExtensionSourceRoots,
+  GeneratedPackageRoots,
+} from "@svvy/extensions";
 import {
   layer as extensionsLayer,
+  layerExtensionBuildProcessPort,
+  layerExtensionCliRequirementProbePort,
   layerExtensionSourceRootsPort,
   layerGeneratedPackageRootPort,
   layerPackagedExtensionTemplatesPort,
@@ -70,6 +95,7 @@ import {
   prepareRuntimeShutdown,
   RuntimeGeneratedContextRefreshHostPort,
   RuntimeGeneratedPackageRefreshHostPort,
+  RuntimeExternalInstructionScanInputPort,
   RuntimeLayerCommandControlPort,
   RuntimeLayerCommandStdinPort,
   RuntimeLayerModelResolverPort,
@@ -77,6 +103,7 @@ import {
   RuntimeSourceInvalidationScanPort,
   RuntimeWorkflowTaskAgentBridgeBearerVerifier,
   type RuntimeGeneratedPackageRefreshHostPortService,
+  type RuntimeExternalInstructionScanInputPortService,
   type RuntimeLayerCommandControlPortService,
   type RuntimeLayerCommandStdinPortService,
   type RuntimeLayerConfig,
@@ -90,6 +117,12 @@ import {
   layerWorkspaceStateRouter,
   providerAuthStatusStatePortFromStore,
   runtimeRecoveryStatePortFromStore,
+  runtimeExtensionStatePortFromStore,
+  extensionSnapshotSettingsStatePortFromStore,
+  extensionSnapshotStatePortFromStore,
+  extensionUsageStatePortFromStore,
+  runtimeExtensionContextImpactStatePortFromStore,
+  runtimeExternalInstructionStatePortFromStructuredSessionState,
   stateCommandsFromRouter,
   stateReadModelsFromRouter,
   type WorkspaceStateRegistration,
@@ -104,6 +137,10 @@ import {
 import type { AppPreferences } from "../shared/agent-settings";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import type { RunAcceptedLoadExtension } from "./extension-tools";
+import {
+  createExtensionSnapshotPayloadStore,
+  createExtensionSnapshotSecretStore,
+} from "./extension-snapshot-storage";
 import { AppLifecycleCoordinator } from "./app-lifecycle-coordinator";
 import type { PackagedSandboxHostSupportServices } from "./runtime-service-adapter";
 import {
@@ -154,6 +191,11 @@ export interface AppRuntimeBootstrapInput {
   readonly packagedExtensionTemplatesRoot: AbsolutePath;
   readonly generatedPackageRoots: GeneratedPackageRoots;
   readonly extensionStatePort: ExtensionStatePortService;
+  readonly extensionBuildProcess: ExtensionBuildProcessPortService;
+  readonly extensionCliRequirementProbe: ExtensionCliRequirementProbePortService;
+  readonly secretStore: SecretStorePortService;
+  readonly secretStoreMutation: SecretStoreMutationPortService;
+  readonly snapshotStorageRoot: AbsolutePath;
   readonly generatedPackageLinkPath: (
     input: GeneratedPackageWorkspaceLinkRepairInput,
   ) => Promise<AbsolutePath>;
@@ -185,6 +227,7 @@ export interface AppRuntimeBootstrapInput {
     refresh(input: RefreshGeneratedContextRequest): Promise<void>;
   };
   readonly generatedPackageRefresh: RuntimeGeneratedPackageRefreshHostPortService;
+  readonly externalInstructionScanInput: RuntimeExternalInstructionScanInputPortService;
   readonly generatedPackageStatePort?: Pick<
     RuntimeGeneratedPackageStatePortService,
     "markWorkspaceLinksRepairNeeded" | "recordWorkspaceLinkStatus"
@@ -263,11 +306,219 @@ export interface AppRuntimeBootstrap {
   dispose(reason?: "app-shutdown" | "startup-failure"): Promise<void>;
 }
 
+function processExtensionEnvSecretCleanup(input: {
+  readonly store: WorkspaceStateRegistration["store"];
+  readonly secretStoreMutation: SecretStoreMutationPortService;
+}): Effect.Effect<void> {
+  return Effect.forEach(
+    input.store.listExtensionEnvSecretCleanupRecords(),
+    (cleanup) =>
+      input.secretStoreMutation
+        .removeSecretValue({
+          ref: cleanup.ref,
+          expectedRevisionFingerprint: cleanup.revisionFingerprint,
+        })
+        .pipe(
+          Effect.as(true),
+          Effect.catchTag("SecretStorePortError", (error) =>
+            Effect.succeed(error.reason === "secret-not-found"),
+          ),
+          Effect.flatMap((removed) =>
+            removed
+              ? Effect.sync(() => input.store.completeExtensionEnvSecretCleanup(cleanup.ref)).pipe(
+                  Effect.catch(() => Effect.void),
+                )
+              : Effect.void,
+          ),
+        ),
+    { concurrency: 1, discard: true },
+  );
+}
+
+export function createSnapshotSecretValuesPort(input: {
+  readonly store: WorkspaceStateRegistration["store"];
+  readonly secretStore: SecretStorePortService;
+  readonly secretStoreMutation: SecretStoreMutationPortService;
+}): ExtensionSnapshotSecretValuesPortService {
+  const error = (operation: string, cause?: unknown) =>
+    new SecretStorePortError({
+      operation: `app-runtime-bootstrap.snapshot-secrets.${operation}`,
+      reason: "secret-unavailable",
+      message: "Extension snapshot secret values could not be processed.",
+      cause,
+    });
+  return {
+    capture: (targets) =>
+      Effect.gen(function* () {
+        const configured = new Map(
+          input.store
+            .listExtensionEnvSecrets()
+            .map((record) => [`${record.extensionId}\0${record.envName}`, record]),
+        );
+        const values: Array<{ extensionId: string; envName: string; value: string }> = [];
+        for (const target of targets.filter((entry) => entry.present)) {
+          const record = configured.get(`${target.extensionId}\0${target.envName}`);
+          if (!record) return yield* Effect.fail(error("capture.missing-state"));
+          const resolved = yield* input.secretStore.resolveInvocationValue(record.ref);
+          values.push({
+            extensionId: String(target.extensionId),
+            envName: target.envName,
+            value: Redacted.value(resolved.value),
+          });
+        }
+        if (values.length === 0) return { bytes: null };
+        return {
+          bytes: Redacted.make(
+            new TextEncoder().encode(JSON.stringify({ schemaVersion: 1, values })),
+            { label: "extension-snapshot-secret-values" },
+          ),
+        };
+      }).pipe(
+        Effect.mapError((cause) =>
+          cause instanceof SecretStorePortError ? cause : error("capture", cause),
+        ),
+      ),
+    restore: ({ targets, bytes, clientRequestId }) =>
+      Effect.gen(function* () {
+        let decoded: {
+          schemaVersion: 1;
+          values: Array<{ extensionId: string; envName: string; value: string }>;
+        } = {
+          schemaVersion: 1,
+          values: [],
+        };
+        if (bytes) {
+          try {
+            decoded = JSON.parse(new TextDecoder().decode(Redacted.value(bytes))) as typeof decoded;
+          } catch (cause) {
+            return yield* Effect.fail(error("restore.decode", cause));
+          }
+          if (decoded.schemaVersion !== 1 || !Array.isArray(decoded.values)) {
+            return yield* Effect.fail(error("restore.invalid-envelope"));
+          }
+        }
+        const values = new Map(
+          decoded.values.map((entry) => [`${entry.extensionId}\0${entry.envName}`, entry.value]),
+        );
+        let restoredTargetCount = 0;
+        for (const [index, target] of targets.entries()) {
+          const requestId = `${clientRequestId}:target:${index}`;
+          const commandState = input.store.readExtensionEnvSecretCommandState({
+            operation: target.present ? "set" : "remove",
+            clientRequestId: requestId,
+            extensionId: target.extensionId,
+            envName: target.envName,
+          });
+          if (commandState.receipt) {
+            restoredTargetCount += 1;
+            continue;
+          }
+          const current = commandState.current;
+          if (target.present) {
+            const value = values.get(`${target.extensionId}\0${target.envName}`);
+            if (value === undefined) return yield* Effect.fail(error("restore.missing-value"));
+            const written = yield* input.secretStoreMutation.writeSecretValue({
+              target: {
+                kind: "extension-env",
+                extensionId: target.extensionId,
+                envName: target.envName as never,
+              },
+              materialId:
+                `snapshot_${createHash("sha256").update(requestId).digest("hex").slice(0, 32)}` as never,
+              value: Redacted.make(value, { label: "extension-env-secret" }),
+              ...(current
+                ? {
+                    replaces: {
+                      ref: current.ref,
+                      expectedRevisionFingerprint: current.revisionFingerprint,
+                    },
+                  }
+                : {}),
+            });
+            try {
+              input.store.commitExtensionEnvSecretSet({
+                command: {
+                  extensionId: target.extensionId,
+                  envName: target.envName as never,
+                  secretValue: Redacted.make(value, { label: "extension-env-secret" }),
+                  clientSubmission: {
+                    clientRequestId: requestId as never,
+                    source: "runtime" as never,
+                  },
+                },
+                ref: written.ref,
+                revisionFingerprint: written.revisionFingerprint,
+                previous: current,
+              });
+              if (current) {
+                yield* input.secretStoreMutation
+                  .removeSecretValue({
+                    ref: current.ref,
+                    expectedRevisionFingerprint: current.revisionFingerprint,
+                  })
+                  .pipe(
+                    Effect.tap(() =>
+                      Effect.sync(() => input.store.completeExtensionEnvSecretCleanup(current.ref)),
+                    ),
+                    Effect.catch(() => Effect.void),
+                  );
+              }
+            } catch (cause) {
+              yield* input.secretStoreMutation
+                .removeSecretValue({
+                  ref: written.ref,
+                  expectedRevisionFingerprint: written.revisionFingerprint,
+                })
+                .pipe(Effect.catch(() => Effect.void));
+              return yield* Effect.fail(error("restore.commit-set", cause));
+            }
+          } else if (current) {
+            input.store.commitExtensionEnvSecretRemove({
+              command: {
+                extensionId: target.extensionId,
+                envName: target.envName as never,
+                expectedRevisionFingerprint: current.revisionFingerprint,
+                clientSubmission: {
+                  clientRequestId: requestId as never,
+                  source: "runtime" as never,
+                },
+              },
+              previous: current,
+            });
+            yield* input.secretStoreMutation
+              .removeSecretValue({
+                ref: current.ref,
+                expectedRevisionFingerprint: current.revisionFingerprint,
+              })
+              .pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => input.store.completeExtensionEnvSecretCleanup(current.ref)),
+                ),
+                Effect.catch(() => Effect.void),
+              );
+          }
+          restoredTargetCount += 1;
+        }
+        return { restoredTargetCount };
+      }).pipe(
+        Effect.mapError((cause) =>
+          cause instanceof SecretStorePortError ? cause : error("restore", cause),
+        ),
+      ),
+  };
+}
+
 export async function createAppRuntimeBootstrap(
   input: AppRuntimeBootstrapInput,
 ): Promise<AppRuntimeBootstrap> {
   const appGlobalStateRegistration = workspaceStateRegistration(input.appGlobalState);
   const initialWorkspaceStateRegistrations = input.workspaceStates.map(workspaceStateRegistration);
+  const registeredWorkspaceStores = new Map(
+    initialWorkspaceStateRegistrations.map((registration) => [
+      registration.store.workspaceId as WorkspaceId,
+      registration.store,
+    ]),
+  );
   const workspaceRouter = createWorkspaceStateRouter({
     appGlobalStore: appGlobalStateRegistration.store,
     workspaceStores: initialWorkspaceStateRegistrations,
@@ -308,6 +559,7 @@ export async function createAppRuntimeBootstrap(
         router: workspaceRouter,
         appLogs: appLogState,
         resolveAppLogs: resolveAppLogState,
+        secretStoreMutation: input.secretStoreMutation,
       }),
     ),
   );
@@ -319,10 +571,101 @@ export async function createAppRuntimeBootstrap(
     appGlobalStateRegistration.store,
   );
   const recoveryState = runtimeRecoveryStatePortFromStore(appGlobalStateRegistration.store);
+  const extensionState = runtimeExtensionStatePortFromStore(appGlobalStateRegistration.store);
+  const extensionSnapshotState = extensionSnapshotStatePortFromStore(
+    appGlobalStateRegistration.store,
+  );
+  const extensionSnapshotSettings = extensionSnapshotSettingsStatePortFromStore(
+    appGlobalStateRegistration.store,
+  );
+  const extensionUsageState = extensionUsageStatePortFromStore(appGlobalStateRegistration.store);
+  const snapshotPayloadStore = createExtensionSnapshotPayloadStore({
+    root: input.snapshotStorageRoot,
+    isReferenced: (ref) =>
+      appGlobalStateRegistration.store
+        .listExtensionSnapshots()
+        .snapshots.some(
+          (summary) =>
+            appGlobalStateRegistration.store.readExtensionSnapshot(summary.snapshotId)?.payloadRef
+              .digest === ref.digest,
+        ) ||
+      appGlobalStateRegistration.store
+        .listPendingExtensionSnapshotRestoreAttempts()
+        .some((attempt) => attempt.payloadRef.digest === ref.digest),
+  });
+  const snapshotSecretStore = createExtensionSnapshotSecretStore({
+    isReferenced: (ref) =>
+      appGlobalStateRegistration.store
+        .listExtensionSnapshots()
+        .snapshots.some(
+          (summary) =>
+            appGlobalStateRegistration.store.readExtensionSnapshot(summary.snapshotId)
+              ?.secretPayloadRef === ref,
+        ) ||
+      appGlobalStateRegistration.store
+        .listPendingExtensionSnapshotRestoreAttempts()
+        .some((attempt) => attempt.secretPayloadRef === ref),
+  });
+  const snapshotSecretValues = createSnapshotSecretValuesPort({
+    store: appGlobalStateRegistration.store,
+    secretStore: input.secretStore,
+    secretStoreMutation: input.secretStoreMutation,
+  });
+  const snapshotContextImpact = {
+    listUsageContextAffectedSurfaces: (
+      request: ListRuntimeExtensionUsageContextAffectedSurfacesInput,
+    ) =>
+      Effect.forEach(
+        registeredWorkspaceStores.values(),
+        (store) =>
+          runtimeExtensionContextImpactStatePortFromStore(store).listUsageContextAffectedSurfaces(
+            request,
+          ),
+        { concurrency: 1 },
+      ).pipe(Effect.map((groups) => groups.flat())),
+    applySnapshotContextImpact: (request: ApplyRuntimeExtensionSnapshotContextImpactInput) =>
+      Effect.forEach(
+        registeredWorkspaceStores.values(),
+        (store) =>
+          runtimeExtensionContextImpactStatePortFromStore(store).applySnapshotContextImpact(
+            request,
+          ),
+        { concurrency: 1 },
+      ).pipe(
+        Effect.map((results) => ({
+          value: results.flatMap((result) => result.value),
+          afterCommit: results.flatMap((result) => result.afterCommit),
+        })),
+      ),
+  };
+  const externalInstructionState = {
+    reconcileExternalInstructions: (request) =>
+      workspaceRouter
+        .resolveWorkspaceStructuredSession(request.workspaceId)
+        .pipe(
+          Effect.flatMap((state) =>
+            runtimeExternalInstructionStatePortFromStructuredSessionState(
+              state,
+            ).reconcileExternalInstructions(request),
+          ),
+        ),
+    readExternalInstructions: (request) =>
+      workspaceRouter
+        .resolveWorkspaceStructuredSession(request.workspaceId)
+        .pipe(
+          Effect.flatMap((state) =>
+            runtimeExternalInstructionStatePortFromStructuredSessionState(
+              state,
+            ).readExternalInstructions(request),
+          ),
+        ),
+  } satisfies RuntimeExternalInstructionStatePortService;
   const sandboxHostSupport = input.sandboxHostSupport;
   const extensionPackageLayer = Layer.mergeAll(
     layerRuntimeBunPlatform,
     Layer.succeed(ExtensionStatePort, input.extensionStatePort),
+    layerExtensionBuildProcessPort(input.extensionBuildProcess),
+    layerExtensionCliRequirementProbePort(input.extensionCliRequirementProbe),
     layerExtensionSourceRootsPort(input.sourceRoots),
     layerGeneratedPackageRootPort(input.generatedPackageRoots),
     layerPackagedExtensionTemplatesPort({
@@ -355,6 +698,15 @@ export async function createAppRuntimeBootstrap(
     layerExtensionSourceRootsPort(input.sourceRoots),
     Layer.succeed(RuntimePromptDefaultsStatePort, workspaceRouter.promptDefaults),
     Layer.succeed(RuntimeRecoveryStatePort, recoveryState),
+    Layer.succeed(RuntimeExtensionStatePort, extensionState),
+    Layer.succeed(ExtensionSnapshotStatePort, extensionSnapshotState),
+    Layer.succeed(ExtensionUsageStatePort, extensionUsageState),
+    Layer.succeed(ExtensionSnapshotSettingsStatePort, extensionSnapshotSettings),
+    Layer.succeed(ExtensionSnapshotPayloadStorePort, snapshotPayloadStore),
+    Layer.succeed(ExtensionSnapshotSecretStorePort, snapshotSecretStore),
+    Layer.succeed(ExtensionSnapshotSecretValuesPort, snapshotSecretValues),
+    Layer.succeed(RuntimeExtensionContextImpactStatePort, snapshotContextImpact),
+    Layer.succeed(RuntimeExternalInstructionStatePort, externalInstructionState),
     workspaceStateLayer,
     Layer.succeed(RuntimeLayerProviderAuthPort, {
       ensureUsableProviderAuth: (provider) =>
@@ -454,6 +806,7 @@ export async function createAppRuntimeBootstrap(
     Layer.succeed(AppLogWritePort, input.appLogWritePort),
     Layer.succeed(RuntimeGeneratedContextRefreshHostPort, input.generatedContextRefresh),
     Layer.succeed(RuntimeGeneratedPackageRefreshHostPort, input.generatedPackageRefresh),
+    Layer.succeed(RuntimeExternalInstructionScanInputPort, input.externalInstructionScanInput),
     Layer.succeed(RuntimeGeneratedPackageStatePort, generatedPackageStatePort),
     Layer.succeed(RuntimeSourceInvalidationScanPort, createSourceInvalidationScanPort(input)),
     Layer.succeed(RuntimeLayerCommandStdinPort, input.commandRegistry),
@@ -474,6 +827,7 @@ export async function createAppRuntimeBootstrap(
       runtimeLayerConfig,
       stateFacadeServicesLayer,
       Layer.effect(PiAdapter, PiAdapter),
+      Layer.succeed(SecretStorePort, input.secretStore),
     ).pipe(Layer.provide(runtimeHostLayer)),
   );
   const appLogInvalidationSubscriptions = new Map<string, () => void>();
@@ -518,7 +872,22 @@ export async function createAppRuntimeBootstrap(
   try {
     await managedRuntime.context();
     runtimeServiceAcquired = true;
+    const runRuntimePromise = <A>(effect: Effect.Effect<A, unknown, never>) =>
+      managedRuntime.runPromise(effect);
     const readiness = await awaitRuntimeStartupReadiness(managedRuntime);
+    await runRuntimePromise(
+      Effect.gen(function* () {
+        const runtime = yield* Runtime;
+        yield* runtime.extensions.snapshots.recover();
+        yield* runtime.extensions.snapshots.ensureInitial();
+      }) as Effect.Effect<unknown, unknown, never>,
+    );
+    await runRuntimePromise(
+      processExtensionEnvSecretCleanup({
+        store: appGlobalStateRegistration.store,
+        secretStoreMutation: input.secretStoreMutation,
+      }),
+    );
     const facade = createRuntimeFacade(managedRuntime);
     const state = createStateFacade(managedRuntime);
     const stateCommands = createStateCommandsFacade(managedRuntime);
@@ -533,8 +902,6 @@ export async function createAppRuntimeBootstrap(
       await subscribeToCommittedAppLogAppends(registration.store.workspaceId as WorkspaceId);
     }
     lifecycle.markReady();
-    const runRuntimePromise = <A>(effect: Effect.Effect<A, unknown, never>) =>
-      managedRuntime.runPromise(effect);
     const modelMetadata: AppRuntimeBootstrap["modelMetadata"] = {
       list: async (request) => {
         lifecycle.assertAccepting("app-runtime-bootstrap.modelMetadata.list");
@@ -610,16 +977,19 @@ export async function createAppRuntimeBootstrap(
             const registration = workspaceStateRegistration(request);
             workspaceRouter.registerWorkspaceState(registration);
             const workspaceId = registration.store.workspaceId as WorkspaceId;
+            registeredWorkspaceStores.set(workspaceId, registration.store);
             try {
               await subscribeToCommittedAppLogAppends(workspaceId, appLogs);
             } catch (cause) {
               workspaceRouter.unregisterWorkspaceState(workspaceId);
+              registeredWorkspaceStores.delete(workspaceId);
               throw cause;
             }
           },
           unregister: (workspaceId) => {
             lifecycle.assertAccepting("app-runtime-bootstrap.workspaceStates.unregister");
             unsubscribeFromCommittedAppLogAppends(workspaceId);
+            registeredWorkspaceStores.delete(workspaceId);
             return workspaceRouter.unregisterWorkspaceState(workspaceId);
           },
         },

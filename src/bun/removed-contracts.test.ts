@@ -247,7 +247,7 @@ describe("retired desktop integration RPC paths", () => {
     ).text();
     const openHandlerSource = backendSource
       .split("openWorkflowsGeneratedExportInEditor:")[1]
-      ?.split("openGeneratedAgentContextExternalSourceInEditor:")[0];
+      ?.split("openExternalInstructionSourceInEditor:")[0];
 
     expect(sharedContractSource).toContain("openWorkflowsGeneratedExportInEditor: {");
     expect(chatRuntimeSource).toContain("rpcClient.request.openWorkflowsGeneratedExportInEditor");
@@ -293,6 +293,8 @@ describe("retired desktop integration RPC paths", () => {
       "setRequestInputBlockingTimeout",
       "stateExtensionEnvSetOverride",
       "stateExtensionEnvRemoveOverride",
+      "stateExtensionEnvSetSecret",
+      "stateExtensionEnvRemoveSecret",
       "createOrchestratorSurface",
     ]) {
       expect(sharedContractSource).toContain(`${channel}: {`);
@@ -312,6 +314,14 @@ describe("retired desktop integration RPC paths", () => {
     expect(backendSource).toContain("facades.runtime.requestInput.setBlockingTimeout(input)");
     expect(backendSource).toContain("facades.commands.state.extensionEnv.setOverride");
     expect(backendSource).toContain("facades.commands.state.extensionEnv.removeOverride");
+    expect(backendSource).toContain("stateCommands.extensionEnv.setSecret");
+    expect(backendSource).toContain("stateCommands.extensionEnv.removeSecret");
+    expect(backendSource).toContain("workspaceRuntimeRegistry.getStateCommandsFacade()");
+    expect(backendSource).toContain(
+      'secretValue: Redacted.make(value, { label: "extension-env-secret" })',
+    );
+    expect(backendSource).not.toContain("extensionEnvSecretStore.set(");
+    expect(backendSource).not.toContain("extensionEnvSecretStore.remove(");
     expect(backendSource).toContain("facades.runtime.surfaces.createOrchestrator");
     expect(backendSource).toContain("facades.hostActions.clipboard.writeText(input)");
   });
@@ -342,13 +352,48 @@ describe("retired desktop integration RPC paths", () => {
     const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
     const handlerSource = backendSource
       .split("openWorkflowsGeneratedExportInEditor:")[1]
-      ?.split("openGeneratedAgentContextExternalSourceInEditor:")[0];
+      ?.split("openExternalInstructionSourceInEditor:")[0];
 
     expect(handlerSource).toContain(
       "openPathInPreferredEditor(runtime, facades.hostActions, path)",
     );
     expect(handlerSource).not.toContain("Utils.openPath");
     expect(handlerSource).not.toContain("spawn(");
+  });
+
+  it("resolves external-instruction editor paths from current state identity", async () => {
+    const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const sharedContractSource = await Bun.file(
+      `${import.meta.dir}/../shared/workspace-contract.ts`,
+    ).text();
+    const chatRuntimeSource = await Bun.file(
+      `${import.meta.dir}/../mainview/chat-runtime.ts`,
+    ).text();
+    const registrySource = await Bun.file(
+      `${import.meta.dir}/workspace-runtime-registry.ts`,
+    ).text();
+    const handlerSource = backendSource
+      .split("openExternalInstructionSourceInEditor:")[1]
+      ?.split("writeCommandStdin:")[0];
+    const requestContract = sharedContractSource
+      .split("interface OpenExternalInstructionSourceInEditorRequest")[1]
+      ?.split("}")[0];
+
+    expect(requestContract).toContain("sourceId: string");
+    expect(requestContract).not.toContain("path:");
+    expect(chatRuntimeSource).toContain("scoped({ sourceId })");
+    expect(handlerSource).toContain(
+      "facades.appActions.externalInstructions.resolveEditorTarget(input)",
+    );
+    expect(handlerSource).toContain("facades.hostActions.editor.open");
+    expect(handlerSource).toContain("facades.appActions.externalInstructions.recordEditorResult");
+    expect(handlerSource).not.toContain("getWorkspaceRuntime(input)");
+    expect(registrySource).toContain('kind: "externalInstructions"');
+    expect(registrySource).toContain("candidate.id === sourceId");
+    expect(registrySource).toContain('source.readStatus.status !== "readable"');
+    expect(registrySource).toContain("source.canonicalPath");
+    expect(handlerSource).not.toContain("input.path");
+    expect(registrySource).not.toContain("getGeneratedAgentContextExternalSources");
   });
 
   it("routes renderer telemetry persistence through the typed app action", async () => {
@@ -362,7 +407,7 @@ describe("retired desktop integration RPC paths", () => {
     expect(handlerSource).not.toContain('runtime.appLog.error("renderer"');
   });
 
-  it("pins increment-6 legacy renderer RPC channels until pane migration retires them", async () => {
+  it("retires the aggregate extension inventory renderer RPC", async () => {
     const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
     const chatRuntimeSource = await Bun.file(
       `${import.meta.dir}/../mainview/chat-runtime.ts`,
@@ -371,19 +416,18 @@ describe("retired desktop integration RPC paths", () => {
       `${import.meta.dir}/../shared/workspace-contract.ts`,
     ).text();
     const sessionCatalogSource = await Bun.file(`${import.meta.dir}/session-catalog.ts`).text();
-    const legacyChannels = [
-      { channel: "setExtensionEnvSecret", retirementIncrement: "Increment 10" },
-      { channel: "removeExtensionEnvSecret", retirementIncrement: "Increment 10" },
-      { channel: "getExtensionsInventory", retirementIncrement: "Increment 8" },
-    ] as const;
 
-    expect(
-      legacyChannels.every((entry) => entry.retirementIncrement.startsWith("Increment ")),
-    ).toBe(true);
-    for (const { channel } of legacyChannels) {
-      expect(sharedContractSource).toContain(`${channel}: {`);
-      expect(chatRuntimeSource).toContain(`rpcClient.request.${channel}`);
-      expect(backendSource).toContain(`${channel}:`);
+    expect(sharedContractSource).not.toContain("getExtensionsInventory: {");
+    expect(chatRuntimeSource).not.toContain("rpcClient.request.getExtensionsInventory");
+    expect(backendSource).not.toContain("getExtensionsInventory:");
+    expect(sharedContractSource).toContain("getExtensionSnapshots: {");
+    expect(chatRuntimeSource).toContain("rpcClient.request.getExtensionSnapshots");
+    expect(backendSource).toContain("getExtensionSnapshots:");
+
+    for (const retiredChannel of ["setExtensionEnvSecret", "removeExtensionEnvSecret"] as const) {
+      expect(sharedContractSource).not.toContain(`${retiredChannel}: {`);
+      expect(chatRuntimeSource).not.toContain(`rpcClient.request.${retiredChannel}`);
+      expect(backendSource).not.toContain(`${retiredChannel}:`);
     }
 
     for (const channel of [
@@ -447,6 +491,47 @@ describe("retired desktop integration RPC paths", () => {
     expect(sessionCatalogSource).not.toContain("emitArtifactOpen");
     expect(sessionCatalogSource).not.toContain("emitWorkspaceSync");
     expect(sessionCatalogSource).not.toContain("async listSessions(");
+  });
+
+  it("reads external instruction sources from authoritative state without a dedicated RPC", async () => {
+    const backendSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const chatRuntimeSource = await Bun.file(
+      `${import.meta.dir}/../mainview/chat-runtime.ts`,
+    ).text();
+    const sharedContractSource = await Bun.file(
+      `${import.meta.dir}/../shared/workspace-contract.ts`,
+    ).text();
+
+    expect(sharedContractSource).not.toContain("getGeneratedAgentContextExternalSources: {");
+    expect(backendSource).not.toContain("getGeneratedAgentContextExternalSources: async");
+    expect(chatRuntimeSource).not.toContain(
+      "rpcClient.request.getGeneratedAgentContextExternalSources",
+    );
+    expect(chatRuntimeSource).toContain('kind: "externalInstructions"');
+    expect(chatRuntimeSource).toContain("source.defaultControl.enabled");
+    expect(chatRuntimeSource).toContain("source.defaultControl.eligibleActors");
+  });
+
+  it("keeps the Extensions pane on state and snapshot read models", async () => {
+    const agentsPaneSource = await Bun.file(
+      `${import.meta.dir}/../mainview/AgentsPane.svelte`,
+    ).text();
+    const extensionsPaneSource = await Bun.file(
+      `${import.meta.dir}/../mainview/ExtensionsPane.svelte`,
+    ).text();
+    const usageHelperSource = await Bun.file(
+      `${import.meta.dir}/../mainview/agents-pane-extension-usage.ts`,
+    ).text();
+
+    expect(agentsPaneSource).toContain("runtime.getAgentExtensionsCatalog()");
+    expect(agentsPaneSource).not.toContain("runtime.getExtensionsInventory()");
+    expect(agentsPaneSource).not.toContain("runtime.extensionsInventorySnapshot");
+    expect(extensionsPaneSource).toContain("runtime.getExtensionSnapshots()");
+    expect(extensionsPaneSource).toContain("runtime.extensionSnapshotsSnapshot");
+    expect(extensionsPaneSource).not.toContain("runtime.getExtensionsInventory()");
+    expect(extensionsPaneSource).not.toContain("runtime.extensionsInventorySnapshot");
+    expect(usageHelperSource).not.toContain("ExtensionInventoryItemReadModel");
+    expect(usageHelperSource).toContain("AgentExtensionCatalogItem");
   });
 });
 

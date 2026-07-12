@@ -6,13 +6,42 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import {
   type AbsolutePath,
+  type BuildExtensionInput,
+  type BuildExtensionResult,
   type BuildExecuteTypescriptFacadeDeclarationsInput,
+  type AddExtensionInstructionInput,
+  type AddExtensionInstructionResult,
+  type ConfigureExtensionInstructionInput,
+  type ConfigureExtensionInstructionResult,
+  type CreateExtensionSourceInput,
+  type CreateExtensionSourceResult,
   type CreateWorkflowAgentSourceInput,
   type DeleteWorkflowAgentSourceInput,
   type DuplicateWorkflowAgentSourceInput,
+  type DuplicateExtensionSourceInput,
+  type DuplicateExtensionSourceResult,
+  type DeleteExtensionSourceInput,
+  type DeleteExtensionSourceResult,
   type ExecuteTypescriptFacadeDeclarations,
   ExtensionError as CoreExtensionError,
   type ExtensionError,
+  type ExtensionRegistryObservationResult,
+  type ExtensionSourceMutationId,
+  type RefreshExtensionCliRequirementReadinessInput,
+  type RefreshExtensionCliRequirementReadinessResult,
+  type RemoveExtensionInstructionInput,
+  type RemoveExtensionInstructionResult,
+  type RenameExtensionInstructionInput,
+  type RenameExtensionInstructionResult,
+  type ReorderExtensionInstructionsInput,
+  type ReorderExtensionInstructionsResult,
+  type RevertExtensionSourceMutationInput,
+  type RevertExtensionSourceMutationResult,
+  type ResetExtensionInstructionsInput,
+  type ResetExtensionInstructionsResult,
+  type ExternalInstructionScanInput,
+  type ExternalInstructionScanResult,
+  type ConfigureExtensionTypescriptApiResult,
   ExtensionStatePort,
   type GeneratedPackageBuildInput,
   type GeneratedPackageBuildPlanResult,
@@ -22,7 +51,13 @@ import {
   type NativeToolDeclaration,
   type NativeToolHandlerLookupInput,
   type OpenExtensionSourceEditInput,
+  type ObserveExtensionSourceBuildsInput,
+  type ObserveExtensionSourceBuildsResult,
   type RequestInputVariant,
+  type ResolveExternalInstructionSourceInput,
+  type ResolvedExternalInstructionSource,
+  type SaveExternalInstructionSourceInput,
+  type ConfigureExtensionTypescriptApiInput,
   type SaveExtensionSourceEditInput,
   type ScaffoldMissingWorkflowAgentSourcesResult,
   type SourceEditSaveResult,
@@ -30,7 +65,41 @@ import {
   type WorkflowAgentSourceDeleteResult,
   type WorkflowAgentSourceLifecycleResult,
   type WorkflowAgentSourceObservation,
+  type ApplyExtensionSnapshotSourceRestoreInput,
+  type CaptureExtensionSnapshotSourcePayloadInput,
+  type ExtensionSnapshotPayload,
+  type ExtensionSnapshotSourceRestorePlan,
+  type ExtensionSnapshotSourceRestoreReceipt,
+  type PrepareExtensionSnapshotSourceRestoreInput,
+  type FinalizeExtensionSnapshotSourceRestoreInput,
+  type FinalizeExtensionSnapshotSourceRestoreResult,
 } from "@svvy/core";
+import {
+  addExtensionInstruction,
+  configureExtensionInstruction,
+  createExtensionSource,
+  deleteExtensionSource,
+  duplicateExtensionSource,
+  finalizeExtensionSourceMutation,
+  removeExtensionInstruction,
+  recoverExtensionSourceMutations,
+  renameExtensionInstruction,
+  reorderExtensionInstructions,
+  revertExtensionSourceMutation,
+  resetExtensionInstructions,
+} from "./extension-source-lifecycle";
+import { configureExtensionTypescriptApi } from "./extension-source-management";
+import { buildExtension } from "./extension-build-execution";
+import { observeCurrentExtensionBuilds } from "./extension-build-observation";
+import { ExtensionBuildProcessPort } from "./extension-build-process-port";
+import { ExtensionCliRequirementProbePort } from "./extension-cli-requirement-probe-port";
+import { refreshExtensionCliRequirementReadiness } from "./extension-cli-requirement-readiness";
+import { observeExtensionRegistry } from "./extension-registry-observation";
+import {
+  resolveExternalInstructionSource,
+  saveExternalInstructionSource,
+  scanExternalInstructions,
+} from "./external-instructions";
 import {
   GENERATED_EXTENSIONS_PACKAGE_NAME,
   refreshGeneratedExtensionsPackage as refreshGeneratedExtensionsPackageFiles,
@@ -51,6 +120,12 @@ import { loadExtensionHandler } from "./load-extension-handler";
 import { requestUserInputHandler } from "./request-user-input-handler";
 import { threadStartHandler } from "./thread-start-handler";
 import { ExtensionSourceRootsPort } from "./extension-source-roots-port";
+import {
+  applyExtensionSnapshotSourceRestore,
+  captureExtensionSnapshotSourcePayload,
+  prepareExtensionSnapshotSourceRestore,
+  finalizeExtensionSnapshotSourceRestore,
+} from "./extension-snapshots";
 import { PackagedExtensionTemplatesPort } from "./packaged-extension-templates-port";
 import {
   createWorkflowAgentSource,
@@ -117,9 +192,35 @@ export interface ToolMetadataInput {
 }
 
 export interface ExtensionsService {
+  snapshots: {
+    captureSourcePayload(
+      input: CaptureExtensionSnapshotSourcePayloadInput,
+    ): Effect.Effect<ExtensionSnapshotPayload, ExtensionError>;
+    prepareSourceRestore(
+      input: PrepareExtensionSnapshotSourceRestoreInput,
+    ): Effect.Effect<ExtensionSnapshotSourceRestorePlan, ExtensionError>;
+    applySourceRestore(
+      input: ApplyExtensionSnapshotSourceRestoreInput,
+    ): Effect.Effect<ExtensionSnapshotSourceRestoreReceipt, ExtensionError>;
+    finalizeSourceRestore(
+      input: FinalizeExtensionSnapshotSourceRestoreInput,
+    ): Effect.Effect<FinalizeExtensionSnapshotSourceRestoreResult, ExtensionError>;
+  };
   registry: {
     list(): Effect.Effect<readonly ExtensionRecord[]>;
     inspect(input: ExtensionRegistryInspectInput): Effect.Effect<ExtensionRecord, ExtensionError>;
+    observe(): Effect.Effect<ExtensionRegistryObservationResult, ExtensionError>;
+  };
+  builds: {
+    build(input: BuildExtensionInput): Effect.Effect<BuildExtensionResult, ExtensionError>;
+    observeCurrent(
+      input: ObserveExtensionSourceBuildsInput,
+    ): Effect.Effect<ObserveExtensionSourceBuildsResult, ExtensionError>;
+  };
+  dependencies: {
+    refreshReadiness(
+      input: RefreshExtensionCliRequirementReadinessInput,
+    ): Effect.Effect<RefreshExtensionCliRequirementReadinessResult, ExtensionError>;
   };
   actorBindings: {
     resolve(input: ResolveActorExtensionBindingInput): Effect.Effect<ActorExtensionBinding>;
@@ -147,7 +248,53 @@ export interface ExtensionsService {
       input: GeneratedPackageWorkspaceLinkRepairInput,
     ): Effect.Effect<GeneratedPackageWorkspaceLinkRepairPlan, ExtensionError>;
   };
+  externalInstructions: {
+    scan(
+      input: ExternalInstructionScanInput,
+    ): Effect.Effect<ExternalInstructionScanResult, ExtensionError>;
+    resolveSource(
+      input: ResolveExternalInstructionSourceInput,
+    ): Effect.Effect<ResolvedExternalInstructionSource, ExtensionError>;
+    saveSource(input: SaveExternalInstructionSourceInput): Effect.Effect<never, ExtensionError>;
+  };
   sources: {
+    recoverMutations(): Effect.Effect<void, ExtensionError>;
+    finalizeLifecycleMutation(
+      mutationId: ExtensionSourceMutationId,
+    ): Effect.Effect<{ readonly finalized: boolean }, ExtensionError>;
+    createExtension(
+      input: CreateExtensionSourceInput,
+    ): Effect.Effect<CreateExtensionSourceResult, ExtensionError>;
+    duplicateExtension(
+      input: DuplicateExtensionSourceInput,
+    ): Effect.Effect<DuplicateExtensionSourceResult, ExtensionError>;
+    deleteExtension(
+      input: DeleteExtensionSourceInput,
+    ): Effect.Effect<DeleteExtensionSourceResult, ExtensionError>;
+    resetExtensionInstructions(
+      input: ResetExtensionInstructionsInput,
+    ): Effect.Effect<ResetExtensionInstructionsResult, ExtensionError>;
+    addInstruction(
+      input: AddExtensionInstructionInput,
+    ): Effect.Effect<AddExtensionInstructionResult, ExtensionError>;
+    removeInstruction(
+      input: RemoveExtensionInstructionInput,
+    ): Effect.Effect<RemoveExtensionInstructionResult, ExtensionError>;
+    configureInstruction(
+      input: ConfigureExtensionInstructionInput,
+    ): Effect.Effect<ConfigureExtensionInstructionResult, ExtensionError>;
+    renameInstruction(
+      input: RenameExtensionInstructionInput,
+    ): Effect.Effect<RenameExtensionInstructionResult, ExtensionError>;
+    reorderInstructions(
+      input: ReorderExtensionInstructionsInput,
+    ): Effect.Effect<ReorderExtensionInstructionsResult, ExtensionError>;
+    revertMutation(
+      input: RevertExtensionSourceMutationInput,
+    ): Effect.Effect<RevertExtensionSourceMutationResult, ExtensionError>;
+    configureTypescriptApi(
+      input: ConfigureExtensionTypescriptApiInput,
+    ): Effect.Effect<ConfigureExtensionTypescriptApiResult, ExtensionError>;
     openEditSession(
       input: OpenExtensionSourceEditInput,
     ): Effect.Effect<SourceEditSession, ExtensionError>;
@@ -183,7 +330,9 @@ export type ExtensionsLayerRequirements =
   | ExtensionSourceRootsPort
   | PackagedExtensionTemplatesPort
   | GeneratedPackageRootPort
-  | WorkspaceSourceLinkPort;
+  | WorkspaceSourceLinkPort
+  | ExtensionBuildProcessPort
+  | ExtensionCliRequirementProbePort;
 
 export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
   Effect.gen(function* () {
@@ -195,8 +344,40 @@ export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
     const packagedExtensionTemplates = yield* PackagedExtensionTemplatesPort;
     const generatedPackageRoot = yield* GeneratedPackageRootPort;
     const workspaceSourceLink = yield* WorkspaceSourceLinkPort;
+    const extensionBuildProcess = yield* ExtensionBuildProcessPort;
+    const cliRequirementProbe = yield* ExtensionCliRequirementProbePort;
     return yield* Effect.succeed(
       Extensions.of({
+        snapshots: {
+          captureSourcePayload: (input) =>
+            captureExtensionSnapshotSourcePayload(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+            ),
+          prepareSourceRestore: (input) =>
+            prepareExtensionSnapshotSourceRestore(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+            ),
+          applySourceRestore: (input) =>
+            applyExtensionSnapshotSourceRestore(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+            ),
+          finalizeSourceRestore: (input) =>
+            finalizeExtensionSnapshotSourceRestore(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+            ),
+        },
         registry: {
           list: () => Effect.succeed(BUILTIN_EXTENSIONS),
           inspect: ({ id }) => {
@@ -213,6 +394,38 @@ export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
             }
             return Effect.succeed(record);
           },
+          observe: () =>
+            observeExtensionRegistry().pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
+        },
+        builds: {
+          build: (input) =>
+            buildExtension(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+              Effect.provideService(ExtensionBuildProcessPort, extensionBuildProcess),
+            ),
+          observeCurrent: (input) =>
+            observeCurrentExtensionBuilds(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+            ),
+        },
+        dependencies: {
+          refreshReadiness: (input) =>
+            refreshExtensionCliRequirementReadiness(input).pipe(
+              Effect.provideService(ExtensionCliRequirementProbePort, cliRequirementProbe),
+            ),
         },
         actorBindings: {
           resolve: (input) => Effect.succeed(resolveActorExtensionState(input)),
@@ -287,13 +500,130 @@ export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
               Effect.provideService(Path.Path, path),
             ),
         },
+        externalInstructions: {
+          scan: (input) =>
+            scanExternalInstructions(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+            ),
+          resolveSource: (input) =>
+            resolveExternalInstructionSource(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+            ),
+          saveSource: saveExternalInstructionSource,
+        },
         sources: {
+          recoverMutations: () =>
+            recoverExtensionSourceMutations().pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+            ),
+          finalizeLifecycleMutation: (mutationId) =>
+            finalizeExtensionSourceMutation(mutationId).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+            ),
+          createExtension: (input) =>
+            createExtensionSource(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
+          duplicateExtension: (input) =>
+            duplicateExtensionSource(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
+          deleteExtension: (input) =>
+            deleteExtensionSource(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
+          resetExtensionInstructions: (input) =>
+            resetExtensionInstructions(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
+          addInstruction: (input) =>
+            addExtensionInstruction(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
+          removeInstruction: (input) =>
+            removeExtensionInstruction(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
+          configureInstruction: (input) =>
+            configureExtensionInstruction(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
+          renameInstruction: (input) =>
+            renameExtensionInstruction(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
+          reorderInstructions: (input) =>
+            reorderExtensionInstructions(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
+          revertMutation: (input) =>
+            revertExtensionSourceMutation(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
+          configureTypescriptApi: (input) =>
+            configureExtensionTypescriptApi(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
           openEditSession: (input) =>
             openExtensionSourceEditSession(input).pipe(
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
               Effect.provideService(Crypto.Crypto, crypto),
               Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
             ),
           saveEditSession: (input) =>
             saveExtensionSourceEditSession(input).pipe(
@@ -301,6 +631,7 @@ export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
               Effect.provideService(Path.Path, path),
               Effect.provideService(Crypto.Crypto, crypto),
               Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
             ),
           createWorkflowAgent: (input) =>
             createWorkflowAgentSource(input).pipe(
@@ -308,6 +639,7 @@ export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
               Effect.provideService(Path.Path, path),
               Effect.provideService(Crypto.Crypto, crypto),
               Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
             ),
           duplicateWorkflowAgent: (input) =>
             duplicateWorkflowAgentSource(input).pipe(
@@ -315,6 +647,7 @@ export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
               Effect.provideService(Path.Path, path),
               Effect.provideService(Crypto.Crypto, crypto),
               Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
             ),
           deleteWorkflowAgent: (input) =>
             deleteWorkflowAgentSource(input).pipe(
@@ -322,6 +655,7 @@ export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
               Effect.provideService(Path.Path, path),
               Effect.provideService(Crypto.Crypto, crypto),
               Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
             ),
           scanWorkflowAgents: () =>
             scanWorkflowAgentSources().pipe(

@@ -301,8 +301,10 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "DeleteOrchestratorProfileCommandInputSchema",
       "ExtensionEnvStateCommands",
       "ExtensionReadModelRecord",
+      "ExtensionCliReadinessReadModel",
       "ExtensionsReadModel",
       "ExtensionsReadModelRequest",
+      "ExternalInstructionsReadModelRequest",
       "GeneratedContextPreviewReadModelRecord",
       "HandlerInspectorReadModel",
       "HandlerInspectorReadModelRequest",
@@ -327,6 +329,8 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "RecordProviderAuthStatusCommandInputSchema",
       "RemoveExtensionEnvOverrideCommandInput",
       "RemoveExtensionEnvOverrideCommandInputSchema",
+      "RemoveExtensionEnvSecretCommandInput",
+      "RemoveExtensionEnvSecretCommandInputSchema",
       "ReorderOrchestratorProfilesCommandInput",
       "ReorderOrchestratorProfilesCommandInputSchema",
       "RequestInputReadModel",
@@ -350,6 +354,8 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "SetAgentActorExtensionDefaultsCommandInputSchema",
       "SetExtensionEnvOverrideCommandInput",
       "SetExtensionEnvOverrideCommandInputSchema",
+      "SetExtensionEnvSecretCommandInput",
+      "SetExtensionEnvSecretCommandInputSchema",
       "SetExternalInstructionActorUsageCommandInput",
       "SetExternalInstructionActorUsageCommandInputSchema",
       "SetProfileExtensionUsageCommandInput",
@@ -459,6 +465,8 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "decodeUnknownRecordProviderAuthStatusCommandInputExit",
       "decodeUnknownRemoveExtensionEnvOverrideCommandInputEffect",
       "decodeUnknownRemoveExtensionEnvOverrideCommandInputExit",
+      "decodeUnknownRemoveExtensionEnvSecretCommandInputEffect",
+      "decodeUnknownRemoveExtensionEnvSecretCommandInputExit",
       "decodeUnknownReorderOrchestratorProfilesCommandInputEffect",
       "decodeUnknownReorderOrchestratorProfilesCommandInputExit",
       "decodeUnknownResetActorExtensionDefaultsCommandInputEffect",
@@ -473,6 +481,8 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "decodeUnknownSelectWorkspaceTabCommandInputExit",
       "decodeUnknownSetExtensionEnvOverrideCommandInputEffect",
       "decodeUnknownSetExtensionEnvOverrideCommandInputExit",
+      "decodeUnknownSetExtensionEnvSecretCommandInputEffect",
+      "decodeUnknownSetExtensionEnvSecretCommandInputExit",
       "decodeUnknownSetExternalInstructionActorUsageCommandInputEffect",
       "decodeUnknownSetExternalInstructionActorUsageCommandInputExit",
       "decodeUnknownSetProfileExtensionUsageCommandInputEffect",
@@ -556,6 +566,10 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "layer",
       "layerAppLogWritePort",
       "layerExtensionStatePort",
+      "layerExtensionSnapshotStatePort",
+      "layerExtensionSnapshotSettingsStatePort",
+      "layerExtensionUsageStatePort",
+      "layerGeneratedContextPreviewSubjectStatePort",
       "layerPiSessionReferencePort",
       "layerProviderAuthStatusStatePort",
       "layerRuntimeActorExtensionBindingStatePort",
@@ -567,6 +581,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "layerRuntimeEpisodeStatePort",
       "layerRuntimeExtensionContextImpactStatePort",
       "layerRuntimeExtensionStatePort",
+      "layerRuntimeExternalInstructionStatePort",
       "layerRuntimeGeneratedPackageStatePort",
       "layerRuntimePromptDefaultsStatePort",
       "layerRuntimeQueueStatePort",
@@ -608,8 +623,11 @@ const expectedPublicSymbols = new Map<string, string[]>([
     [
       "BUILTIN_EXTENSIONS",
       "BUILTIN_EXTENSION_IDS",
+      "BuildGeneratedContextSources",
       "BuiltinExtensionId",
       "ExtensionCliRequirement",
+      "ExtensionCliRequirementProbePort",
+      "ExtensionCliRequirementProbePortService",
       "ExtensionExternalInstructionSource",
       "ExtensionGeneratedInstruction",
       "ExtensionInstructionFile",
@@ -621,9 +639,15 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "ExtensionCategory",
       "ExtensionInterfaceKind",
       "ExtensionUsageState",
+      "ExtensionRegistryObservationServices",
+      "ExtensionBuildObservationServices",
+      "ExtensionBuildProcessPort",
+      "ExtensionBuildProcessPortService",
+      "ExtensionOwnedSourceAddress",
       "Extensions",
       "ExtensionsLayerRequirements",
       "ExtensionsService",
+      "ExternalInstructionServices",
       "ActorExtensionBinding",
       "BuildVisibleExtensionRecordsInput",
       "CommandInvocationContext",
@@ -635,12 +659,16 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "GeneratedPackageRootPort",
       "GeneratedPackageRootPortService",
       "GeneratedPackageRoots",
+      "GeneratedContextBuildArtifacts",
+      "GeneratedContextSourceContributor",
       "GeneratedExtensionExportDiscoveryHost",
       "PackagedExtensionTemplateRoots",
       "PackagedExtensionTemplatesPort",
       "PackagedExtensionTemplatesPortService",
       "WorkspaceSourceLinkPort",
       "WorkspaceSourceLinkPortService",
+      "layerExtensionCliRequirementProbePort",
+      "layerExtensionBuildProcessPort",
       "ListExtensionsDetails",
       "ListExtensionsHandlerInvocation",
       "ListExtensionsInput",
@@ -676,16 +704,23 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "VisibleExtensionRecordsResult",
       "WORKFLOWS_FACADE_DECLARATION",
       "ResolveActorExtensionBindingInput",
+      "addExtensionInstruction",
+      "buildGeneratedContext",
+      "buildGeneratedContextArtifacts",
       "buildExecuteTypescriptFacadeDeclarations",
       "buildNativeToolSchemaJsonForExtension",
       "buildNativeToolSchemasJson",
       "builtinDefaultExtensionOrder",
       "builtinDefaultExtensionUsageState",
+      "builtinExtensionRegistryUsagePolicy",
       "workflowTaskReferenceableBuiltinExtensionIds",
       "createListExtensionsHandler",
       "createLoadExtensionHandler",
       "createRequestUserInputHandler",
       "createThreadStartHandler",
+      "createExtensionSource",
+      "configureExtensionInstruction",
+      "configureExtensionTypescriptApi",
       "decodeRequestUserInputInputEffect",
       "decodeRequestUserInputInputExit",
       "decodeRequestUserInputResultEffect",
@@ -693,6 +728,10 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "decodeThreadStartInputEffect",
       "decodeThreadStartInputExit",
       "externalInstructionExtensionId",
+      "extensionOwnedSourceId",
+      "deleteExtensionSource",
+      "duplicateExtensionSource",
+      "finalizeExtensionSourceMutation",
       "GENERATED_EXTENSIONS_PACKAGE_NAME",
       "generatedExtensionExportIds",
       "generatedExtensionExportIdsFromHost",
@@ -716,10 +755,22 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "requestUserInputHandler",
       "renderGeneratedExtensionsPackageFiles",
       "renderGeneratedWorkflowsPackageFiles",
+      "observeExtensionRegistry",
+      "observeCurrentExtensionBuilds",
+      "recoverExtensionSourceMutations",
+      "removeExtensionInstruction",
+      "renameExtensionInstruction",
+      "reorderExtensionInstructions",
+      "resetExtensionInstructions",
+      "resolveExternalInstructionSource",
       "resolveActorExtensionState",
+      "revertExtensionSourceMutation",
+      "saveExternalInstructionSource",
+      "scanExternalInstructions",
       "summarizeListExtensions",
       "threadStartHandler",
       "visibleExtensionRecords",
+      "userExtensionRegistryUsagePolicy",
     ],
   ],
   ["@svvy/pi-adapter", ["PiAdapter", "layer"]],
@@ -734,6 +785,8 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "DesktopBridgeAdapter",
       "DesktopBridgeRegistration",
       "DesktopBrowserToolsUiAdapter",
+      "DesktopExternalInstructionEditorResult",
+      "DesktopExternalInstructionEditorTarget",
       "DesktopHostActionsAdapter",
       "DesktopHostAdapter",
       "DesktopMainWindowInput",
@@ -839,6 +892,7 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "RuntimeGeneratedPackageRefreshHostPort",
       "RuntimeLayerModelResolverPort",
       "RuntimeLayerProviderAuthPort",
+      "RuntimeExternalInstructionScanInputPort",
       "RuntimeSourceInvalidationScanPort",
       "RuntimeSurfaceQueueWakeReason",
       "RuntimeWorkflowTaskAgentBridgeBearerVerifier",
@@ -849,6 +903,7 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "RuntimeGeneratedPackageRefreshHostPortService",
       "RuntimeLayerModelResolverPortService",
       "RuntimeLayerProviderAuthPortService",
+      "RuntimeExternalInstructionScanInputPortService",
       "RuntimeSourceInvalidationScanPortService",
       "RuntimeGeneratedPackageWorkspaceLinkFileHost",
       "RuntimeSourceInvalidationDirectoryEntry",
@@ -900,8 +955,16 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "WorkspaceStateRouter",
       "WorkspaceStateRouterInput",
       "createWorkspaceStateRouter",
+      "extensionSnapshotSettingsStatePortFromStore",
+      "extensionSnapshotSettingsStatePortFromStructuredSessionState",
+      "extensionSnapshotStatePortFromStore",
+      "extensionSnapshotStatePortFromStructuredSessionState",
       "extensionStatePortFromStore",
       "extensionStatePortFromStructuredSessionState",
+      "extensionUsageStatePortFromStore",
+      "extensionUsageStatePortFromStructuredSessionState",
+      "generatedContextPreviewSubjectStatePortFromStore",
+      "generatedContextPreviewSubjectStatePortFromStructuredSessionState",
       "layerWorkspaceStateRouter",
       "piSessionReferencePortFromStore",
       "piSessionReferencePortFromStructuredSessionState",
@@ -924,6 +987,8 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "runtimeExtensionContextImpactStatePortFromStructuredSessionState",
       "runtimeExtensionStatePortFromStore",
       "runtimeExtensionStatePortFromStructuredSessionState",
+      "runtimeExternalInstructionStatePortFromStore",
+      "runtimeExternalInstructionStatePortFromStructuredSessionState",
       "runtimeGeneratedPackageStatePortFromStore",
       "runtimeGeneratedPackageStatePortFromStructuredSessionState",
       "runtimePromptDefaultsStatePortFromStore",
@@ -1019,6 +1084,14 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "StructuredAgentActorExtensionDefaultsRecord",
       "StructuredAgentProfileRecord",
       "StructuredExtensionEnvOverrideRecord",
+      "StructuredExtensionEnvDeclarationRecord",
+      "StructuredExtensionEnvSecretRecord",
+      "StructuredExtensionEnvSecretReceiptRecord",
+      "StructuredExtensionEnvSecretCleanupRecord",
+      "StructuredExtensionRegistryReconcileResult",
+      "StructuredExtensionSourceBuildEvidenceBatchRecord",
+      "StructuredExtensionSourceBuildEvidenceReconcileResult",
+      "StructuredExtensionBuildAttemptMutationResult",
       "StructuredSnippetRecord",
       "StructuredWorkspaceRecord",
       "StructuredWorkspaceInput",
@@ -1071,6 +1144,8 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "StructuredWorkflowAgentSourceIndexRecord",
       "StructuredExtensionDependencyApprovalRecord",
       "StructuredExtensionDependencyReadinessRecord",
+      "StructuredExtensionDependencyReadinessBatchRecord",
+      "StructuredExtensionDependencyReadinessReconcileResult",
       "StructuredSurfaceQueuedMessageRecord",
       "StructuredRuntimeHandlerThreadGeneratedContextBindingInput",
       "StructuredRuntimeHandlerThreadInitialQueueInput",
@@ -1131,6 +1206,7 @@ const runtimeBootstrapSpecApprovedSymbols = [
   "RuntimeGeneratedPackageRefreshHostPort",
   "RuntimeLayerModelResolverPort",
   "RuntimeLayerProviderAuthPort",
+  "RuntimeExternalInstructionScanInputPort",
   "RuntimeSourceInvalidationScanPort",
   "RuntimeSurfaceQueueWakeReason",
   "RuntimeWorkflowTaskAgentBridgeBearerVerifier",
@@ -1141,6 +1217,7 @@ const runtimeBootstrapSpecApprovedSymbols = [
   "RuntimeGeneratedPackageRefreshHostPortService",
   "RuntimeLayerModelResolverPortService",
   "RuntimeLayerProviderAuthPortService",
+  "RuntimeExternalInstructionScanInputPortService",
   "RuntimeSourceInvalidationScanPortService",
   "RuntimeGeneratedPackageWorkspaceLinkFileHost",
   "RuntimeSourceInvalidationDirectoryEntry",
@@ -3386,6 +3463,15 @@ describe("package boundaries", () => {
   it("@svvy/core data-only ports use function-syntax Context.Service", () => {
     const coreDataOnlyPorts = [
       { file: "extension-state-ports.ts", names: ["ExtensionStatePort"] },
+      {
+        file: "extension-snapshot-contracts.ts",
+        names: [
+          "ExtensionSnapshotStatePort",
+          "ExtensionSnapshotSettingsStatePort",
+          "ExtensionSnapshotPayloadStorePort",
+          "ExtensionSnapshotSecretStorePort",
+        ],
+      },
       { file: "app-log-contracts.ts", names: ["AppLogWritePort"] },
       { file: "sandbox-policy-contracts.ts", names: ["SandboxPolicySource"] },
       {
@@ -3394,6 +3480,10 @@ describe("package boundaries", () => {
       },
       { file: "secret-store-ports.ts", names: ["SecretStorePort"] },
       { file: "pi-adapter-ports.ts", names: ["PiSessionReferencePort", "PiRuntimePathsPort"] },
+      {
+        file: "external-instruction-state-ports.ts",
+        names: ["RuntimeExternalInstructionStatePort"],
+      },
       {
         file: "runtime-state-ports.ts",
         names: [
@@ -3677,6 +3767,17 @@ describe("package boundaries", () => {
           )
           .filter((specifier) => {
             if (
+              display(file) === "src/bun/extension-lifecycle-authority.ts" &&
+              [
+                "@effect/platform-bun/BunCrypto",
+                "@effect/platform-bun/BunFileSystem",
+                "@effect/platform-bun/BunPath",
+                "effect/Layer",
+              ].includes(specifier)
+            ) {
+              return false;
+            }
+            if (
               specifier === "effect/ManagedRuntime" ||
               specifier === "effect/Layer" ||
               specifier === "effect/Scope"
@@ -3834,6 +3935,12 @@ describe("package boundaries", () => {
           "packages/state/src/app-log-store.ts -> layerAppLogState",
           "packages/state/src/app-log-write-port.ts -> layerAppLogWritePort",
           "packages/state/src/extension-state-port.ts -> layerExtensionStatePort",
+          "packages/state/src/extension-snapshot-state-port.ts -> layerExtensionSnapshotStatePort",
+          "packages/state/src/extension-snapshot-settings-state-port.ts -> layerExtensionSnapshotSettingsStatePort",
+          "packages/core/src/extension-usage-contracts.ts -> ExtensionUsageStatePort",
+          "packages/state/src/extension-usage-state-port.ts -> layerExtensionUsageStatePort",
+          "packages/core/src/generated-context-preview-contracts.ts -> GeneratedContextPreviewSubjectStatePort",
+          "packages/state/src/generated-context-preview-subject-state-port.ts -> layerGeneratedContextPreviewSubjectStatePort",
           "packages/state/src/pi-session-reference-port.ts -> layerPiSessionReferencePort",
           "packages/state/src/provider-auth-status-state-port.ts -> layerProviderAuthStatusStatePort",
           "packages/state/src/runtime-actor-extension-binding-state-port.ts -> layerRuntimeActorExtensionBindingStatePort",
@@ -3845,6 +3952,7 @@ describe("package boundaries", () => {
           "packages/state/src/runtime-episode-state-port.ts -> layerRuntimeEpisodeStatePort",
           "packages/state/src/runtime-extension-context-impact-state-port.ts -> layerRuntimeExtensionContextImpactStatePort",
           "packages/state/src/runtime-extension-state-port.ts -> layerRuntimeExtensionStatePort",
+          "packages/state/src/runtime-external-instruction-state-port.ts -> layerRuntimeExternalInstructionStatePort",
           "packages/state/src/runtime-generated-package-state-port.ts -> layerRuntimeGeneratedPackageStatePort",
           "packages/state/src/runtime-prompt-defaults-state-port.ts -> layerRuntimePromptDefaultsStatePort",
           "packages/state/src/runtime-queue-state-port.ts -> layerRuntimeQueueStatePort",
@@ -3910,6 +4018,11 @@ describe("package boundaries", () => {
         exports: [
           "packages/extensions/src/extensions-service.ts -> Extensions",
           "packages/extensions/src/extensions-service.ts -> layer",
+          "packages/extensions/src/extension-cli-requirement-probe-port.ts -> ExtensionCliRequirementProbePort",
+          "packages/extensions/src/extension-cli-requirement-probe-port.ts -> layerExtensionCliRequirementProbePort",
+          "packages/extensions/src/extension-build-process-port.ts -> ExtensionBuildProcessPort",
+          "packages/extensions/src/extension-build-process-port.ts -> layerExtensionBuildProcessPort",
+          "packages/core/src/extension-snapshot-contracts.ts -> ExtensionSnapshotSecretValuesPort",
         ],
         resources: [
           "Extension source file read/edit session",
@@ -3917,11 +4030,13 @@ describe("package boundaries", () => {
           "Generated package temporary directory",
           "Generated package root and manifest",
           "CLI requirement probe subprocess",
+          "ExtensionCliRequirementProbePort",
+          "ExtensionBuildProcessPort",
+          "Extension snapshot secret-values host port",
           "Dependency install/update subprocess",
           "Extension reference eligibility cache",
           "Source edit file write/staging",
           "Dependency probe/generator child process",
-          "Generated context cache file, when emitted",
         ],
       },
       {
@@ -3951,6 +4066,17 @@ describe("package boundaries", () => {
           "packages/runtime/src/workflow-task-agent-bridge-service.ts -> RuntimeWorkflowTaskAgentBridgeBearerVerifier",
           "packages/runtime/src/workflow-task-agent-bridge-service.ts -> layerRuntimeWorkflowTaskAgentBridgeService",
           "packages/runtime/src/runtime-source-invalidation-service.ts -> RuntimeSourceInvalidationScanPort",
+          "packages/runtime/src/runtime-source-invalidation-service.ts -> RuntimeExternalInstructionScanInputPort",
+          "packages/runtime/src/runtime-extension-build-service.ts -> RuntimeExtensionBuildService",
+          "packages/runtime/src/runtime-extension-build-service.ts -> layerRuntimeExtensionBuildService",
+          "packages/runtime/src/runtime-extension-lifecycle-service.ts -> RuntimeExtensionLifecycleService",
+          "packages/runtime/src/runtime-extension-lifecycle-service.ts -> layerRuntimeExtensionLifecycleService",
+          "packages/runtime/src/runtime-extension-snapshot-service.ts -> RuntimeExtensionSnapshotService",
+          "packages/runtime/src/runtime-extension-snapshot-service.ts -> layerRuntimeExtensionSnapshotService",
+          "packages/runtime/src/runtime-generated-context-binding-service.ts -> RuntimeGeneratedContextBindingService",
+          "packages/runtime/src/runtime-generated-context-binding-service.ts -> layerRuntimeGeneratedContextBindingService",
+          "packages/runtime/src/runtime-generated-context-preview-service.ts -> RuntimeGeneratedContextPreviewService",
+          "packages/runtime/src/runtime-generated-context-preview-service.ts -> layerRuntimeGeneratedContextPreviewService",
           "packages/runtime/src/runtime-source-reconcile-recovery-worker.ts -> RuntimeSourceReconcileRecoveryWorker",
           "packages/runtime/src/runtime-source-reconcile-recovery-worker.ts -> layerRuntimeSourceReconcileRecoveryWorker",
           "packages/runtime/src/runtime-workflow-agent-source-index.ts -> RuntimeWorkflowAgentSourceIndex",
@@ -3967,6 +4093,11 @@ describe("package boundaries", () => {
         ],
         resources: [
           "Runtime event bus",
+          "Extension build service",
+          "Extension lifecycle service",
+          "Extension snapshot service",
+          "Generated-context binding service",
+          "Generated-context preview service",
           "Surface stream cursor lane",
           "Workspace runtime scope service",
           "Surface runtime scope service",
@@ -3981,6 +4112,7 @@ describe("package boundaries", () => {
           "Request-input wait registry",
           "App-log commit notification service",
           "RuntimeSourceInvalidationScanPort",
+          "RuntimeExternalInstructionScanInputPort",
           "Runtime startup readiness barrier",
           "Runtime shutdown admission service",
           "Runtime shutdown preparation service",
@@ -4011,6 +4143,10 @@ describe("package boundaries", () => {
     const nonScopedExports = new Set([
       "packages/core/src/app-log-contracts.ts -> AppLogWritePort",
       "packages/core/src/extension-state-ports.ts -> ExtensionStatePort",
+      "packages/core/src/extension-snapshot-contracts.ts -> ExtensionSnapshotStatePort",
+      "packages/core/src/extension-snapshot-contracts.ts -> ExtensionSnapshotSettingsStatePort",
+      "packages/core/src/extension-snapshot-contracts.ts -> ExtensionSnapshotPayloadStorePort",
+      "packages/core/src/extension-snapshot-contracts.ts -> ExtensionSnapshotSecretStorePort",
       "packages/core/src/pi-adapter-ports.ts -> PiRuntimePathsPort",
       "packages/core/src/pi-adapter-ports.ts -> PiSessionReferencePort",
       "packages/core/src/provider-auth-ports.ts -> ProviderAuthPort",
@@ -4026,6 +4162,7 @@ describe("package boundaries", () => {
       "packages/core/src/runtime-state-ports.ts -> RuntimeExtensionContextImpactStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeExtensionStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeGeneratedPackageStatePort",
+      "packages/core/src/external-instruction-state-ports.ts -> RuntimeExternalInstructionStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimePromptDefaultsStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeQueueStatePort",
       "packages/core/src/runtime-state-ports.ts -> RuntimeReadModelStatePort",
@@ -4705,6 +4842,7 @@ describe("package boundaries", () => {
           "adopted-source-gated",
           [
             "packages/runtime/src/source-invalidation-coordinator-adapter.ts",
+            "src/bun/extension-lifecycle-authority.ts",
             "src/bun/runtime-service-adapter.ts",
           ],
         ],
@@ -4724,7 +4862,16 @@ describe("package boundaries", () => {
           "effect/Effect",
           "uninterruptible",
           "adopted-source-gated",
-          ["packages/extensions/src/generated-package-writer.ts"],
+          [
+            "packages/extensions/src/extension-build-execution.ts",
+            "packages/extensions/src/generated-package-writer.ts",
+          ],
+        ],
+        [
+          "effect/Effect",
+          "onInterrupt",
+          "adopted-source-gated",
+          ["packages/extensions/src/extension-snapshots.ts"],
         ],
         [
           "effect/Effect",
@@ -4745,13 +4892,24 @@ describe("package boundaries", () => {
           "effect/Redacted",
           "make",
           "adopted-source-gated",
-          ["src/bun/app-runtime-bootstrap.ts", "src/bun/session-catalog.ts"],
+          [
+            "src/bun/app-runtime-bootstrap.ts",
+            "src/bun/extension-env-secret-store.ts",
+            "src/bun/extension-snapshot-storage.ts",
+            "src/bun/index.ts",
+            "src/bun/session-catalog.ts",
+          ],
         ],
         [
           "effect/Redacted",
           "value",
           "adopted-source-gated",
-          ["packages/pi-adapter/src/pi-adapter.ts"],
+          [
+            "packages/pi-adapter/src/pi-adapter.ts",
+            "src/bun/app-runtime-bootstrap.ts",
+            "src/bun/extension-env-secret-store.ts",
+            "src/bun/extension-snapshot-storage.ts",
+          ],
         ],
         [
           "effect/SchemaIssue",
@@ -4880,6 +5038,94 @@ describe("package boundaries", () => {
         [
           "effect/FileSystem",
           "FileSystem.FileSystem",
+          ["exists", "readFileString", "realPath", "stat"],
+          ["packages/extensions/src/external-instructions.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          [
+            "exists",
+            "makeDirectory",
+            "readDirectory",
+            "readFile",
+            "readFileString",
+            "readLink",
+            "remove",
+            "rename",
+            "stat",
+            "writeFile",
+            "writeFileString",
+          ],
+          ["packages/extensions/src/extension-source-management.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          ["exists", "readDirectory", "readFileString", "stat"],
+          ["packages/extensions/src/extension-registry-observation.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          ["exists", "readFile", "readFileString", "stat"],
+          ["packages/extensions/src/extension-build-observation.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          [
+            "exists",
+            "makeDirectory",
+            "readFile",
+            "remove",
+            "rename",
+            "writeFile",
+            "writeFileString",
+          ],
+          ["packages/extensions/src/extension-build-execution.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          ["exists", "readDirectory", "readFile", "stat"],
+          ["packages/extensions/src/extension-source-fingerprint.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          [
+            "exists",
+            "makeDirectory",
+            "readDirectory",
+            "readFile",
+            "readLink",
+            "realPath",
+            "remove",
+            "rename",
+            "stat",
+          ],
+          ["packages/extensions/src/extension-snapshots.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
+          [
+            "exists",
+            "makeDirectory",
+            "readDirectory",
+            "readFileString",
+            "readLink",
+            "remove",
+            "rename",
+            "stat",
+            "writeFileString",
+          ],
+          ["packages/extensions/src/extension-source-lifecycle.ts"],
+        ],
+        [
+          "effect/FileSystem",
+          "FileSystem.FileSystem",
           ["remove"],
           ["packages/pi-adapter/src/pi-adapter.ts"],
         ],
@@ -4943,7 +5189,55 @@ describe("package boundaries", () => {
         [
           "effect/Path",
           "Path.Path",
+          ["dirname", "isAbsolute", "parse", "relative", "resolve", "sep"],
+          ["packages/extensions/src/external-instructions.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
           ["dirname", "join", "resolve"],
+          ["packages/extensions/src/extension-source-management.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
+          ["dirname", "resolve", "sep"],
+          ["packages/extensions/src/extension-registry-observation.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
+          ["resolve", "sep"],
+          ["packages/extensions/src/extension-build-observation.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
+          ["dirname", "resolve", "sep"],
+          ["packages/extensions/src/extension-build-execution.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
+          ["dirname", "resolve", "sep"],
+          ["packages/extensions/src/extension-source-fingerprint.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
+          ["dirname", "isAbsolute", "join", "relative", "resolve"],
+          ["packages/extensions/src/extension-snapshots.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
+          ["dirname", "join", "resolve"],
+          ["packages/extensions/src/extension-source-lifecycle.ts"],
+        ],
+        [
+          "effect/Path",
+          "Path.Path",
+          ["basename", "dirname", "join", "resolve"],
           ["packages/extensions/src/source-edit-sessions.ts"],
         ],
         [
@@ -4982,6 +5276,41 @@ describe("package boundaries", () => {
         [
           "effect/Crypto",
           "Crypto.Crypto",
+          ["digest"],
+          [
+            "packages/extensions/src/extension-build-observation.ts",
+            "packages/extensions/src/extension-build-execution.ts",
+            "packages/extensions/src/extension-registry-observation.ts",
+            "packages/extensions/src/extension-snapshots.ts",
+            "packages/extensions/src/extension-source-fingerprint.ts",
+            "packages/extensions/src/extension-source-lifecycle.ts",
+            "packages/extensions/src/external-instructions.ts",
+            "packages/extensions/src/generated-context.ts",
+            "packages/runtime/src/runtime-extension-snapshot-service.ts",
+          ],
+        ],
+        [
+          "effect/Crypto",
+          "Crypto.Crypto",
+          ["randomBytes"],
+          [
+            "packages/extensions/src/extension-build-execution.ts",
+            "packages/extensions/src/extension-source-lifecycle.ts",
+            "packages/runtime/src/runtime-extension-build-service.ts",
+          ],
+        ],
+        [
+          "effect/Crypto",
+          "Crypto.Crypto",
+          ["randomUUIDv4"],
+          [
+            "packages/extensions/src/extension-source-lifecycle.ts",
+            "packages/extensions/src/extension-source-management.ts",
+          ],
+        ],
+        [
+          "effect/Crypto",
+          "Crypto.Crypto",
           ["digest", "randomUUIDv4"],
           ["packages/extensions/src/source-edit-sessions.ts"],
         ],
@@ -5009,6 +5338,9 @@ describe("package boundaries", () => {
           ["withPermit"],
           [
             "packages/runtime/src/runtime-event-bus.ts",
+            "packages/runtime/src/runtime-extension-build-service.ts",
+            "packages/runtime/src/runtime-extension-lifecycle-service.ts",
+            "packages/runtime/src/runtime-extension-snapshot-service.ts",
             "packages/runtime/src/runtime-shutdown-admission.ts",
             "packages/runtime/src/runtime-surface-event-publisher.ts",
             "packages/runtime/src/surface-runtime-scope-service.ts",
@@ -5130,10 +5462,23 @@ describe("package boundaries", () => {
         "packages/pi-adapter/src/pi-adapter.ts",
       ],
       queueFailCauseCalls: [],
-      redactedMakeCalls: ["src/bun/app-runtime-bootstrap.ts", "src/bun/session-catalog.ts"],
+      redactedMakeCalls: [
+        "src/bun/app-runtime-bootstrap.ts",
+        "src/bun/app-runtime-bootstrap.ts",
+        "src/bun/app-runtime-bootstrap.ts",
+        "src/bun/app-runtime-bootstrap.ts",
+        "src/bun/extension-env-secret-store.ts",
+        "src/bun/extension-snapshot-storage.ts",
+        "src/bun/index.ts",
+        "src/bun/session-catalog.ts",
+      ],
       redactedValueCalls: [
         "packages/pi-adapter/src/pi-adapter.ts",
         "packages/pi-adapter/src/pi-adapter.ts",
+        "src/bun/app-runtime-bootstrap.ts",
+        "src/bun/app-runtime-bootstrap.ts",
+        "src/bun/extension-env-secret-store.ts",
+        "src/bun/extension-snapshot-storage.ts",
       ],
       schemaIssueFormatterCalls: ["packages/core/src/errors.ts"],
     });
@@ -5164,7 +5509,11 @@ describe("package boundaries", () => {
   });
 
   it("extracted package production code reads host process facts only through explicit host zones", () => {
-    const allowedHostReadFiles = new Set<string>();
+    const allowedHostReadFiles = new Set(
+      listTypeScriptFiles(join(packageRoot, "extensions", "src", "builtin"))
+        .filter((file) => display(file).includes("/scripts/"))
+        .map(display),
+    );
     const hostReadPattern =
       /\bprocess\s*\.\s*(?:platform|arch|env|argv|cwd|chdir|exit|execPath)\b|\bBun\s*\.\s*argv\b|\bimport\s*\.\s*meta\s*\.\s*main\b|\b(?:hostname|os\.hostname)\s*\(/;
     const violations = sourceRoots.flatMap((root) =>
@@ -7164,7 +7513,6 @@ describe("package boundaries", () => {
     const allowedProduction = [
       "packages/extensions/src/generated-workflows-package.ts",
       "src/bun/smithers-runtime/task-agent-bridge-server.ts",
-      "src/bun/smithers-runtime/workflow-library.ts",
       "src/bun/svvy-direct-tools.ts",
     ].toSorted();
 
@@ -7410,6 +7758,25 @@ describe("package boundaries", () => {
     expect(runtimeSource).toContain('StateContractError.reason === "not-found"');
     expect(runtimeSource).toContain("`CommandOutputEventPayload`");
     expect(runtimeSource).toContain("It does not carry raw bytes");
+  });
+
+  it("secret mutation authority stays private to app bootstrap and state commands", () => {
+    const forbiddenRoots = ["runtime", "extensions", "pi-adapter", "sandbox", "desktop"];
+    const violations = forbiddenRoots.flatMap((packageName) =>
+      listTypeScriptFiles(join(projectRoot, "packages", packageName, "src"))
+        .filter((file) => !isTestFile(file))
+        .filter((file) => /\bSecretStoreMutationPort(?:Service)?\b/.test(readSource(file)))
+        .map(display),
+    );
+    const bootstrapSource = readSource(join(projectRoot, "src", "bun", "app-runtime-bootstrap.ts"));
+    const rendererFacadeSource = readSource(
+      join(projectRoot, "src", "bun", "renderer-state-facade.ts"),
+    );
+
+    expect(violations).toEqual([]);
+    expect(bootstrapSource).toContain("secretStoreMutation: input.secretStoreMutation");
+    expect(bootstrapSource).not.toContain("Layer.succeed(SecretStoreMutationPort");
+    expect(rendererFacadeSource).not.toMatch(/\bSecretStore(?:Mutation)?Port(?:Service)?\b/);
   });
 
   it("source invalidation spec keeps Workflows source refresh separate from actor staleness", () => {
@@ -8293,7 +8660,10 @@ describe("package boundaries", () => {
   });
 
   it("only approved secret intake schemas expose secretValue", () => {
-    const approvedSecretValueOccurrences: string[] = [];
+    const approvedSecretValueOccurrences = [
+      "packages/state/src/state-command-schemas.ts -> SetExtensionEnvSecretCommandInputSchema",
+      "packages/state/src/state-facade.ts -> <non-schema>",
+    ];
     const secretValueOccurrences = sourceRoots
       .flatMap((root) => listTypeScriptFiles(root))
       .filter((file) => !isTestFile(file))
@@ -8442,14 +8812,13 @@ describe("package boundaries", () => {
     );
   });
 
-  it("generated @svvyx/extensions writer owns emitted file contents", () => {
-    const source = readSource(join(projectRoot, "src", "bun", "generated-extensions-package.ts"));
-    expect(source).toContain("renderGeneratedExtensionsPackageFiles");
-    expect(source).not.toContain("export const Extensions = {");
-    expect(source).not.toContain("export type ExtensionReference");
+  it("does not preserve a Bun-owned generated-package writer", () => {
+    expect(existsSync(join(projectRoot, "src", "bun", "generated-extensions-package.ts"))).toBe(
+      false,
+    );
   });
 
-  it("production generated-package writer renderers are not imported outside the named app adapter", () => {
+  it("production generated-package writer renderers stay package-private", () => {
     const writerNames = new Set([
       "renderGeneratedExtensionsPackageFiles",
       "renderGeneratedWorkflowsPackageFiles",
@@ -8467,9 +8836,7 @@ describe("package boundaries", () => {
       )
       .toSorted();
 
-    expect(actual).toEqual([
-      "src/bun/generated-extensions-package.ts -> renderGeneratedExtensionsPackageFiles",
-    ]);
+    expect(actual).toEqual([]);
   });
 
   it("workspace generated package link repair is applied by runtime against an app file host", () => {
@@ -10115,11 +10482,25 @@ describe("package boundaries", () => {
       .flatMap((file) => {
         const source = readSource(file);
         const directViolations = forbiddenPatterns.flatMap(({ pattern, name }) =>
-          [...source.matchAll(pattern)].map(() => `${display(file)} -> ${name}`),
+          [...source.matchAll(pattern)]
+            .filter(
+              () =>
+                !(
+                  display(file) === "src/bun/extension-lifecycle-authority.ts" && name === "Layer.*"
+                ),
+            )
+            .map(() => `${display(file)} -> ${name}`),
         );
         const importViolations = readImports(file)
           .filter(
             (specifier) => specifier === "effect/Layer" || specifier === "effect/ManagedRuntime",
+          )
+          .filter(
+            (specifier) =>
+              !(
+                display(file) === "src/bun/extension-lifecycle-authority.ts" &&
+                specifier === "effect/Layer"
+              ),
           )
           .map((specifier) => `${display(file)} -> ${specifier}`);
         return [...directViolations, ...importViolations];
@@ -10149,6 +10530,7 @@ describe("package boundaries", () => {
       ["src/bun/index.ts", ["Effect.runSync"]],
     ]);
     const sessionCatalogRunnerExceptionReads = new Map<string, string[]>([
+      ["src/bun/extension-lifecycle-authority.ts", ["Effect.runPromise"]],
       ["src/bun/runtime-service-adapter.ts", ["Effect.runPromise"]],
       ["src/bun/session-catalog.ts", ["Effect.runSync"]],
     ]);
@@ -10183,6 +10565,7 @@ describe("package boundaries", () => {
       sessionCatalogManualRunners: ["Effect.runSync"],
       sessionCatalogRunPromiseReads: [],
       sessionCatalogRunnerExceptionReads: [
+        ["src/bun/extension-lifecycle-authority.ts", ["Effect.runPromise"]],
         ["src/bun/runtime-service-adapter.ts", ["Effect.runPromise"]],
         ["src/bun/session-catalog.ts", ["Effect.runSync"]],
       ],
@@ -10211,7 +10594,26 @@ describe("package boundaries", () => {
       .toSorted();
 
     expect(actual).toEqual([
+      "src/bun/app-runtime-bootstrap.test.ts -> Effect.runPromise",
+      "src/bun/app-runtime-bootstrap.test.ts -> Effect.runPromise",
+      "src/bun/app-runtime-bootstrap.test.ts -> Effect.runPromise",
       "src/bun/execute-typescript-tool.test.ts -> Effect.runSync",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      "src/bun/extension-env-secret-store.test.ts -> Effect.runPromise",
+      ...Array(20).fill("src/bun/extension-snapshot-storage.test.ts -> Effect.runPromise"),
       "src/bun/extension-tools.test.ts -> Effect.runSync",
       "src/bun/native-sandbox-helper-package.test.ts -> Effect.runPromise",
       "src/bun/native-sandbox-helper-package.test.ts -> Effect.runPromise",
@@ -10231,6 +10633,7 @@ describe("package boundaries", () => {
       "src/bun/svvy-direct-tools.test.ts -> Effect.runSync",
       "src/bun/svvy-direct-tools.test.ts -> Effect.runSync",
       "src/bun/svvy-direct-tools.test.ts -> Effect.runSync",
+      "src/bun/svvyx-extensions-command.test.ts -> Effect.runPromise",
       "src/bun/thread-orchestration-tools.test.ts -> Effect.runSync",
       "src/bun/thread-report-tool.test.ts -> Effect.runSync",
       "src/bun/thread-start-tool.test.ts -> Effect.runSync",

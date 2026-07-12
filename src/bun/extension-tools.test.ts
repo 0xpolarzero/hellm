@@ -9,9 +9,8 @@ import {
   type RunAcceptedLoadExtension,
 } from "./extension-tools";
 import { resolveExtensionRecord } from "./svvyx-extensions-command";
-import { builtinLoadedInstructionDefaults } from "./default-system-prompt";
 import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
-import type { ListExtensionsDetails } from "@svvy/extensions";
+import type { ExtensionRecord, ListExtensionsDetails } from "@svvy/extensions";
 
 /**
  * Unwrap a `extFacts(NativeToolResult).commandFacts` payload back into the typed
@@ -54,8 +53,9 @@ const stores: StructuredSessionStateStore[] = [];
 
 type TestLoadExtensionToolOptions = Omit<
   Parameters<typeof createLoadExtensionToolBase>[0],
-  "runAcceptedLoadExtension"
+  "runAcceptedLoadExtension" | "resolveVisibleRecords"
 > & {
+  extensionsRoot?: string;
   refreshGeneratedContext?: (input: RefreshGeneratedContextRequest) => Promise<void>;
 };
 
@@ -63,8 +63,19 @@ function createLoadExtensionTool(options: TestLoadExtensionToolOptions) {
   const { refreshGeneratedContext, ...baseOptions } = options;
   return createLoadExtensionToolBase({
     ...baseOptions,
+    resolveVisibleRecords: testResolveVisibleRecords(options.extensionsRoot),
     runAcceptedLoadExtension: fakeAcceptedLoadExtensionRunner(options, refreshGeneratedContext),
   });
+}
+
+function testResolveVisibleRecords(extensionsRoot?: string) {
+  return async (ids: readonly string[]): Promise<readonly ExtensionRecord[]> =>
+    ids.flatMap((id) => {
+      const record = extensionsRoot
+        ? (resolveExtensionRecord(id, extensionsRoot) ?? getExtensionRecord(id))
+        : (getExtensionRecord(id) ?? resolveExtensionRecord(id));
+      return record ? [record] : [];
+    });
 }
 
 function createExtensionToolState(store: StructuredSessionStateStore) {
@@ -84,9 +95,10 @@ function fakeAcceptedLoadExtensionRunner(
 ): RunAcceptedLoadExtension {
   return async (request) => {
     const extensionId = request.arguments.extensionId.trim() as ExtensionId;
-    const record =
-      resolveExtensionRecord(extensionId, options.extensionsRoot) ??
-      getExtensionRecord(extensionId);
+    const record = options.extensionsRoot
+      ? (resolveExtensionRecord(extensionId, options.extensionsRoot) ??
+        getExtensionRecord(extensionId))
+      : (getExtensionRecord(extensionId) ?? resolveExtensionRecord(extensionId));
     if (!record || !request.actorBinding.availableExtensionIds.includes(extensionId)) {
       throw new Error(`Unknown extension: ${extensionId}`);
     }
@@ -277,23 +289,12 @@ describe("builtin extension registry", () => {
       interface: "svvyx",
       typescriptApiEnabled: false,
     });
-    expect(builtinLoadedInstructionDefaults("thread-orchestration")).toEqual([
-      expect.objectContaining({ name: "010-thread-orchestration.md" }),
-    ]);
-    expect(builtinLoadedInstructionDefaults("thread-handling")).toEqual([
-      expect.objectContaining({ name: "010-thread-handling.md" }),
-    ]);
-
     for (const extension of BUILTIN_EXTENSIONS) {
       expect(extension.category).toBe("builtin");
       expect(["instructions", "native_tool", "svvyx"]).toContain(extension.interface);
-      const generatedInstructionCount =
-        "generatedInstructions" in extension ? extension.generatedInstructions.length : 0;
       expect(
-        extension.instructionSourceFiles.length +
-          builtinLoadedInstructionDefaults(extension.id).length +
-          generatedInstructionCount,
-      ).toBeGreaterThan(0);
+        existsSync(join("packages/extensions/src/builtin", extension.id, "manifest.json")),
+      ).toBe(true);
       expect(extension.minimalLoadingHint.trim().length).toBeGreaterThan(0);
       expect(["ready", "not_required", "missing"]).toContain(extension.envReadiness);
       expect(["ready", "not_required", "missing"]).toContain(extension.dependencyReadiness);
@@ -310,18 +311,11 @@ describe("builtin extension registry", () => {
     expect(getExtensionRecord("base-orchestrator")?.generatedInstructions).toBeUndefined();
     expect(getExtensionRecord("base-handler")?.generatedInstructions).toBeUndefined();
     expect(getExtensionRecord("base-workflow-task")?.generatedInstructions).toBeUndefined();
-    expect(builtinLoadedInstructionDefaults("base-common")).toEqual([
-      expect.objectContaining({ name: "010-base-common.md" }),
-    ]);
-    expect(builtinLoadedInstructionDefaults("base-orchestrator")).toEqual([
-      expect.objectContaining({ name: "010-base-orchestrator.md" }),
-    ]);
-    expect(builtinLoadedInstructionDefaults("base-handler")).toEqual([
-      expect.objectContaining({ name: "010-base-handler.md" }),
-    ]);
-    expect(builtinLoadedInstructionDefaults("base-workflow-task")).toEqual([
-      expect.objectContaining({ name: "010-base-workflow-task.md" }),
-    ]);
+    for (const id of ["base-common", "base-orchestrator", "base-handler", "base-workflow-task"]) {
+      expect(existsSync(join("packages/extensions/src/builtin", id, "instructions/full"))).toBe(
+        true,
+      );
+    }
   });
 
   it("keeps Extension Loading fixed loaded through profile and thread overrides", () => {
@@ -436,6 +430,7 @@ describe("builtin extension registry", () => {
     const result = await createListExtensionsTool({
       runtime,
       state: createExtensionToolState(store),
+      resolveVisibleRecords: testResolveVisibleRecords(),
     }).execute("tool-call-list", {});
     const byId = new Map(extFacts(result)!.loaded.map((extension) => [extension.id, extension]));
 
@@ -507,12 +502,12 @@ describe("builtin extension registry", () => {
     expect(byId.get("smithers")?.generatedInstructions).toEqual([
       {
         output: "instructions/full/010-smithers-core.generated.md",
-        script: "scripts/generate-smithers-fragment.ts",
+        script: "scripts/generate-smithers-core.ts",
         versionCliRequirementId: "smithers-orchestrator",
       },
       {
         output: "instructions/full/040-smithers-memory.generated.md",
-        script: "scripts/generate-smithers-fragment.ts",
+        script: "scripts/generate-smithers-memory.ts",
         versionCliRequirementId: "smithers-orchestrator",
       },
     ]);
@@ -522,11 +517,11 @@ describe("builtin extension registry", () => {
         bypassed: false,
       },
       {
-        file: "020-smithers-handler.md",
+        file: "020-smithers-handler.mdx",
         bypassed: false,
       },
       {
-        file: "030-smithers-svvy-boundary.md",
+        file: "030-smithers-svvy-boundary.mdx",
         bypassed: false,
       },
       {
@@ -535,7 +530,9 @@ describe("builtin extension registry", () => {
       },
     ]);
     for (const instruction of byId.get("smithers")?.generatedInstructions ?? []) {
-      expect(existsSync(instruction.script)).toBe(true);
+      expect(existsSync(join("packages/extensions/src/builtin/smithers", instruction.script))).toBe(
+        true,
+      );
     }
   });
 
@@ -718,6 +715,7 @@ describe("extension loading tools", () => {
     const result = await createListExtensionsTool({
       runtime,
       state: createExtensionToolState(store),
+      resolveVisibleRecords: testResolveVisibleRecords(),
     }).execute("tool-call-list", {});
 
     expect(extFacts(result)!.loaded.map((extension) => extension.id)).toEqual([
@@ -737,7 +735,6 @@ describe("extension loading tools", () => {
     for (const extension of [...extFacts(result)!.loaded, ...extFacts(result)!.available]) {
       expect(extension).not.toHaveProperty("fingerprint");
       expect(extension).not.toHaveProperty("generatedContextFingerprint");
-      expect(extension).not.toHaveProperty("aggregateCacheKey");
       expect(extension).not.toHaveProperty("secretValues");
       expect(extension).not.toHaveProperty("globalProfileState");
     }
@@ -789,20 +786,16 @@ describe("extension loading tools", () => {
       const result = await createListExtensionsTool({
         runtime,
         state: createExtensionToolState(store),
-        extensionsRoot,
+        resolveVisibleRecords: testResolveVisibleRecords(),
       }).execute("tool-call-list-base", {});
 
       expect(extFacts(result)!.loaded.map((extension) => extension.id)).toEqual([
         "base-common",
         "base-orchestrator",
       ]);
-      for (const extension of extFacts(result)!.loaded) {
-        expect(extension.instructionSourceFiles).toHaveLength(1);
-        expect(extension.instructionSourceFiles[0]).toContain(
-          join(extensionsRoot, "sources", "builtin", extension.id, "instructions", "full"),
-        );
-        expect(extension.instructionSourceFiles[0]).not.toBe("src/bun/default-system-prompt.ts");
-      }
+      expect(extFacts(result)!.loaded.every((extension) => extension.description.length > 0)).toBe(
+        true,
+      );
     } finally {
       rmSync(extensionsRoot, { recursive: true, force: true });
     }
@@ -867,14 +860,13 @@ describe("extension loading tools", () => {
       const listed = await createListExtensionsTool({
         runtime: listRuntime,
         state: createExtensionToolState(listStore),
-        extensionsRoot,
+        resolveVisibleRecords: testResolveVisibleRecords(extensionsRoot),
       }).execute("tool-call-list-user-extension", {});
 
       expect(extFacts(listed)!.available.map((extension) => extension.id)).toEqual(["notes"]);
       expect(extFacts(listed)!.available[0]).toMatchObject({
         category: "user",
         interface: "instructions",
-        minimalLoadingHint: "Load Notes when workspace notes matter.\n",
         resetBehavior: "user_reset",
         deleteBehavior: "trash_allowed",
         envReadiness: "not_required",
@@ -1005,6 +997,7 @@ describe("extension loading tools", () => {
     const result = await createListExtensionsTool({
       runtime,
       state: createExtensionToolState(store),
+      resolveVisibleRecords: testResolveVisibleRecords(),
     }).execute("tool-call-list", {});
     const external = extFacts(result)!.loaded.find(
       (extension) => extension.id === externalInstructionExtensionId(source),
@@ -1080,6 +1073,7 @@ describe("extension loading tools", () => {
     const result = await createListExtensionsTool({
       runtime,
       state: createExtensionToolState(store),
+      resolveVisibleRecords: testResolveVisibleRecords(),
     }).execute("tool-call-list", {});
 
     expect(extFacts(result)!.loaded.map((extension) => extension.id)).not.toContain(

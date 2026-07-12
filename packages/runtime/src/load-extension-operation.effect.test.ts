@@ -23,6 +23,8 @@ import {
   type WorkspaceSessionId,
 } from "@svvy/core";
 import {
+  ExtensionBuildProcessPort,
+  ExtensionCliRequirementProbePort,
   Extensions,
   layerExtensionSourceRootsPort,
   layerGeneratedPackageRootPort,
@@ -80,6 +82,8 @@ describe("load_extension runtime operation", () => {
         const eventCalls: string[] = [];
         const bindingStatePort = {
           readRuntimePromptBinding: () => Effect.die("Unexpected runtime prompt binding read."),
+          readGeneratedContextBuildSubject: () => Effect.die("Unexpected context subject read."),
+          bindGeneratedContext: () => Effect.die("Unexpected context binding write."),
           updateActorExtensionBinding: (input) => {
             updateCalls.push(input);
             return Effect.succeed(
@@ -233,6 +237,12 @@ describe("load_extension runtime operation", () => {
 function testExtensionsPlatform() {
   return Layer.mergeAll(
     testEffectPlatformLayer(),
+    Layer.succeed(ExtensionBuildProcessPort, {
+      run: () => Effect.die("Unexpected extension build process execution."),
+    }),
+    Layer.succeed(ExtensionCliRequirementProbePort, {
+      probe: () => Effect.succeed({ status: "missing" as const }),
+    }),
     Layer.succeed(ExtensionStatePort, {
       records: {
         readSourceFingerprint: () => Effect.succeed(null),

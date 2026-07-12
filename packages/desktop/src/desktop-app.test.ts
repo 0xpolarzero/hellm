@@ -13,6 +13,7 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
     messages: {},
     queues: {},
     requestInput: {},
+    generatedContext: {},
     approvals: {},
     sourceEdits: {},
     sourceInvalidation: {},
@@ -73,6 +74,16 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
       materializeSelectedAttachments: async () => ({ attachments: [], skippedPaths: [] }),
       importComposerAttachments: async () => ({ attachments: [], skippedPaths: [] }),
       resolvePathTarget: async () => ({ kind: "missing" as const }),
+    },
+    externalInstructions: {
+      resolveEditorTarget: async ({ sourceId }) => ({
+        sourceId,
+        path: "/workspace/AGENTS.md",
+        cwd: "/workspace",
+        editor: "system" as const,
+        customCommand: "",
+      }),
+      recordEditorResult: async () => ({ ok: true as const }),
     },
     telemetry: {
       recordRenderer: async () => ({ ok: true as const }),

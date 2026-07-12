@@ -4,12 +4,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
-  BASE_COMMON_INSTRUCTIONS,
-  BASE_HANDLER_INSTRUCTIONS,
-  BASE_ORCHESTRATOR_INSTRUCTIONS,
-  BASE_WORKFLOW_TASK_INSTRUCTIONS,
-} from "../src/bun/default-system-prompt";
-import {
   generateSmithersCoreInstructions,
   generateSmithersMemoryInstructions,
 } from "../src/bun/smithers-runtime/smithers-instruction-generator";
@@ -192,39 +186,6 @@ if (
 }
 
 const generatedInstructionDir = join(generatedDir, "instructions", "full");
-const baseInstructionTargets = [
-  {
-    outputPath: join(generatedInstructionDir, "010-base-common.generated.md"),
-    content: BASE_COMMON_INSTRUCTIONS,
-    label: "base common instructions",
-  },
-  {
-    outputPath: join(generatedInstructionDir, "010-base-orchestrator.generated.md"),
-    content: BASE_ORCHESTRATOR_INSTRUCTIONS,
-    label: "base orchestrator instructions",
-  },
-  {
-    outputPath: join(generatedInstructionDir, "010-base-handler.generated.md"),
-    content: BASE_HANDLER_INSTRUCTIONS,
-    label: "base handler instructions",
-  },
-  {
-    outputPath: join(generatedInstructionDir, "010-base-workflow-task.generated.md"),
-    content: BASE_WORKFLOW_TASK_INSTRUCTIONS,
-    label: "base workflow task instructions",
-  },
-] as const;
-
-for (const target of baseInstructionTargets) {
-  const content = `${target.content.trimEnd()}\n`;
-  if (writeIfChanged(target.outputPath, content)) {
-    changedCount += 1;
-    console.log(`Generated ${target.label} assets.`);
-  } else {
-    console.log(`${target.label} assets are up to date.`);
-  }
-}
-
 const cxInstructions = readFileSync(
   join(generatedInstructionDir, "010-cx-skill.generated.md"),
   "utf8",

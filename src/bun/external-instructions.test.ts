@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
 import { discoverExternalInstructionSources } from "./external-instructions";
-import { buildSystemPrompt } from "./default-system-prompt";
 
 describe("external instruction discovery", () => {
   it("discovers workspace-chain files from filesystem root toward the workspace", () => {
@@ -178,11 +177,8 @@ describe("external instruction discovery", () => {
       workspaceKey: workspace,
     });
 
-    expect(buildSystemPrompt("handler", { externalInstructionSources: sources })).toContain(
-      "handler-only rules",
-    );
-    expect(
-      buildSystemPrompt("orchestrator", { externalInstructionSources: sources }),
-    ).not.toContain("handler-only rules");
+    expect(sources).toEqual([
+      expect.objectContaining({ content: "handler-only rules", actors: ["handler"] }),
+    ]);
   });
 });

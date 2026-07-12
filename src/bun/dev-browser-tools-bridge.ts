@@ -80,7 +80,6 @@ export const noopDevBrowserToolsRecorder: DevBrowserToolsRecorder = {
 };
 
 type MountDevBrowserToolsBridgeOptions = {
-  defaultSystemPrompt: string;
   getDefaultAgentSettings: () => AgentDefaults;
   getActiveWorkspace: () => Promise<WorkspaceInfoResponse | null>;
   getMainWindow: () => BrowserWindow | null;
@@ -140,7 +139,6 @@ export async function mountDevBrowserToolsBridge(
       },
       defaults: {
         ...defaults,
-        systemPrompt: options.defaultSystemPrompt,
       },
       providers: {
         connected: providerAuths.filter((provider) => provider.hasKey).length,

@@ -18,6 +18,10 @@ import {
   ExtensionError,
   StateContractError,
   RuntimeEpisodeStatePort,
+  RuntimeExternalInstructionStatePort,
+  ExtensionUsageStatePort,
+  RuntimeExtensionContextImpactStatePort,
+  GeneratedContextPreviewSubjectStatePort,
   RuntimeGeneratedPackageStatePort,
   RuntimeQueueStatePort,
   RuntimeRecoveryStatePort,
@@ -55,6 +59,18 @@ import {
   type AnswerRequestInputResult,
   type CancelCommandInput,
   type CancelCommandResult,
+  type BuildRuntimeExtensionInput,
+  type BuildRuntimeExtensionResult,
+  type AddExtensionInstructionInput,
+  type AddExtensionInstructionResult,
+  type ConfigureExtensionInstructionInput,
+  type ConfigureExtensionInstructionResult,
+  type CreateExtensionSourceInput,
+  type CreateExtensionSourceResult,
+  type DeleteExtensionSourceInput,
+  type DeleteExtensionSourceResult,
+  type DuplicateExtensionSourceInput,
+  type DuplicateExtensionSourceResult,
   type CloseSurfaceInput,
   type CloseSurfaceResult,
   type CreateOrchestratorSurfaceInput,
@@ -67,11 +83,31 @@ import {
   type OpenSurfaceInput,
   type OpenSurfaceResult,
   type PromptTarget,
+  type PreviewGeneratedContextInput,
   type ExtensionId,
   type JsonObject,
   type RecordRuntimeSourceSaveInput,
   type RecordRuntimeSourceDeleteInput,
   type RefreshGeneratedContextRequest,
+  type RemoveExtensionInstructionInput,
+  type RemoveExtensionInstructionResult,
+  type ResetExtensionInstructionsInput,
+  type RuntimeResetExtensionInstructionsResult,
+  type RuntimeDeleteExtensionSnapshotInput,
+  type RuntimeListExtensionSnapshotsInput,
+  type RuntimeLoadExtensionSnapshotInput,
+  type RuntimeRenameExtensionSnapshotInput,
+  type RuntimeSaveExtensionSnapshotInput,
+  type SetExtensionUsageInput,
+  type RevertExtensionUsageInput,
+  type RuntimeExtensionUsageMutationResult,
+  type SvvyxRuntimeEffectTransportRequest,
+  type RenameExtensionInstructionInput,
+  type RenameExtensionInstructionResult,
+  type ReorderExtensionInstructionsInput,
+  type ReorderExtensionInstructionsResult,
+  type RevertExtensionSourceMutationInput,
+  type RuntimeRevertExtensionSourceMutationResult,
   type InternalRefreshGeneratedPackagesRequest,
   type ReleaseWorkspaceInput,
   type ReleaseWorkspaceResult,
@@ -85,6 +121,7 @@ import {
   type RuntimeCreateWorkflowAgentSourceInput,
   type RuntimeDeleteWorkflowAgentSourceInput,
   type RuntimeDuplicateWorkflowAgentSourceInput,
+  type ConfigureExtensionTypescriptApiInput,
   type RuntimeSaveExtensionSourceEditInput,
   type RuntimeRecoveryStatePortService,
   type RuntimePromptBindingRecord,
@@ -177,9 +214,14 @@ import {
 import { RuntimeGeneratedContextRefreshHostPort } from "./runtime-generated-context-refresh-service";
 import { RuntimeGeneratedPackageRefreshHostPort } from "./runtime-generated-package-refresh-service";
 import {
+  type RuntimeExternalInstructionScanInputPort,
   type RuntimeSourceInvalidationScanPort,
   RuntimeSourceInvalidationService,
 } from "./runtime-source-invalidation-service";
+import { RuntimeExtensionBuildService } from "./runtime-extension-build-service";
+import { RuntimeExtensionLifecycleService } from "./runtime-extension-lifecycle-service";
+import { RuntimeExtensionSnapshotService } from "./runtime-extension-snapshot-service";
+import { RuntimeGeneratedContextPreviewService } from "./runtime-generated-context-preview-service";
 import {
   RuntimeWorkspaceScopeService,
   type RuntimeWorkspaceScopeServiceService,
@@ -207,8 +249,14 @@ export { RuntimeGeneratedContextRefreshHostPort } from "./runtime-generated-cont
 export type { RuntimeGeneratedContextRefreshHostPortService } from "./runtime-generated-context-refresh-service";
 export { RuntimeGeneratedPackageRefreshHostPort } from "./runtime-generated-package-refresh-service";
 export type { RuntimeGeneratedPackageRefreshHostPortService } from "./runtime-generated-package-refresh-service";
-export { RuntimeSourceInvalidationScanPort } from "./runtime-source-invalidation-service";
-export type { RuntimeSourceInvalidationScanPortService } from "./runtime-source-invalidation-service";
+export {
+  RuntimeExternalInstructionScanInputPort,
+  RuntimeSourceInvalidationScanPort,
+} from "./runtime-source-invalidation-service";
+export type {
+  RuntimeExternalInstructionScanInputPortService,
+  RuntimeSourceInvalidationScanPortService,
+} from "./runtime-source-invalidation-service";
 export {
   RuntimeLayerModelResolverPort,
   RuntimeLayerProviderAuthPort,
@@ -246,6 +294,7 @@ export type RuntimeLayerRequirements =
   | AppLogWritePort
   | RuntimeGeneratedContextRefreshHostPort
   | RuntimeGeneratedPackageRefreshHostPort
+  | RuntimeExternalInstructionScanInputPort
   | RuntimeSourceInvalidationScanPort
   | RuntimeLayerCommandStdinPort
   | RuntimeLayerCommandControlPort
@@ -255,6 +304,8 @@ export type RuntimeLayerRequirements =
   | RuntimeWorkspaceStatePort
   | RuntimeSurfaceLifecycleStatePort
   | RuntimeSourceStatePort
+  | RuntimeExternalInstructionStatePort
+  | GeneratedContextPreviewSubjectStatePort
   | RuntimeRecoveryStatePort
   | RuntimeGeneratedPackageStatePort
   | Extensions
@@ -285,6 +336,12 @@ export function makeRuntimeService() {
     const modelResolver = yield* RuntimeLayerModelResolverPort;
     const appLog = yield* AppLogWritePort;
     const sourceInvalidation = yield* RuntimeSourceInvalidationService;
+    const extensionBuild = yield* RuntimeExtensionBuildService;
+    const extensionLifecycle = yield* RuntimeExtensionLifecycleService;
+    const extensionSnapshots = yield* RuntimeExtensionSnapshotService;
+    const extensionUsageState = yield* ExtensionUsageStatePort;
+    const extensionContextImpact = yield* RuntimeExtensionContextImpactStatePort;
+    const generatedContextPreview = yield* RuntimeGeneratedContextPreviewService;
     const eventBus = yield* RuntimeEventBus;
     const surfaceEvents = yield* RuntimeSurfaceEventPublisher;
     const commandStdin = yield* RuntimeLayerCommandStdinPort;
@@ -621,6 +678,10 @@ export function makeRuntimeService() {
             ),
           ),
       },
+      generatedContext: {
+        preview: (input: PreviewGeneratedContextInput) =>
+          admit("runtime.generatedContext.preview", generatedContextPreview.preview(input)),
+      },
       commands: {
         writeStdin: (
           input: WriteCommandStdinInput,
@@ -662,7 +723,313 @@ export function makeRuntimeService() {
             ),
           ),
       },
+      extensions: {
+        setUsage: (
+          input: Omit<SetExtensionUsageInput, "target"> & { readonly agentProfile: string },
+        ): Effect.Effect<RuntimeExtensionUsageMutationResult, RuntimeContractError> =>
+          admit(
+            "runtime.extensions.setUsage",
+            Effect.gen(function* () {
+              const registry = yield* extensions.registry.observe().pipe(
+                Effect.mapError(
+                  () =>
+                    new RuntimeContractError({
+                      operation: "runtime.extensions.setUsage",
+                      reason: "target-not-ready",
+                      message: "Extension registry observation is unavailable.",
+                    }),
+                ),
+              );
+              const extension = registry.observations.find(
+                (candidate) => candidate.extensionId === input.extensionId,
+              );
+              if (!extension) {
+                return yield* new RuntimeContractError({
+                  operation: "runtime.extensions.setUsage",
+                  reason: "target-not-found",
+                  message: "Extension was not found.",
+                });
+              }
+              if (!extension.usagePolicy.configurable) {
+                return yield* new RuntimeContractError({
+                  operation: "runtime.extensions.setUsage",
+                  reason: "invalid-input",
+                  message: extension.usagePolicy.fixedReason ?? "Extension usage is fixed.",
+                });
+              }
+              const networkAccess = yield* extensionUsageState.readNetworkAccess().pipe(
+                Effect.mapError(
+                  () =>
+                    new RuntimeContractError({
+                      operation: "runtime.extensions.setUsage",
+                      reason: "state-conflict",
+                      message: "Network-access preference could not be read.",
+                    }),
+                ),
+              );
+              if (
+                extension.usagePolicy.networkAccess === "required" &&
+                !networkAccess &&
+                input.usage !== "unavailable"
+              ) {
+                return yield* new RuntimeContractError({
+                  operation: "runtime.extensions.setUsage",
+                  reason: "invalid-input",
+                  message:
+                    "This extension requires network access before it can be loaded or available.",
+                });
+              }
+              const target = yield* extensionUsageState.resolveTarget(input.agentProfile).pipe(
+                Effect.mapError(
+                  () =>
+                    new RuntimeContractError({
+                      operation: "runtime.extensions.setUsage",
+                      reason: "target-not-found",
+                      message: "Agent profile could not be resolved.",
+                    }),
+                ),
+              );
+              const committed = yield* commitStateMutation({
+                operation: "runtime.extensions.setUsage",
+                effect: extensionUsageState.set({
+                  clientRequestId: input.clientRequestId,
+                  extensionId: input.extensionId,
+                  target,
+                  usage: input.usage,
+                  ...(input.expectedStateRevision === undefined
+                    ? {}
+                    : { expectedStateRevision: input.expectedStateRevision }),
+                }),
+                eventBus,
+              });
+              const affected = yield* extensionContextImpact
+                .listUsageContextAffectedSurfaces({
+                  agentProfile: input.agentProfile,
+                  profileId: target.profileId as never,
+                })
+                .pipe(
+                  Effect.mapError(
+                    () =>
+                      new RuntimeContractError({
+                        operation: "runtime.extensions.setUsage",
+                        reason: "state-conflict",
+                        message: "Affected surfaces could not be resolved.",
+                      }),
+                  ),
+                );
+              return { change: committed, affectedSurfaceCount: affected.length };
+            }),
+          ),
+        revertUsage: (
+          input: RevertExtensionUsageInput,
+        ): Effect.Effect<RuntimeExtensionUsageMutationResult, RuntimeContractError> =>
+          admit(
+            "runtime.extensions.revertUsage",
+            Effect.gen(function* () {
+              const original = yield* extensionUsageState.read(input.changeId).pipe(
+                Effect.mapError(
+                  () =>
+                    new RuntimeContractError({
+                      operation: "runtime.extensions.revertUsage",
+                      reason: "state-conflict",
+                      message: "Usage change could not be read.",
+                    }),
+                ),
+              );
+              if (!original) {
+                return yield* new RuntimeContractError({
+                  operation: "runtime.extensions.revertUsage",
+                  reason: "target-not-found",
+                  message: "Usage change was not found.",
+                });
+              }
+              const registry = yield* extensions.registry.observe().pipe(
+                Effect.mapError(
+                  () =>
+                    new RuntimeContractError({
+                      operation: "runtime.extensions.revertUsage",
+                      reason: "target-not-ready",
+                      message: "Extension registry observation is unavailable.",
+                    }),
+                ),
+              );
+              const extension = registry.observations.find(
+                (candidate) => candidate.extensionId === original.extensionId,
+              );
+              if (!extension) {
+                return yield* new RuntimeContractError({
+                  operation: "runtime.extensions.revertUsage",
+                  reason: "target-not-found",
+                  message: "Extension was not found.",
+                });
+              }
+              const networkAccess = yield* extensionUsageState.readNetworkAccess().pipe(
+                Effect.mapError(
+                  () =>
+                    new RuntimeContractError({
+                      operation: "runtime.extensions.revertUsage",
+                      reason: "state-conflict",
+                      message: "Network-access preference could not be read.",
+                    }),
+                ),
+              );
+              if (
+                extension.usagePolicy.networkAccess === "required" &&
+                !networkAccess &&
+                original.before !== null &&
+                original.before !== "unavailable"
+              ) {
+                return yield* new RuntimeContractError({
+                  operation: "runtime.extensions.revertUsage",
+                  reason: "invalid-input",
+                  message:
+                    "This revert would restore network-required extension usage while network access is disabled.",
+                });
+              }
+              const committed = yield* commitStateMutation({
+                operation: "runtime.extensions.revertUsage",
+                effect: extensionUsageState.revert(input),
+                eventBus,
+              });
+              const affected = yield* extensionContextImpact
+                .listUsageContextAffectedSurfaces({
+                  agentProfile: committed.target.agentProfile,
+                  profileId: committed.target.profileId as never,
+                })
+                .pipe(
+                  Effect.mapError(
+                    () =>
+                      new RuntimeContractError({
+                        operation: "runtime.extensions.revertUsage",
+                        reason: "state-conflict",
+                        message: "Affected surfaces could not be resolved.",
+                      }),
+                  ),
+                );
+              return { change: committed, affectedSurfaceCount: affected.length };
+            }),
+          ),
+        reconcileMutation: (
+          input: Extract<
+            SvvyxRuntimeEffectTransportRequest,
+            { readonly type: "extension_source.reconcile" }
+          >["input"],
+        ): Effect.Effect<void, RuntimeContractError> =>
+          admit(
+            "runtime.extensions.reconcileMutation",
+            extensionLifecycle.reconcileMutation(input),
+          ),
+        create: (
+          input: CreateExtensionSourceInput,
+        ): Effect.Effect<CreateExtensionSourceResult, RuntimeContractError> =>
+          admit("runtime.extensions.create", extensionLifecycle.create(input)),
+        duplicate: (
+          input: DuplicateExtensionSourceInput,
+        ): Effect.Effect<DuplicateExtensionSourceResult, RuntimeContractError> =>
+          admit("runtime.extensions.duplicate", extensionLifecycle.duplicate(input)),
+        delete: (
+          input: DeleteExtensionSourceInput,
+        ): Effect.Effect<DeleteExtensionSourceResult, RuntimeContractError> =>
+          admit("runtime.extensions.delete", extensionLifecycle.delete(input)),
+        reset: (
+          input: ResetExtensionInstructionsInput,
+        ): Effect.Effect<RuntimeResetExtensionInstructionsResult, RuntimeContractError> =>
+          admit("runtime.extensions.reset", extensionLifecycle.reset(input)),
+        addInstruction: (
+          input: AddExtensionInstructionInput,
+        ): Effect.Effect<AddExtensionInstructionResult, RuntimeContractError> =>
+          admit("runtime.extensions.addInstruction", extensionLifecycle.addInstruction(input)),
+        removeInstruction: (
+          input: RemoveExtensionInstructionInput,
+        ): Effect.Effect<RemoveExtensionInstructionResult, RuntimeContractError> =>
+          admit(
+            "runtime.extensions.removeInstruction",
+            extensionLifecycle.removeInstruction(input),
+          ),
+        configureInstruction: (
+          input: ConfigureExtensionInstructionInput,
+        ): Effect.Effect<ConfigureExtensionInstructionResult, RuntimeContractError> =>
+          admit(
+            "runtime.extensions.configureInstruction",
+            extensionLifecycle.configureInstruction(input),
+          ),
+        renameInstruction: (
+          input: RenameExtensionInstructionInput,
+        ): Effect.Effect<RenameExtensionInstructionResult, RuntimeContractError> =>
+          admit(
+            "runtime.extensions.renameInstruction",
+            extensionLifecycle.renameInstruction(input),
+          ),
+        reorderInstructions: (
+          input: ReorderExtensionInstructionsInput,
+        ): Effect.Effect<ReorderExtensionInstructionsResult, RuntimeContractError> =>
+          admit(
+            "runtime.extensions.reorderInstructions",
+            extensionLifecycle.reorderInstructions(input),
+          ),
+        revertMutation: (
+          input: RevertExtensionSourceMutationInput,
+        ): Effect.Effect<RuntimeRevertExtensionSourceMutationResult, RuntimeContractError> =>
+          admit("runtime.extensions.revertMutation", extensionLifecycle.revertMutation(input)),
+        build: (
+          input: BuildRuntimeExtensionInput,
+        ): Effect.Effect<BuildRuntimeExtensionResult, RuntimeContractError> =>
+          admit("runtime.extensions.build", extensionBuild.build(input)),
+        snapshots: {
+          list: (input: RuntimeListExtensionSnapshotsInput) =>
+            admit("runtime.extensions.snapshots.list", extensionSnapshots.list(input)),
+          save: (input: RuntimeSaveExtensionSnapshotInput) =>
+            admit("runtime.extensions.snapshots.save", extensionSnapshots.save(input)),
+          rename: (input: RuntimeRenameExtensionSnapshotInput) =>
+            admit("runtime.extensions.snapshots.rename", extensionSnapshots.rename(input)),
+          delete: (input: RuntimeDeleteExtensionSnapshotInput) =>
+            admit("runtime.extensions.snapshots.delete", extensionSnapshots.delete(input)),
+          load: (input: RuntimeLoadExtensionSnapshotInput) =>
+            admit("runtime.extensions.snapshots.load", extensionSnapshots.load(input)),
+          ensureInitial: () =>
+            admit("runtime.extensions.snapshots.ensureInitial", extensionSnapshots.ensureInitial()),
+          recover: () =>
+            admit("runtime.extensions.snapshots.recover", extensionSnapshots.recover()),
+        },
+      },
       sourceEdits: {
+        configureTypescriptApi: (input: ConfigureExtensionTypescriptApiInput) =>
+          admit(
+            "runtime.sourceEdits.configureTypescriptApi",
+            Effect.gen(function* () {
+              const result = yield* extensions.sources
+                .configureTypescriptApi(input)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    runtimeExtensionSourceEditError(
+                      "runtime.sourceEdits.configureTypescriptApi",
+                      cause,
+                    ),
+                  ),
+                );
+              if (result.reconcileRequired) {
+                yield* sourceInvalidation.reconcile({
+                  scope: { kind: "app-global" },
+                  domains: ["extensions"],
+                  reason: "manual",
+                });
+              }
+              yield* appendRuntimeAppLog({
+                appLog,
+                eventBus,
+                level: "info",
+                source: "settings",
+                message: "Extension TypeScript API setting updated.",
+                details: {
+                  workspaceId: input.workspaceId,
+                  extensionId: input.extensionId,
+                  enabled: input.enabled,
+                  changed: result.changed,
+                },
+              });
+              return result;
+            }),
+          ),
         open: (input: OpenExtensionSourceEditInput) =>
           admit(
             "runtime.sourceEdits.open",
@@ -2122,7 +2489,7 @@ function saveRuntimeSourceEdit(input: {
       scope: { kind: "app-global" as const },
       sourceKind: sourceInput.sourceKind,
       sourceId: sourceInput.sourceId,
-      path: current.path,
+      path: saveResult.path,
       previousSourceVersion: sourceFact?.sourceVersion ?? null,
       sourceVersion: saveResult.sourceVersion,
       fingerprint: saveResult.fingerprint,
@@ -2163,7 +2530,7 @@ function saveRuntimeSourceEdit(input: {
       operation,
       sourceKind: sourceInput.sourceKind,
       sourceId: sourceInput.sourceId,
-      path: current.path,
+      path: saveResult.path,
       observedAt: savedAt,
       recoveryPayload,
       recoveryState: input.recoveryState,

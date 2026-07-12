@@ -134,6 +134,7 @@ describe("runtime source edit contracts", () => {
     expect(
       unsafeDecodeSourceEditSaveResultSyncForTestsAndBootstrap({
         status: "saved",
+        path: "/tmp/reviewAgent.agent.json",
         sourceVersion: "version_02",
         fingerprint: "fingerprint_02",
         diagnostics: [],
@@ -141,6 +142,7 @@ describe("runtime source edit contracts", () => {
       }) as unknown,
     ).toEqual({
       status: "saved",
+      path: "/tmp/reviewAgent.agent.json",
       sourceVersion: "version_02",
       fingerprint: "fingerprint_02",
       diagnostics: [],

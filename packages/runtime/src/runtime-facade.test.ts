@@ -8,6 +8,8 @@ import type {
   AcquireDefaultWorkspaceInput,
   AcquireWorkspaceInput,
   AnswerRuntimeApprovalInput,
+  BuildRuntimeExtensionInput,
+  BuildRuntimeExtensionResult,
   CloseSurfaceInput,
   AnswerRequestInputInput,
   CommandId,
@@ -150,7 +152,9 @@ type RuntimeServiceTestOverrides = Pick<RuntimeService, "events"> & {
       | "workspaces"
       | "surfaces"
       | "requestInput"
+      | "generatedContext"
       | "approvals"
+      | "extensions"
       | "sourceEdits"
       | "sourceInvalidation"
     >
@@ -194,6 +198,9 @@ function runtimeService(overrides: RuntimeServiceTestOverrides): RuntimeService 
       answer: () => Effect.die("unused"),
       setTimerPaused: () => Effect.die("unused"),
     },
+    generatedContext: {
+      preview: () => Effect.die("unused"),
+    },
     commands: {
       writeStdin: () => Effect.die("unused"),
       cancel: () => Effect.die("unused"),
@@ -202,7 +209,33 @@ function runtimeService(overrides: RuntimeServiceTestOverrides): RuntimeService 
     approvals: {
       answer: () => Effect.die("unused"),
     },
+    extensions: {
+      setUsage: () => Effect.die("unused"),
+      revertUsage: () => Effect.die("unused"),
+      reconcileMutation: () => Effect.die("unused"),
+      create: () => Effect.die("unused"),
+      duplicate: () => Effect.die("unused"),
+      delete: () => Effect.die("unused"),
+      reset: () => Effect.die("unused"),
+      addInstruction: () => Effect.die("unused"),
+      removeInstruction: () => Effect.die("unused"),
+      configureInstruction: () => Effect.die("unused"),
+      renameInstruction: () => Effect.die("unused"),
+      reorderInstructions: () => Effect.die("unused"),
+      revertMutation: () => Effect.die("unused"),
+      build: () => Effect.die("unused"),
+      snapshots: {
+        list: () => Effect.die("unused"),
+        save: () => Effect.die("unused"),
+        rename: () => Effect.die("unused"),
+        delete: () => Effect.die("unused"),
+        load: () => Effect.die("unused"),
+        ensureInitial: () => Effect.die("unused"),
+        recover: () => Effect.die("unused"),
+      },
+    },
     sourceEdits: {
+      configureTypescriptApi: () => Effect.die("unused"),
       open: () => Effect.die("unused"),
       save: () => Effect.die("unused"),
       createWorkflowAgent: () => Effect.die("unused"),
@@ -261,6 +294,8 @@ describe("@svvy/runtime facade", () => {
         "close",
         "commands",
         "events",
+        "extensions",
+        "generatedContext",
         "messages",
         "queues",
         "requestInput",
@@ -1084,6 +1119,85 @@ describe("@svvy/runtime facade", () => {
     }
   });
 
+  it("strictly forwards extension builds through the runtime build API", async () => {
+    const built: BuildRuntimeExtensionInput[] = [];
+    const input = {
+      extensionId: "linear" as BuildRuntimeExtensionInput["extensionId"],
+      clientRequestId:
+        "runtime-facade-build-linear" as BuildRuntimeExtensionInput["clientRequestId"],
+    };
+    const result = {
+      attemptId:
+        `extension-build-attempt:linear:${"a".repeat(64)}` as BuildRuntimeExtensionResult["attemptId"],
+      registryAggregateFingerprint: "registry-fingerprint",
+      manifest: {
+        schemaVersion: 1,
+        buildId:
+          `extension-build:linear:${"b".repeat(64)}` as BuildRuntimeExtensionResult["manifest"]["buildId"],
+        extensionId: input.extensionId,
+        interfaceKind: "svvyx",
+        sourceFingerprint:
+          `sha256:${"c".repeat(64)}` as BuildRuntimeExtensionResult["manifest"]["sourceFingerprint"],
+        contextFingerprint:
+          `sha256:${"d".repeat(64)}` as BuildRuntimeExtensionResult["manifest"]["contextFingerprint"],
+        outputFingerprint:
+          `sha256:${"e".repeat(64)}` as BuildRuntimeExtensionResult["manifest"]["outputFingerprint"],
+        contextReady: true,
+        generatedFiles: [],
+        builtAt: "2026-07-12T10:00:00.000Z" as BuildRuntimeExtensionResult["manifest"]["builtAt"],
+      },
+    } satisfies BuildRuntimeExtensionResult;
+    const managedRuntime = createTestManagedRuntime(
+      runtimeService({
+        messages: {},
+        queues: {},
+        commands: {},
+        extensions: {
+          setUsage: () => Effect.die("unused"),
+          revertUsage: () => Effect.die("unused"),
+          reconcileMutation: () => Effect.die("unused"),
+          create: () => Effect.die("unused"),
+          duplicate: () => Effect.die("unused"),
+          delete: () => Effect.die("unused"),
+          reset: () => Effect.die("unused"),
+          addInstruction: () => Effect.die("unused"),
+          removeInstruction: () => Effect.die("unused"),
+          configureInstruction: () => Effect.die("unused"),
+          renameInstruction: () => Effect.die("unused"),
+          reorderInstructions: () => Effect.die("unused"),
+          revertMutation: () => Effect.die("unused"),
+          build: (request) =>
+            Effect.sync(() => {
+              built.push(request);
+              return result;
+            }),
+          snapshots: {
+            list: () => Effect.die("unused"),
+            save: () => Effect.die("unused"),
+            rename: () => Effect.die("unused"),
+            delete: () => Effect.die("unused"),
+            load: () => Effect.die("unused"),
+            ensureInitial: () => Effect.die("unused"),
+            recover: () => Effect.die("unused"),
+          },
+        },
+        events: () => Effect.succeed(testEventSubscription(Stream.empty)),
+      }),
+    );
+    const facade = createRuntimeFacade(managedRuntime);
+
+    try {
+      await expect(facade.extensions.build(input)).resolves.toEqual(result);
+      expect(built).toEqual([input]);
+      await expect(
+        facade.extensions.build({ ...input, registryObservation: {} } as never),
+      ).rejects.toMatchObject({ reason: "typed-failure" });
+    } finally {
+      await facade.close();
+      await managedRuntime.dispose();
+    }
+  });
+
   it("forwards extension source edit sessions through the source edit API", async () => {
     const opened: OpenExtensionSourceEditInput[] = [];
     const saved: RuntimeSaveExtensionSourceEditInput[] = [];
@@ -1099,6 +1213,7 @@ describe("@svvy/runtime facade", () => {
     } satisfies SourceEditSession;
     const saveResult = {
       status: "saved",
+      path: sourcePath,
       sourceVersion: "version_02",
       fingerprint: "fingerprint_02",
       diagnostics: [],
@@ -1115,6 +1230,7 @@ describe("@svvy/runtime facade", () => {
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         sourceEdits: {
+          configureTypescriptApi: () => Effect.die("unused"),
           open: (input) =>
             Effect.sync(() => {
               opened.push(input);
@@ -1175,6 +1291,7 @@ describe("@svvy/runtime facade", () => {
           cancel: () => Effect.succeed(cancelledCommandResult),
         },
         sourceEdits: {
+          configureTypescriptApi: () => Effect.die("unused"),
           open: () =>
             Effect.sync(() => {
               opened += 1;
@@ -1271,6 +1388,7 @@ describe("@svvy/runtime facade", () => {
         queues: { steer: () => Effect.void },
         commands: { cancel: () => Effect.succeed(cancelledCommandResult) },
         sourceEdits: {
+          configureTypescriptApi: () => Effect.die("unused"),
           open: () => Effect.die("unused"),
           save: () => Effect.die("unused"),
           createWorkflowAgent: (input) =>
@@ -2021,6 +2139,45 @@ describe("@svvy/runtime facade", () => {
           error,
         },
       );
+    } finally {
+      await facade.close();
+      await managedRuntime.dispose();
+    }
+  });
+
+  it("decodes generated-context preview input and output at the facade boundary", async () => {
+    let calls = 0;
+    const managedRuntime = createTestManagedRuntime(
+      runtimeService({
+        generatedContext: {
+          preview: () => {
+            calls += 1;
+            return Effect.succeed({} as never);
+          },
+        },
+        messages: { submit: () => Effect.die("unused"), abort: () => Effect.void },
+        queues: { steer: () => Effect.void },
+        commands: { cancel: () => Effect.succeed(cancelledCommandResult) },
+        events: () => Effect.succeed(testEventSubscription(Stream.empty)),
+      }),
+    );
+    const facade = createRuntimeFacade(managedRuntime);
+    try {
+      await expect(
+        facade.generatedContext.preview({ workspaceId: "invalid", subject: {} } as never),
+      ).rejects.toMatchObject({ reason: "typed-failure" });
+      expect(calls).toBe(0);
+      await expect(
+        facade.generatedContext.preview({
+          workspaceId: "workspace_preview" as WorkspaceId,
+          subject: {
+            kind: "workflow-agent",
+            actorKind: "workflow-task",
+            sourceId: "reviewer",
+          },
+        }),
+      ).rejects.toMatchObject({ reason: "typed-failure" });
+      expect(calls).toBe(1);
     } finally {
       await facade.close();
       await managedRuntime.dispose();

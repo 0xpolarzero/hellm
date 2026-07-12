@@ -23,7 +23,7 @@
 		preferences: AppPreferences;
 		workspaceKey?: string;
 		externalInstructionSources?: readonly GeneratedAgentContextExternalSource[];
-		onOpenExternalInstructionSource?: (path: string) => Promise<boolean>;
+		onOpenExternalInstructionSource?: (sourceId: string) => Promise<boolean>;
 		onSave: (preferences: AppPreferences) => Promise<AppPreferences>;
 	};
 
@@ -526,7 +526,7 @@
 										size="sm"
 										editor={formState.current.values.preferredExternalEditor}
 										targetLabel={source.path}
-										onclick={() => void onOpenExternalInstructionSource?.(source.path)}
+										onclick={() => void onOpenExternalInstructionSource?.(source.id)}
 									/>
 								{/if}
 							</div>

@@ -31,7 +31,13 @@ const FACADE_BACKED_REQUESTS = [
   "stateAgentProfilesPromoteExtensionDefault",
   "stateAgentProfilesResetExtensionDefaults",
   "stateAgentProfilesSetExternalInstructionUsage",
+  "previewGeneratedContext",
   "listModelMetadata",
+  "getExtensionSnapshots",
+  "saveExtensionSnapshot",
+  "renameExtensionSnapshot",
+  "deleteExtensionSnapshot",
+  "loadExtensionSnapshot",
   "stateSnippetsCreateManaged",
   "stateSnippetsUpdateManaged",
   "stateSnippetsDeleteManaged",
@@ -44,6 +50,15 @@ const FACADE_BACKED_REQUESTS = [
   "duplicateWorkflowAgentSource",
   "deleteWorkflowAgentSource",
   "openSourceInEditor",
+  "configureExtensionTypescriptApi",
+  "buildExtension",
+  "createExtension",
+  "duplicateExtension",
+  "deleteExtension",
+  "resetExtension",
+  "addExtensionInstructionFile",
+  "removeExtensionInstructionFile",
+  "configureExtensionInstructionFile",
   "writeCommandStdin",
   "sendPrompt",
   "deleteQueuedSurfaceMessage",
@@ -62,6 +77,8 @@ const FACADE_BACKED_REQUESTS = [
   "closeSurface",
   "stateExtensionEnvSetOverride",
   "stateExtensionEnvRemoveOverride",
+  "stateExtensionEnvSetSecret",
+  "stateExtensionEnvRemoveSecret",
   "createOrchestratorSurface",
   "openWorkspace",
   "getDefaultWorkspace",
@@ -73,6 +90,7 @@ const FACADE_BACKED_REQUESTS = [
   "pickWorkspaceAttachments",
   "importComposerAttachments",
   "openWorkspacePath",
+  "openExternalInstructionSourceInEditor",
   "updateComposerDraft",
   "editCommittedUserMessage",
   "editQueuedSurfaceMessage",
@@ -90,29 +108,8 @@ const HOST_BACKED_REQUESTS = [
   "writeClipboardText",
 ] as const satisfies readonly ChatRpcRequestName[];
 
-const LEGACY_HANDLER_RETIREMENT_INCREMENT = 10 as const;
-
-const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
-  "getGeneratedAgentContextExternalSources",
-  "getAgentContextPreview",
-  "getExtensionsInventory",
-  "saveExtensionSnapshot",
-  "renameExtensionSnapshot",
-  "deleteExtensionSnapshot",
-  "loadExtensionSnapshot",
-  "createExtension",
-  "duplicateExtension",
-  "deleteExtension",
-  "resetExtension",
-  "buildExtension",
-  "setExtensionTypescriptApi",
-  "addExtensionInstructionFile",
-  "removeExtensionInstructionFile",
-  "configureExtensionInstructionFile",
-  "setExtensionEnvSecret",
-  "removeExtensionEnvSecret",
-  "openGeneratedAgentContextExternalSourceInEditor",
-] as const satisfies readonly ChatRpcRequestName[];
+const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 =
+  [] as const satisfies readonly ChatRpcRequestName[];
 
 describe("legacy RPC handler seam", () => {
   it("exhaustively classifies current ChatRPCSchema requests and Bun handlers", async () => {
@@ -142,14 +139,81 @@ describe("legacy RPC handler seam", () => {
     expect([...handlerRequests].toSorted()).toEqual([...schemaRequests].toSorted());
   });
 
-  it("pins every carried legacy request to Increment 10", () => {
-    expect(LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10.length).toBeGreaterThan(0);
-    for (const requestName of LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10) {
-      expect({ requestName, retiresInIncrement: LEGACY_HANDLER_RETIREMENT_INCREMENT }).toEqual({
-        requestName,
-        retiresInIncrement: 10,
-      });
-    }
+  it("carries no legacy requests", () => {
+    expect(LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10).toEqual([]);
+  });
+
+  it("routes exact generated-context preview DTOs through the Runtime facade", async () => {
+    const contractSource = await Bun.file(
+      `${import.meta.dir}/../shared/workspace-contract.ts`,
+    ).text();
+    const indexSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const rendererSource = await Bun.file(`${import.meta.dir}/../mainview/chat-runtime.ts`).text();
+    const catalogSource = await Bun.file(`${import.meta.dir}/session-catalog.ts`).text();
+
+    expect(contractSource).toContain("params: PreviewGeneratedContextInput;");
+    expect(contractSource).toContain("response: GeneratedContextPreviewResult;");
+    expect(indexSource).toContain(
+      "previewGeneratedContext: (input) => facades.runtime.generatedContext.preview(input)",
+    );
+    expect(rendererSource).toContain("rpcClient.request.previewGeneratedContext(scoped(request))");
+    expect(contractSource).not.toContain("getAgentContextPreview:");
+    expect(indexSource).not.toContain("getAgentContextPreview:");
+    expect(rendererSource).not.toContain("getAgentContextPreview:");
+    expect(catalogSource).not.toContain("getAgentContextPreview(");
+  });
+
+  it("routes extension build receipts through the runtime facade instead of legacy inventory", async () => {
+    const contractSource = await Bun.file(
+      `${import.meta.dir}/../shared/workspace-contract.ts`,
+    ).text();
+    const indexSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const rendererSource = await Bun.file(`${import.meta.dir}/../mainview/chat-runtime.ts`).text();
+    const paneSource = await Bun.file(
+      `${import.meta.dir}/../mainview/ExtensionsPane.svelte`,
+    ).text();
+
+    expect(contractSource).toContain("params: BuildRuntimeExtensionInput;");
+    expect(contractSource).toContain("response: BuildRuntimeExtensionResult;");
+    expect(contractSource).not.toContain("interface BuildExtensionRequest");
+    expect(indexSource).toContain(
+      "buildExtension: (input) => facades.runtime.extensions.build(input)",
+    );
+    expect(rendererSource).toContain(
+      "buildExtension: (input) => rpcClient.request.buildExtension(input)",
+    );
+    expect(paneSource).toContain("extensions = await runtime.getExtensions();");
+    expect(paneSource).not.toContain("applyExtensionInventoryMutation(runtime.buildExtension");
+  });
+
+  it("routes snapshot summaries and mutations through the Runtime facade", async () => {
+    const contractSource = await Bun.file(
+      `${import.meta.dir}/../shared/workspace-contract.ts`,
+    ).text();
+    const indexSource = await Bun.file(`${import.meta.dir}/index.ts`).text();
+    const rendererSource = await Bun.file(`${import.meta.dir}/../mainview/chat-runtime.ts`).text();
+    const paneSource = await Bun.file(
+      `${import.meta.dir}/../mainview/ExtensionsPane.svelte`,
+    ).text();
+
+    expect(contractSource).toContain("params: RuntimeListExtensionSnapshotsInput;");
+    expect(contractSource).toContain("response: ExtensionSnapshotsReadModel;");
+    expect(contractSource).toContain("params: RuntimeSaveExtensionSnapshotInput;");
+    expect(contractSource).toContain("params: RuntimeRenameExtensionSnapshotInput;");
+    expect(contractSource).toContain("params: RuntimeDeleteExtensionSnapshotInput;");
+    expect(contractSource).toContain("params: RuntimeLoadExtensionSnapshotInput;");
+    expect(indexSource).toContain(
+      "getExtensionSnapshots: (input) => facades.runtime.extensions.snapshots.list(input)",
+    );
+    expect(indexSource).toContain(
+      "loadExtensionSnapshot: (input) => facades.runtime.extensions.snapshots.load(input)",
+    );
+    expect(indexSource).not.toContain("runWorkspaceExtensionsCommand");
+    expect(rendererSource).toContain("extension-snapshot-cleanup:");
+    expect(rendererSource).toContain("extension-snapshot-restore:");
+    expect(rendererSource).toContain("expectedRevision: snapshot.revision");
+    expect(paneSource).toContain('snapshot.secretState === "captured"');
+    expect(paneSource).toContain('result.status !== "completed"');
   });
 
   it("keeps retired sync messages in their dedicated boundary test", async () => {

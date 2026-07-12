@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"request-user-input","interface":"native_tool","title":"Request User Input","description":"Clarification requests for orchestrators and handler threads.","typescriptApiEnabled":false,"instructionFiles":[{"file":"010-request-user-input.mdx","bypassed":false}]}

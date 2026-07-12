@@ -45,6 +45,7 @@ export const adoptedEffectRuntimeModuleExports = [
   {
     module: "effect/Cause",
     members: [
+      "findErrorOption",
       "hasInterruptsOnly",
       "isDieReason",
       "isFailReason",
@@ -97,6 +98,8 @@ export const adoptedEffectRuntimeModuleExports = [
       "mapError",
       "matchEffect",
       "onError",
+      "onExit",
+      "onInterrupt",
       "promise",
       "provide",
       "provideService",
@@ -114,6 +117,7 @@ export const adoptedEffectRuntimeModuleExports = [
       "suspend",
       "sync",
       "tap",
+      "tapError",
       "timeoutOrElse",
       "try",
       "tryPromise",
@@ -144,6 +148,7 @@ export const adoptedEffectRuntimeModuleExports = [
       "Boolean",
       "DateTimeUtcFromString",
       "Defect",
+      "Int",
       "Json",
       "Literal",
       "Literals",
@@ -158,6 +163,7 @@ export const adoptedEffectRuntimeModuleExports = [
       "TaggedErrorClass",
       "TemplateLiteral",
       "Union",
+      "Unknown",
       "brand",
       "check",
       "decodeUnknownEffect",
@@ -270,6 +276,110 @@ export const adoptedEffectInstanceMemberPolicies = [
   {
     module: "effect/FileSystem",
     receiver: "FileSystem.FileSystem",
+    members: ["exists", "readFileString", "realPath", "stat"],
+    allowedSourceGlobs: ["packages/extensions/src/external-instructions.ts"],
+    productReason:
+      "External instruction discovery uses the injected filesystem to canonicalize, inspect, and read trusted candidates without ambient host filesystem access.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: [
+      "exists",
+      "makeDirectory",
+      "readDirectory",
+      "readFile",
+      "readFileString",
+      "readLink",
+      "remove",
+      "rename",
+      "stat",
+      "writeFile",
+      "writeFileString",
+    ],
+    allowedSourceGlobs: ["packages/extensions/src/extension-source-management.ts"],
+    productReason:
+      "Extension source configuration and builtin materialization use the injected filesystem for staged, atomic, rollback-capable source-tree updates.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: ["exists", "readDirectory", "readFileString", "stat"],
+    allowedSourceGlobs: ["packages/extensions/src/extension-registry-observation.ts"],
+    productReason:
+      "Extension registry observation uses the injected filesystem to inspect packaged and live manifests and fingerprint referenced source inputs.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: ["exists", "readFile", "readFileString", "stat"],
+    allowedSourceGlobs: ["packages/extensions/src/extension-build-observation.ts"],
+    productReason:
+      "Per-extension current-build observation validates the evidence manifest and each contained generated file through the injected filesystem.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: [
+      "exists",
+      "makeDirectory",
+      "readFile",
+      "remove",
+      "rename",
+      "writeFile",
+      "writeFileString",
+    ],
+    allowedSourceGlobs: ["packages/extensions/src/extension-build-execution.ts"],
+    productReason:
+      "Per-extension build execution validates staged evidence and atomically promotes a successful current build through the injected filesystem.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: ["exists", "readDirectory", "readFile", "stat"],
+    allowedSourceGlobs: ["packages/extensions/src/extension-source-fingerprint.ts"],
+    productReason:
+      "Canonical extension source fingerprinting reads declared regular files and recursively enumerates editable source through the injected filesystem.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: [
+      "exists",
+      "makeDirectory",
+      "readDirectory",
+      "readFile",
+      "readLink",
+      "realPath",
+      "remove",
+      "rename",
+      "stat",
+    ],
+    allowedSourceGlobs: ["packages/extensions/src/extension-snapshots.ts"],
+    productReason:
+      "Extension snapshot capture and restore use the injected filesystem to reject links and escaped paths, stage bounded source material, journal atomic source-tree promotion, recover interruption, and clean finalized plans.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
+    members: [
+      "exists",
+      "makeDirectory",
+      "readDirectory",
+      "readFileString",
+      "readLink",
+      "remove",
+      "rename",
+      "stat",
+      "writeFileString",
+    ],
+    allowedSourceGlobs: ["packages/extensions/src/extension-source-lifecycle.ts"],
+    productReason:
+      "Extension source lifecycle commands inspect and stage only contained regular source trees, atomically promote mutations, retain exact revert journals, and clean completed app-owned lifecycle roots through the injected filesystem.",
+  },
+  {
+    module: "effect/FileSystem",
+    receiver: "FileSystem.FileSystem",
     members: ["remove"],
     allowedSourceGlobs: ["packages/pi-adapter/src/pi-adapter.ts"],
     productReason:
@@ -365,7 +475,71 @@ export const adoptedEffectInstanceMemberPolicies = [
   {
     module: "effect/Path",
     receiver: "Path.Path",
+    members: ["dirname", "isAbsolute", "parse", "relative", "resolve", "sep"],
+    allowedSourceGlobs: ["packages/extensions/src/external-instructions.ts"],
+    productReason:
+      "External instruction discovery uses injected path operations for trusted expansion, containment, ancestor ordering, and stable canonical identity.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
     members: ["dirname", "join", "resolve"],
+    allowedSourceGlobs: ["packages/extensions/src/extension-source-management.ts"],
+    productReason:
+      "Extension source configuration resolves only package-owned live, packaged, staging, and backup paths through the injected path service.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["dirname", "resolve", "sep"],
+    allowedSourceGlobs: ["packages/extensions/src/extension-registry-observation.ts"],
+    productReason:
+      "Extension registry observation resolves and validates packaged and live source containment through the injected path service.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["resolve", "sep"],
+    allowedSourceGlobs: ["packages/extensions/src/extension-build-observation.ts"],
+    productReason:
+      "Per-extension current-build observation resolves only app-owned build roots and validates lexical containment through the injected path service.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["dirname", "resolve", "sep"],
+    allowedSourceGlobs: ["packages/extensions/src/extension-build-execution.ts"],
+    productReason:
+      "Per-extension build execution resolves app-owned source, staging, and current roots and validates lexical containment through the injected path service.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["dirname", "resolve", "sep"],
+    allowedSourceGlobs: ["packages/extensions/src/extension-source-fingerprint.ts"],
+    productReason:
+      "Canonical extension source fingerprinting resolves and validates every declared and recursively discovered source path under its extension root.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["dirname", "isAbsolute", "join", "relative", "resolve"],
+    allowedSourceGlobs: ["packages/extensions/src/extension-snapshots.ts"],
+    productReason:
+      "Extension snapshot capture and restore derive only app-owned source, staging, backup, journal, and receipt paths and validate lexical containment through the injected path service.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["dirname", "join", "resolve"],
+    allowedSourceGlobs: ["packages/extensions/src/extension-source-lifecycle.ts"],
+    productReason:
+      "Extension source lifecycle commands derive only packaged, live, staging, trash, and journal paths under configured app-owned roots through the injected path service.",
+  },
+  {
+    module: "effect/Path",
+    receiver: "Path.Path",
+    members: ["basename", "dirname", "join", "resolve"],
     allowedSourceGlobs: ["packages/extensions/src/source-edit-sessions.ts"],
     productReason:
       "Extension source edit sessions use the injected abstract Path service to resolve known extension/workflow source roots, source file candidates, and atomic-save temp paths under extension-owned source roots without importing host path modules.",
@@ -437,6 +611,47 @@ export const adoptedEffectInstanceMemberPolicies = [
   {
     module: "effect/Crypto",
     receiver: "Crypto.Crypto",
+    members: ["digest"],
+    allowedSourceGlobs: [
+      "packages/extensions/src/extension-build-observation.ts",
+      "packages/extensions/src/extension-build-execution.ts",
+      "packages/extensions/src/extension-registry-observation.ts",
+      "packages/extensions/src/extension-snapshots.ts",
+      "packages/extensions/src/extension-source-fingerprint.ts",
+      "packages/extensions/src/extension-source-lifecycle.ts",
+      "packages/extensions/src/external-instructions.ts",
+      "packages/extensions/src/generated-context.ts",
+      "packages/runtime/src/runtime-extension-snapshot-service.ts",
+    ],
+    productReason:
+      "Extension observations, snapshot payloads, generated actor context, source lifecycle journals, and runtime snapshot orchestration derive stable content identities and fingerprints through the injected crypto service.",
+  },
+  {
+    module: "effect/Crypto",
+    receiver: "Crypto.Crypto",
+    members: ["randomBytes"],
+    allowedSourceGlobs: [
+      "packages/extensions/src/extension-build-execution.ts",
+      "packages/extensions/src/extension-source-lifecycle.ts",
+      "packages/runtime/src/runtime-extension-build-service.ts",
+    ],
+    productReason:
+      "Per-extension build execution allocates an unpredictable operation-scoped staging directory id, source lifecycle allocates opaque mutation identities, and runtime allocates durable build attempt identities through the injected crypto service.",
+  },
+  {
+    module: "effect/Crypto",
+    receiver: "Crypto.Crypto",
+    members: ["randomUUIDv4"],
+    allowedSourceGlobs: [
+      "packages/extensions/src/extension-source-lifecycle.ts",
+      "packages/extensions/src/extension-source-management.ts",
+    ],
+    productReason:
+      "Extension source transactions use injected UUID generation for collision-resistant staging and backup paths.",
+  },
+  {
+    module: "effect/Crypto",
+    receiver: "Crypto.Crypto",
     members: ["digest", "randomUUIDv4"],
     allowedSourceGlobs: ["packages/extensions/src/source-edit-sessions.ts"],
     productReason:
@@ -472,12 +687,15 @@ export const adoptedEffectInstanceMemberPolicies = [
     members: ["withPermit"],
     allowedSourceGlobs: [
       "packages/runtime/src/runtime-event-bus.ts",
+      "packages/runtime/src/runtime-extension-build-service.ts",
+      "packages/runtime/src/runtime-extension-lifecycle-service.ts",
+      "packages/runtime/src/runtime-extension-snapshot-service.ts",
       "packages/runtime/src/runtime-shutdown-admission.ts",
       "packages/runtime/src/runtime-surface-event-publisher.ts",
       "packages/runtime/src/surface-runtime-scope-service.ts",
     ],
     productReason:
-      "The runtime event bus serializes publication through one process-local permit so replay ordering and subscriber fanout remain deterministic, runtime shutdown admission uses one short permit-protected lane to close admission and track concurrent in-flight public runtime, queue-claim, and non-waiting accepted-tool work before its drain barrier while wait-bearing accepted tools use the same closed-gate check, the runtime surface event publisher serializes target-local stream cursor assignment before handing accepted events to the event bus, and retained runtime surface scopes use one prompt permit per live surface so queue dispatch and user cancellation cannot race active pi turns.",
+      "The runtime event bus serializes publication through one process-local permit so replay ordering and subscriber fanout remain deterministic; extension build, lifecycle, and snapshot lanes serialize conflicting app-global or identity-scoped transitions; runtime shutdown admission uses one short permit-protected lane to close admission and track concurrent in-flight public runtime, queue-claim, and non-waiting accepted-tool work before its drain barrier while wait-bearing accepted tools use the same closed-gate check; the runtime surface event publisher serializes target-local stream cursor assignment before handing accepted events to the event bus; and retained runtime surface scopes use one prompt permit per live surface so queue dispatch and user cancellation cannot race active pi turns.",
   },
 ] as const satisfies readonly AdoptedEffectInstanceMemberPolicy[];
 
@@ -686,10 +904,11 @@ export const auditedEffectInstalledExportMemberPolicies = [
     adoptionState: "adopted-source-gated",
     allowedSourceGlobs: [
       "packages/runtime/src/source-invalidation-coordinator-adapter.ts",
+      "src/bun/extension-lifecycle-authority.ts",
       "src/bun/runtime-service-adapter.ts",
     ],
     productReason:
-      "Runtime app-bootstrap and source-invalidation coordinator adapters are the named Promise edges for already composed runtime effects; they start, signal, run, or close runtime-owned work without exposing generic runners or package-private service/layer/policy surfaces.",
+      "Runtime app-bootstrap and source-invalidation coordinator adapters are named Promise edges for already composed runtime effects. The app-owned Extension Managing lifecycle adapter is the exact Promise edge that supplies Bun file/path/crypto host services to package-owned source lifecycle effects invoked by the svvyx command boundary. These seams do not expose generic runners.",
   },
   {
     module: "effect/Effect",
@@ -711,9 +930,20 @@ export const auditedEffectInstalledExportMemberPolicies = [
     module: "effect/Effect",
     member: "uninterruptible",
     adoptionState: "adopted-source-gated",
-    allowedSourceGlobs: ["packages/extensions/src/generated-package-writer.ts"],
+    allowedSourceGlobs: [
+      "packages/extensions/src/extension-build-execution.ts",
+      "packages/extensions/src/generated-package-writer.ts",
+    ],
     productReason:
-      "Generated-package promotion uses one short uninterruptible rename/restore critical section so interruption cannot leave the previous ready package outside the canonical live root.",
+      "Generated-package and per-extension build promotion use one short uninterruptible rename/restore critical section so interruption cannot leave the previous ready output outside the canonical live root.",
+  },
+  {
+    module: "effect/Effect",
+    member: "onInterrupt",
+    adoptionState: "adopted-source-gated",
+    allowedSourceGlobs: ["packages/extensions/src/extension-snapshots.ts"],
+    productReason:
+      "Extension snapshot source restore rolls back its prepared rename journal when the applying fiber is interrupted, so cancellation cannot leave only a partially promoted source tree.",
   },
   {
     module: "effect/Effect",
@@ -738,17 +968,28 @@ export const auditedEffectInstalledExportMemberPolicies = [
     module: "effect/Redacted",
     member: "make",
     adoptionState: "adopted-source-gated",
-    allowedSourceGlobs: ["src/bun/app-runtime-bootstrap.ts", "src/bun/session-catalog.ts"],
+    allowedSourceGlobs: [
+      "src/bun/app-runtime-bootstrap.ts",
+      "src/bun/extension-env-secret-store.ts",
+      "src/bun/extension-snapshot-storage.ts",
+      "src/bun/index.ts",
+      "src/bun/session-catalog.ts",
+    ],
     productReason:
-      "Trusted app provider-auth edges wrap raw provider credentials immediately after host credential intake and before handing them to typed provider-auth snapshots for the title-helper legacy path and runtime-owned pi-adapter sessions.",
+      "Trusted app provider-auth and extension snapshot/keychain intake edges wrap raw credential or snapshot-secret bytes immediately before handing them to typed process-local secret services.",
   },
   {
     module: "effect/Redacted",
     member: "value",
     adoptionState: "adopted-source-gated",
-    allowedSourceGlobs: ["packages/pi-adapter/src/pi-adapter.ts"],
+    allowedSourceGlobs: [
+      "packages/pi-adapter/src/pi-adapter.ts",
+      "src/bun/app-runtime-bootstrap.ts",
+      "src/bun/extension-env-secret-store.ts",
+      "src/bun/extension-snapshot-storage.ts",
+    ],
     productReason:
-      "Pi-adapter unwraps usable provider credentials only at the trusted pi/model registry invocation boundary.",
+      "Pi-adapter unwraps usable provider credentials only at the trusted pi/model registry invocation boundary. App bootstrap and snapshot storage unwrap snapshot-secret values only at the in-process snapshot codec or OS keychain persistence boundary.",
   },
   {
     module: "effect/SchemaIssue",
@@ -832,6 +1073,7 @@ export const auditedEffectInstalledExports = [
   {
     module: "effect/Cause",
     members: [
+      "findErrorOption",
       "hasInterruptsOnly",
       "isDieReason",
       "isFailReason",
@@ -951,6 +1193,8 @@ export const auditedEffectInstalledExports = [
       "logInfo",
       "logTrace",
       "logWarning",
+      "onInterrupt",
+      "onExit",
       "logWithLevel",
       "scoped",
       "trackDuration",

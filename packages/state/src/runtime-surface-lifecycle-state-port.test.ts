@@ -55,6 +55,12 @@ describe("RuntimeSurfaceLifecycleStatePort", () => {
       },
       created: "new",
     });
+    expect(store.getSessionState(created.value.workspaceSessionId).pi).toMatchObject({
+      provider: "zai",
+      model: "glm-5-turbo",
+      reasoningEffort: "medium",
+      orchestratorAgentProfileId: "default-orchestrator",
+    });
     expect(opened.value).toMatchObject({
       workspaceSessionId: created.value.workspaceSessionId,
       surfacePiSessionId: created.value.surfacePiSessionId,

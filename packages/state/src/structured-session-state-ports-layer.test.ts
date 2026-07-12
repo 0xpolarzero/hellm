@@ -3,6 +3,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import {
   ExtensionStatePort,
+  GeneratedContextPreviewSubjectStatePort,
+  RuntimeExternalInstructionStatePort,
   RuntimePromptDefaultsStatePort,
   RuntimeSurfaceLifecycleStatePort,
   RuntimeTranscriptStatePort,
@@ -36,6 +38,8 @@ describe("structured session state ports layer", () => {
         const promptDefaults = yield* RuntimePromptDefaultsStatePort;
         const transcripts = yield* RuntimeTranscriptStatePort;
         const extensions = yield* ExtensionStatePort;
+        const previewSubjects = yield* GeneratedContextPreviewSubjectStatePort;
+        const externalInstructions = yield* RuntimeExternalInstructionStatePort;
 
         const acquired = yield* workspaces.acquireWorkspace({
           cwd: workspace.cwd,
@@ -71,6 +75,9 @@ describe("structured session state ports layer", () => {
         const transcript = yield* transcripts.readSurfaceTranscript({
           surfacePiSessionId: created.value.surfacePiSessionId,
         });
+        const externalInstructionProjection = yield* externalInstructions.readExternalInstructions({
+          workspaceId: workspace.id,
+        });
 
         return {
           acquired,
@@ -79,6 +86,8 @@ describe("structured session state ports layer", () => {
           defaultsExit,
           missingSourceFingerprint,
           transcript,
+          externalInstructionProjection,
+          hasPreviewSubjectReader: typeof previewSubjects.readSubject === "function",
         };
       }).pipe(
         Effect.provide(
@@ -101,13 +110,28 @@ describe("structured session state ports layer", () => {
     expect(result.opened.value.target.surfacePiSessionId).toBe(
       result.created.value.surfacePiSessionId,
     );
-    expect(result.defaultsExit._tag).toBe("Failure");
+    expect(result.defaultsExit).toMatchObject({
+      _tag: "Success",
+      value: {
+        provider: "zai",
+        model: "glm-5-turbo",
+        reasoningEffort: "medium",
+      },
+    });
     expect(result.missingSourceFingerprint).toBe(null);
+    expect(result.hasPreviewSubjectReader).toBe(true);
     expect(result.transcript).toEqual({
       surfacePiSessionId: result.created.value.surfacePiSessionId,
       messages: [],
       activeAssistantMessage: null,
       streamCursor: null,
+    });
+    expect(result.externalInstructionProjection).toMatchObject({
+      workspaceId: workspace.id,
+      sources: [],
+      diagnostics: [],
+      observedAt: null,
+      revision: 0,
     });
     expect(result.created.afterCommit).toContainEqual({
       scope: "workspace",

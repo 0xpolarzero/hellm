@@ -33,6 +33,12 @@ import type {
   SurfacePiSessionId,
   SvvyxRuntimeEffectTransportIntent,
   SvvyxRuntimeEffectTransportRequest,
+  SvvyxExtensionManagementRuntimeIntent,
+  SvvyxExtensionManagementRuntimeRequest,
+  SvvyxExtensionManagementRuntimeResponse,
+  SvvyxWorkflowsRuntimeIntent,
+  SvvyxWorkflowsRuntimeRequest,
+  SvvyxWorkflowsRuntimeResponse,
   ThreadId,
   ToolItemId,
   TurnId,
@@ -41,7 +47,11 @@ import type {
   BuildLaunchPolicyInput,
   SandboxLaunchFacts,
 } from "@svvy/core";
-import { decodeUnknownSvvyxRuntimeEffectTransportIntentExit } from "@svvy/core";
+import {
+  decodeUnknownSvvyxExtensionManagementRuntimeIntentExit,
+  decodeUnknownSvvyxRuntimeEffectTransportIntentExit,
+  decodeUnknownSvvyxWorkflowsRuntimeIntentExit,
+} from "@svvy/core";
 import type { AppLoggerEvent } from "./app-logger";
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import type { AgentSettingsStore } from "./agent-settings-store";
@@ -62,8 +72,7 @@ import type {
   LiveCommandStdinAdmissionResult,
   LiveCommandStdinRegistry,
 } from "./live-command-stdin-registry";
-import { getWorkflowsGeneratedPackagePath } from "./smithers-runtime/workflow-library";
-import { effectiveExtensionsGeneratedPackagePath } from "./generated-extensions-package";
+import { extensionsGeneratedPackagePath, workflowsGeneratedPackagePath } from "./extension-paths";
 import {
   formatSvvyxArtifactsError,
   runSvvyxArtifactsOperation,
@@ -75,8 +84,7 @@ import {
   materializeRuntimeArtifact,
   type RuntimeArtifactMaterializedRecord,
 } from "./runtime-artifact-materializer";
-import type { SvvyxExtensionsCliProbe } from "./svvyx-extensions-command";
-import type { SvvyxRuntimeEnvValues } from "./svvyx-runtime-command";
+import type { SvvyxRuntimeEnvValues, SvvyxRuntimeExtensionPlan } from "./svvyx-runtime-command";
 import type { SvvyxWorkflowsModelCatalogReader } from "./svvyx-workflows-command";
 import type { AgentSettingsState, ApprovalMode } from "../shared/agent-settings";
 import type * as Effect from "effect/Effect";
@@ -160,10 +168,22 @@ type DirectToolOptions = {
   workflowsModelCatalog?: SvvyxWorkflowsModelCatalogReader;
   workflowsSourceRoot?: string;
   extensionsBuildRoot?: string;
-  extensionsCliProbe?: SvvyxExtensionsCliProbe;
   extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
+  applyExtensionLifecycleRuntimeEffect?: (
+    request: Extract<
+      SvvyxRuntimeEffectTransportRequest,
+      { readonly type: "extension_build.request" | "extension_source.reconcile" }
+    >,
+  ) => Promise<void>;
+  applyExtensionManagementRuntimeRequest?: (
+    request: SvvyxExtensionManagementRuntimeRequest,
+  ) => Promise<SvvyxExtensionManagementRuntimeResponse>;
+  applyWorkflowsRuntimeRequest?: (
+    request: SvvyxWorkflowsRuntimeRequest,
+  ) => Promise<SvvyxWorkflowsRuntimeResponse>;
   extensionEnvSecretStore?: ExtensionEnvSecretStore;
   extensionsEnvValues?: SvvyxRuntimeEnvValues;
+  extensionsRuntimePlans?: () => readonly SvvyxRuntimeExtensionPlan[];
   extensionsRoot?: string;
   agentSettingsStore?: AgentSettingsStore;
   agentProfileSnapshot?: AgentProfileAuthoritySnapshot;
@@ -678,7 +698,9 @@ type SvvyxSubprocessIntent =
       kind: "artifact.operation";
       operation: SvvyxArtifactsOperationInput;
     }
-  | SvvyxRuntimeEffectTransportIntent;
+  | SvvyxRuntimeEffectTransportIntent
+  | SvvyxExtensionManagementRuntimeIntent
+  | SvvyxWorkflowsRuntimeIntent;
 
 type SvvyxSubprocessProgressEvent = {
   facts?: Record<string, JsonValue>;
@@ -734,6 +756,7 @@ function prepareSvvyxSubprocess(input: {
     // This env-visible context is intentionally non-secret. Extension secret values are never
     // serialized here; svvyx subprocesses read secrets through the app-owned secret store only.
     extensionEnvValues: resolveExtensionsEnvValues(input.options),
+    extensionRuntimePlans: input.options.extensionsRuntimePlans?.() ?? [],
     extensionsBuildRoot: input.options.extensionsBuildRoot,
     extensionsGeneratedPackagePath: input.options.workflowsExtensionsGeneratedPackagePath,
     extensionsRoot: input.options.extensionsRoot,
@@ -744,6 +767,7 @@ function prepareSvvyxSubprocess(input: {
     workflowModelCatalog: input.options.workflowsModelCatalog?.() ?? null,
     workflowsGeneratedPackagePath: input.options.workflowsGeneratedPackagePath,
     workflowsSourceRoot: input.options.workflowsSourceRoot,
+    workspaceId: input.options.workspaceId,
     workspaceCwd: input.options.cwd,
   };
   return {
@@ -924,6 +948,18 @@ async function finalizeSvvyxSubprocessResult(input: {
       }
       await input.options.applyAgentProfileMutations(transport.agentProfileMutations);
     }
+    const workflowAgentSaveResponse =
+      transport.ok && transport.commandFacts?.workflowSourceSaveRequested === true
+        ? await applyWorkflowsRuntimeRequestForTransport(
+            {
+              operation: "build",
+              input: input.svvyxSubprocess.sourceCommandId
+                ? { sourceCommandId: input.svvyxSubprocess.sourceCommandId as CommandId }
+                : {},
+            },
+            input.options.applyWorkflowsRuntimeRequest,
+          )
+        : null;
     const intentResult = transport.ok
       ? await applySvvyxSubprocessIntents(
           input.options,
@@ -942,6 +978,7 @@ async function finalizeSvvyxSubprocessResult(input: {
       Object.keys(retainedOutputArtifacts).length > 0
         ? {
             ...transport.commandFacts,
+            ...workflowAgentSaveResponse?.commandFacts,
             ...intentResult.commandFacts,
             ...retainedOutputArtifacts,
           }
@@ -976,13 +1013,22 @@ async function finalizeSvvyxSubprocessResult(input: {
       );
     }
     const stdout =
-      intentResult.output !== undefined
-        ? JSON.stringify(intentResult.output, null, 2)
-        : transport.output !== undefined
-          ? JSON.stringify(transport.output, null, 2)
-          : typeof input.result.details.stdout === "string"
-            ? input.result.details.stdout
-            : stripCommandExitTrailer(readTextContent(input.result));
+      workflowAgentSaveResponse?.output !== undefined
+        ? JSON.stringify(
+            {
+              ...(workflowAgentSaveResponse.output as Record<string, unknown>),
+              ...(transport.output as Record<string, unknown>),
+            },
+            null,
+            2,
+          )
+        : intentResult.output !== undefined
+          ? JSON.stringify(intentResult.output, null, 2)
+          : transport.output !== undefined
+            ? JSON.stringify(transport.output, null, 2)
+            : typeof input.result.details.stdout === "string"
+              ? input.result.details.stdout
+              : stripCommandExitTrailer(readTextContent(input.result));
     return {
       ...input.result,
       content: stdout ? [{ type: "text", text: stdout.trimEnd() }] : input.result.content,
@@ -1005,6 +1051,24 @@ async function applySvvyxSubprocessIntents(
     ? { ...transportCommandFacts }
     : undefined;
   for (const intent of intents) {
+    if (intent.kind === "extension_management.runtime_request") {
+      const response = await applyExtensionManagementRuntimeRequestForTransport(
+        intent.request,
+        options.applyExtensionManagementRuntimeRequest,
+      );
+      output = response.output;
+      commandFacts = { ...response.commandFacts };
+      continue;
+    }
+    if (intent.kind === "workflows.runtime_request") {
+      if (!options.applyWorkflowsRuntimeRequest) {
+        throw new Error("Workflows Runtime request application is unavailable.");
+      }
+      const response = await options.applyWorkflowsRuntimeRequest(intent.request);
+      output = response.output;
+      commandFacts = { ...response.commandFacts };
+      continue;
+    }
     if (intent.kind === "artifact.operation") {
       if (
         !subprocess.runtime ||
@@ -1034,6 +1098,16 @@ async function applySvvyxSubprocessIntents(
       continue;
     }
     if (intent.kind === "runtime_effect.request") {
+      if (
+        intent.request.type === "extension_build.request" ||
+        intent.request.type === "extension_source.reconcile"
+      ) {
+        if (!options.applyExtensionLifecycleRuntimeEffect) {
+          throw new Error("Extension lifecycle runtime-effect application is unavailable.");
+        }
+        await options.applyExtensionLifecycleRuntimeEffect(intent.request);
+        continue;
+      }
       const result = patchAppPrivateSvvyxRuntimeEffectTransportOutput({
         commandFacts,
         contextImpactState: options.extensionContextImpactState,
@@ -1048,6 +1122,51 @@ async function applySvvyxSubprocessIntents(
     ...(commandFacts ? { commandFacts } : {}),
     ...(output !== undefined ? { output } : {}),
   };
+}
+
+export async function applyExtensionManagementRuntimeRequestForTransport(
+  request: SvvyxExtensionManagementRuntimeRequest,
+  apply:
+    | ((
+        request: SvvyxExtensionManagementRuntimeRequest,
+      ) => Promise<SvvyxExtensionManagementRuntimeResponse>)
+    | undefined,
+): Promise<SvvyxExtensionManagementRuntimeResponse> {
+  if (!apply) {
+    throw new Error("Extension Managing Runtime request application is unavailable.");
+  }
+  try {
+    return await apply(request);
+  } catch {
+    const build = request.operation === "build";
+    return {
+      output: {
+        ok: false,
+        error: {
+          code: build ? "EXTENSION_BUILD_FAILED" : "EXTENSION_SNAPSHOT_FAILED",
+          message: build
+            ? "The extension build did not complete. Inspect Extensions readiness for details."
+            : "The extension snapshot operation did not complete. Refresh snapshots and retry.",
+        },
+      },
+      commandFacts: {
+        extensionManagementRuntimeRequest: request.operation,
+        extensionManagementRuntimeOk: false,
+      },
+    };
+  }
+}
+
+export async function applyWorkflowsRuntimeRequestForTransport(
+  request: SvvyxWorkflowsRuntimeRequest,
+  apply:
+    | ((request: SvvyxWorkflowsRuntimeRequest) => Promise<SvvyxWorkflowsRuntimeResponse>)
+    | undefined,
+): Promise<SvvyxWorkflowsRuntimeResponse> {
+  if (!apply) {
+    throw new Error("Workflows Runtime request application is unavailable.");
+  }
+  return apply(request);
 }
 
 type SvvyxRuntimeEffectTransportApplicationInput = {
@@ -1292,6 +1411,16 @@ function readSvvyxSubprocessIntent(value: unknown): SvvyxSubprocessIntent[] {
     if (!Exit.isSuccess(decoded)) {
       return [];
     }
+    return [decoded.value];
+  }
+  if (intent.kind === "extension_management.runtime_request") {
+    const decoded = decodeUnknownSvvyxExtensionManagementRuntimeIntentExit(intent);
+    if (!Exit.isSuccess(decoded)) return [];
+    return [decoded.value];
+  }
+  if (intent.kind === "workflows.runtime_request") {
+    const decoded = decodeUnknownSvvyxWorkflowsRuntimeIntentExit(intent);
+    if (!Exit.isSuccess(decoded)) return [];
     return [decoded.value];
   }
   return [];
@@ -1734,10 +1863,10 @@ function protectedArtifactDirectEditPolicy(options: WorkflowsGeneratedProtection
 
 function protectedWorkflowsGeneratedRoots(options: WorkflowsGeneratedProtectionOptions): string[] {
   const workflowsPackagePath = resolvePath(
-    options.workflowsGeneratedPackagePath ?? getWorkflowsGeneratedPackagePath(),
+    options.workflowsGeneratedPackagePath ?? workflowsGeneratedPackagePath(),
   );
   const extensionsPackagePath = resolvePath(
-    effectiveExtensionsGeneratedPackagePath({
+    extensionsGeneratedPackagePath({
       extensionsGeneratedPackagePath: options.workflowsExtensionsGeneratedPackagePath,
       generatedPackagePath: options.workflowsGeneratedPackagePath
         ? workflowsPackagePath

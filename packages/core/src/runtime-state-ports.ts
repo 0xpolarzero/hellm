@@ -2,6 +2,18 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { strictBoundaryParseOptions } from "./boundary-parse-options";
+import type {
+  ExtensionRegistryStateRecord,
+  ReconcileExtensionRegistryObservationInput,
+} from "./extension-inventory-contracts";
+import type { ActorBinding } from "./extension-contracts";
+import {
+  ExtensionBuildAttemptIdSchema,
+  ExtensionBuildIdSchema,
+  ExtensionCurrentBuildManifestSchema,
+  ExtensionSourceBuildObservationSchema,
+  ExtensionSourceFingerprintSchema,
+} from "./extension-build-contracts";
 import {
   ComposerAttachmentSchema,
   ComposerSnippetMentionSchema,
@@ -102,6 +114,7 @@ import {
   RequestInputOptionId,
   RequestInputQuestionId,
   RuntimeApprovalId,
+  RuntimeClientRequestId,
   RuntimeOwnerId,
   SurfacePiSessionId,
   SurfaceStreamGenerationId,
@@ -2271,6 +2284,7 @@ export type ExtensionDependencyReadinessStatus =
 export const ExtensionDependencyReadinessSchema = Schema.Struct({
   extensionId: ExtensionId,
   requirementId: Schema.String.check(Schema.isNonEmpty()),
+  requirementFingerprint: Schema.String.check(Schema.isNonEmpty()),
   status: ExtensionDependencyReadinessStatusSchema,
   detectedVersion: Schema.NullOr(Schema.String),
   expectedVersion: Schema.NullOr(Schema.String),
@@ -2290,13 +2304,205 @@ export const RecordExtensionDependencyReadinessInputSchema = Schema.Struct({
   recordedAt: IsoDateTimeStringSchema,
 });
 
+export const ReconcileExtensionDependencyReadinessInputSchema = Schema.Struct({
+  registryAggregateFingerprint: Schema.String.check(Schema.isNonEmpty()),
+  readiness: Schema.Array(ExtensionDependencyReadinessSchema),
+  recordedAt: IsoDateTimeStringSchema,
+  sourceCommandId: Schema.optionalKey(Schema.NullOr(CommandId)),
+});
+export type ReconcileExtensionDependencyReadinessInput =
+  typeof ReconcileExtensionDependencyReadinessInputSchema.Type;
+
+export const ReconcileExtensionDependencyReadinessResultSchema = Schema.Struct({
+  changed: Schema.Boolean,
+  readiness: Schema.Array(ExtensionDependencyReadinessSchema),
+});
+export type ReconcileExtensionDependencyReadinessResult =
+  typeof ReconcileExtensionDependencyReadinessResultSchema.Type;
+
+export const ReconcileExtensionSourceBuildEvidenceInputSchema = Schema.Struct({
+  registryAggregateFingerprint: Schema.String.check(Schema.isNonEmpty()),
+  observations: Schema.Array(ExtensionSourceBuildObservationSchema),
+  observedAt: IsoDateTimeStringSchema,
+});
+export type ReconcileExtensionSourceBuildEvidenceInput =
+  typeof ReconcileExtensionSourceBuildEvidenceInputSchema.Type;
+
+export const ReconcileExtensionSourceBuildEvidenceResultSchema = Schema.Struct({
+  changed: Schema.Boolean,
+  changedExtensionIds: Schema.Array(ExtensionId),
+});
+export type ReconcileExtensionSourceBuildEvidenceResult =
+  typeof ReconcileExtensionSourceBuildEvidenceResultSchema.Type;
+
+export const ExtensionBuildFailureReasonSchema = Schema.Literals([
+  "validation",
+  "process-failed",
+  "timed-out",
+  "cancelled",
+  "stale-state",
+  "output-invalid",
+  "unknown",
+]);
+export type ExtensionBuildFailureReason = typeof ExtensionBuildFailureReasonSchema.Type;
+
+type ExtensionBuildAttemptRecordShape = {
+  readonly status: "running" | "succeeded" | "failed";
+  readonly failureReason: ExtensionBuildFailureReason | null;
+  readonly successfulBuildId: import("./extension-build-contracts").ExtensionBuildId | null;
+  readonly startedAt: IsoDateTimeString;
+  readonly finishedAt: IsoDateTimeString | null;
+};
+
+const ExtensionBuildAttemptRecordInvariant = Schema.makeFilter(
+  (record: ExtensionBuildAttemptRecordShape) => {
+    if (record.status === "running") {
+      if (
+        record.failureReason !== null ||
+        record.successfulBuildId !== null ||
+        record.finishedAt !== null
+      ) {
+        return {
+          path: ["status"],
+          issue: "running extension build attempts cannot carry terminal fields",
+        };
+      }
+      return true;
+    }
+    if (record.finishedAt === null || record.finishedAt < record.startedAt) {
+      return {
+        path: ["finishedAt"],
+        issue: "terminal extension build attempts must finish at or after their start time",
+      };
+    }
+    if (record.status === "succeeded") {
+      return record.failureReason === null && record.successfulBuildId !== null
+        ? true
+        : {
+            path: ["status"],
+            issue: "successful extension build attempts require only a successful build id",
+          };
+    }
+    return record.failureReason !== null && record.successfulBuildId === null
+      ? true
+      : {
+          path: ["status"],
+          issue: "failed extension build attempts require only a failure reason",
+        };
+  },
+  { expected: "valid extension build attempt terminal fields and timestamps" },
+);
+
+export const ExtensionBuildAttemptRecordSchema = Schema.Struct({
+  attemptId: ExtensionBuildAttemptIdSchema,
+  clientRequestId: RuntimeClientRequestId,
+  extensionId: ExtensionId,
+  registryAggregateFingerprint: Schema.String.check(Schema.isNonEmpty()),
+  sourceFingerprint: ExtensionSourceFingerprintSchema,
+  status: Schema.Literals(["running", "succeeded", "failed"]),
+  failureReason: Schema.NullOr(ExtensionBuildFailureReasonSchema),
+  successfulBuildId: Schema.NullOr(ExtensionBuildIdSchema),
+  startedAt: IsoDateTimeStringSchema,
+  finishedAt: Schema.NullOr(IsoDateTimeStringSchema),
+}).pipe(Schema.check(ExtensionBuildAttemptRecordInvariant));
+export type ExtensionBuildAttemptRecord = typeof ExtensionBuildAttemptRecordSchema.Type;
+
+const ExtensionBuildAttemptIdentityFields = {
+  attemptId: ExtensionBuildAttemptIdSchema,
+  clientRequestId: RuntimeClientRequestId,
+  extensionId: ExtensionId,
+  registryAggregateFingerprint: Schema.String.check(Schema.isNonEmpty()),
+  sourceFingerprint: ExtensionSourceFingerprintSchema,
+};
+
+export const StartExtensionBuildAttemptInputSchema = Schema.Struct({
+  ...ExtensionBuildAttemptIdentityFields,
+  startedAt: IsoDateTimeStringSchema,
+});
+export type StartExtensionBuildAttemptInput = typeof StartExtensionBuildAttemptInputSchema.Type;
+
+export const RecordExtensionBuildSuccessInputSchema = Schema.Struct({
+  ...ExtensionBuildAttemptIdentityFields,
+  manifest: ExtensionCurrentBuildManifestSchema,
+  finishedAt: IsoDateTimeStringSchema,
+});
+export type RecordExtensionBuildSuccessInput = typeof RecordExtensionBuildSuccessInputSchema.Type;
+
+export const RecordExtensionBuildFailureInputSchema = Schema.Struct({
+  ...ExtensionBuildAttemptIdentityFields,
+  failureReason: ExtensionBuildFailureReasonSchema,
+  finishedAt: IsoDateTimeStringSchema,
+});
+export type RecordExtensionBuildFailureInput = typeof RecordExtensionBuildFailureInputSchema.Type;
+
+export const decodeUnknownExtensionBuildAttemptRecordExit = Schema.decodeUnknownExit(
+  ExtensionBuildAttemptRecordSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownStartExtensionBuildAttemptInputExit = Schema.decodeUnknownExit(
+  StartExtensionBuildAttemptInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownRecordExtensionBuildSuccessInputExit = Schema.decodeUnknownExit(
+  RecordExtensionBuildSuccessInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownRecordExtensionBuildFailureInputExit = Schema.decodeUnknownExit(
+  RecordExtensionBuildFailureInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownReconcileExtensionSourceBuildEvidenceInputEffect =
+  Schema.decodeUnknownEffect(
+    ReconcileExtensionSourceBuildEvidenceInputSchema,
+    strictBoundaryParseOptions,
+  );
+export const decodeUnknownReconcileExtensionSourceBuildEvidenceInputExit = Schema.decodeUnknownExit(
+  ReconcileExtensionSourceBuildEvidenceInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeReconcileExtensionSourceBuildEvidenceResultEffect = Schema.encodeEffect(
+  ReconcileExtensionSourceBuildEvidenceResultSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeReconcileExtensionSourceBuildEvidenceResultExit = Schema.encodeExit(
+  ReconcileExtensionSourceBuildEvidenceResultSchema,
+  strictBoundaryParseOptions,
+);
+
 export interface RuntimeExtensionStatePortService {
+  readBuildAttemptByClientRequestId(
+    clientRequestId: RuntimeClientRequestId,
+  ): Effect.Effect<ExtensionBuildAttemptRecord | null, StateContractError>;
+  reconcileRegistryObservation(
+    input: ReconcileExtensionRegistryObservationInput,
+  ): Effect.Effect<StateMutationResult<ExtensionRegistryStateRecord>, StateContractError>;
+  reconcileBuildEvidence(
+    input: ReconcileExtensionSourceBuildEvidenceInput,
+  ): Effect.Effect<
+    StateMutationResult<ReconcileExtensionSourceBuildEvidenceResult>,
+    StateContractError
+  >;
+  startBuildAttempt(
+    input: StartExtensionBuildAttemptInput,
+  ): Effect.Effect<StateMutationResult<ExtensionBuildAttemptRecord>, StateContractError>;
+  recordBuildSuccess(
+    input: RecordExtensionBuildSuccessInput,
+  ): Effect.Effect<StateMutationResult<ExtensionBuildAttemptRecord>, StateContractError>;
+  recordBuildFailure(
+    input: RecordExtensionBuildFailureInput,
+  ): Effect.Effect<StateMutationResult<ExtensionBuildAttemptRecord>, StateContractError>;
   recordDependencyApproval(
     input: RecordExtensionDependencyApprovalInput,
   ): Effect.Effect<StateMutationResult<void>, StateContractError>;
   recordDependencyReadiness(
     input: RecordExtensionDependencyReadinessInput,
   ): Effect.Effect<StateMutationResult<ExtensionDependencyReadiness>, StateContractError>;
+  reconcileDependencyReadiness(
+    input: ReconcileExtensionDependencyReadinessInput,
+  ): Effect.Effect<
+    StateMutationResult<ReconcileExtensionDependencyReadinessResult>,
+    StateContractError
+  >;
 }
 
 export interface RuntimeExtensionStatePort {
@@ -2378,6 +2584,27 @@ export const ReadRuntimePromptBindingInputSchema = Schema.Struct({
 });
 export type ReadRuntimePromptBindingInput = typeof ReadRuntimePromptBindingInputSchema.Type;
 
+export interface RuntimeGeneratedContextBuildSubjectRecord {
+  readonly target: RuntimeSurfaceTarget;
+  readonly actorKind: ActorBinding["actorKind"];
+  readonly profileId: string | null;
+  readonly loadedExtensionIds: readonly ExtensionId[];
+  readonly availableExtensionIds: readonly ExtensionId[];
+}
+
+export interface BindRuntimeGeneratedContextInput {
+  readonly target: RuntimeSurfaceTarget;
+  readonly actorKind: ActorBinding["actorKind"];
+  readonly fingerprint: GeneratedContextFingerprint;
+  readonly systemPrompt: string;
+  readonly svvyxGuidance: string;
+  readonly commandsDts: string;
+  readonly nativeToolSchemasJson: string;
+  readonly loadedExtensionIds: readonly ExtensionId[];
+  readonly availableExtensionIds: readonly ExtensionId[];
+  readonly externalSourceHashes: readonly string[];
+}
+
 export const SetRuntimeActorExtensionBindingInputSchema = Schema.Struct({
   target: PromptTargetSchema,
   loadedExtensionIds: Schema.Array(ExtensionId),
@@ -2392,6 +2619,12 @@ export interface RuntimeActorExtensionBindingStatePortService {
   readRuntimePromptBinding(
     input: ReadRuntimePromptBindingInput,
   ): Effect.Effect<RuntimePromptBindingRecord, StateContractError>;
+  readGeneratedContextBuildSubject(input: {
+    readonly target: RuntimeSurfaceTarget;
+  }): Effect.Effect<RuntimeGeneratedContextBuildSubjectRecord, StateContractError>;
+  bindGeneratedContext(
+    input: BindRuntimeGeneratedContextInput,
+  ): Effect.Effect<StateMutationResult<RuntimePromptBindingRecord>, StateContractError>;
   updateActorExtensionBinding(
     input: UpdateActorExtensionBindingRequest,
   ): Effect.Effect<StateMutationResult<RuntimeActorExtensionBindingRecord>, StateContractError>;
@@ -2949,7 +3182,6 @@ export type EnsureRuntimeHandlerThreadRunnableInput =
   typeof EnsureRuntimeHandlerThreadRunnableInputSchema.Type;
 
 export const RuntimeHandlerThreadGeneratedContextBindingInputSchema = Schema.Struct({
-  aggregateCacheKey: Schema.String,
   generatedAgentContextFingerprint: Schema.String,
   generatedAgentContextRevision: Schema.Number,
   externalSourceHashes: Schema.Array(Schema.String),

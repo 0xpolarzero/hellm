@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   FindRuntimeCommandByToolCallIdInput,
+  GeneratedContextPreviewSubjectStatePortService,
   RuntimeActorExtensionBindingStatePortService,
   RuntimeApprovalStatePortService,
   RuntimeCommandStatePortService,
@@ -122,6 +123,16 @@ const actorExtensionBindingAudit: PortRoutingAudit<RuntimeActorExtensionBindingS
     inputField: "target",
     committedRecords: ["pi_session_reference", "session"],
   },
+  readGeneratedContextBuildSubject: {
+    via: "prompt-target",
+    inputField: "target",
+    committedRecords: ["pi_session_reference", "session"],
+  },
+  bindGeneratedContext: {
+    via: "prompt-target",
+    inputField: "target",
+    committedRecords: ["generated_agent_context_binding", "session", "thread"],
+  },
   updateActorExtensionBinding: {
     via: "prompt-target",
     inputField: "target",
@@ -133,6 +144,11 @@ const actorExtensionBindingAudit: PortRoutingAudit<RuntimeActorExtensionBindingS
     committedRecords: ["pi_session_reference", "session"],
   },
 };
+
+const generatedContextPreviewSubjectAudit: PortRoutingAudit<GeneratedContextPreviewSubjectStatePortService> =
+  {
+    readSubject: { via: "explicit-workspace-id", inputField: "workspaceId" },
+  };
 
 const queueAudit: PortRoutingAudit<RuntimeQueueStatePortService> = {
   acceptSubmittedSurfaceMessage: {
@@ -459,6 +475,7 @@ const auditedPorts = [
   ["source", sourceAudit],
   ["generatedPackage", generatedPackageAudit],
   ["actorExtensionBinding", actorExtensionBindingAudit],
+  ["generatedContextPreviewSubject", generatedContextPreviewSubjectAudit],
   ["queue", queueAudit],
   ["request", requestAudit],
   ["approval", approvalAudit],
@@ -524,7 +541,7 @@ function createRegistry() {
 }
 
 describe("workspace state router routing-identity audit", () => {
-  it("classifies exactly the sixteen routed state ports and 94 dispatched methods", () => {
+  it("classifies exactly the seventeen routed state ports and 97 dispatched methods", () => {
     const { registry, cleanup } = createRegistry();
     const router = createWorkspaceStateRouter({
       appGlobalStore: makeStore(registry, "workspace_app_global", "appglobal"),
@@ -541,6 +558,7 @@ describe("workspace state router routing-identity audit", () => {
         source: router.source,
         generatedPackage: router.generatedPackage,
         actorExtensionBinding: router.actorExtensionBinding,
+        generatedContextPreviewSubject: router.generatedContextPreviewSubject,
         queue: router.queue,
         request: router.request,
         approval: router.approval,
@@ -562,12 +580,12 @@ describe("workspace state router routing-identity audit", () => {
         totalMethods += auditedMethods.length;
       }
 
-      expect(auditedPorts.length).toBe(16);
+      expect(auditedPorts.length).toBe(17);
       expect(Object.keys(routerPorts).toSorted()).toEqual(
         auditedPorts.map(([key]) => key).toSorted(),
       );
-      expect(totalMethods).toBe(94);
-      expect(auditRows.length).toBe(94);
+      expect(totalMethods).toBe(97);
+      expect(auditRows.length).toBe(97);
     } finally {
       cleanup();
     }

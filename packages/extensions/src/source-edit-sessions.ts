@@ -22,7 +22,9 @@ import {
   type WorkflowAgentSourceLifecycleResult,
 } from "@svvy/core";
 import { getExtensionRecord } from "./extension-records";
+import { materializeBuiltinExtensionSource } from "./extension-source-management";
 import { ExtensionSourceRootsPort } from "./extension-source-roots-port";
+import { PackagedExtensionTemplatesPort } from "./packaged-extension-templates-port";
 import {
   decodeWorkflowAgentSourceText,
   isDefaultWorkflowAgentSourceId,
@@ -34,7 +36,8 @@ export type ExtensionSourceEditServices =
   | FileSystem.FileSystem
   | Path.Path
   | Crypto.Crypto
-  | ExtensionSourceRootsPort;
+  | ExtensionSourceRootsPort
+  | PackagedExtensionTemplatesPort;
 
 export function createWorkflowAgentSource(
   input: CreateWorkflowAgentSourceInput,
@@ -237,7 +240,11 @@ export function openExtensionSourceEditSession(
 ): Effect.Effect<
   SourceEditSession,
   ExtensionError,
-  FileSystem.FileSystem | Path.Path | Crypto.Crypto | ExtensionSourceRootsPort
+  | FileSystem.FileSystem
+  | Path.Path
+  | Crypto.Crypto
+  | ExtensionSourceRootsPort
+  | PackagedExtensionTemplatesPort
 > {
   return Effect.gen(function* () {
     const editableSource = yield* resolveEditableMinimalInstructionSource(
@@ -253,7 +260,11 @@ export function saveExtensionSourceEditSession(
 ): Effect.Effect<
   SourceEditSaveResult,
   ExtensionError,
-  FileSystem.FileSystem | Path.Path | Crypto.Crypto | ExtensionSourceRootsPort
+  | FileSystem.FileSystem
+  | Path.Path
+  | Crypto.Crypto
+  | ExtensionSourceRootsPort
+  | PackagedExtensionTemplatesPort
 > {
   return Effect.gen(function* () {
     const editableSource = yield* resolveEditableMinimalInstructionSource(
@@ -278,6 +289,23 @@ export function saveExtensionSourceEditSession(
       return { status: "stale" as const, current };
     }
 
+    let targetSource = editableSource;
+    if (editableSource.materializeBuiltinId) {
+      yield* materializeBuiltinExtensionSource(editableSource.materializeBuiltinId);
+      const materializedSource = yield* resolveEditableMinimalInstructionSource(
+        "extensions.sources.save-edit-session",
+        input,
+      );
+      const materializedCurrent = yield* readSourceEditSession(input, materializedSource);
+      if (
+        input.saveMode === "compare-and-swap" &&
+        materializedCurrent.sourceVersion !== input.expectedSourceVersion
+      ) {
+        return { status: "stale" as const, current: materializedCurrent };
+      }
+      targetSource = materializedSource;
+    }
+
     if (input.sourceKind === "workflow-agent") {
       const parsed = yield* decodeWorkflowAgentSourceText({
         operation: "extensions.sources.save-edit-session",
@@ -291,7 +319,7 @@ export function saveExtensionSourceEditSession(
       });
     }
 
-    yield* writeTextFileAtomically(editableSource.path, input.text).pipe(
+    yield* writeTextFileAtomically(targetSource.path, input.text).pipe(
       Effect.mapError((cause) =>
         extensionSourceEditError({
           operation: "extensions.sources.save-edit-session",
@@ -305,6 +333,7 @@ export function saveExtensionSourceEditSession(
     const sourceVersion = yield* sourceVersionFromText(input.text);
     return {
       status: "saved" as const,
+      path: targetSource.path,
       sourceVersion,
       fingerprint: sourceVersion,
       diagnostics: [],
@@ -456,6 +485,7 @@ interface EditableMinimalInstructionSource {
   readonly path: AbsolutePath;
   readonly fallbackText: string;
   readonly readOnly?: boolean;
+  readonly materializeBuiltinId?: string;
 }
 
 export type ExtensionOwnedSourceAddress =
@@ -464,7 +494,9 @@ export type ExtensionOwnedSourceAddress =
   | { readonly kind: "script"; readonly relativePath: string }
   | { readonly kind: "generated-instruction"; readonly relativePath: string }
   | { readonly kind: "svvyx-source" }
-  | { readonly kind: "command-schema" };
+  | { readonly kind: "command-schema" }
+  | { readonly kind: "native-tool-schema" }
+  | { readonly kind: "typescript-api-declaration" };
 
 export function extensionOwnedSourceId(
   extensionId: string,
@@ -476,7 +508,9 @@ export function extensionOwnedSourceId(
   const suffix =
     address.kind === "minimal" ||
     address.kind === "svvyx-source" ||
-    address.kind === "command-schema"
+    address.kind === "command-schema" ||
+    address.kind === "native-tool-schema" ||
+    address.kind === "typescript-api-declaration"
       ? address.kind
       : `${address.kind}/${encodeURIComponent(
           address.kind === "instruction" ? address.name : address.relativePath,
@@ -490,11 +524,12 @@ function resolveEditableMinimalInstructionSource(
 ): Effect.Effect<
   EditableMinimalInstructionSource,
   ExtensionError,
-  FileSystem.FileSystem | Path.Path | ExtensionSourceRootsPort
+  FileSystem.FileSystem | Path.Path | ExtensionSourceRootsPort | PackagedExtensionTemplatesPort
 > {
   return Effect.gen(function* () {
     const path = yield* Path.Path;
     const roots = yield* (yield* ExtensionSourceRootsPort).roots();
+    const templates = yield* (yield* PackagedExtensionTemplatesPort).roots();
     const extensionsRoot = path.resolve(roots.extensionsRoot);
     const workflowsRoot = path.resolve(roots.workflowsSourceRoot);
     const sourceAddress =
@@ -522,7 +557,29 @@ function resolveEditableMinimalInstructionSource(
         if (!sourceAddress) {
           return yield* invalidExtensionSourceAddress(operation, input.sourceId);
         }
-        const sourceRoot = path.resolve(extensionsRoot, "sources", "builtin", sourceId);
+        const liveSourceRoot = path.resolve(extensionsRoot, "sources", "builtin", sourceId);
+        const liveManifest = path.resolve(liveSourceRoot, "manifest.json");
+        const liveExists = yield* (yield* FileSystem.FileSystem).exists(liveManifest).pipe(
+          Effect.mapError((cause) =>
+            extensionSourceEditError({
+              operation,
+              reason: "execution-failed",
+              sourceId,
+              message: `Failed to inspect builtin extension source ${sourceId}.`,
+              cause,
+            }),
+          ),
+        );
+        const sourceRoot = liveExists
+          ? liveSourceRoot
+          : path.resolve(templates.builtinExtensionsRoot, sourceId);
+        yield* validateManifestSourceAddress({
+          operation,
+          sourceId,
+          sourceRoot,
+          address: sourceAddress.address,
+          builtin: extension,
+        });
         return yield* resolveExtensionOwnedSourceAddress({
           operation,
           sourceId,
@@ -530,6 +587,7 @@ function resolveEditableMinimalInstructionSource(
           extensionsRoot,
           address: sourceAddress.address,
           builtin: extension,
+          ...(liveExists ? {} : { materializeBuiltinId: sourceId }),
         });
       }
       case "user-extension": {
@@ -559,6 +617,12 @@ function resolveEditableMinimalInstructionSource(
             }),
           );
         }
+        yield* validateManifestSourceAddress({
+          operation,
+          sourceId,
+          sourceRoot,
+          address: sourceAddress.address,
+        });
         return yield* resolveExtensionOwnedSourceAddress({
           operation,
           sourceId,
@@ -609,7 +673,13 @@ function parseExtensionOwnedSourceId(sourceId: string): {
   if (separator <= 0) return null;
   const extensionId = sourceId.slice(0, separator);
   const suffix = sourceId.slice(separator + 1);
-  if (suffix === "minimal" || suffix === "svvyx-source" || suffix === "command-schema") {
+  if (
+    suffix === "minimal" ||
+    suffix === "svvyx-source" ||
+    suffix === "command-schema" ||
+    suffix === "native-tool-schema" ||
+    suffix === "typescript-api-declaration"
+  ) {
     return { extensionId, address: { kind: suffix } };
   }
   for (const kind of ["instruction", "script", "generated-instruction"] as const) {
@@ -652,6 +722,109 @@ function invalidExtensionSourceAddress(
   );
 }
 
+function validateManifestSourceAddress(input: {
+  readonly operation: string;
+  readonly sourceId: string;
+  readonly sourceRoot: string;
+  readonly address: ExtensionOwnedSourceAddress;
+  readonly builtin?: NonNullable<ReturnType<typeof getExtensionRecord>>;
+}): Effect.Effect<void, ExtensionError, FileSystem.FileSystem | Path.Path> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const manifestPath = path.resolve(input.sourceRoot, "manifest.json");
+    const exists = yield* fs.exists(manifestPath).pipe(
+      Effect.mapError((cause) =>
+        extensionSourceEditError({
+          operation: input.operation,
+          reason: "execution-failed",
+          sourceId: input.sourceId,
+          message: `Failed to inspect builtin extension manifest: ${input.sourceId}`,
+          cause,
+        }),
+      ),
+    );
+    if (!exists) return yield* invalidExtensionSourceAddress(input.operation, input.sourceId);
+    const text = yield* fs.readFileString(manifestPath).pipe(
+      Effect.mapError((cause) =>
+        extensionSourceEditError({
+          operation: input.operation,
+          reason: "execution-failed",
+          sourceId: input.sourceId,
+          message: `Failed to read builtin extension manifest: ${input.sourceId}`,
+          cause,
+        }),
+      ),
+    );
+    const manifest = yield* Effect.try({
+      try: () => JSON.parse(text) as unknown,
+      catch: (cause) =>
+        extensionSourceEditError({
+          operation: input.operation,
+          reason: "invalid-input",
+          sourceId: input.sourceId,
+          message: `Builtin extension manifest is invalid: ${input.sourceId}`,
+          cause,
+        }),
+    });
+    if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+      return yield* invalidExtensionSourceAddress(input.operation, input.sourceId);
+    }
+    const record = manifest as Record<string, unknown>;
+    const instructionFiles = Array.isArray(record.instructionFiles)
+      ? record.instructionFiles.flatMap((entry) =>
+          entry &&
+          typeof entry === "object" &&
+          !Array.isArray(entry) &&
+          typeof (entry as Record<string, unknown>).file === "string"
+            ? [(entry as Record<string, unknown>).file as string]
+            : [],
+        )
+      : (input.builtin?.instructionFiles ?? []).map((entry) => entry.file);
+    const generatedInstructions = Array.isArray(record.generatedInstructions)
+      ? record.generatedInstructions.flatMap((entry) =>
+          entry && typeof entry === "object" && !Array.isArray(entry)
+            ? [entry as Record<string, unknown>]
+            : [],
+        )
+      : (input.builtin?.generatedInstructions ?? []);
+    const generatedOutputs = new Set(
+      generatedInstructions.flatMap((entry) =>
+        typeof entry.output === "string" ? [entry.output] : [],
+      ),
+    );
+    const admitted = (() => {
+      switch (input.address.kind) {
+        case "minimal":
+          return true;
+        case "instruction":
+          return (
+            instructionFiles.includes(input.address.name) &&
+            !generatedOutputs.has(`instructions/full/${input.address.name}`)
+          );
+        case "script": {
+          const relativePath = input.address.relativePath;
+          return generatedInstructions.some((entry) => entry.script === relativePath);
+        }
+        case "generated-instruction":
+          return generatedOutputs.has(input.address.relativePath);
+        case "svvyx-source":
+        case "command-schema":
+          return record.interface === "svvyx";
+        case "native-tool-schema":
+          return record.interface === "native_tool";
+        case "typescript-api-declaration":
+          return (
+            (typeof record.typescriptApiEnabled === "boolean"
+              ? record.typescriptApiEnabled
+              : input.builtin?.typescriptApiEnabled) === true
+          );
+      }
+    })();
+    if (!admitted) return yield* invalidExtensionSourceAddress(input.operation, input.sourceId);
+  });
+}
+
 function resolveExtensionOwnedSourceAddress(input: {
   readonly operation: string;
   readonly sourceId: string;
@@ -659,28 +832,20 @@ function resolveExtensionOwnedSourceAddress(input: {
   readonly extensionsRoot: string;
   readonly address: ExtensionOwnedSourceAddress;
   readonly builtin?: ReturnType<typeof getExtensionRecord>;
+  readonly materializeBuiltinId?: string;
 }): Effect.Effect<EditableMinimalInstructionSource, ExtensionError, Path.Path> {
   return Effect.gen(function* () {
     const path = yield* Path.Path;
     const address = input.address;
-    if (input.builtin && !builtinDeclaresSourceAddress(input.builtin, address, path.basename)) {
-      return yield* Effect.fail(
-        extensionSourceEditError({
-          operation: input.operation,
-          reason: "not-found",
-          sourceId: input.sourceId,
-          message: `Builtin extension source record does not exist: ${input.sourceId}`,
-        }),
-      );
-    }
     let root = input.sourceRoot;
     let relativePath: string;
     let fallbackText = "";
     let readOnly = false;
     switch (address.kind) {
       case "minimal":
-        relativePath = path.join("instructions", "minimal.md");
+        relativePath = path.join("instructions", "minimal.mdx");
         fallbackText = input.builtin ? `${input.builtin.minimalLoadingHint}\n` : "";
+        readOnly = input.builtin?.id === "extension-loading";
         break;
       case "instruction":
         if (path.basename(address.name) !== address.name) {
@@ -708,8 +873,36 @@ function resolveExtensionOwnedSourceAddress(input: {
         relativePath = path.join("source", "index.ts");
         break;
       case "command-schema":
-        root = path.resolve(input.extensionsRoot, "generated", "extensions", input.sourceId);
+        root = path.resolve(
+          input.extensionsRoot,
+          "builds",
+          "extensions",
+          input.sourceId,
+          "current",
+        );
         relativePath = "commands.json";
+        readOnly = true;
+        break;
+      case "native-tool-schema":
+        root = path.resolve(
+          input.extensionsRoot,
+          "builds",
+          "extensions",
+          input.sourceId,
+          "current",
+        );
+        relativePath = "native-tool-schema.json";
+        readOnly = true;
+        break;
+      case "typescript-api-declaration":
+        root = path.resolve(
+          input.extensionsRoot,
+          "builds",
+          "extensions",
+          input.sourceId,
+          "current",
+        );
+        relativePath = "index.d.ts";
         readOnly = true;
         break;
     }
@@ -719,34 +912,13 @@ function resolveExtensionOwnedSourceAddress(input: {
       root,
       candidate: path.resolve(root, relativePath),
     });
-    return { path: sourcePath, fallbackText, ...(readOnly ? { readOnly: true } : {}) };
+    return {
+      path: sourcePath,
+      fallbackText,
+      ...(readOnly ? { readOnly: true } : {}),
+      ...(input.materializeBuiltinId ? { materializeBuiltinId: input.materializeBuiltinId } : {}),
+    };
   });
-}
-
-function builtinDeclaresSourceAddress(
-  builtin: NonNullable<ReturnType<typeof getExtensionRecord>>,
-  address: ExtensionOwnedSourceAddress,
-  basename: (path: string) => string,
-): boolean {
-  switch (address.kind) {
-    case "minimal":
-      return builtin.id !== "extension-loading";
-    case "instruction":
-      return builtin.instructionSourceFiles.some(
-        (sourcePath) => basename(sourcePath) === address.name,
-      );
-    case "script":
-      return (builtin.generatedInstructions ?? []).some(
-        (instruction) => instruction.script === address.relativePath,
-      );
-    case "generated-instruction":
-      return (builtin.generatedInstructions ?? []).some(
-        (instruction) => instruction.output === address.relativePath,
-      );
-    case "svvyx-source":
-    case "command-schema":
-      return builtin.interface === "svvyx";
-  }
 }
 
 function resolveWorkflowSourceFile(input: {
@@ -946,12 +1118,12 @@ function readFileBackedText(
       ),
     );
     if (!exists) {
-      if (editableSource.readOnly) {
+      if (editableSource.readOnly || !editableSource.fallbackText) {
         return yield* Effect.fail(
           extensionSourceEditError({
             operation: "extensions.sources.read-file-backed-text",
             reason: "not-found",
-            message: `Generated extension source does not exist: ${editableSource.path}`,
+            message: `Extension source does not exist: ${editableSource.path}`,
           }),
         );
       }

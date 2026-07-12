@@ -30,7 +30,11 @@ lifecycle, surface lifecycle, prompt defaults, queues, turns, commands, approval
 bindings, episodes, threads, requests, session waits, extension context impact, extension dependency
 readiness, generated-package facts, artifacts, app-log writes, recovery, composer drafts, source
 versions/source saves, and read models, plus `StateCommandPostCommitNotificationPort`,
-`RuntimeExtensionStatePort`, `ExtensionStatePort`, `SandboxPolicySource`, `ProviderAuthPort`,
+`RuntimeExtensionStatePort`, `ExtensionStatePort`, `ExtensionSnapshotStatePort`,
+`ExtensionSnapshotSettingsStatePort`,
+`ExtensionSnapshotPayloadStorePort`, `ExtensionSnapshotSecretStorePort`,
+`ExtensionSnapshotSecretValuesPort`, `GeneratedContextPreviewSubjectStatePort`,
+`SandboxPolicySource`, `ProviderAuthPort`,
 `ProviderAuthStatusStatePort`, `PiSessionReferencePort`, `PiRuntimePathsPort`, `SecretStorePort`,
 and `SecretStoreMutationPort`.
 Runtime-internal services such as command-session registries, wait registries, event buses, recovery
@@ -41,6 +45,43 @@ cross-package port for a concrete product reason.
 those tags. Core-owned tags contain only method contracts and schema-backed records; they do not
 close over stores, host paths, pi objects, process handles, mutable global state, or resource
 lifetime policy.
+
+Extension snapshot boundaries are schema-first and app-global. `extension-snapshot-contracts.ts`
+owns branded snapshot/restore/cleanup ids, the content-addressed JSON payload reference and payload
+shape, private authoritative metadata, public summaries/read model, save/rename/delete/load and
+maintenance commands/receipts, restore attempts, pending cleanup records, and the data-only
+`ExtensionSnapshotStatePort`. Public snapshot summaries contain neither payload/secret references
+nor filesystem paths; payload secret targets record presence only and never secret values. The
+private state record and cleanup/restore contracts may carry opaque payload and secret references
+for trusted state/runtime work, but never absolute paths or secret material.
+
+The same module owns strict state-to-Extensions capture input and path-free source-restore
+prepare/plan/apply/receipt DTOs. The capture input carries exact actor/profile usage, non-secret
+overrides, and secret-presence identities without values. Restore plans expose only branded ids,
+payload digest, and counts; filesystem staging, backup, journal, and live-root paths remain private
+to `@svvy/extensions`. Finalize input/result DTOs let orchestration request idempotent package-owned
+plan cleanup without receiving or constructing a host path.
+
+`ExtensionSnapshotSettingsStatePort` is the narrow app-global settings seam. Its capture facts carry
+only actor defaults, existing profile extension order/usage, explicit non-secret override scopes and
+rows, and secret target presence identities. Its transactional apply command receives a decoded
+snapshot payload, replaces only those captured extension settings, skips missing profile ids, and
+reports secret targets as deferred. It cannot read or write secret values, create profiles, or alter
+profile names, provider/model/reasoning/follow-composer fields, prompt settings, or unrelated state.
+
+The app/bootstrap host owns implementations of `ExtensionSnapshotPayloadStorePort` and
+`ExtensionSnapshotSecretStorePort`, plus the layer-acquired
+`ExtensionSnapshotSecretValuesPort` adapter used only by runtime snapshot orchestration to capture
+and restore live values. Payload storage receives an absolute packaged-app-safe root,
+uses immutable content-addressed `sha256` objects with atomic put-if-absent, and verifies byte size,
+digest, codec, and payload schema on every read. It returns bytes and refs only, never host paths.
+Cleanup consults the authoritative-reference hook before deleting. Snapshot secret payloads use
+opaque versioned `extension-snapshot-secret:v1:*` refs and `Redacted<Uint8Array>` values through the
+snapshot-specific secret-store port; secret bytes never enter public DTOs, SQLite, logs, or errors.
+Restore failure persistence uses only the strict coarse classification enum and no raw messages.
+The snapshot host adapter lifetime and redaction receipts are fixed by the Extensions resource
+lifetime matrix; the generated-context preview-subject state-port lifetime is fixed by the State
+resource lifetime matrix. Core owns only their data-only tags and contracts.
 
 Every public cross-package data payload exported by `@svvy/core` has a hoisted Effect Schema
 contract, an encoded TypeScript type when the wire/persistence shape differs from the decoded
@@ -2986,6 +3027,176 @@ type GeneratedPackageWorkspaceLinkRepairPlan = {
   overwritePolicy: "symlink-only";
 };
 
+// Per-extension source/build evidence is a distinct contract family from generated-package
+// evidence. These identities and every DTO below have matching exported Effect Schema values.
+type ExtensionSourceFingerprint = string & Brand.Brand<"ExtensionSourceFingerprint">;
+type ExtensionBuildId = string & Brand.Brand<"ExtensionBuildId">;
+type ExtensionBuildOutputFingerprint = string & Brand.Brand<"ExtensionBuildOutputFingerprint">;
+type ExtensionContextFingerprint = string & Brand.Brand<"ExtensionContextFingerprint">;
+
+type ExtensionBuildFileEvidence = {
+  role:
+    | "minimal-instruction"
+    | "full-instruction"
+    | "command-manifest"
+    | "typescript-declaration"
+    | "runtime-module";
+  relativePath: string;
+  contentHash: string;
+  byteSize: ByteCount;
+};
+
+type ExtensionCurrentBuildManifest = {
+  schemaVersion: 1;
+  buildId: ExtensionBuildId;
+  extensionId: ExtensionId;
+  interfaceKind: "instructions" | "native_tool" | "svvyx";
+  sourceFingerprint: ExtensionSourceFingerprint;
+  contextFingerprint: ExtensionContextFingerprint;
+  outputFingerprint: ExtensionBuildOutputFingerprint;
+  contextReady: true;
+  generatedFiles: readonly ExtensionBuildFileEvidence[];
+  builtAt: IsoDateTimeString;
+};
+
+type ExtensionSourceBuildObservation = {
+  extensionId: ExtensionId;
+  category: "builtin" | "user";
+  buildRequirement: "required" | "not-required";
+  sourceStatus: "materialized" | "unmaterialized" | "invalid";
+  sourceFingerprint: ExtensionSourceFingerprint | null;
+  currentBuildStatus: "current" | "missing" | "stale" | "invalid" | "not-required";
+  currentBuild: ExtensionCurrentBuildManifest | null;
+  buildRequired: boolean;
+  diagnostics: readonly string[];
+};
+
+type ObserveExtensionSourceBuildsInput = {
+  registryObservation: ExtensionRegistryObservationResult;
+};
+
+type ObserveExtensionSourceBuildsResult = {
+  registryAggregateFingerprint: string;
+  observations: readonly ExtensionSourceBuildObservation[];
+};
+
+type ExtensionBuildExpectedOutput = Pick<
+  ExtensionBuildFileEvidence,
+  "role" | "relativePath"
+>;
+
+type ExtensionBuildGeneratorInvocation = {
+  scriptPath: AbsolutePath;
+  outputPath: AbsolutePath;
+  argv: readonly string[];
+};
+
+type ExtensionBuildProcessPlan = {
+  extensionId: ExtensionId;
+  sourceRoot: AbsolutePath;
+  stagingRoot: AbsolutePath;
+  generators: readonly ExtensionBuildGeneratorInvocation[];
+  expectedProcessOutputs: readonly ExtensionBuildExpectedOutput[];
+  svvyxRuntime: null | {
+    sourcePath: AbsolutePath;
+    runtimeOutputPath: AbsolutePath;
+  };
+  timeoutMs: PositiveDurationMs;
+  maxStdoutBytes: PositiveSafeInteger;
+  maxStderrBytes: PositiveSafeInteger;
+};
+
+type ExtensionBuildProcessEvidence =
+  | { status: "timed-out" | "failed" }
+  | {
+      status: "completed";
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+      stdoutTruncated: boolean;
+      stderrTruncated: boolean;
+      stagedFiles: readonly ExtensionBuildFileEvidence[];
+      commandManifest: SvvyxCommandManifest | null;
+    };
+
+type BuildExtensionInput = {
+  extensionId: ExtensionId;
+  registryObservation: ExtensionRegistryObservationResult;
+  sourceObservation: ExtensionSourceBuildObservation;
+  builtAt: IsoDateTimeString;
+};
+
+type BuildExtensionResult = {
+  registryAggregateFingerprint: string;
+  manifest: ExtensionCurrentBuildManifest;
+};
+
+type BuildRuntimeExtensionInput = {
+  extensionId: ExtensionId;
+  clientRequestId: RuntimeClientRequestId;
+};
+
+type BuildRuntimeExtensionResult = {
+  attemptId: ExtensionBuildAttemptId;
+  registryAggregateFingerprint: string;
+  manifest: ExtensionCurrentBuildManifest;
+};
+
+type ReconcileExtensionSourceBuildEvidenceInput = ObserveExtensionSourceBuildsResult & {
+  observedAt: IsoDateTimeString;
+};
+
+type ReconcileExtensionSourceBuildEvidenceResult = {
+  changed: boolean;
+  changedExtensionIds: readonly ExtensionId[];
+};
+
+// Durable build attempts are runtime-orchestration receipts, not build-artifact history.
+type ExtensionBuildAttemptId = string & Brand.Brand<"ExtensionBuildAttemptId">;
+type ExtensionBuildFailureReason =
+  | "validation"
+  | "process-failed"
+  | "timed-out"
+  | "cancelled"
+  | "stale-state"
+  | "output-invalid"
+  | "unknown";
+type ExtensionBuildAttemptRecord = {
+  attemptId: ExtensionBuildAttemptId;
+  clientRequestId: RuntimeClientRequestId;
+  extensionId: ExtensionId;
+  registryAggregateFingerprint: string;
+  sourceFingerprint: ExtensionSourceFingerprint;
+  status: "running" | "succeeded" | "failed";
+  failureReason: ExtensionBuildFailureReason | null;
+  successfulBuildId: ExtensionBuildId | null;
+  startedAt: IsoDateTimeString;
+  finishedAt: IsoDateTimeString | null;
+};
+type StartExtensionBuildAttemptInput = Pick<
+  ExtensionBuildAttemptRecord,
+  | "attemptId"
+  | "clientRequestId"
+  | "extensionId"
+  | "registryAggregateFingerprint"
+  | "sourceFingerprint"
+  | "startedAt"
+>;
+type RecordExtensionBuildSuccessInput = Omit<
+  StartExtensionBuildAttemptInput,
+  "startedAt"
+> & {
+  manifest: ExtensionCurrentBuildManifest;
+  finishedAt: IsoDateTimeString;
+};
+type RecordExtensionBuildFailureInput = Omit<
+  StartExtensionBuildAttemptInput,
+  "startedAt"
+> & {
+  failureReason: ExtensionBuildFailureReason;
+  finishedAt: IsoDateTimeString;
+};
+
 type GeneratedPackageFileEvidence = {
   relativePath: string;
   path: AbsolutePath;
@@ -3915,19 +4126,63 @@ export const ExtensionEnvName = Schema.String.check(
 ).pipe(Schema.brand("ExtensionEnvName"));
 export type ExtensionEnvName = typeof ExtensionEnvName.Type;
 
-export const ExtensionEnvSecretRefSchema = Schema.Struct({
+export const ExtensionEnvSecretTargetSchema = Schema.Struct({
   kind: Schema.Literal("extension-env"),
   extensionId: ExtensionId,
   envName: ExtensionEnvName,
 });
+export type ExtensionEnvSecretTarget = typeof ExtensionEnvSecretTargetSchema.Type;
+
+export const ExtensionEnvSecretMaterialId = Schema.String.check(
+  Schema.isNonEmpty(),
+  Schema.isPattern(/^[A-Za-z0-9_-]+$/),
+).pipe(Schema.brand("ExtensionEnvSecretMaterialId"));
+
+export const ExtensionEnvSecretRefSchema = Schema.Struct({
+  ...ExtensionEnvSecretTargetSchema.fields,
+  materialId: ExtensionEnvSecretMaterialId,
+});
 export type ExtensionEnvSecretRef = typeof ExtensionEnvSecretRefSchema.Type;
+
+`extension-inventory-contracts.ts` owns strict schema-backed CLI readiness boundary data:
+`ExtensionCliDeclarationSchema` includes the deterministic full-declaration
+`requirementFingerprint`; `ExtensionCliRequirementProbePlanSchema` carries only probe kind, direct
+executable/argv, explicit non-secret env with `extendEnv: false`, timeout, and output caps;
+`ExtensionCliRequirementProbeEvidenceSchema` carries bounded host evidence; and
+`RefreshExtensionCliRequirementReadinessInputSchema` /
+`RefreshExtensionCliRequirementReadinessResultSchema` carry registry observation input and immutable
+package-owned readiness evidence. These contracts contain no shell command, ambient env, secret,
+install admission, build request, state mutation, or runtime command authority.
+
+Every row in `ExtensionRegistryObservationResultSchema` also carries the closed
+`buildRequirement: "required" | "not-required"` declaration used by the per-extension build
+schemas. The registry schema rejects `required` for external instructions, rejects `not-required`
+when a local record declares generated contributors, and includes the declaration in the registry
+aggregate fingerprint. Build observation and state reconciliation consume this field directly;
+they do not infer it from interface kind, current files, or aggregate generated-package facts.
+
+Every normal builtin/user row also carries `usagePolicy` with the exact schema-backed shape
+`{ canonicalOrder, baselineUsage: { orchestrator, handler, "workflow-task" }, networkAccess,
+configurable, fixedReason }`. Each baseline value is `"loaded" | "available" | "unavailable"`;
+`networkAccess` is `"required" | "not-required"`; and `fixedReason` is non-null exactly when
+`configurable` is false. `canonicalOrder` is a non-negative app-global catalogue position. This is
+package-owned catalogue policy, not a state override, resolved actor binding, or live network
+setting. External instruction observations use their separate contract and do not carry this field.
+
+// `@svvy/extensions` supplies the complete package-owned observation. State persists this exact
+// app-global record and retains the original observedAt when an identical observation reconciles.
+export const ExtensionRegistryStateRecordSchema = Schema.Struct({
+  observation: ExtensionRegistryObservationResultSchema,
+  observedAt: IsoDateTimeStringSchema,
+});
+export const ReconcileExtensionRegistryObservationInputSchema =
+  ExtensionRegistryStateRecordSchema;
 
 export const GetSecretStatusInputSchema = ExtensionEnvSecretRefSchema;
 export type GetSecretStatusInput = typeof GetSecretStatusInputSchema.Type;
 
 export const ListSecretStatusInputSchema = Schema.Struct({
-  kind: Schema.optionalKey(Schema.Literal("extension-env")),
-  extensionId: Schema.optionalKey(ExtensionId),
+  refs: Schema.Array(ExtensionEnvSecretRefSchema),
 });
 export type ListSecretStatusInput = typeof ListSecretStatusInputSchema.Type;
 
@@ -3935,12 +4190,17 @@ export const ResolveSecretInvocationValueInputSchema = ExtensionEnvSecretRefSche
 export type ResolveSecretInvocationValueInput = typeof ResolveSecretInvocationValueInputSchema.Type;
 
 export const WriteSecretValueInputSchema = Schema.Struct({
-  ref: ExtensionEnvSecretRefSchema,
+  target: ExtensionEnvSecretTargetSchema,
   value: Schema.Redacted(Schema.String.check(Schema.isNonEmpty()), {
     label: "extension-env-secret",
     disallowJsonEncode: true,
   }),
-  expectedRevisionFingerprint: Schema.optionalKey(Schema.String.check(Schema.isNonEmpty())),
+  replaces: Schema.optionalKey(
+    Schema.Struct({
+      ref: ExtensionEnvSecretRefSchema,
+      expectedRevisionFingerprint: Schema.String.check(Schema.isNonEmpty()),
+    }),
+  ),
 });
 export type WriteSecretValueInput = typeof WriteSecretValueInputSchema.Type;
 
@@ -3977,6 +4237,11 @@ export type RemoveSecretValueResult = typeof RemoveSecretValueResultSchema.Type;
 // App/bootstrap provides SecretStoreMutationPort only into state-owned secret-write command/facade
 // layers, not into the general app runtime context available to runtime, extensions, pi-adapter, or
 // sandbox services.
+// ExtensionEnvSecretTarget is the logical state-owned key. Each successful write allocates a new
+// opaque materialId and returns an immutable physical ExtensionEnvSecretRef. A replacement verifies
+// the prior exact ref/fingerprint but does not remove it; state commits the new ref before requesting
+// post-commit cleanup of the old ref. Revision fingerprints derive only from opaque material identity,
+// never from secret bytes.
 
 export const GetPiSessionReferenceInputSchema = Schema.Struct({
   surfacePiSessionId: SurfacePiSessionId,

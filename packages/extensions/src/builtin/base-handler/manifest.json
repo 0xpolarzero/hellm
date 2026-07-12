@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"base-handler","interface":"instructions","title":"Base Handler","description":"Delegated handler-thread instructions.","typescriptApiEnabled":false,"instructionFiles":[{"file":"010-base-handler.mdx","bypassed":false}]}

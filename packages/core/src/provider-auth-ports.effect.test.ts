@@ -13,6 +13,7 @@ import {
   ProviderAuthStatusSchema,
   ProviderCredentialSnapshotSchema,
   WriteSecretValueResultSchema,
+  WriteSecretValueInputSchema,
   strictBoundaryParseOptions,
   type ProviderId,
   type WorkspaceId,
@@ -188,24 +189,37 @@ describe("@svvy/core provider auth port contracts", () => {
   it.effect("decodes secret mutation inputs through the mutation-only secret port contract", () =>
     Effect.gen(function* () {
       const writeInput = yield* decodeUnknownWriteSecretValueInputEffect({
-        ref: {
+        target: {
           kind: "extension-env",
           extensionId: "extension_01",
           envName: "API_KEY",
         },
         value: Redacted.make("sk-test-secret", { label: "extension-env-secret" }),
-        expectedRevisionFingerprint: "rev_01",
+        replaces: {
+          ref: {
+            kind: "extension-env",
+            extensionId: "extension_01",
+            envName: "API_KEY",
+            materialId: "material_01",
+          },
+          expectedRevisionFingerprint: "rev_01",
+        },
       });
-      assert.strictEqual(writeInput.ref.extensionId, "extension_01");
-      assert.strictEqual(writeInput.ref.envName, "API_KEY");
+      assert.strictEqual(writeInput.target.extensionId, "extension_01");
+      assert.strictEqual(writeInput.target.envName, "API_KEY");
       assert.strictEqual(Redacted.value(writeInput.value), "sk-test-secret");
-      assert.strictEqual(writeInput.expectedRevisionFingerprint, "rev_01");
+      assert.strictEqual(writeInput.replaces?.expectedRevisionFingerprint, "rev_01");
+      assert.throws(
+        () => Schema.encodeSync(Schema.toCodecJson(WriteSecretValueInputSchema))(writeInput),
+        /Cannot serialize Redacted/,
+      );
 
       const removeInput = yield* decodeUnknownRemoveSecretValueInputEffect({
         ref: {
           kind: "extension-env",
           extensionId: "extension_01",
           envName: "API_KEY",
+          materialId: "material_02",
         },
         expectedRevisionFingerprint: "rev_02",
       });
@@ -215,7 +229,7 @@ describe("@svvy/core provider auth port contracts", () => {
       assert.strictEqual(removeInput.expectedRevisionFingerprint, "rev_02");
 
       yield* decodeUnknownWriteSecretValueInputEffect({
-        ref: {
+        target: {
           kind: "extension-env",
           extensionId: "extension_01",
           envName: "API_KEY",
@@ -231,6 +245,7 @@ describe("@svvy/core provider auth port contracts", () => {
           kind: "extension-env",
           extensionId: "extension_01",
           envName: "API_KEY",
+          materialId: "material_03",
         },
         revisionFingerprint: "rev_03",
       });
@@ -244,6 +259,7 @@ describe("@svvy/core provider auth port contracts", () => {
           kind: "extension-env",
           extensionId: "extension_01",
           envName: "API_KEY",
+          materialId: "material_04",
         },
         removed: true,
         revisionFingerprint: "rev_04",

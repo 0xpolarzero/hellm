@@ -34,7 +34,26 @@ async function waitForWorkspaceChrome(page: SvvyApp["page"]): Promise<void> {
 }
 
 async function currentText(page: SvvyApp["page"], selector: string): Promise<string> {
-  return (await page.locator(selector).textContent())?.trim() ?? "";
+  return (
+    (await page.locator(selector).filter({ visible: true }).first().textContent())?.trim() ?? ""
+  );
+}
+
+async function waitForText(
+  page: SvvyApp["page"],
+  selector: string,
+  expected: string,
+): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  let lastText = "";
+  while (Date.now() < deadline) {
+    lastText = await currentText(page, selector);
+    if (lastText === expected) return;
+    await Bun.sleep(100);
+  }
+  throw new Error(
+    `Timed out waiting for ${selector} to contain ${expected}. Last text: ${lastText}`,
+  );
 }
 
 test("default provider and model bootstrap from Bun-side defaults", async () => {
@@ -46,6 +65,8 @@ test("default provider and model bootstrap from Bun-side defaults", async () => 
         .getByRole("button", { name: "Create a new orchestrator" })
         .click({ force: true });
       await app.page.locator(".composer-shell").waitFor({ state: "visible" });
+
+      await waitForText(app.page, ".model-control .compact-combobox-label", "GLM-5-Turbo");
 
       expect(await currentText(app.page, ".model-control .compact-combobox-label")).toBe(
         "GLM-5-Turbo",

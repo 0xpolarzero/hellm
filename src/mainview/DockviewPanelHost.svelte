@@ -156,10 +156,10 @@
         usage[extensionId] = "available";
       }
     }
-    const inventoryIds = new Set(
-      runtime.extensionsInventorySnapshot?.extensions.map((extension) => extension.id) ?? [],
+    const catalogIds = new Set(
+      runtime.agentExtensionsCatalogSnapshot?.records.map((extension) => extension.extensionId) ?? [],
     );
-    for (const extensionId of inventoryIds) {
+    for (const extensionId of catalogIds) {
       if (usage[extensionId] === undefined) {
         usage[extensionId] = "unavailable";
       }
@@ -168,12 +168,18 @@
   });
   const composerExtensionUsageItems = $derived.by<ExtensionUsageControlItem[]>(() => {
     void controllerRevision;
+    const actorDefaults =
+      composerExtensionActor === "orchestrator"
+        ? (runtime.agentsSnapshot?.actorExtensionDefaults.find(
+            (record) => record.actor === composerExtensionActor,
+          ) ?? null)
+        : null;
     return buildExtensionUsageItems({
       actor: composerExtensionActor,
       profileId: controller?.agentProfileId ?? "composer-surface",
       usage: composerExtensionUsage,
-      extensionInventoryItems: runtime.extensionsInventorySnapshot?.extensions ?? [],
-      inventoryDefaults: runtime.extensionsInventorySnapshot?.defaults ?? null,
+      extensionCatalogItems: runtime.agentExtensionsCatalogSnapshot?.records ?? [],
+      actorDefaults,
       networkAccess: runtime.appPreferencesSnapshot?.networkAccess ?? true,
     });
   });

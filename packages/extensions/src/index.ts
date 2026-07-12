@@ -1,8 +1,16 @@
 export * from "./extension-records";
+export * from "./extension-cli-requirement-probe-port";
+export * from "./extension-build-observation";
+export * from "./extension-build-process-port";
+export * from "./extension-registry-observation";
 export * from "./extension-source-roots-port";
+export * from "./extension-source-lifecycle";
+export { configureExtensionTypescriptApi } from "./extension-source-management";
+export * from "./external-instructions";
 export * from "./execute-typescript-facade-declarations";
 export * from "./extensions-service";
 export * from "./generated-package-root-port";
+export * from "./generated-context";
 export {
   GENERATED_EXTENSIONS_PACKAGE_NAME,
   generatedExtensionExportIds,

@@ -23,6 +23,61 @@ const workspaceSessionId = "session-runtime-actor-extension-binding" as Workspac
 const orchestratorSurfacePiSessionId = workspaceSessionId as string as SurfacePiSessionId;
 
 describe("RuntimeActorExtensionBindingStatePort", () => {
+  it("atomically binds the first authoritative orchestrator context", async () => {
+    await runTestEffect(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* StructuredSessionState;
+          yield* state.upsertPiSession({
+            sessionId: workspaceSessionId,
+            title: "Unbound orchestrator",
+            provider: "openai",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            updateExtensionContextBeforeNextTurn: true,
+            loadedExtensionIds: ["base-common"],
+            availableExtensionIds: ["shell"],
+            messageCount: 0,
+            status: "idle",
+            createdAt: "2026-04-18T08:55:00.000Z",
+            updatedAt: "2026-04-18T08:56:00.000Z",
+          });
+          const port = yield* RuntimeActorExtensionBindingStatePort;
+          const target = {
+            workspaceSessionId,
+            surface: "orchestrator" as const,
+            surfacePiSessionId: orchestratorSurfacePiSessionId,
+          };
+          const subject = yield* port.readGeneratedContextBuildSubject({ target });
+          expect(subject.loadedExtensionIds as readonly string[]).toEqual(["base-common"]);
+          const committed = yield* port.bindGeneratedContext({
+            target,
+            actorKind: "orchestrator",
+            fingerprint: "sha256:first-authoritative-context" as never,
+            systemPrompt: "Authoritative first prompt.",
+            svvyxGuidance: "",
+            commandsDts: "",
+            nativeToolSchemasJson: "[]",
+            loadedExtensionIds: subject.loadedExtensionIds,
+            availableExtensionIds: subject.availableExtensionIds,
+            externalSourceHashes: ["sha256:agents"],
+          });
+          expect(committed.value.systemPrompt).toBe("Authoritative first prompt.");
+          expect(committed.value.generatedAgentContextRevision).toBe(1);
+          const rebound = yield* port.readRuntimePromptBinding({ target });
+          expect(rebound.systemPrompt).toBe("Authoritative first prompt.");
+          expect(rebound.updateExtensionContextBeforeNextTurn).toBe(false);
+        }).pipe(
+          Effect.provide(
+            layerRuntimeActorExtensionBindingStatePort.pipe(
+              Layer.provideMerge(layerStructuredSessionState({ workspace })),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it("reads the orchestrator runtime prompt binding by the session-bound fingerprint", async () => {
     await runTestEffect(
       Effect.scoped(
@@ -48,7 +103,6 @@ describe("RuntimeActorExtensionBindingStatePort", () => {
             ownerKind: "session",
             ownerId: workspaceSessionId,
             actorKind: "orchestrator",
-            aggregateCacheKey: "orchestrator-cache-key",
             systemPrompt: "Use the orchestrator generated context.",
             svvyxGuidance: "hidden svvyx guidance",
             commandsDts: "hidden commands declarations",
@@ -134,7 +188,6 @@ describe("RuntimeActorExtensionBindingStatePort", () => {
             ownerKind: "thread",
             ownerId: thread.id,
             actorKind: "handler",
-            aggregateCacheKey: "handler-cache-key",
             systemPrompt: "Use the handler generated context.",
             svvyxGuidance: "hidden handler svvyx guidance",
             commandsDts: "hidden handler commands declarations",

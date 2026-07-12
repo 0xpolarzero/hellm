@@ -105,6 +105,30 @@ export interface DesktopRendererTelemetryInput {
   };
 }
 
+export interface DesktopExternalInstructionEditorTarget {
+  readonly sourceId: string;
+  readonly path: string;
+  readonly cwd: string;
+  readonly editor: "system" | "code" | "cursor" | "zed" | "sublime" | "custom";
+  readonly customCommand: string;
+}
+
+export interface DesktopExternalInstructionEditorResult {
+  readonly workspaceId: string;
+  readonly sourceId: string;
+  readonly path: string;
+  readonly opened: boolean;
+  readonly editor: DesktopExternalInstructionEditorTarget["editor"];
+  readonly failure?:
+    | { readonly kind: "app-launch"; readonly message: string }
+    | { readonly kind: "custom-command-empty" }
+    | {
+        readonly kind: "custom-command-launch";
+        readonly command: string;
+        readonly message: string;
+      };
+}
+
 export interface DesktopAppActionsFacade {
   readonly workspaces: {
     acquireByCwd(input: { readonly cwd: string }): Promise<DesktopWorkspaceInfo>;
@@ -144,6 +168,15 @@ export interface DesktopAppActionsFacade {
       readonly workspaceRelativePath: string;
     }): Promise<DesktopWorkspacePathTarget>;
   };
+  readonly externalInstructions: {
+    resolveEditorTarget(input: {
+      readonly workspaceId: string;
+      readonly sourceId: string;
+    }): Promise<DesktopExternalInstructionEditorTarget>;
+    recordEditorResult(
+      input: DesktopExternalInstructionEditorResult,
+    ): Promise<{ readonly ok: true }>;
+  };
   readonly telemetry: {
     recordRenderer(input: DesktopRendererTelemetryInput): Promise<{ readonly ok: true }>;
   };
@@ -166,7 +199,10 @@ export interface RendererStateCommandsFacade {
   readonly appLogs: BootstrapStateCommandsFacade["appLogs"];
   readonly appPreferences: BootstrapStateCommandsFacade["appPreferences"];
   readonly providerAuth: BootstrapStateCommandsFacade["providerAuth"];
-  readonly extensionEnv: BootstrapStateCommandsFacade["extensionEnv"];
+  readonly extensionEnv: Pick<
+    BootstrapStateCommandsFacade["extensionEnv"],
+    "setOverride" | "removeOverride"
+  >;
   readonly agentProfiles: BootstrapStateCommandsFacade["agentProfiles"];
   readonly snippets: BootstrapStateCommandsFacade["snippets"];
 }

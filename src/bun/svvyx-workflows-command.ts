@@ -1,16 +1,17 @@
 import { getModels, getProviders, getSupportedThinkingLevels } from "@mariozechner/pi-ai";
-import { decodeUnknownTaskAgentParametersSourceExit } from "@svvy/core";
+import {
+  decodeUnknownTaskAgentParametersSourceExit,
+  type SvvyxWorkflowsRuntimeRequest,
+  type SvvyxWorkflowsRuntimeResponse,
+} from "@svvy/core";
 import { existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 import * as Exit from "effect/Exit";
 import type { ReasoningEffort } from "../shared/agent-settings";
 import type { AuthKeyType, WorkspaceWorkflowsGeneratedKind } from "../shared/workspace-contract";
-import type { AgentSettingsStore } from "./agent-settings-store";
 import type { AgentProfileMutationStore } from "./agent-profile-mutation-store";
 import { resolveAuthState } from "./auth-store";
-import type { ExtensionEnvSecretStore } from "./extension-env-secret-store";
 import {
-  buildWorkflowsGeneratedPackage,
   copyWorkflowSourceItem,
   extractWorkflowAgentParametersFromSource,
   extractWorkflowSourceExportItem,
@@ -19,7 +20,6 @@ import {
   WorkflowLibraryError,
   type WorkflowsBuildDiagnostic,
 } from "./smithers-runtime/workflow-library";
-import type { SvvyxExtensionsCliProbe } from "./svvyx-extensions-command";
 
 export type SvvyxWorkflowsCommandResult = {
   output: unknown;
@@ -99,19 +99,17 @@ export function assertAgentModelSelection(
 
 export async function runSvvyxWorkflowsCommand(input: {
   agentProfileStore?: AgentProfileMutationStore;
-  agentSettingsStore?: AgentSettingsStore;
   command: string;
   cwd?: string;
-  env?: NodeJS.ProcessEnv;
-  envSecretStore?: ExtensionEnvSecretStore;
-  extensionsBuildRoot?: string;
-  extensionsCliProbe?: SvvyxExtensionsCliProbe;
   extensionsRoot?: string;
   extensionsGeneratedPackagePath?: string;
   generatedPackagePath?: string;
   readModelCatalog?: SvvyxWorkflowsModelCatalogReader;
   sourceRoot?: string;
   sourceCommandId?: string;
+  requestWorkflowsRuntime?: (
+    request: SvvyxWorkflowsRuntimeRequest,
+  ) => Promise<SvvyxWorkflowsRuntimeResponse>;
   workspaceCwd?: string;
 }): Promise<SvvyxWorkflowsCommandResult> {
   const words = splitCommandLine(input.command);
@@ -134,34 +132,21 @@ export async function runSvvyxWorkflowsCommand(input: {
   }
   if (commandId === "build") {
     return await runBuildCommand(words.slice(3), {
-      agentSettingsStore: input.agentSettingsStore,
-      cwd: input.cwd,
-      env: input.env,
-      envSecretStore: input.envSecretStore,
-      extensionsBuildRoot: input.extensionsBuildRoot,
-      extensionsCliProbe: input.extensionsCliProbe,
-      extensionsRoot: input.extensionsRoot,
-      extensionsGeneratedPackagePath: input.extensionsGeneratedPackagePath,
-      generatedPackagePath: input.generatedPackagePath,
-      modelCatalog: (input.readModelCatalog ?? readDefaultModelCatalog)(),
-      sourceRoot: input.sourceRoot,
+      requestWorkflowsRuntime: input.requestWorkflowsRuntime,
+      sourceCommandId: input.sourceCommandId,
     });
   }
   if (commandId === "save") {
     return await runSaveCommand(words.slice(3), {
       agentProfileStore: input.agentProfileStore,
-      agentSettingsStore: input.agentSettingsStore,
       cwd: input.cwd,
-      env: input.env,
-      envSecretStore: input.envSecretStore,
-      extensionsBuildRoot: input.extensionsBuildRoot,
-      extensionsCliProbe: input.extensionsCliProbe,
       extensionsRoot: input.extensionsRoot,
       extensionsGeneratedPackagePath: input.extensionsGeneratedPackagePath,
       generatedPackagePath: input.generatedPackagePath,
       modelCatalog: (input.readModelCatalog ?? readDefaultModelCatalog)(),
       sourceRoot: input.sourceRoot,
       sourceCommandId: input.sourceCommandId,
+      requestWorkflowsRuntime: input.requestWorkflowsRuntime,
       workspaceCwd: input.workspaceCwd,
     });
   }
@@ -202,76 +187,43 @@ export async function runSvvyxWorkflowsCommand(input: {
 async function runBuildCommand(
   words: string[],
   options: {
-    agentSettingsStore?: AgentSettingsStore;
-    cwd?: string;
-    env?: NodeJS.ProcessEnv;
-    envSecretStore?: ExtensionEnvSecretStore;
-    extensionsBuildRoot?: string;
-    extensionsCliProbe?: SvvyxExtensionsCliProbe;
-    extensionsRoot?: string;
-    extensionsGeneratedPackagePath?: string;
-    generatedPackagePath?: string;
-    modelCatalog: readonly SvvyxWorkflowsModelChoice[];
-    sourceRoot?: string;
+    requestWorkflowsRuntime?: (
+      request: SvvyxWorkflowsRuntimeRequest,
+    ) => Promise<SvvyxWorkflowsRuntimeResponse>;
+    sourceCommandId?: string;
   },
 ): Promise<SvvyxWorkflowsCommandResult> {
   const flags = parseFlags(words);
   requireJson(flags);
   rejectUnknownFlags(flags, ["json"]);
-  const result = await buildWorkflowsGeneratedPackage({
-    agentSettingsStore: options.agentSettingsStore,
-    cwd: options.cwd,
-    env: options.env,
-    envSecretStore: options.envSecretStore,
-    extensionsBuildRoot: options.extensionsBuildRoot,
-    extensionsCliProbe: options.extensionsCliProbe,
-    extensionsRoot: options.extensionsRoot,
-    extensionsGeneratedPackagePath: options.extensionsGeneratedPackagePath,
-    generatedPackagePath: options.generatedPackagePath,
-    modelCatalog: options.modelCatalog,
-    sourceRoot: options.sourceRoot,
-  });
-  if (!result.ok) {
-    throw workflowsCommandError("build_failed", "Workflows build failed.", result.diagnostics);
+  if (!options.requestWorkflowsRuntime) {
+    throw workflowsCommandError(
+      "runtime_authority_unavailable",
+      "Workflows builds require the runtime-owned generated-package authority.",
+    );
   }
-  return {
-    output: {
-      ok: true,
-      generatedPackagePath: result.generatedPackagePath,
-      diagnostics: result.diagnostics,
-      items: result.items.map((item) => ({
-        kind: item.kind,
-        namespace: item.namespace,
-        exportName: item.exportName,
-        qualifiedName: item.qualifiedName,
-        sourcePath: item.sourcePath,
-        generatedPath: item.generatedPath,
-      })),
-    },
-    commandFacts: {
-      workflowBuildOk: true,
-      workflowExportCount: result.items.length,
-      workflowDiagnosticCount: result.diagnostics.length,
-    },
-  };
+  const response = await options.requestWorkflowsRuntime({
+    operation: "build",
+    input: options.sourceCommandId ? { sourceCommandId: options.sourceCommandId as never } : {},
+  });
+  assertWorkflowsRuntimeBuildSucceeded(response);
+  return response;
 }
 
 async function runSaveCommand(
   words: string[],
   options: {
     agentProfileStore?: AgentProfileMutationStore;
-    agentSettingsStore?: AgentSettingsStore;
     cwd?: string;
-    env?: NodeJS.ProcessEnv;
-    envSecretStore?: ExtensionEnvSecretStore;
-    extensionsBuildRoot?: string;
-    extensionsCliProbe?: SvvyxExtensionsCliProbe;
     extensionsRoot?: string;
     extensionsGeneratedPackagePath?: string;
     generatedPackagePath?: string;
     modelCatalog: readonly SvvyxWorkflowsModelChoice[];
     sourceRoot?: string;
     sourceCommandId?: string;
+    requestWorkflowsRuntime?: (
+      request: SvvyxWorkflowsRuntimeRequest,
+    ) => Promise<SvvyxWorkflowsRuntimeResponse>;
     workspaceCwd?: string;
   },
 ): Promise<SvvyxWorkflowsCommandResult> {
@@ -402,43 +354,35 @@ async function runSaveCommand(
       });
     }
 
-    const build = await buildWorkflowsGeneratedPackage({
-      agentSettingsStore: options.agentSettingsStore,
-      cwd: options.cwd,
-      env: options.env,
-      envSecretStore: options.envSecretStore,
-      extensionsBuildRoot: options.extensionsBuildRoot,
-      extensionsCliProbe: options.extensionsCliProbe,
-      extensionsRoot: options.extensionsRoot,
-      extensionsGeneratedPackagePath: options.extensionsGeneratedPackagePath,
-      generatedPackagePath: options.generatedPackagePath,
-      modelCatalog: options.modelCatalog,
-      sourceRoot: options.sourceRoot,
-    });
-    if (!build.ok) {
+    if (!options.requestWorkflowsRuntime) {
       restoreSourceAfterFailedSave(targetPath, previous);
-      throw workflowsCommandError("build_failed", "Workflows build failed.", build.diagnostics);
+      throw workflowsCommandError(
+        "runtime_authority_unavailable",
+        "Workflows saves require the runtime-owned generated-package authority.",
+      );
     }
+    const build = await options.requestWorkflowsRuntime({
+      operation: "build",
+      input: options.sourceCommandId ? { sourceCommandId: options.sourceCommandId as never } : {},
+    });
+    assertWorkflowsRuntimeBuildSucceeded(build);
     return {
       output: {
-        ok: true,
+        ...(build.output as Record<string, unknown>),
         sourcePath: targetPath,
-        generatedPackagePath: build.generatedPackagePath,
         exportName,
         kind,
-        diagnostics: build.diagnostics,
       },
       commandFacts: {
+        ...build.commandFacts,
         workflowSavedExportName: exportName,
         workflowSavedKind: kind,
         workflowSourcePath: targetPath,
-        workflowBuildOk: true,
-        workflowExportCount: build.items.length,
       },
     };
   } catch (error) {
+    restoreSourceAfterFailedSave(targetPath, previous);
     if (error instanceof WorkflowLibraryError) {
-      restoreSourceAfterFailedSave(targetPath, previous);
       throw workflowsCommandError(error.code, error.message, [
         {
           code: error.code,
@@ -449,6 +393,39 @@ async function runSaveCommand(
       ]);
     }
     throw error;
+  }
+}
+
+function runtimeBuildFailure(output: unknown): {
+  message: string;
+  diagnostics?: WorkflowsBuildDiagnostic[];
+} | null {
+  if (!output || typeof output !== "object" || Array.isArray(output)) return null;
+  const candidate = output as {
+    ok?: unknown;
+    error?: { message?: unknown; diagnostics?: unknown };
+  };
+  if (candidate.ok !== false) return null;
+  const diagnostics = Array.isArray(candidate.error?.diagnostics)
+    ? candidate.error.diagnostics.filter((value): value is WorkflowsBuildDiagnostic =>
+        Boolean(value && typeof value === "object" && typeof value.message === "string"),
+      )
+    : undefined;
+  return {
+    message:
+      typeof candidate.error?.message === "string"
+        ? candidate.error.message
+        : "Workflows build failed.",
+    ...(diagnostics ? { diagnostics } : {}),
+  };
+}
+
+export function assertWorkflowsRuntimeBuildSucceeded(
+  response: SvvyxWorkflowsRuntimeResponse,
+): void {
+  const failure = runtimeBuildFailure(response.output);
+  if (failure) {
+    throw workflowsCommandError("build_failed", failure.message, failure.diagnostics);
   }
 }
 

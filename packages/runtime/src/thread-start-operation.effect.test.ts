@@ -102,7 +102,6 @@ const preparedInput = {
       historyMode: "isolated",
       agentProfileJson: null,
       generatedAgentContextBinding: {
-        aggregateCacheKey: "handler-thread-cache",
         generatedAgentContextFingerprint: "handler-thread-fingerprint",
         generatedAgentContextRevision: 1,
         externalSourceHashes: [],

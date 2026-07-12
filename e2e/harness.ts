@@ -206,6 +206,8 @@ function createLaunchOptions(
   const workspaceDir = options.workspaceDir ?? APP_WORKSPACE_DIR;
   const preparedHomeDirs = new Set<string>();
   const env = {
+    OPENAI_API_KEY: "svvy-e2e-openai-key",
+    ZAI_API_KEY: "svvy-e2e-zai-key",
     ...options.env,
     ...(options.openInitialWorkspace === false ? {} : { SVVY_WORKSPACE_CWD: workspaceDir }),
   };

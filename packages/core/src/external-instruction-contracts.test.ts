@@ -3,10 +3,13 @@ import * as Exit from "effect/Exit";
 
 import {
   DEFAULT_EXTERNAL_INSTRUCTIONS,
+  decodeUnknownExternalInstructionScanInputExit,
   decodeUnknownExternalInstructionsSettingsExit,
+  encodeExternalInstructionScanResultExit,
   encodeExternalInstructionsSettingsExit,
   normalizeExternalInstructionsSettings,
 } from "./external-instruction-contracts";
+import type { AbsolutePath, ExternalInstructionSourceId, WorkspaceId } from "./ids";
 
 describe("external instruction settings contracts", () => {
   it("round-trips the exact default settings contract", () => {
@@ -105,5 +108,72 @@ describe("external instruction settings contracts", () => {
       },
     });
     expect(normalizeExternalInstructionsSettings(normalized)).toEqual(normalized);
+  });
+
+  it("round-trips split source observations and content without path-shaped identity", () => {
+    const sourceId = "external_instruction_01" as ExternalInstructionSourceId;
+    const encoded = encodeExternalInstructionScanResultExit({
+      sources: [
+        {
+          id: sourceId,
+          source: { sourceKind: "external-instruction", sourceId },
+          fileName: "AGENTS.md",
+          title: "AGENTS.md",
+          canonicalPath: "/repo/AGENTS.md" as AbsolutePath,
+          sourceGroup: "workspace_chain",
+          order: 0,
+          enabled: true,
+          eligibleActors: ["orchestrator"],
+          readOnly: true,
+          contentHash: "sha256:content",
+          fingerprint: "sha256:fingerprint",
+          readStatus: { status: "readable" },
+        },
+      ],
+      contents: [{ sourceId, content: "rules" }],
+      diagnostics: [],
+    });
+    expect(Exit.isSuccess(encoded)).toBe(true);
+  });
+
+  it("rejects renderer-like scan fields and invalid observation ordering", () => {
+    expect(
+      Exit.isFailure(
+        decodeUnknownExternalInstructionScanInputExit({
+          workspaceId: "workspace_01" as WorkspaceId,
+          workspaceRoot: "/repo" as AbsolutePath,
+          cwd: "/repo" as AbsolutePath,
+          homeDirectory: "/home/test" as AbsolutePath,
+          settings: DEFAULT_EXTERNAL_INSTRUCTIONS,
+          rendererPath: "/tmp/untrusted",
+        }),
+      ),
+    ).toBe(true);
+    const sourceId = "external_instruction_01" as ExternalInstructionSourceId;
+    expect(
+      Exit.isFailure(
+        encodeExternalInstructionScanResultExit({
+          sources: [
+            {
+              id: sourceId,
+              source: { sourceKind: "external-instruction", sourceId },
+              fileName: "AGENTS.md",
+              title: "AGENTS.md",
+              canonicalPath: "/repo/AGENTS.md" as AbsolutePath,
+              sourceGroup: "workspace_chain",
+              order: -1 as never,
+              enabled: true,
+              eligibleActors: ["orchestrator"],
+              readOnly: true,
+              contentHash: "sha256:content",
+              fingerprint: "sha256:fingerprint",
+              readStatus: { status: "readable" },
+            },
+          ],
+          contents: [],
+          diagnostics: [],
+        }),
+      ),
+    ).toBe(true);
   });
 });

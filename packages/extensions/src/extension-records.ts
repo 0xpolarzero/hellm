@@ -2,6 +2,7 @@ import type {
   ActorKind,
   ExtensionCategory,
   ExtensionInterfaceKind,
+  ExtensionRegistryUsagePolicy,
   ExtensionUsageState,
 } from "@svvy/core";
 export type { ExtensionCategory, ExtensionInterfaceKind, ExtensionUsageState } from "@svvy/core";
@@ -392,12 +393,12 @@ export const BUILTIN_EXTENSIONS = [
     generatedInstructions: [
       {
         output: "instructions/full/010-smithers-core.generated.md",
-        script: "scripts/generate-smithers-fragment.ts",
+        script: "scripts/generate-smithers-core.ts",
         versionCliRequirementId: "smithers-orchestrator",
       },
       {
         output: "instructions/full/040-smithers-memory.generated.md",
-        script: "scripts/generate-smithers-fragment.ts",
+        script: "scripts/generate-smithers-memory.ts",
         versionCliRequirementId: "smithers-orchestrator",
       },
     ],
@@ -407,11 +408,11 @@ export const BUILTIN_EXTENSIONS = [
         bypassed: false,
       },
       {
-        file: "020-smithers-handler.md",
+        file: "020-smithers-handler.mdx",
         bypassed: false,
       },
       {
-        file: "030-smithers-svvy-boundary.md",
+        file: "030-smithers-svvy-boundary.mdx",
         bypassed: false,
       },
       {
@@ -460,6 +461,34 @@ export const BUILTIN_EXTENSION_IDS = BUILTIN_EXTENSIONS.map((extension) => exten
 
 export function builtinDefaultExtensionOrder(): string[] {
   return [...BUILTIN_EXTENSION_IDS];
+}
+
+const EXTENSION_LOADING_FIXED_REASON =
+  "Extension Loading is fixed always-loaded so actors can inspect and load available extensions.";
+
+export function builtinExtensionRegistryUsagePolicy(
+  id: BuiltinExtensionId,
+): ExtensionRegistryUsagePolicy {
+  const configurable = id !== "extension-loading";
+  return {
+    canonicalOrder: BUILTIN_EXTENSION_IDS.indexOf(id),
+    baselineUsage: { ...DEFAULT_STATES[id] },
+    networkAccess: id === "web" ? "required" : "not-required",
+    configurable,
+    fixedReason: configurable ? null : EXTENSION_LOADING_FIXED_REASON,
+  };
+}
+
+export function userExtensionRegistryUsagePolicy(
+  canonicalOrder: number,
+): ExtensionRegistryUsagePolicy {
+  return {
+    canonicalOrder,
+    baselineUsage: actorStates("loaded", "unavailable", "loaded"),
+    networkAccess: "not-required",
+    configurable: true,
+    fixedReason: null,
+  };
 }
 
 export function workflowTaskReferenceableBuiltinExtensionIds(): string[] {

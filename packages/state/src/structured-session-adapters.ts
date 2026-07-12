@@ -3,6 +3,22 @@ export {
   extensionStatePortFromStructuredSessionState,
 } from "./extension-state-port";
 export {
+  generatedContextPreviewSubjectStatePortFromStore,
+  generatedContextPreviewSubjectStatePortFromStructuredSessionState,
+} from "./generated-context-preview-subject-state-port";
+export {
+  extensionSnapshotStatePortFromStore,
+  extensionSnapshotStatePortFromStructuredSessionState,
+} from "./extension-snapshot-state-port";
+export {
+  extensionSnapshotSettingsStatePortFromStore,
+  extensionSnapshotSettingsStatePortFromStructuredSessionState,
+} from "./extension-snapshot-settings-state-port";
+export {
+  extensionUsageStatePortFromStore,
+  extensionUsageStatePortFromStructuredSessionState,
+} from "./extension-usage-state-port";
+export {
   piSessionReferencePortFromStore,
   piSessionReferencePortFromStructuredSessionState,
 } from "./pi-session-reference-port";
@@ -43,6 +59,10 @@ export {
   runtimeExtensionStatePortFromStore,
   runtimeExtensionStatePortFromStructuredSessionState,
 } from "./runtime-extension-state-port";
+export {
+  runtimeExternalInstructionStatePortFromStore,
+  runtimeExternalInstructionStatePortFromStructuredSessionState,
+} from "./runtime-external-instruction-state-port";
 export {
   runtimeGeneratedPackageStatePortFromStore,
   runtimeGeneratedPackageStatePortFromStructuredSessionState,

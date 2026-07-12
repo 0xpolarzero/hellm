@@ -1,6 +1,12 @@
 import * as Schema from "effect/Schema";
 
 import { strictBoundaryParseOptions } from "./boundary-parse-options";
+import {
+  AbsolutePath,
+  ExternalInstructionSourceId,
+  NonNegativeSafeIntegerSchema,
+  WorkspaceId,
+} from "./ids";
 
 export const ExternalInstructionActorSchema = Schema.Literals([
   "orchestrator",
@@ -91,6 +97,100 @@ export const DEFAULT_EXTERNAL_INSTRUCTIONS = {
   workspaceControls: {},
 } satisfies ExternalInstructionsSettings;
 
+export const ExternalInstructionFileNameSchema = Schema.Literals(["AGENTS.md", "CLAUDE.md"]);
+export type ExternalInstructionFileName = typeof ExternalInstructionFileNameSchema.Type;
+
+export const ExternalInstructionSourceGroupSchema = Schema.Literals([
+  "builtin_global_root",
+  "custom_global_root",
+  "workspace_chain",
+]);
+export type ExternalInstructionSourceGroup = typeof ExternalInstructionSourceGroupSchema.Type;
+
+export const ExternalInstructionSourceAddressSchema = Schema.Struct({
+  sourceKind: Schema.Literal("external-instruction"),
+  sourceId: ExternalInstructionSourceId,
+});
+export type ExternalInstructionSourceAddress = typeof ExternalInstructionSourceAddressSchema.Type;
+
+export const ExternalInstructionReadStatusSchema = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("readable") }),
+  Schema.Struct({ status: Schema.Literal("unreadable"), error: Schema.String }),
+]);
+export type ExternalInstructionReadStatus = typeof ExternalInstructionReadStatusSchema.Type;
+
+export const ExternalInstructionDiagnosticSchema = Schema.Struct({
+  sourceId: Schema.optionalKey(ExternalInstructionSourceId),
+  severity: Schema.Literals(["error", "warning"]),
+  code: Schema.String,
+  message: Schema.String,
+});
+export type ExternalInstructionDiagnostic = typeof ExternalInstructionDiagnosticSchema.Type;
+
+export const ExternalInstructionSourceObservationSchema = Schema.Struct({
+  id: ExternalInstructionSourceId,
+  source: ExternalInstructionSourceAddressSchema,
+  fileName: ExternalInstructionFileNameSchema,
+  title: Schema.String,
+  canonicalPath: AbsolutePath,
+  sourceGroup: ExternalInstructionSourceGroupSchema,
+  rootId: Schema.optionalKey(Schema.String),
+  rootLabel: Schema.optionalKey(Schema.String),
+  order: NonNegativeSafeIntegerSchema,
+  enabled: Schema.Boolean,
+  eligibleActors: Schema.Array(ExternalInstructionActorSchema),
+  readOnly: Schema.Literal(true),
+  contentHash: Schema.String,
+  fingerprint: Schema.String,
+  readStatus: ExternalInstructionReadStatusSchema,
+});
+export type ExternalInstructionSourceObservation =
+  typeof ExternalInstructionSourceObservationSchema.Type;
+
+export const ExternalInstructionSourceContentSchema = Schema.Struct({
+  sourceId: ExternalInstructionSourceId,
+  content: Schema.String,
+});
+export type ExternalInstructionSourceContent = typeof ExternalInstructionSourceContentSchema.Type;
+
+export const ExternalInstructionScanInputSchema = Schema.Struct({
+  // These paths are runtime-derived trusted workspace authority, not renderer input.
+  workspaceId: WorkspaceId,
+  workspaceRoot: AbsolutePath,
+  cwd: AbsolutePath,
+  homeDirectory: AbsolutePath,
+  settings: ExternalInstructionsSettingsSchema,
+});
+export type ExternalInstructionScanInput = typeof ExternalInstructionScanInputSchema.Type;
+
+export const ExternalInstructionScanResultSchema = Schema.Struct({
+  sources: Schema.Array(ExternalInstructionSourceObservationSchema),
+  contents: Schema.Array(ExternalInstructionSourceContentSchema),
+  diagnostics: Schema.Array(ExternalInstructionDiagnosticSchema),
+});
+export type ExternalInstructionScanResult = typeof ExternalInstructionScanResultSchema.Type;
+
+export const ResolveExternalInstructionSourceInputSchema = Schema.Struct({
+  scan: ExternalInstructionScanInputSchema,
+  source: ExternalInstructionSourceAddressSchema,
+});
+export type ResolveExternalInstructionSourceInput =
+  typeof ResolveExternalInstructionSourceInputSchema.Type;
+
+export const ResolvedExternalInstructionSourceSchema = Schema.Struct({
+  observation: ExternalInstructionSourceObservationSchema,
+  content: Schema.String,
+});
+export type ResolvedExternalInstructionSource = typeof ResolvedExternalInstructionSourceSchema.Type;
+
+export const SaveExternalInstructionSourceInputSchema = Schema.Struct({
+  source: ExternalInstructionSourceAddressSchema,
+  expectedFingerprint: Schema.String,
+  text: Schema.String,
+});
+export type SaveExternalInstructionSourceInput =
+  typeof SaveExternalInstructionSourceInputSchema.Type;
+
 export function normalizeExternalInstructionsSettings(
   input: ExternalInstructionsSettings | undefined,
 ): ExternalInstructionsSettings {
@@ -175,5 +275,30 @@ export const encodeExternalInstructionsSettingsExit = Schema.encodeExit(
 );
 export const encodeExternalInstructionsSettingsEffect = Schema.encodeEffect(
   ExternalInstructionsSettingsSchema,
+  strictBoundaryParseOptions,
+);
+
+export const decodeUnknownExternalInstructionScanInputEffect = Schema.decodeUnknownEffect(
+  ExternalInstructionScanInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownExternalInstructionScanInputExit = Schema.decodeUnknownExit(
+  ExternalInstructionScanInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeExternalInstructionScanResultEffect = Schema.encodeEffect(
+  ExternalInstructionScanResultSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeExternalInstructionScanResultExit = Schema.encodeExit(
+  ExternalInstructionScanResultSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownResolveExternalInstructionSourceInputEffect = Schema.decodeUnknownEffect(
+  ResolveExternalInstructionSourceInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownSaveExternalInstructionSourceInputEffect = Schema.decodeUnknownEffect(
+  SaveExternalInstructionSourceInputSchema,
   strictBoundaryParseOptions,
 );

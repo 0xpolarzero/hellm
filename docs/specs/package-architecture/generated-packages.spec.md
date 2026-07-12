@@ -435,15 +435,10 @@ discovery: callers use `generatedExtensionExportIds(...)`,
 service through declared Effect services and layers. The host-backed functions are only app-edge and
 test adapters for callers that already own an explicit filesystem/state host object; they do not
 become generated-package runtime facades and must not add operations beyond the named host contract.
-The `@svvy/extensions` root also exports the pure file-render helpers
-`renderGeneratedExtensionsPackageFiles(...)` and `renderGeneratedWorkflowsPackageFiles(...)` for
-package-owned tests, package-private generated-package refresh implementation, and spec-named
-app-edge adapters such as `src/bun/generated-extensions-package.ts`. App/runtime generated-package
-refresh paths use `Extensions.generatedPackages.refresh(...)`; app-edge helper use stays
-file-render/discovery only and does not commit generated-package facts, mutate workspace links,
-publish runtime/read-model events, expose runtime facades, or duplicate eligibility policy beyond
-delegating to package-owned host adapters. Those render helpers return generated file contents only;
-they do not become generated `@svvyx/*` output.
+The pure file-render helpers remain package-owned implementation/test seams. App/runtime
+generated-package refresh paths use `Extensions.generatedPackages.refresh(...)`; Bun app-edge
+modules do not import those renderers or own generated-package file writes. The render helpers
+return generated file contents only; they do not become generated `@svvyx/*` output.
 
 Any new app-edge or test adapter must first be named by this spec with its exact export,
 input/output types, allowed host operations, owning tests, and boundary allowlist. Such an adapter

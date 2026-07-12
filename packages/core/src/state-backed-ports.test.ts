@@ -133,6 +133,7 @@ describe("@svvy/core state-backed port contracts", () => {
         kind: "extension-env",
         extensionId: "ext_openai",
         envName: "OPENAI_API_KEY",
+        materialId: "material_openai_01",
       },
       configured: true,
       redactedLabel: "sk-...abcd",
@@ -181,17 +182,16 @@ describe("@svvy/core state-backed port contracts", () => {
       kind: "extension-env",
       extensionId: "ext_web",
       envName: "TINYFISH_API_KEY",
+      materialId: "material_web_01",
     };
     const decodedGet = decodeUnknownGetSecretStatusInputExit(ref);
     const decodedResolve = decodeUnknownResolveSecretInvocationValueInputExit(ref);
-    const decodedList = decodeUnknownListSecretStatusInputExit({
-      kind: "extension-env",
-      extensionId: "ext_web",
-    });
+    const decodedList = decodeUnknownListSecretStatusInputExit({ refs: [ref] });
     const invalidRef = decodeUnknownGetSecretStatusInputExit({
       kind: "extension-env",
       extensionId: "ext_web",
       envName: "tinyfish_api_key",
+      materialId: "material_web_01",
     });
     const staleKeyInput = decodeUnknownResolveSecretInvocationValueInputExit({
       key: "web.tinyfish_api_key",
@@ -811,6 +811,7 @@ describe("@svvy/core state-backed port contracts", () => {
     const readiness = Schema.decodeUnknownSync(ExtensionDependencyReadinessSchema)({
       extensionId: "ext_web",
       requirementId: "dep:tinyfish",
+      requirementFingerprint: "sha256:tinyfish",
       status: "ready",
       detectedVersion: "1.2.3",
       expectedVersion: "1.2.3",
@@ -831,6 +832,7 @@ describe("@svvy/core state-backed port contracts", () => {
       Schema.decodeUnknownSync(ExtensionDependencyReadinessSchema)({
         extensionId: "ext_web",
         requirementId: "",
+        requirementFingerprint: "sha256:tinyfish",
         status: "ready",
         detectedVersion: null,
         expectedVersion: null,
@@ -2016,7 +2018,6 @@ describe("@svvy/core state-backed port contracts", () => {
 
   it("decodes runtime handler-thread start DTOs through public schemas", () => {
     const generatedAgentContextBinding = {
-      aggregateCacheKey: "handler_context_cache_01",
       generatedAgentContextFingerprint: "context_fp_01",
       generatedAgentContextRevision: 1,
       externalSourceHashes: ["external_hash_01"],
@@ -2089,9 +2090,9 @@ describe("@svvy/core state-backed port contracts", () => {
       createdAt: "2026-06-21T12:35:56.789Z",
     });
 
-    expect(startInput.threads[0]?.generatedAgentContextBinding.aggregateCacheKey).toBe(
-      "handler_context_cache_01",
-    );
+    expect(
+      startInput.threads[0]?.generatedAgentContextBinding.generatedAgentContextFingerprint,
+    ).toBe("context_fp_01");
     expect(started.threads[0]?.queuedMessageId as string).toBe("queue_initial_handler_01");
     expect(ensureInput.threadId as string).toBe("thread_01");
     expect(episode.kind).toBe("report");

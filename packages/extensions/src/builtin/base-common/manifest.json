@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"base-common","interface":"instructions","title":"Base Common","description":"Shared svvy operating instructions.","typescriptApiEnabled":false,"instructionFiles":[{"file":"010-base-common.mdx","bypassed":false}]}

@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"base-workflow-task","interface":"instructions","title":"Base Workflow Task","description":"Workflow task-agent instructions.","typescriptApiEnabled":false,"instructionFiles":[{"file":"010-base-workflow-task.mdx","bypassed":false}]}

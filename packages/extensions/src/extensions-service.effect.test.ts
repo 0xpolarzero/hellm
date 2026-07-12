@@ -7,10 +7,13 @@ import * as Path from "effect/Path";
 import { DEFAULT_WORKFLOW_AGENT_SOURCE_IDS, ExtensionStatePort } from "@svvy/core";
 import type {
   AbsolutePath,
+  BuildExtensionInput,
   CommandId,
   DefaultWorkflowAgentSourceId,
   ExtensionError,
   ExtensionId,
+  ExtensionRegistryObservationResult,
+  ExtensionSourceFingerprint,
   NativeToolHandlerLookupInput,
   PromptExecutionContext,
   SurfacePiSessionId,
@@ -21,6 +24,8 @@ import type {
   WorkflowTaskAttemptId,
   WorkspaceId,
   WorkspaceSessionId,
+  ExtensionSnapshotSourceRestorePlanId,
+  ExtensionSnapshotId,
 } from "@svvy/core";
 import { Extensions, layer, makeExtensions, type ExtensionsService } from "./extensions-service";
 import {
@@ -41,6 +46,12 @@ import {
 } from "./workspace-source-link-port";
 import type { GeneratedExtensionExportDiscoveryServices } from "./generated-extensions-package";
 import { extensionOwnedSourceId } from "./source-edit-sessions";
+import { ExtensionCliRequirementProbePort } from "./extension-cli-requirement-probe-port";
+import { ExtensionBuildProcessPort } from "./extension-build-process-port";
+import {
+  APP_NATIVE_SVVYX_METADATA,
+  appNativeSvvyxMetadataFingerprintInput,
+} from "./svvyx-build-metadata";
 
 function nativeToolLookup(input: {
   toolName: string;
@@ -94,10 +105,26 @@ function makeTestExtensions(): Effect.Effect<ExtensionsService, ExtensionError> 
   return provideGeneratedPackagePlatform(makeExtensions());
 }
 
+const snapshotCaptureInput = {
+  capturedAt: "2026-07-12T10:00:00.000Z",
+  actorSettings: [],
+  profileSettings: [],
+  nonSecretEnvOverrideScopes: [],
+  nonSecretEnvOverrides: [],
+  secretTargets: [],
+} as const;
+
 function makeSourceEditHarness(
   harnessOptions: {
     readonly publishRaceContents?: string;
+    readonly symbolicLinkPaths?: readonly string[];
     readonly unreadablePaths?: readonly string[];
+    readonly failRenameToOnce?: string;
+    readonly interruptRenameToOnce?: string;
+    readonly buildProcess?: (
+      plan: import("@svvy/core").ExtensionBuildProcessPlan,
+      files: Map<string, string>,
+    ) => import("@svvy/core").ExtensionBuildProcessEvidence;
   } = {},
 ): {
   readonly extensionsRoot: AbsolutePath;
@@ -109,23 +136,38 @@ function makeSourceEditHarness(
 } {
   const files = new Map<string, string>();
   const unreadablePaths = new Set(harnessOptions.unreadablePaths ?? []);
+  const symbolicLinkPaths = new Set(harnessOptions.symbolicLinkPaths ?? []);
   const directories = new Set<string>(["/", "/extensions-test", "/workflows-test"]);
+  let renameFailurePending = harnessOptions.failRenameToOnce !== undefined;
+  let renameInterruptionPending = harnessOptions.interruptRenameToOnce !== undefined;
   const fileSystem = {
     exists: (path: string) => Effect.succeed(files.has(path) || directories.has(path)),
+    readLink: (path: string) =>
+      symbolicLinkPaths.has(path)
+        ? Effect.succeed("/outside")
+        : Effect.fail(new Error(`Not a symbolic link: ${path}`)),
     stat: (path: string) =>
-      files.has(path)
-        ? Effect.succeed({ type: "File" } as FileSystem.File.Info)
-        : directories.has(path)
-          ? Effect.succeed({ type: "Directory" } as FileSystem.File.Info)
-          : Effect.die(new Error(`Missing path: ${path}`)),
+      symbolicLinkPaths.has(path)
+        ? Effect.succeed({ type: "SymbolicLink" } as FileSystem.File.Info)
+        : files.has(path)
+          ? Effect.succeed({ type: "File" } as FileSystem.File.Info)
+          : directories.has(path)
+            ? Effect.succeed({ type: "Directory" } as FileSystem.File.Info)
+            : Effect.die(new Error(`Missing path: ${path}`)),
     readFileString: (path: string) =>
       unreadablePaths.has(path)
         ? Effect.fail(new Error(`Unreadable file: ${path}`))
         : files.has(path)
           ? Effect.succeed(files.get(path) ?? "")
           : Effect.die(new Error(`Missing file: ${path}`)),
+    readFile: (path: string) =>
+      files.has(path)
+        ? Effect.succeed(new TextEncoder().encode(files.get(path) ?? ""))
+        : Effect.die(new Error(`Missing file: ${path}`)),
     readDirectory: (path: string) =>
       Effect.succeed(sourceEditReadDirectoryNames(path, files, directories)),
+    realPath: (path: string) =>
+      symbolicLinkPaths.has(path) ? Effect.succeed("/outside") : Effect.succeed(path),
     makeDirectory: (path: string) =>
       Effect.sync(() => {
         addSourceEditDirectoryChain(directories, path);
@@ -143,11 +185,11 @@ function makeSourceEditHarness(
         },
         catch: (cause) => cause,
       }),
-    remove: (path: string) =>
+    remove: (path: string, options?: { readonly force?: boolean; readonly recursive?: boolean }) =>
       Effect.sync(() => {
-        if (!files.delete(path)) {
-          throw new Error(`Missing file: ${path}`);
-        }
+        const existed = files.has(path) || directories.has(path);
+        removePath({ path, directories, writtenFiles: files });
+        if (!existed && !options?.force) throw new Error(`Missing file: ${path}`);
       }),
     writeFileString: (path: string, contents: string, options?: { readonly flag?: string }) =>
       Effect.sync(() => {
@@ -157,16 +199,23 @@ function makeSourceEditHarness(
         addSourceEditDirectoryChain(directories, sourceEditDirnamePath(path));
         files.set(path, contents);
       }),
-    rename: (fromPath: string, toPath: string) =>
+    writeFile: (path: string, contents: Uint8Array) =>
       Effect.sync(() => {
-        const contents = files.get(fromPath);
-        if (contents === undefined) {
-          throw new Error(`Missing file: ${fromPath}`);
-        }
-        addSourceEditDirectoryChain(directories, sourceEditDirnamePath(toPath));
-        files.delete(fromPath);
-        files.set(toPath, contents);
+        addSourceEditDirectoryChain(directories, sourceEditDirnamePath(path));
+        files.set(path, new TextDecoder().decode(contents));
       }),
+    rename: (fromPath: string, toPath: string) =>
+      renameInterruptionPending && toPath === harnessOptions.interruptRenameToOnce
+        ? Effect.sync(() => {
+            renameInterruptionPending = false;
+          }).pipe(Effect.andThen(Effect.interrupt))
+        : Effect.sync(() => {
+            if (renameFailurePending && toPath === harnessOptions.failRenameToOnce) {
+              renameFailurePending = false;
+              throw new Error(`Injected rename failure: ${toPath}`);
+            }
+            movePath({ fromPath, toPath, directories, writtenFiles: files });
+          }),
   } as unknown as FileSystem.FileSystem;
   const pathService = {
     sep: "/",
@@ -175,9 +224,19 @@ function makeSourceEditHarness(
     join: joinSourceEditPathSegments,
     resolve: (...segments: readonly string[]) =>
       normalizeSourceEditPath(joinSourceEditPathSegments(...segments)),
+    relative: (from: string, to: string) => {
+      const fromParts = normalizeSourceEditPath(from).split("/").filter(Boolean);
+      const toParts = normalizeSourceEditPath(to).split("/").filter(Boolean);
+      while (fromParts[0] === toParts[0]) {
+        fromParts.shift();
+        toParts.shift();
+      }
+      return [...fromParts.map(() => ".."), ...toParts].join("/");
+    },
+    isAbsolute: (input: string) => input.startsWith("/"),
   } as unknown as Path.Path;
   const crypto = Crypto.make({
-    digest: (_algorithm, data) => Effect.succeed(data),
+    digest: (_algorithm, data) => Effect.succeed(testDigestBytes(data)),
     randomBytes: (size) => new Uint8Array(size).fill(1),
   });
   const extensionsRoot = "/extensions-test" as AbsolutePath;
@@ -220,6 +279,13 @@ function makeSourceEditHarness(
         Effect.provideService(Path.Path, pathService),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ExtensionStatePort, extensionState),
+        Effect.provideService(ExtensionCliRequirementProbePort, {
+          probe: () => Effect.succeed({ status: "missing" }),
+        }),
+        Effect.provideService(ExtensionBuildProcessPort, {
+          run: (plan) =>
+            Effect.succeed(harnessOptions.buildProcess?.(plan, files) ?? { status: "failed" }),
+        }),
         Effect.provide(extensionSourceRootsLayer),
         Effect.provide(packagedTemplatesLayer),
         Effect.provide(generatedPackageRootLayer),
@@ -349,6 +415,648 @@ describe("@svvy/extensions Effect service", () => {
           title: "Shell",
         },
       );
+    }),
+  );
+
+  it.effect("exposes CLI readiness refresh through the Extensions service", () =>
+    Effect.gen(function* () {
+      const service = yield* makeTestExtensions();
+      const registryObservation = yield* service.registry.observe();
+
+      const result = yield* service.dependencies.refreshReadiness({ registryObservation });
+
+      assert.strictEqual(
+        result.registryAggregateFingerprint,
+        registryObservation.aggregateFingerprint,
+      );
+      assert.isAbove(result.readiness.length, 0);
+      assert.strictEqual(
+        result.readiness.find((item) => item.requirementId === "cx")?.status,
+        "missing",
+      );
+    }),
+  );
+
+  it.effect(
+    "observes a deterministic app-global builtin registry without unsafe pristine refs",
+    () =>
+      Effect.gen(function* () {
+        const harness = makeSourceEditHarness();
+        const first = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).registry.observe();
+        }).pipe(Effect.provide(harness.layer));
+        const second = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).registry.observe();
+        }).pipe(Effect.provide(harness.layer));
+
+        assert.strictEqual(first.aggregateFingerprint, second.aggregateFingerprint);
+        const shell = first.observations.find((item) => item.extensionId === "shell");
+        assert.strictEqual(shell?.capabilities.materializationRequired, true);
+        assert.strictEqual(shell?.buildRequirement, "not-required");
+        assert.deepStrictEqual(shell?.usagePolicy, {
+          canonicalOrder: 4,
+          baselineUsage: {
+            orchestrator: "loaded",
+            handler: "loaded",
+            "workflow-task": "loaded",
+          },
+          networkAccess: "not-required",
+          configurable: true,
+          fixedReason: null,
+        });
+        assert.deepStrictEqual(
+          first.observations.find((item) => item.extensionId === "extension-loading")?.usagePolicy,
+          {
+            canonicalOrder: 7,
+            baselineUsage: {
+              orchestrator: "loaded",
+              handler: "loaded",
+              "workflow-task": "loaded",
+            },
+            networkAccess: "not-required",
+            configurable: false,
+            fixedReason:
+              "Extension Loading is fixed always-loaded so actors can inspect and load available extensions.",
+          },
+        );
+        assert.strictEqual(
+          first.observations.find((item) => item.extensionId === "web")?.usagePolicy.networkAccess,
+          "required",
+        );
+        assert.deepStrictEqual(
+          shell?.contributors.map((item) => [item.kind, item.source?.sourceId]),
+          [["minimal", extensionOwnedSourceId("shell", { kind: "minimal" })]],
+        );
+        assert.strictEqual(
+          shell?.contributors.every((item) => !item.openable),
+          true,
+        );
+        assert.deepStrictEqual(
+          shell?.tooling.map((item) => [item.kind, item.openable, item.source?.sourceId]),
+          [
+            [
+              "native-tool-schema",
+              false,
+              extensionOwnedSourceId("shell", { kind: "native-tool-schema" }),
+            ],
+          ],
+        );
+      }),
+  );
+
+  it.effect("canonically observes user manifests, declarations, contributors, and tooling", () =>
+    Effect.gen(function* () {
+      const harness = makeSourceEditHarness();
+      const root = `${harness.extensionsRoot}/sources/user/linear`;
+      harness.writeFile(
+        `${root}/manifest.json`,
+        `${JSON.stringify(
+          {
+            schemaVersion: 1,
+            id: "linear",
+            interface: "svvyx",
+            title: "Linear",
+            description: "Manage Linear issues.",
+            typescriptApiEnabled: true,
+            instructionFiles: [
+              { file: "010-linear.mdx", bypassed: false },
+              { file: "020-docs.md", bypassed: true },
+            ],
+            generatedInstructions: [
+              { script: "scripts/generate-docs.ts", output: "instructions/full/020-docs.md" },
+            ],
+            cliRequirements: [
+              {
+                id: "linear-cli",
+                binary: "linear",
+                required: true,
+                package: "@example/linear-cli",
+                version: "1.2.3",
+                versionCommand: "linear --version",
+                installCommand: "bun add -g @example/linear-cli@{{version}}",
+                nodeRequirement: ">=22",
+              },
+            ],
+            env: [
+              {
+                name: "LINEAR_TOKEN",
+                required: true,
+                secret: true,
+                description: "Linear API token.",
+              },
+            ],
+            dependencies: { "@linear/sdk": "4.0.0" },
+            trustedDependencies: { sharp: "0.34.0" },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      harness.writeFile(`${root}/instructions/minimal.mdx`, "Load Linear when needed.\n");
+      harness.writeFile(`${root}/instructions/full/010-linear.mdx`, "# Linear\n");
+      harness.writeFile(`${root}/scripts/generate-docs.ts`, "export {};\n");
+      harness.writeFile(`${root}/instructions/full/020-docs.md`, "# Generated docs\n");
+      harness.writeFile(`${root}/source/index.ts`, "export default {};\n");
+
+      const result = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).registry.observe();
+      }).pipe(Effect.provide(harness.layer));
+      const linear = result.observations.find((item) => item.extensionId === "linear");
+
+      assert.strictEqual(linear?.category, "user");
+      assert.deepStrictEqual(linear?.usagePolicy, {
+        canonicalOrder: 19,
+        baselineUsage: {
+          orchestrator: "loaded",
+          handler: "unavailable",
+          "workflow-task": "loaded",
+        },
+        networkAccess: "not-required",
+        configurable: true,
+        fixedReason: null,
+      });
+      assert.strictEqual(linear?.capabilities.materializationRequired, false);
+      assert.deepStrictEqual(
+        linear?.contributors.map((item) => [item.kind, item.name, item.editable]),
+        [
+          ["minimal", "minimal.mdx", true],
+          ["instruction", "010-linear.mdx", true],
+          ["script", "scripts/generate-docs.ts", true],
+          ["generated-instruction", "instructions/full/020-docs.md", false],
+        ],
+      );
+      assert.deepStrictEqual(
+        linear?.contributors.map((item) => item.bypassed),
+        [false, false, true, true],
+      );
+      assert.deepStrictEqual(linear?.cliDeclarations[0], {
+        id: "linear-cli",
+        requirementFingerprint: linear!.cliDeclarations[0]!.requirementFingerprint,
+        binary: "linear",
+        package: "@example/linear-cli",
+        required: true,
+        defaultVersion: "1.2.3",
+        versionCommand: "linear --version",
+        installCommand: "bun add -g @example/linear-cli@{{version}}",
+        nodeRequirement: ">=22",
+      });
+      assert.isNotEmpty(linear?.cliDeclarations[0]?.requirementFingerprint ?? "");
+      const firstRequirementFingerprint = linear!.cliDeclarations[0]!.requirementFingerprint;
+      const firstSourceFingerprint = linear!.sourceFingerprint;
+      harness.writeFile(`${root}/instructions/full/020-docs.md`, "# Regenerated docs\n");
+      const regenerated = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).registry.observe();
+      }).pipe(Effect.provide(harness.layer));
+      assert.strictEqual(
+        regenerated.observations.find((item) => item.extensionId === "linear")?.sourceFingerprint,
+        firstSourceFingerprint,
+      );
+      harness.writeFile(`${root}/scripts/generate-docs.ts`, "export const changed = true;\n");
+      const generatorChanged = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).registry.observe();
+      }).pipe(Effect.provide(harness.layer));
+      assert.notStrictEqual(
+        generatorChanged.observations.find((item) => item.extensionId === "linear")
+          ?.sourceFingerprint,
+        firstSourceFingerprint,
+      );
+      const changedManifest = JSON.parse(harness.readFile(`${root}/manifest.json`)!) as {
+        cliRequirements: Array<{ version: string }>;
+      };
+      changedManifest.cliRequirements[0]!.version = "1.2.4";
+      harness.writeFile(`${root}/manifest.json`, `${JSON.stringify(changedManifest, null, 2)}\n`);
+      const changed = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).registry.observe();
+      }).pipe(Effect.provide(harness.layer));
+      assert.notStrictEqual(
+        changed.observations.find((item) => item.extensionId === "linear")?.cliDeclarations[0]
+          ?.requirementFingerprint,
+        firstRequirementFingerprint,
+      );
+      assert.deepStrictEqual(
+        linear?.dependencyDeclarations.map((item) => [item.kind, item.name, item.version]),
+        [
+          ["dependency", "@linear/sdk", "4.0.0"],
+          ["trusted_dependency", "sharp", "0.34.0"],
+        ],
+      );
+      assert.strictEqual(
+        linear?.tooling.find((item) => item.kind === "svvyx-source")?.source?.sourceId,
+        extensionOwnedSourceId("linear", { kind: "svvyx-source" }),
+      );
+      assert.strictEqual(
+        linear?.tooling.find((item) => item.kind === "command-schema")?.openable,
+        false,
+      );
+      assert.strictEqual(
+        linear?.tooling.find((item) => item.kind === "command-schema")?.source?.sourceId,
+        extensionOwnedSourceId("linear", { kind: "command-schema" }),
+      );
+      assert.strictEqual(
+        linear?.tooling.find((item) => item.kind === "typescript-api-declaration")?.source
+          ?.sourceId,
+        extensionOwnedSourceId("linear", { kind: "typescript-api-declaration" }),
+      );
+    }),
+  );
+
+  it.effect(
+    "preserves packaged builtin contributor order and detects live customization by bytes",
+    () =>
+      Effect.gen(function* () {
+        const harness = makeSourceEditHarness();
+        const manifest = `${JSON.stringify(
+          {
+            schemaVersion: 1,
+            id: "cx",
+            interface: "instructions",
+            title: "cx",
+            description: "Prompt-only semantic code navigation CLI guidance.",
+            instructionFiles: [
+              { file: "005-overview.md", bypassed: false },
+              { file: "010-cx-skill.generated.md", bypassed: true },
+            ],
+            generatedInstructions: [
+              {
+                output: "instructions/full/010-cx-skill.generated.md",
+                script: "scripts/generate-cx-skill.ts",
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`;
+        const files = new Map([
+          ["manifest.json", manifest],
+          ["instructions/minimal.mdx", "Use cx when needed.\n"],
+          ["instructions/full/005-overview.md", "# Overview\n"],
+          ["instructions/full/010-cx-skill.generated.md", "# Generated cx skill\n"],
+          ["scripts/generate-cx-skill.ts", "export {};\n"],
+        ]);
+        const packagedRoot = `${harness.packagedExtensionsRoot}/cx`;
+        for (const [filePath, contents] of files) {
+          harness.writeFile(`${packagedRoot}/${filePath}`, contents);
+        }
+
+        const pristine = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).registry.observe();
+        }).pipe(Effect.provide(harness.layer));
+        const pristineCx = pristine.observations.find((item) => item.extensionId === "cx");
+        assert.strictEqual(pristineCx?.customized, false);
+        assert.deepStrictEqual(pristineCx?.materializationPlan, {
+          kind: "scaffold-builtin",
+          extensionId: "cx",
+        });
+        assert.deepStrictEqual(
+          pristineCx?.contributors.map((item) => [
+            item.kind,
+            item.name,
+            item.bypassed,
+            item.requiresMaterialization,
+          ]),
+          [
+            ["minimal", "minimal.mdx", false, true],
+            ["instruction", "005-overview.md", false, true],
+            ["script", "scripts/generate-cx-skill.ts", true, true],
+            ["generated-instruction", "instructions/full/010-cx-skill.generated.md", true, true],
+          ],
+        );
+        assert.strictEqual(
+          pristineCx?.contributors.every((item) => !item.openable),
+          true,
+        );
+
+        const liveRoot = `${harness.extensionsRoot}/sources/builtin/cx`;
+        for (const [filePath, contents] of files) {
+          harness.writeFile(`${liveRoot}/${filePath}`, contents);
+        }
+        const unchanged = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).registry.observe();
+        }).pipe(Effect.provide(harness.layer));
+        assert.strictEqual(
+          unchanged.observations.find((item) => item.extensionId === "cx")?.customized,
+          false,
+        );
+
+        harness.writeFile(`${liveRoot}/instructions/full/005-overview.md`, "# Customized\n");
+        const customized = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).registry.observe();
+        }).pipe(Effect.provide(harness.layer));
+        assert.strictEqual(
+          customized.observations.find((item) => item.extensionId === "cx")?.customized,
+          true,
+        );
+      }),
+  );
+
+  it.effect(
+    "opens pristine packaged builtin source and scaffolds the full template on first CAS save",
+    () =>
+      Effect.gen(function* () {
+        const harness = makeSourceEditHarness();
+        const packagedRoot = `${harness.packagedExtensionsRoot}/git`;
+        harness.writeFile(
+          `${packagedRoot}/manifest.json`,
+          `${JSON.stringify({
+            schemaVersion: 1,
+            id: "git",
+            interface: "instructions",
+            title: "Git",
+            description: "Prompt-only Git CLI guidance.",
+            instructionFiles: [{ file: "010-git.md", bypassed: false }],
+          })}\n`,
+        );
+        harness.writeFile(`${packagedRoot}/instructions/minimal.mdx`, "Use git when needed.\n");
+        harness.writeFile(`${packagedRoot}/instructions/full/010-git.md`, "# Git\n");
+        harness.writeFile(`${packagedRoot}/assets/kept.txt`, "whole template\n");
+        const source = {
+          sourceKind: "builtin-extension" as const,
+          sourceId: extensionOwnedSourceId("git", {
+            kind: "instruction",
+            name: "010-git.md",
+          }),
+        };
+        const opened = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).sources.openEditSession(source);
+        }).pipe(Effect.provide(harness.layer));
+        assert.strictEqual(opened.text, "# Git\n");
+        assert.strictEqual(
+          harness.readFile(`${harness.extensionsRoot}/sources/builtin/git/manifest.json`),
+          null,
+        );
+        const saved = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).sources.saveEditSession({
+            ...source,
+            expectedSourceVersion: opened.sourceVersion,
+            text: "# Customized Git\n",
+            saveMode: "compare-and-swap",
+          });
+        }).pipe(Effect.provide(harness.layer));
+        assert.strictEqual(saved.status, "saved");
+        assert.strictEqual(
+          harness.readFile(
+            `${harness.extensionsRoot}/sources/builtin/git/instructions/full/010-git.md`,
+          ),
+          "# Customized Git\n",
+        );
+        assert.strictEqual(
+          harness.readFile(`${harness.extensionsRoot}/sources/builtin/git/assets/kept.txt`),
+          "whole template\n",
+        );
+      }),
+  );
+
+  it.effect("opens Extension Loading minimal context as an internal read-only source", () =>
+    Effect.gen(function* () {
+      const harness = makeSourceEditHarness();
+      const packagedRoot = `${harness.packagedExtensionsRoot}/extension-loading`;
+      harness.writeFile(
+        `${packagedRoot}/manifest.json`,
+        JSON.stringify({
+          schemaVersion: 1,
+          id: "extension-loading",
+          interface: "instructions",
+          title: "Extension Loading",
+          description: "Actor-local extension loading guidance.",
+          instructionFiles: [],
+        }),
+      );
+      harness.writeFile(
+        `${packagedRoot}/instructions/minimal.mdx`,
+        "Inspect ready extensions before loading them.\n",
+      );
+      const source = {
+        sourceKind: "builtin-extension" as const,
+        sourceId: extensionOwnedSourceId("extension-loading", { kind: "minimal" }),
+      };
+      const result = yield* Effect.gen(function* () {
+        const extensions = yield* Extensions;
+        const opened = yield* extensions.sources.openEditSession(source);
+        const saveError = yield* extensions.sources
+          .saveEditSession({
+            ...source,
+            expectedSourceVersion: opened.sourceVersion,
+            text: "Do not customize.\n",
+            saveMode: "compare-and-swap",
+          })
+          .pipe(Effect.flip);
+        return { opened, saveError };
+      }).pipe(Effect.provide(harness.layer));
+
+      assert.strictEqual(result.opened.text, "Inspect ready extensions before loading them.\n");
+      assertExtensionError(result.saveError, {
+        _tag: "ExtensionError",
+        reason: "read-only-source",
+      });
+      assert.strictEqual(
+        harness.readFile(
+          `${harness.extensionsRoot}/sources/builtin/extension-loading/manifest.json`,
+        ),
+        null,
+      );
+    }),
+  );
+
+  it.effect("rejects a stale packaged builtin CAS without materializing", () =>
+    Effect.gen(function* () {
+      const harness = makeSourceEditHarness();
+      const packagedRoot = `${harness.packagedExtensionsRoot}/git`;
+      harness.writeFile(
+        `${packagedRoot}/manifest.json`,
+        JSON.stringify({
+          schemaVersion: 1,
+          id: "git",
+          interface: "instructions",
+          title: "Git",
+          description: "Prompt-only Git CLI guidance.",
+          instructionFiles: [{ file: "010-git.md", bypassed: false }],
+        }),
+      );
+      harness.writeFile(`${packagedRoot}/instructions/minimal.mdx`, "Use git.\n");
+      harness.writeFile(`${packagedRoot}/instructions/full/010-git.md`, "# Git v1\n");
+      const source = {
+        sourceKind: "builtin-extension" as const,
+        sourceId: extensionOwnedSourceId("git", {
+          kind: "instruction",
+          name: "010-git.md",
+        }),
+      };
+      const opened = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).sources.openEditSession(source);
+      }).pipe(Effect.provide(harness.layer));
+      harness.writeFile(`${packagedRoot}/instructions/full/010-git.md`, "# Git v2\n");
+      const stale = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).sources.saveEditSession({
+          ...source,
+          expectedSourceVersion: opened.sourceVersion,
+          text: "# Local edit\n",
+          saveMode: "compare-and-swap",
+        });
+      }).pipe(Effect.provide(harness.layer));
+      assert.strictEqual(stale.status, "stale");
+      assert.strictEqual(
+        harness.readFile(`${harness.extensionsRoot}/sources/builtin/git/manifest.json`),
+        null,
+      );
+    }),
+  );
+
+  it.effect("rejects fabricated builtin roles and partial live roots", () =>
+    Effect.gen(function* () {
+      const harness = makeSourceEditHarness();
+      const packagedRoot = `${harness.packagedExtensionsRoot}/git`;
+      harness.writeFile(
+        `${packagedRoot}/manifest.json`,
+        JSON.stringify({
+          schemaVersion: 1,
+          id: "git",
+          interface: "instructions",
+          title: "Git",
+          description: "Prompt-only Git CLI guidance.",
+          instructionFiles: [{ file: "010-git.md", bypassed: false }],
+        }),
+      );
+      harness.writeFile(`${packagedRoot}/instructions/minimal.mdx`, "Use git.\n");
+      harness.writeFile(`${packagedRoot}/instructions/full/010-git.md`, "# Git\n");
+      const fabricatedExit = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).sources.openEditSession({
+          sourceKind: "builtin-extension",
+          sourceId: extensionOwnedSourceId("git", {
+            kind: "instruction",
+            name: "999-fabricated.md",
+          }),
+        });
+      }).pipe(Effect.provide(harness.layer), Effect.exit);
+      assert.strictEqual(fabricatedExit._tag, "Failure");
+
+      const source = {
+        sourceKind: "builtin-extension" as const,
+        sourceId: extensionOwnedSourceId("git", {
+          kind: "instruction",
+          name: "010-git.md",
+        }),
+      };
+      const opened = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).sources.openEditSession(source);
+      }).pipe(Effect.provide(harness.layer));
+      harness.writeFile(`${harness.extensionsRoot}/sources/builtin/git/partial.txt`, "partial\n");
+      const saveExit = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).sources.saveEditSession({
+          ...source,
+          expectedSourceVersion: opened.sourceVersion,
+          text: "# Local\n",
+          saveMode: "compare-and-swap",
+        });
+      }).pipe(Effect.provide(harness.layer), Effect.exit);
+      assert.strictEqual(saveExit._tag, "Failure");
+      assert.strictEqual(
+        harness.readFile(`${harness.extensionsRoot}/sources/builtin/git/manifest.json`),
+        null,
+      );
+    }),
+  );
+
+  it.effect("rejects fabricated user extension source identities", () =>
+    Effect.gen(function* () {
+      const harness = makeSourceEditHarness();
+      const root = `${harness.extensionsRoot}/sources/user/notes`;
+      harness.writeFile(
+        `${root}/manifest.json`,
+        JSON.stringify({
+          schemaVersion: 1,
+          id: "notes",
+          interface: "instructions",
+          title: "Notes",
+          description: "Notes guidance.",
+          instructionFiles: [{ file: "010-notes.md", bypassed: false }],
+        }),
+      );
+      harness.writeFile(`${root}/instructions/minimal.mdx`, "Use notes.\n");
+      harness.writeFile(`${root}/instructions/full/010-notes.md`, "# Notes\n");
+      const exit = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).sources.openEditSession({
+          sourceKind: "user-extension",
+          sourceId: extensionOwnedSourceId("notes", {
+            kind: "instruction",
+            name: "999-fabricated.md",
+          }),
+        });
+      }).pipe(Effect.provide(harness.layer), Effect.exit);
+      assert.strictEqual(exit._tag, "Failure");
+    }),
+  );
+
+  it.effect("rejects nested symbolic-link boundaries in user source", () =>
+    Effect.gen(function* () {
+      const root = "/extensions-test/sources/user/linked";
+      const harness = makeSourceEditHarness({
+        symbolicLinkPaths: [`${root}/instructions`],
+      });
+      harness.writeFile(
+        `${root}/manifest.json`,
+        JSON.stringify({
+          schemaVersion: 1,
+          id: "linked",
+          interface: "instructions",
+          title: "Linked",
+          description: "Invalid linked source.",
+          instructionFiles: [{ file: "010-linked.md", bypassed: false }],
+        }),
+      );
+      harness.writeFile(`${root}/instructions/minimal.mdx`, "Linked.\n");
+      harness.writeFile(`${root}/instructions/full/010-linked.md`, "# Linked\n");
+      const exit = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).registry.observe();
+      }).pipe(Effect.provide(harness.layer), Effect.exit);
+      assert.strictEqual(exit._tag, "Failure");
+    }),
+  );
+
+  it.effect("rejects malformed manifests and duplicate contributor source identities", () =>
+    Effect.gen(function* () {
+      const malformed = makeSourceEditHarness();
+      const malformedRoot = `${malformed.extensionsRoot}/sources/user/bad`;
+      malformed.writeFile(
+        `${malformedRoot}/manifest.json`,
+        JSON.stringify({
+          schemaVersion: 1,
+          id: "bad",
+          interface: "instructions",
+          title: "Bad",
+          description: "Bad duplicate manifest.",
+          instructionFiles: [
+            { file: "010-bad.md", bypassed: false },
+            { file: "010-bad.md", bypassed: true },
+          ],
+        }),
+      );
+      malformed.writeFile(`${malformedRoot}/instructions/full/010-bad.md`, "bad\n");
+      const malformedExit = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).registry.observe();
+      }).pipe(Effect.provide(malformed.layer), Effect.exit);
+      assert.strictEqual(malformedExit._tag, "Failure");
+
+      const duplicateSource = makeSourceEditHarness();
+      const duplicateRoot = `${duplicateSource.extensionsRoot}/sources/user/generated`;
+      duplicateSource.writeFile(
+        `${duplicateRoot}/manifest.json`,
+        JSON.stringify({
+          schemaVersion: 1,
+          id: "generated",
+          interface: "instructions",
+          title: "Generated",
+          description: "Duplicate script source.",
+          generatedInstructions: [
+            { script: "scripts/docs.ts", output: "instructions/full/010-a.md" },
+            { script: "scripts/docs.ts", output: "instructions/full/020-b.md" },
+          ],
+        }),
+      );
+      duplicateSource.writeFile(`${duplicateRoot}/scripts/docs.ts`, "export {};\n");
+      const duplicateExit = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).registry.observe();
+      }).pipe(Effect.provide(duplicateSource.layer), Effect.exit);
+      assert.strictEqual(duplicateExit._tag, "Failure");
     }),
   );
 
@@ -632,6 +1340,22 @@ describe("@svvy/extensions Effect service", () => {
   it.effect("opens and saves editable extension source sessions with file-backed CAS", () =>
     Effect.gen(function* () {
       const sourceEditHarness = makeSourceEditHarness();
+      const packagedRoot = `${sourceEditHarness.packagedExtensionsRoot}/base-common`;
+      sourceEditHarness.writeFile(
+        `${packagedRoot}/manifest.json`,
+        JSON.stringify({
+          schemaVersion: 1,
+          id: "base-common",
+          interface: "instructions",
+          title: "Base Common",
+          description: "Shared svvy operating instructions.",
+          instructionFiles: [],
+        }),
+      );
+      sourceEditHarness.writeFile(
+        `${packagedRoot}/instructions/minimal.mdx`,
+        "Load Base Common only when shared svvy operating rules are missing.\n",
+      );
       const sourceId = extensionOwnedSourceId("base-common", { kind: "minimal" });
       const result = yield* Effect.gen(function* () {
         const extensions = yield* Extensions;
@@ -667,12 +1391,10 @@ describe("@svvy/extensions Effect service", () => {
       assert.strictEqual(
         result.opened.path,
         joinSourceEditPathSegments(
-          sourceEditHarness.extensionsRoot,
-          "sources",
-          "builtin",
+          sourceEditHarness.packagedExtensionsRoot,
           "base-common",
           "instructions",
-          "minimal.md",
+          "minimal.mdx",
         ) as AbsolutePath,
       );
       assert.strictEqual(result.stale.status, "stale");
@@ -684,7 +1406,16 @@ describe("@svvy/extensions Effect service", () => {
       assert.strictEqual(result.saved.reconcileRequired, true);
       assert.strictEqual(result.reopened.text, "Load Base Common from the editable source file.\n");
       assert.strictEqual(
-        sourceEditHarness.readFile(result.opened.path),
+        sourceEditHarness.readFile(
+          joinSourceEditPathSegments(
+            sourceEditHarness.extensionsRoot,
+            "sources",
+            "builtin",
+            "base-common",
+            "instructions",
+            "minimal.mdx",
+          ),
+        ),
         "Load Base Common from the editable source file.\n",
       );
     }),
@@ -706,19 +1437,89 @@ describe("@svvy/extensions Effect service", () => {
         );
         const commandSchemaPath = joinSourceEditPathSegments(
           sourceEditHarness.extensionsRoot,
-          "generated",
+          "builds",
           "extensions",
           "workflows",
+          "current",
           "commands.json",
+        );
+        const nativeToolSchemaPath = joinSourceEditPathSegments(
+          sourceEditHarness.extensionsRoot,
+          "builds",
+          "extensions",
+          "shell",
+          "current",
+          "native-tool-schema.json",
+        );
+        const typescriptDeclarationPath = joinSourceEditPathSegments(
+          sourceEditHarness.extensionsRoot,
+          "builds",
+          "extensions",
+          "workflows",
+          "current",
+          "index.d.ts",
         );
         sourceEditHarness.writeFile(generatedPath, "generated web guidance\n");
         sourceEditHarness.writeFile(commandSchemaPath, "{}\n");
+        sourceEditHarness.writeFile(nativeToolSchemaPath, '{"name":"shell"}\n');
+        sourceEditHarness.writeFile(typescriptDeclarationPath, "export {};\n");
+        sourceEditHarness.writeFile(
+          joinSourceEditPathSegments(
+            sourceEditHarness.packagedExtensionsRoot,
+            "shell",
+            "manifest.json",
+          ),
+          JSON.stringify({
+            schemaVersion: 1,
+            id: "shell",
+            interface: "native_tool",
+          }),
+        );
+        sourceEditHarness.writeFile(
+          joinSourceEditPathSegments(
+            sourceEditHarness.extensionsRoot,
+            "sources",
+            "builtin",
+            "web",
+            "manifest.json",
+          ),
+          JSON.stringify({
+            schemaVersion: 1,
+            id: "web",
+            interface: "instructions",
+            instructionFiles: [{ file: "010-tinyfish-cli.generated.md", bypassed: false }],
+            generatedInstructions: [
+              {
+                output: "instructions/full/010-tinyfish-cli.generated.md",
+                script: "scripts/generate-tinyfish-cli.ts",
+              },
+            ],
+          }),
+        );
+        sourceEditHarness.writeFile(
+          joinSourceEditPathSegments(
+            sourceEditHarness.packagedExtensionsRoot,
+            "workflows",
+            "manifest.json",
+          ),
+          JSON.stringify({
+            schemaVersion: 1,
+            id: "workflows",
+            interface: "svvyx",
+          }),
+        );
         const generatedSourceId = extensionOwnedSourceId("web", {
           kind: "generated-instruction",
           relativePath: "instructions/full/010-tinyfish-cli.generated.md",
         });
         const commandSchemaSourceId = extensionOwnedSourceId("workflows", {
           kind: "command-schema",
+        });
+        const nativeToolSchemaSourceId = extensionOwnedSourceId("shell", {
+          kind: "native-tool-schema",
+        });
+        const typescriptDeclarationSourceId = extensionOwnedSourceId("workflows", {
+          kind: "typescript-api-declaration",
         });
 
         const result = yield* Effect.gen(function* () {
@@ -731,6 +1532,27 @@ describe("@svvy/extensions Effect service", () => {
             sourceKind: "builtin-extension",
             sourceId: commandSchemaSourceId,
           });
+          const nativeToolSchema = yield* extensions.sources.openEditSession({
+            sourceKind: "builtin-extension",
+            sourceId: nativeToolSchemaSourceId,
+          });
+          const typescriptDeclaration = yield* extensions.sources.openEditSession({
+            sourceKind: "builtin-extension",
+            sourceId: typescriptDeclarationSourceId,
+          });
+          const generatedOutputWrites = yield* Effect.all(
+            [nativeToolSchema, typescriptDeclaration].map((session) =>
+              extensions.sources
+                .saveEditSession({
+                  sourceKind: "builtin-extension",
+                  sourceId: session.sourceId,
+                  expectedSourceVersion: session.sourceVersion,
+                  text: "do not write\n",
+                  saveMode: "overwrite",
+                })
+                .pipe(Effect.flip),
+            ),
+          );
           const readOnly = yield* extensions.sources
             .saveEditSession({
               sourceKind: "builtin-extension",
@@ -759,12 +1581,28 @@ describe("@svvy/extensions Effect service", () => {
               }),
             })
             .pipe(Effect.flip);
-          return { generated, commandSchema, readOnly, aliases, missingGenerated };
+          return {
+            generated,
+            commandSchema,
+            nativeToolSchema,
+            typescriptDeclaration,
+            generatedOutputWrites,
+            readOnly,
+            aliases,
+            missingGenerated,
+          };
         }).pipe(Effect.provide(sourceEditHarness.layer));
 
         assert.strictEqual(result.generated.path, generatedPath);
         assert.strictEqual(result.generated.text, "generated web guidance\n");
         assert.strictEqual(result.commandSchema.path, commandSchemaPath);
+        assert.strictEqual(result.nativeToolSchema.path, nativeToolSchemaPath);
+        assert.strictEqual(result.nativeToolSchema.text, '{"name":"shell"}\n');
+        assert.strictEqual(result.typescriptDeclaration.path, typescriptDeclarationPath);
+        assert.strictEqual(result.typescriptDeclaration.text, "export {};\n");
+        for (const error of result.generatedOutputWrites) {
+          assertExtensionError(error, { _tag: "ExtensionError", reason: "read-only-source" });
+        }
         assertExtensionError(result.readOnly, {
           _tag: "ExtensionError",
           reason: "read-only-source",
@@ -774,7 +1612,7 @@ describe("@svvy/extensions Effect service", () => {
         }
         assertExtensionError(result.missingGenerated, {
           _tag: "ExtensionError",
-          reason: "not-found",
+          reason: "invalid-input",
         });
       }),
   );
@@ -2151,6 +2989,525 @@ describe("@svvy/extensions Effect service", () => {
     }),
   );
 
+  it.effect("observes validated current builds from canonical non-generated source inputs", () =>
+    Effect.gen(function* () {
+      const harness = makeSourceEditHarness();
+      const sourceRoot = `${harness.extensionsRoot}/sources/user/buildable`;
+      const currentRoot = `${harness.extensionsRoot}/builds/extensions/buildable/current`;
+      const manifestText = '{"schemaVersion":1,"id":"buildable","interface":"svvyx"}\n';
+      const minimalText = "Minimal source\n";
+      const runtimeSource = "export const run = true;\n";
+      harness.writeFile(`${sourceRoot}/manifest.json`, manifestText);
+      harness.writeFile(`${sourceRoot}/instructions/minimal.mdx`, minimalText);
+      harness.writeFile(`${sourceRoot}/instructions/full/generated.md`, "generated v1\n");
+      harness.writeFile(`${sourceRoot}/source/index.ts`, runtimeSource);
+
+      const sourceFingerprint = testEvidenceFingerprint("svvy-extension-source-v1", [
+        ["manifest", "manifest.json", testSha256(manifestText)],
+        ["minimal-instruction", "instructions/minimal.mdx", testSha256(minimalText)],
+        ["source-file", "source/index.ts", testSha256(runtimeSource)],
+      ]);
+      const generatedText = "Generated context\n";
+      const generatedEvidence = [
+        ["minimal-instruction", "context.md", testSha256(generatedText)],
+      ] as const;
+      const outputFingerprint = testEvidenceFingerprint(
+        "svvy-extension-output-v1",
+        generatedEvidence,
+      );
+      const contextFingerprint = testEvidenceFingerprint(
+        "svvy-extension-context-v1",
+        generatedEvidence,
+      );
+      harness.writeFile(`${currentRoot}/context.md`, generatedText);
+      const currentManifest = {
+        schemaVersion: 1,
+        buildId: `extension-build:buildable:${outputFingerprint.slice("sha256:".length)}`,
+        extensionId: "buildable",
+        interfaceKind: "svvyx",
+        sourceFingerprint,
+        contextFingerprint,
+        outputFingerprint,
+        contextReady: true,
+        generatedFiles: [
+          {
+            role: "minimal-instruction",
+            relativePath: "context.md",
+            contentHash: testSha256(generatedText),
+            byteSize: new TextEncoder().encode(generatedText).byteLength,
+          },
+        ],
+        builtAt: "2026-07-12T10:00:00.000Z",
+      };
+      harness.writeFile(`${currentRoot}/manifest.json`, JSON.stringify(currentManifest));
+      const registryObservation = {
+        aggregateFingerprint: "registry-fingerprint-does-not-author-build-source-evidence",
+        observations: [
+          {
+            extensionId: "buildable" as ExtensionId,
+            category: "user",
+            interfaceKind: "svvyx",
+            svvyxImplementation: {
+              kind: "source-runtime",
+              sourceRelativePath: "source/index.ts",
+            },
+            buildRequirement: "required",
+            usagePolicy: {
+              canonicalOrder: 19,
+              baselineUsage: {
+                orchestrator: "loaded",
+                handler: "unavailable",
+                "workflow-task": "loaded",
+              },
+              networkAccess: "not-required",
+              configurable: true,
+              fixedReason: null,
+            },
+            title: "Buildable",
+            description: "Build observation fixture",
+            customized: true,
+            materializationPlan: null,
+            capabilities: {
+              resettable: false,
+              deletable: true,
+              typescriptApiEnabled: false,
+              materializationRequired: false,
+            },
+            contributors: [
+              {
+                kind: "minimal",
+                name: "minimal.mdx",
+                bypassed: false,
+                editable: true,
+                openable: true,
+                requiresMaterialization: false,
+              },
+            ],
+            tooling: [],
+            cliDeclarations: [],
+            envDeclarations: [],
+            dependencyDeclarations: [],
+            sourceFingerprint: "registry-owned-fingerprint",
+            diagnostics: [],
+          },
+        ],
+        diagnostics: [],
+      } satisfies ExtensionRegistryObservationResult;
+
+      const first = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).builds.observeCurrent({ registryObservation });
+      }).pipe(Effect.provide(harness.layer));
+      harness.writeFile(`${sourceRoot}/instructions/full/generated.md`, "generated v2\n");
+      const second = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).builds.observeCurrent({ registryObservation });
+      }).pipe(Effect.provide(harness.layer));
+      harness.writeFile(`${sourceRoot}/source/index.ts`, "export const run = false;\n");
+      const stale = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).builds.observeCurrent({ registryObservation });
+      }).pipe(Effect.provide(harness.layer));
+      harness.writeFile(`${sourceRoot}/source/index.ts`, runtimeSource);
+      harness.writeFile(`${currentRoot}/context.md`, "tampered output\n");
+      const invalid = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).builds.observeCurrent({ registryObservation });
+      }).pipe(Effect.provide(harness.layer));
+      harness.writeFile(`${currentRoot}/context.md`, generatedText);
+      harness.writeFile(
+        `${currentRoot}/manifest.json`,
+        JSON.stringify({ ...currentManifest, interfaceKind: "instructions" }),
+      );
+      const identityInvalid = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).builds.observeCurrent({ registryObservation });
+      }).pipe(Effect.provide(harness.layer));
+      harness.writeFile(
+        `${currentRoot}/manifest.json`,
+        JSON.stringify({
+          ...currentManifest,
+          generatedFiles: [
+            { ...currentManifest.generatedFiles[0], relativePath: "../escaped-context.md" },
+          ],
+        }),
+      );
+      const pathInvalid = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).builds.observeCurrent({ registryObservation });
+      }).pipe(Effect.provide(harness.layer));
+
+      assert.strictEqual(first.observations[0]?.currentBuildStatus, "current");
+      assert.strictEqual(first.observations[0]?.sourceFingerprint, sourceFingerprint);
+      assert.strictEqual(second.observations[0]?.sourceFingerprint, sourceFingerprint);
+      assert.notStrictEqual(first.observations[0]?.sourceFingerprint, "registry-owned-fingerprint");
+      assert.strictEqual(stale.observations[0]?.currentBuildStatus, "stale");
+      assert.notStrictEqual(stale.observations[0]?.sourceFingerprint, sourceFingerprint);
+      assert.strictEqual(invalid.observations[0]?.currentBuildStatus, "invalid");
+      assert.strictEqual(identityInvalid.observations[0]?.currentBuildStatus, "invalid");
+      assert.strictEqual(pathInvalid.observations[0]?.currentBuildStatus, "invalid");
+    }),
+  );
+
+  it.effect(
+    "sorts build observations and keeps app-native tools outside build-required state",
+    () =>
+      Effect.gen(function* () {
+        const harness = makeSourceEditHarness();
+        const observation = (input: {
+          extensionId: string;
+          interfaceKind: "native_tool" | "svvyx";
+          buildRequirement: "required" | "not-required";
+        }) => ({
+          extensionId: input.extensionId as ExtensionId,
+          category: "builtin" as const,
+          interfaceKind: input.interfaceKind,
+          svvyxImplementation:
+            input.interfaceKind === "svvyx"
+              ? ({ kind: "source-runtime", sourceRelativePath: "source/index.ts" } as const)
+              : null,
+          buildRequirement: input.buildRequirement,
+          usagePolicy: {
+            canonicalOrder: input.extensionId === "a-native" ? 0 : 1,
+            baselineUsage: {
+              orchestrator: input.extensionId === "a-native" ? "loaded" : "unavailable",
+              handler: input.extensionId === "a-native" ? "loaded" : "unavailable",
+              "workflow-task": input.extensionId === "a-native" ? "loaded" : "unavailable",
+            } as const,
+            networkAccess: "not-required" as const,
+            configurable: true,
+            fixedReason: null,
+          },
+          title: input.extensionId,
+          description: `${input.extensionId} fixture`,
+          customized: false,
+          materializationPlan: {
+            kind: "scaffold-builtin" as const,
+            extensionId: input.extensionId as ExtensionId,
+          },
+          capabilities: {
+            resettable: true,
+            deletable: false,
+            typescriptApiEnabled: false,
+            materializationRequired: true,
+          },
+          contributors: [],
+          tooling: [],
+          cliDeclarations: [],
+          envDeclarations: [],
+          dependencyDeclarations: [],
+          sourceFingerprint: "registry-fingerprint",
+          diagnostics: [],
+        });
+        const result = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).builds.observeCurrent({
+            registryObservation: {
+              aggregateFingerprint: "registry-order-fixture",
+              observations: [
+                observation({
+                  extensionId: "z-buildable",
+                  interfaceKind: "svvyx",
+                  buildRequirement: "required",
+                }),
+                observation({
+                  extensionId: "a-native",
+                  interfaceKind: "native_tool",
+                  buildRequirement: "not-required",
+                }),
+              ],
+              diagnostics: [],
+            },
+          });
+        }).pipe(Effect.provide(harness.layer));
+
+        assert.deepStrictEqual(
+          result.observations.map((item) => item.extensionId),
+          ["a-native", "z-buildable"],
+        );
+        assert.strictEqual(result.observations[0]?.currentBuildStatus, "not-required");
+        assert.strictEqual(result.observations[0]?.buildRequired, false);
+        assert.strictEqual(result.observations[1]?.currentBuildStatus, "missing");
+        assert.strictEqual(result.observations[1]?.buildRequired, true);
+      }),
+  );
+
+  it.effect("builds one canonical source and promotes validated staged evidence", () =>
+    Effect.gen(function* () {
+      const harness = makeSourceEditHarness({
+        buildProcess: (plan, files) => {
+          assert.deepStrictEqual(plan.generators[0]?.argv.slice(-2), ["--version", "1.2.3"]);
+          const outputs = plan.expectedProcessOutputs.map((output) => {
+            const contents = `${output.role}:${output.relativePath}\n`;
+            files.set(`${plan.stagingRoot}/${output.relativePath}`, contents);
+            return {
+              ...output,
+              contentHash: testSha256(contents),
+              byteSize: new TextEncoder().encode(contents).byteLength,
+            };
+          });
+          return {
+            status: "completed",
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stagedFiles: outputs,
+            commandManifest: null,
+          };
+        },
+      });
+      const sourceRoot = `${harness.extensionsRoot}/sources/user/buildable`;
+      harness.writeFile(`${sourceRoot}/manifest.json`, "{}\n");
+      harness.writeFile(`${sourceRoot}/instructions/minimal.mdx`, "Buildable\n");
+      harness.writeFile(`${sourceRoot}/scripts/generate.ts`, "export {};\n");
+      const registryObservation = {
+        aggregateFingerprint: "registry-build-fixture",
+        observations: [
+          {
+            extensionId: "buildable" as ExtensionId,
+            category: "user",
+            interfaceKind: "instructions",
+            svvyxImplementation: null,
+            buildRequirement: "required",
+            usagePolicy: {
+              canonicalOrder: 19,
+              baselineUsage: {
+                orchestrator: "loaded",
+                handler: "unavailable",
+                "workflow-task": "loaded",
+              },
+              networkAccess: "not-required",
+              configurable: true,
+              fixedReason: null,
+            },
+            title: "Buildable",
+            description: "Build execution fixture",
+            customized: true,
+            materializationPlan: null,
+            capabilities: {
+              resettable: false,
+              deletable: true,
+              typescriptApiEnabled: false,
+              materializationRequired: false,
+            },
+            contributors: [
+              {
+                kind: "minimal",
+                name: "minimal.mdx",
+                bypassed: false,
+                editable: true,
+                openable: true,
+                requiresMaterialization: false,
+              },
+              {
+                kind: "script",
+                name: "scripts/generate.ts",
+                bypassed: false,
+                editable: true,
+                openable: true,
+                requiresMaterialization: false,
+                versionCliRequirementId: "builder",
+              },
+              {
+                kind: "generated-instruction",
+                name: "instructions/full/generated.md",
+                bypassed: false,
+                editable: false,
+                openable: true,
+                requiresMaterialization: false,
+              },
+            ],
+            tooling: [],
+            cliDeclarations: [
+              {
+                id: "builder",
+                requirementFingerprint: "builder-fingerprint",
+                binary: "builder",
+                package: null,
+                required: true,
+                defaultVersion: "1.2.3",
+                versionCommand: "builder --version",
+                installCommand: null,
+                nodeRequirement: null,
+              },
+            ],
+            envDeclarations: [],
+            dependencyDeclarations: [],
+            sourceFingerprint: "registry-source-fingerprint",
+            diagnostics: [],
+          },
+        ],
+        diagnostics: [],
+      } satisfies ExtensionRegistryObservationResult;
+      const observed = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).builds.observeCurrent({ registryObservation });
+      }).pipe(Effect.provide(harness.layer));
+      const sourceObservation = observed.observations[0]!;
+      const result = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).builds.build({
+          extensionId: "buildable" as ExtensionId,
+          registryObservation,
+          sourceObservation,
+          builtAt:
+            "2026-07-12T10:00:00.000Z" as import("@svvy/core").BuildExtensionInput["builtAt"],
+        });
+      }).pipe(Effect.provide(harness.layer));
+
+      assert.strictEqual(result.manifest.extensionId, "buildable");
+      assert.strictEqual(result.manifest.generatedFiles.length, 2);
+      assert.ok(
+        harness.readFile(
+          `${harness.extensionsRoot}/builds/extensions/buildable/current/manifest.json`,
+        ),
+      );
+    }),
+  );
+
+  it.effect(
+    "builds an app-native svvyx extension from package metadata without source runtime",
+    () =>
+      Effect.gen(function* () {
+        const harness = makeSourceEditHarness({
+          buildProcess: () => ({
+            status: "completed",
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stagedFiles: [],
+            commandManifest: null,
+          }),
+        });
+        const metadata = APP_NATIVE_SVVYX_METADATA.get("artifacts")!;
+        harness.writeFile(
+          `${harness.packagedExtensionsRoot}/artifacts/instructions/minimal.mdx`,
+          `${metadata.minimalInstruction}\n`,
+        );
+        const sourceFingerprint = `sha256:${"a".repeat(64)}` as ExtensionSourceFingerprint;
+        const registryObservation: ExtensionRegistryObservationResult = {
+          aggregateFingerprint: "registry-app-native-fixture",
+          observations: [
+            {
+              extensionId: "artifacts" as ExtensionId,
+              category: "builtin",
+              interfaceKind: "svvyx",
+              svvyxImplementation: {
+                kind: "app-native",
+                namespace: metadata.namespace,
+                metadataFingerprint: testSha256(appNativeSvvyxMetadataFingerprintInput(metadata)),
+              },
+              buildRequirement: "required",
+              usagePolicy: {
+                canonicalOrder: 18,
+                baselineUsage: {
+                  orchestrator: "available",
+                  handler: "available",
+                  "workflow-task": "available",
+                },
+                networkAccess: "not-required",
+                configurable: true,
+                fixedReason: null,
+              },
+              title: "Artifacts",
+              description: "Durable artifacts.",
+              customized: false,
+              materializationPlan: null,
+              capabilities: {
+                resettable: false,
+                deletable: false,
+                typescriptApiEnabled: true,
+                materializationRequired: false,
+              },
+              contributors: [],
+              tooling: [
+                {
+                  kind: "command-schema",
+                  name: "commands.json",
+                  openable: false,
+                  requiresMaterialization: false,
+                },
+                {
+                  kind: "typescript-api-declaration",
+                  name: "index.d.ts",
+                  openable: false,
+                  requiresMaterialization: false,
+                },
+              ],
+              cliDeclarations: [],
+              envDeclarations: [],
+              dependencyDeclarations: [],
+              sourceFingerprint,
+              diagnostics: [],
+            },
+          ],
+          diagnostics: [],
+        };
+        const result = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).builds.build({
+            extensionId: "artifacts" as ExtensionId,
+            registryObservation,
+            sourceObservation: {
+              extensionId: "artifacts" as ExtensionId,
+              category: "builtin",
+              buildRequirement: "required",
+              sourceStatus: "materialized",
+              sourceFingerprint,
+              currentBuildStatus: "missing",
+              currentBuild: null,
+              buildRequired: true,
+              diagnostics: [],
+            },
+            builtAt: "2026-07-12T10:00:00.000Z" as BuildExtensionInput["builtAt"],
+          });
+        }).pipe(Effect.provide(harness.layer));
+
+        assert.deepStrictEqual(
+          result.manifest.generatedFiles.map(({ role }) => role),
+          ["command-manifest", "minimal-instruction", "typescript-declaration"],
+        );
+        assert.match(
+          harness.readFile(
+            `${harness.extensionsRoot}/builds/extensions/artifacts/current/commands.json`,
+          )!,
+          /"create"/,
+        );
+        const staleRegistryObservation: ExtensionRegistryObservationResult = {
+          ...registryObservation,
+          observations: registryObservation.observations.map((entry) => ({
+            ...entry,
+            svvyxImplementation:
+              entry.svvyxImplementation?.kind === "app-native"
+                ? {
+                    ...entry.svvyxImplementation,
+                    metadataFingerprint: `sha256:${"b".repeat(64)}`,
+                  }
+                : entry.svvyxImplementation,
+          })),
+        };
+        const stale = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).builds
+            .build({
+              extensionId: "artifacts" as ExtensionId,
+              registryObservation: staleRegistryObservation,
+              sourceObservation: {
+                extensionId: "artifacts" as ExtensionId,
+                category: "builtin",
+                buildRequirement: "required",
+                sourceStatus: "materialized",
+                sourceFingerprint,
+                currentBuildStatus: "missing",
+                currentBuild: null,
+                buildRequired: true,
+                diagnostics: [],
+              },
+              builtAt: "2026-07-12T10:00:01.000Z" as BuildExtensionInput["builtAt"],
+            })
+            .pipe(Effect.flip);
+        }).pipe(Effect.provide(harness.layer));
+        assertExtensionError(stale, {
+          _tag: "ExtensionError",
+          reason: "invalid-input",
+          message: "App-native svvyx metadata fingerprint is stale.",
+        });
+      }),
+  );
+
   it.effect("provides the service through an Effect layer", () =>
     Effect.gen(function* () {
       const toolName = yield* provideGeneratedPackagePlatform(
@@ -2175,7 +3532,462 @@ describe("@svvy/extensions Effect service", () => {
       assert.strictEqual(toolName, "thread_report");
     }),
   );
+  it.effect("captures only canonical materialized source files and exact supplied state", () =>
+    Effect.gen(function* () {
+      const harness = makeSourceEditHarness();
+      harness.writeFile(
+        `${harness.extensionsRoot}/sources/user/demo/manifest.json`,
+        JSON.stringify({ id: "demo" }),
+      );
+      harness.writeFile(
+        `${harness.extensionsRoot}/sources/user/demo/instructions/minimal.mdx`,
+        "hello",
+      );
+      harness.writeFile(`${harness.extensionsRoot}/sources/user/demo/package.json`, "excluded");
+      harness.writeFile(`${harness.extensionsRoot}/package/package.json`, '{"dependencies":{}}');
+      harness.writeFile(`${harness.extensionsRoot}/package/bun.lock`, "lock-state");
+      harness.writeFile(
+        `${harness.extensionsRoot}/package/node_modules/ignored/index.js`,
+        "ignored",
+      );
+      const payload = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.captureSourcePayload(
+          snapshotCaptureInput as never,
+        );
+      }).pipe(Effect.provide(harness.layer));
+      assert.deepStrictEqual(
+        payload.sources.map((source) => String(source.extensionId)),
+        ["demo"],
+      );
+      assert.deepStrictEqual(
+        payload.sources[0]?.files.map((file) => file.relativePath),
+        ["instructions/minimal.mdx", "manifest.json"],
+      );
+      assert.deepStrictEqual(
+        payload.packageFiles.map((file) => file.relativePath),
+        ["bun.lock", "package.json"],
+      );
+      assert.deepStrictEqual(payload.actorSettings, snapshotCaptureInput.actorSettings);
+    }),
+  );
+
+  it.effect("rejects source symlinks and corrupt restore payload files", () =>
+    Effect.gen(function* () {
+      const linked = makeSourceEditHarness({
+        symbolicLinkPaths: ["/extensions-test/sources/user/demo/instructions/link.mdx"],
+      });
+      linked.writeFile(
+        `${linked.extensionsRoot}/sources/user/demo/manifest.json`,
+        JSON.stringify({ id: "demo" }),
+      );
+      linked.writeFile(
+        `${linked.extensionsRoot}/sources/user/demo/instructions/link.mdx`,
+        "linked",
+      );
+      const captureExit = yield* Effect.exit(
+        Effect.gen(function* () {
+          return yield* (yield* Extensions).snapshots.captureSourcePayload(
+            snapshotCaptureInput as never,
+          );
+        }).pipe(Effect.provide(linked.layer)),
+      );
+      assert.strictEqual(captureExit._tag, "Failure");
+
+      const harness = makeSourceEditHarness();
+      harness.writeFile(
+        `${harness.extensionsRoot}/sources/user/demo/manifest.json`,
+        JSON.stringify({ id: "demo" }),
+      );
+      const payload = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.captureSourcePayload(
+          snapshotCaptureInput as never,
+        );
+      }).pipe(Effect.provide(harness.layer));
+      const corrupted = {
+        ...payload,
+        sources: payload.sources.map((source) => ({
+          ...source,
+          files: source.files.map((file) => ({
+            ...file,
+            contentHash: `sha256:${"f".repeat(64)}`,
+          })),
+        })),
+      } as typeof payload;
+      const prepareExit = yield* Effect.exit(
+        Effect.gen(function* () {
+          return yield* (yield* Extensions).snapshots.prepareSourceRestore({
+            planId:
+              "extension-snapshot-source-restore:corrupt" as ExtensionSnapshotSourceRestorePlanId,
+            snapshotId: "extension-snapshot:corrupt" as ExtensionSnapshotId,
+            payload: corrupted,
+          });
+        }).pipe(Effect.provide(harness.layer)),
+      );
+      assert.strictEqual(prepareExit._tag, "Failure");
+    }),
+  );
+
+  it.effect("rejects duplicate capture ids and emits canonical category, id, and path order", () =>
+    Effect.gen(function* () {
+      const duplicate = makeSourceEditHarness();
+      duplicate.writeFile(
+        `${duplicate.extensionsRoot}/sources/builtin/same/manifest.json`,
+        JSON.stringify({ id: "same" }),
+      );
+      duplicate.writeFile(
+        `${duplicate.extensionsRoot}/sources/user/same/manifest.json`,
+        JSON.stringify({ id: "same" }),
+      );
+      const duplicateExit = yield* Effect.exit(
+        Effect.gen(function* () {
+          return yield* (yield* Extensions).snapshots.captureSourcePayload(
+            snapshotCaptureInput as never,
+          );
+        }).pipe(Effect.provide(duplicate.layer)),
+      );
+      assert.strictEqual(duplicateExit._tag, "Failure");
+
+      const harness = makeSourceEditHarness();
+      harness.writeFile(
+        `${harness.extensionsRoot}/sources/user/alpha/manifest.json`,
+        JSON.stringify({ id: "alpha" }),
+      );
+      harness.writeFile(`${harness.extensionsRoot}/sources/user/alpha/z.txt`, "z");
+      harness.writeFile(`${harness.extensionsRoot}/sources/user/alpha/a.txt`, "a");
+      harness.writeFile(
+        `${harness.extensionsRoot}/sources/builtin/zeta/manifest.json`,
+        JSON.stringify({ id: "zeta" }),
+      );
+      const payload = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.captureSourcePayload(
+          snapshotCaptureInput as never,
+        );
+      }).pipe(Effect.provide(harness.layer));
+      assert.deepStrictEqual(
+        payload.sources.map((source) => `${source.category}:${source.extensionId}`),
+        ["builtin:zeta", "user:alpha"],
+      );
+      assert.deepStrictEqual(
+        payload.sources[1]?.files.map((file) => file.relativePath),
+        ["a.txt", "manifest.json", "z.txt"],
+      );
+    }),
+  );
+
+  it.effect("rejects oversized restore payload declarations before staging", () =>
+    Effect.gen(function* () {
+      const harness = makeSourceEditHarness();
+      harness.writeFile(
+        `${harness.extensionsRoot}/sources/user/demo/manifest.json`,
+        JSON.stringify({ id: "demo" }),
+      );
+      const payload = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.captureSourcePayload(
+          snapshotCaptureInput as never,
+        );
+      }).pipe(Effect.provide(harness.layer));
+      const oversized = {
+        ...payload,
+        sources: payload.sources.map((source) => ({
+          ...source,
+          files: source.files.map((file) => ({ ...file, byteSize: 8 * 1024 * 1024 + 1 })),
+        })),
+      } as typeof payload;
+      const exit = yield* Effect.exit(
+        Effect.gen(function* () {
+          return yield* (yield* Extensions).snapshots.prepareSourceRestore({
+            planId:
+              "extension-snapshot-source-restore:oversized" as ExtensionSnapshotSourceRestorePlanId,
+            snapshotId: "extension-snapshot:oversized" as ExtensionSnapshotId,
+            payload: oversized,
+          });
+        }).pipe(Effect.provide(harness.layer)),
+      );
+      assert.strictEqual(exit._tag, "Failure");
+      assert.strictEqual(
+        harness.readFile(`${harness.extensionsRoot}/.svvy/snapshot-restore/oversized/payload.json`),
+        null,
+      );
+      const manifest = payload.sources[0]!.files[0]!;
+      const aggregateOversized = {
+        ...payload,
+        sources: payload.sources.map((source) => ({
+          ...source,
+          files: [
+            ...Array.from({ length: 9 }, (_, index) => ({
+              ...manifest,
+              relativePath: `${String(index).padStart(3, "0")}.txt`,
+              byteSize: 8 * 1024 * 1024,
+            })),
+            manifest,
+          ],
+        })),
+      } as typeof payload;
+      const aggregateExit = yield* Effect.exit(
+        Effect.gen(function* () {
+          return yield* (yield* Extensions).snapshots.prepareSourceRestore({
+            planId:
+              "extension-snapshot-source-restore:aggregate-oversized" as ExtensionSnapshotSourceRestorePlanId,
+            snapshotId: "extension-snapshot:aggregate-oversized" as ExtensionSnapshotId,
+            payload: aggregateOversized,
+          });
+        }).pipe(Effect.provide(harness.layer)),
+      );
+      assert.strictEqual(aggregateExit._tag, "Failure");
+      assert.strictEqual(
+        harness.readFile(
+          `${harness.extensionsRoot}/.svvy/snapshot-restore/aggregate-oversized/payload.json`,
+        ),
+        null,
+      );
+    }),
+  );
+
+  it.effect("finalizes restore staging idempotently and refuses an active journal", () =>
+    Effect.gen(function* () {
+      const harness = makeSourceEditHarness();
+      harness.writeFile(
+        `${harness.extensionsRoot}/sources/user/demo/manifest.json`,
+        JSON.stringify({ id: "demo" }),
+      );
+      const payload = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.captureSourcePayload(
+          snapshotCaptureInput as never,
+        );
+      }).pipe(Effect.provide(harness.layer));
+      const planId =
+        "extension-snapshot-source-restore:finalize" as ExtensionSnapshotSourceRestorePlanId;
+      yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.prepareSourceRestore({
+          planId,
+          snapshotId: "extension-snapshot:finalize" as ExtensionSnapshotId,
+          payload,
+        });
+      }).pipe(Effect.provide(harness.layer));
+      harness.writeFile(
+        `${harness.extensionsRoot}/.svvy/snapshot-restore/finalize/journal.json`,
+        JSON.stringify({ schemaVersion: 1, phase: "prepared" }),
+      );
+      const active = yield* Effect.exit(
+        Effect.gen(function* () {
+          return yield* (yield* Extensions).snapshots.finalizeSourceRestore({ planId });
+        }).pipe(Effect.provide(harness.layer)),
+      );
+      assert.strictEqual(active._tag, "Failure");
+
+      const cleanPlanId =
+        "extension-snapshot-source-restore:clean-finalize" as ExtensionSnapshotSourceRestorePlanId;
+      yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.prepareSourceRestore({
+          planId: cleanPlanId,
+          snapshotId: "extension-snapshot:clean-finalize" as ExtensionSnapshotId,
+          payload,
+        });
+      }).pipe(Effect.provide(harness.layer));
+      const removed = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.finalizeSourceRestore({
+          planId: cleanPlanId,
+        });
+      }).pipe(Effect.provide(harness.layer));
+      assert.strictEqual(removed.outcome, "removed");
+      const missing = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.finalizeSourceRestore({
+          planId: cleanPlanId,
+        });
+      }).pipe(Effect.provide(harness.layer));
+      assert.strictEqual(missing.outcome, "missing");
+    }),
+  );
+
+  it.effect(
+    "rolls back an atomic source promotion failure and can apply the durable plan again",
+    () =>
+      Effect.gen(function* () {
+        const harness = makeSourceEditHarness({
+          failRenameToOnce: "/extensions-test/sources/builtin",
+        });
+        harness.writeFile(
+          `${harness.extensionsRoot}/sources/builtin/demo/manifest.json`,
+          JSON.stringify({ id: "demo", version: "old" }),
+        );
+        const payload = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).snapshots.captureSourcePayload(
+            snapshotCaptureInput as never,
+          );
+        }).pipe(Effect.provide(harness.layer));
+        const changed = {
+          ...payload,
+          sources: payload.sources.map((source) => ({
+            ...source,
+            files: source.files.map((file) =>
+              file.relativePath === "manifest.json"
+                ? (() => {
+                    const bytes = new TextEncoder().encode(
+                      JSON.stringify({ id: "demo", version: "new" }),
+                    );
+                    return {
+                      ...file,
+                      contentBase64: btoa(String.fromCharCode(...bytes)),
+                      contentHash: `sha256:${Array.from(testDigestBytes(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("")}`,
+                      byteSize: bytes.byteLength,
+                    };
+                  })()
+                : file,
+            ),
+          })),
+        } as typeof payload;
+        const plan = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).snapshots.prepareSourceRestore({
+            planId:
+              "extension-snapshot-source-restore:retry" as ExtensionSnapshotSourceRestorePlanId,
+            snapshotId: "extension-snapshot:retry" as ExtensionSnapshotId,
+            payload: changed,
+          });
+        }).pipe(Effect.provide(harness.layer));
+        const first = yield* Effect.exit(
+          Effect.gen(function* () {
+            return yield* (yield* Extensions).snapshots.applySourceRestore({ plan });
+          }).pipe(Effect.provide(harness.layer)),
+        );
+        assert.strictEqual(first._tag, "Failure");
+        assert.match(
+          harness.readFile(`${harness.extensionsRoot}/sources/builtin/demo/manifest.json`)!,
+          /old/,
+        );
+        const receipt = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).snapshots.applySourceRestore({ plan });
+        }).pipe(Effect.provide(harness.layer));
+        assert.strictEqual(receipt.outcome, "applied");
+        assert.match(
+          harness.readFile(`${harness.extensionsRoot}/sources/builtin/demo/manifest.json`)!,
+          /new/,
+        );
+      }),
+  );
+
+  it.effect(
+    "rolls back interruption and recovers the prepared plan through a reopened service",
+    () =>
+      Effect.gen(function* () {
+        const harness = makeSourceEditHarness({
+          interruptRenameToOnce: "/extensions-test/sources/builtin",
+        });
+        harness.writeFile(
+          `${harness.extensionsRoot}/sources/builtin/demo/manifest.json`,
+          JSON.stringify({ id: "demo" }),
+        );
+        const payload = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).snapshots.captureSourcePayload(
+            snapshotCaptureInput as never,
+          );
+        }).pipe(Effect.provide(harness.layer));
+        const plan = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).snapshots.prepareSourceRestore({
+            planId:
+              "extension-snapshot-source-restore:interrupted" as ExtensionSnapshotSourceRestorePlanId,
+            snapshotId: "extension-snapshot:interrupted" as ExtensionSnapshotId,
+            payload,
+          });
+        }).pipe(Effect.provide(harness.layer));
+        const interrupted = yield* Effect.exit(
+          Effect.gen(function* () {
+            return yield* (yield* Extensions).snapshots.applySourceRestore({ plan });
+          }).pipe(Effect.provide(harness.layer)),
+        );
+        assert.strictEqual(interrupted._tag, "Failure");
+        assert.ok(harness.readFile(`${harness.extensionsRoot}/sources/builtin/demo/manifest.json`));
+        const recovered = yield* Effect.gen(function* () {
+          return yield* (yield* Extensions).snapshots.applySourceRestore({ plan });
+        }).pipe(Effect.provide(harness.layer));
+        assert.strictEqual(recovered.outcome, "applied");
+      }),
+  );
+
+  it.effect("restores shared package state and replays a committed promotion idempotently", () =>
+    Effect.gen(function* () {
+      const harness = makeSourceEditHarness();
+      harness.writeFile(
+        `${harness.extensionsRoot}/sources/user/demo/manifest.json`,
+        JSON.stringify({ id: "demo" }),
+      );
+      harness.writeFile(`${harness.extensionsRoot}/package/package.json`, '{"version":"before"}');
+      harness.writeFile(`${harness.extensionsRoot}/package/bun.lock`, "before-lock");
+      const payload = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.captureSourcePayload(
+          snapshotCaptureInput as never,
+        );
+      }).pipe(Effect.provide(harness.layer));
+      harness.writeFile(
+        `${harness.extensionsRoot}/sources/user/removed/manifest.json`,
+        JSON.stringify({ id: "removed" }),
+      );
+      harness.writeFile(`${harness.extensionsRoot}/package/package.json`, '{"version":"after"}');
+      harness.writeFile(`${harness.extensionsRoot}/package/bun.lock`, "after-lock");
+      harness.writeFile(`${harness.extensionsRoot}/package/node_modules/transient/index.js`, "x");
+      const plan = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.prepareSourceRestore({
+          planId:
+            "extension-snapshot-source-restore:package-replay" as ExtensionSnapshotSourceRestorePlanId,
+          snapshotId: "extension-snapshot:package-replay" as ExtensionSnapshotId,
+          payload,
+        });
+      }).pipe(Effect.provide(harness.layer));
+      const applied = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.applySourceRestore({ plan });
+      }).pipe(Effect.provide(harness.layer));
+      assert.strictEqual(applied.outcome, "applied");
+      assert.deepStrictEqual(applied.removedUserExtensionIds.map(String), ["removed"]);
+      assert.strictEqual(
+        harness.readFile(`${harness.extensionsRoot}/package/package.json`),
+        '{"version":"before"}',
+      );
+      assert.strictEqual(
+        harness.readFile(`${harness.extensionsRoot}/package/bun.lock`),
+        "before-lock",
+      );
+      assert.strictEqual(
+        harness.readFile(`${harness.extensionsRoot}/package/node_modules/transient/index.js`),
+        null,
+      );
+      const reopenedPlan = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.prepareSourceRestore({
+          planId: plan.planId,
+          snapshotId: plan.snapshotId,
+          payload,
+        });
+      }).pipe(Effect.provide(harness.layer));
+      const replayed = yield* Effect.gen(function* () {
+        return yield* (yield* Extensions).snapshots.applySourceRestore({ plan: reopenedPlan });
+      }).pipe(Effect.provide(harness.layer));
+      assert.strictEqual(replayed.outcome, "recovered");
+      assert.deepStrictEqual(replayed.removedUserExtensionIds.map(String), ["removed"]);
+    }),
+  );
 });
+
+function testSha256(value: string): string {
+  return `sha256:${Array.from(testDigestBytes(new TextEncoder().encode(value)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("")}`;
+}
+
+function testDigestBytes(data: Uint8Array): Uint8Array {
+  const digest = new Uint8Array(32);
+  for (let index = 0; index < data.length; index += 1) {
+    digest[index % digest.length] = (digest[index % digest.length]! * 33 + data[index]!) & 0xff;
+  }
+  return digest;
+}
+
+function testEvidenceFingerprint(
+  domain: string,
+  entries: readonly (readonly [role: string, relativePath: string, contentHash: string])[],
+): string {
+  const framed = [domain, ...entries.flatMap((entry) => entry)]
+    .map((part) => `${new TextEncoder().encode(part).byteLength}:${part}`)
+    .join("");
+  return testSha256(framed);
+}
 
 function assertExtensionError(
   error: unknown,
@@ -2210,6 +4022,8 @@ function provideGeneratedPackagePlatform<A, E>(
     | PackagedExtensionTemplatesPort
     | GeneratedPackageRootPort
     | WorkspaceSourceLinkPort
+    | ExtensionBuildProcessPort
+    | ExtensionCliRequirementProbePort
   >,
   writtenFiles: Map<string, string> = new Map(),
   roots: Partial<{
@@ -2277,11 +4091,12 @@ function provideGeneratedPackagePlatform<A, E>(
       join: joinPathSegments,
       dirname: dirnamePath,
       relative: relativePath,
+      resolve: (...segments: readonly string[]) => resolvePath(...segments),
     } as unknown as Path.Path),
     Effect.provideService(
       Crypto.Crypto,
       Crypto.make({
-        digest: (_algorithm, data) => Effect.succeed(data),
+        digest: (_algorithm, data) => Effect.succeed(testDigestBytes(data)),
         randomBytes: (size) => new Uint8Array(size).fill(1),
       }),
     ),
@@ -2293,6 +4108,12 @@ function provideGeneratedPackagePlatform<A, E>(
         isApproved: () => Effect.succeed(false),
         readReadiness: () => Effect.succeed(null),
       },
+    }),
+    Effect.provideService(ExtensionCliRequirementProbePort, {
+      probe: () => Effect.succeed({ status: "missing" }),
+    }),
+    Effect.provideService(ExtensionBuildProcessPort, {
+      run: () => Effect.succeed({ status: "failed" }),
     }),
     Effect.provide(
       layerExtensionSourceRootsPort({
@@ -2333,6 +4154,19 @@ function provideGeneratedPackagePlatform<A, E>(
 
 function joinPathSegments(...segments: readonly string[]): string {
   return segments.join("/").replaceAll(/\/+/g, "/");
+}
+
+function resolvePath(...segments: readonly string[]): string {
+  const resolved: string[] = [];
+  for (const segment of segments.join("/").split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      resolved.pop();
+      continue;
+    }
+    resolved.push(segment);
+  }
+  return `/${resolved.join("/")}`;
 }
 
 function dirnamePath(path: string): string {

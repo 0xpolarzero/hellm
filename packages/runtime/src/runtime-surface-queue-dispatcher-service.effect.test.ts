@@ -31,7 +31,7 @@ import type { ExtensionInvocation } from "@svvy/extensions";
 import { RuntimeEventBus } from "./runtime-event-bus";
 import { RuntimeAcceptedNativeToolExecution } from "./accepted-native-tool-execution-service";
 import { createRuntimeLayerConfigLayer, defaultRuntimeLayerConfig } from "./runtime-layer-config";
-import { RuntimeGeneratedContextRefreshService } from "./runtime-generated-context-refresh-service";
+import { RuntimeGeneratedContextBindingService } from "./runtime-generated-context-binding-service";
 import { RuntimePromptDefaultsService } from "./runtime-prompt-defaults-service";
 import { RuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
 import { RuntimePromptExecutionService } from "./runtime-prompt-execution-service";
@@ -141,6 +141,7 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
       const titlePublications: Array<readonly StateInvalidationDescriptor[]> = [];
       let claimed = false;
       let promptExecutions = 0;
+      let generatedContextRefreshes = 0;
       let installedPromptDone: Effect.Effect<void, RuntimeContractError> | null = null;
       const binding = {
         target,
@@ -164,6 +165,7 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
 
         assert.deepStrictEqual(handlerTurnIds, [turnId]);
         assert.strictEqual(promptExecutions, 1);
+        assert.strictEqual(generatedContextRefreshes, 1);
         assert.deepStrictEqual(declarationVariants, ["blocking"]);
         assert.deepStrictEqual(titlePublications, [[titleInvalidation]]);
         assert.deepStrictEqual(calls, [
@@ -266,11 +268,17 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
             }),
             Layer.succeed(RuntimeActorExtensionBindingStatePort, {
               readRuntimePromptBinding: () => Effect.succeed(binding),
+              readGeneratedContextBuildSubject: () => Effect.die("unused"),
+              bindGeneratedContext: () => Effect.die("unused"),
               updateActorExtensionBinding: () => Effect.die("unused"),
               setActorExtensionBinding: () => Effect.die("unused"),
             }),
-            Layer.succeed(RuntimeGeneratedContextRefreshService, {
-              refresh: () => Effect.void,
+            Layer.succeed(RuntimeGeneratedContextBindingService, {
+              refresh: () =>
+                Effect.sync(() => {
+                  generatedContextRefreshes += 1;
+                  return binding;
+                }),
             }),
             Layer.succeed(RuntimeAcceptedNativeToolExecution, {
               runRequestUserInput: () => Effect.die("Unexpected request input execution."),

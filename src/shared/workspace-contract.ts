@@ -1,14 +1,24 @@
 import type { RendererTranscriptUserEntry } from "./renderer-transcript";
+import type { AgentProfileId, AppPreferences, ReasoningEffort } from "./agent-settings";
 import type {
-  AgentProfileId,
-  AppPreferences,
-  ReasoningEffort,
-  WorkflowAgentKey,
-} from "./agent-settings";
-import type {
-  ExtensionCategory,
-  ExtensionInterfaceKind,
   ExtensionUsageState,
+  BuildRuntimeExtensionInput,
+  BuildRuntimeExtensionResult,
+  AddExtensionInstructionInput,
+  AddExtensionInstructionResult,
+  ConfigureExtensionInstructionInput,
+  ConfigureExtensionInstructionResult,
+  CreateExtensionSourceInput,
+  CreateExtensionSourceResult,
+  DeleteExtensionSourceInput,
+  DeleteExtensionSourceResult,
+  DuplicateExtensionSourceInput,
+  DuplicateExtensionSourceResult,
+  RemoveExtensionInstructionInput,
+  RemoveExtensionInstructionResult,
+  ResetExtensionInstructionsInput,
+  RuntimeResetExtensionInstructionsResult,
+  ExternalInstructionsProjection,
   SessionNavigationReadModel as CoreSessionNavigationReadModel,
   SessionNavigationSidebarHandlerThreadRow as CoreSessionNavigationSidebarHandlerThreadRow,
   SessionNavigationSidebarRowSubtitle as CoreSessionNavigationSidebarRowSubtitle,
@@ -28,7 +38,6 @@ import type {
   WorkspaceKind as CoreWorkspaceKind,
 } from "@svvy/core";
 import type { ComposerSnippetMention, SentSnippetProvenance } from "./snippets";
-import type { GeneratedAgentContextExternalSource } from "./generated-agent-context";
 import type {
   AnswerRequestInputResult,
   AnswerRuntimeApprovalResult,
@@ -42,6 +51,8 @@ import type {
   ListModelsInput,
   MessageId,
   ModelInfo,
+  GeneratedContextPreviewResult,
+  PreviewGeneratedContextInput,
   PositiveSafeInteger,
   ProviderAuthStatus,
   ProviderId,
@@ -60,6 +71,23 @@ import type {
   RuntimeCreateWorkflowAgentSourceInput,
   RuntimeDeleteWorkflowAgentSourceInput,
   RuntimeDuplicateWorkflowAgentSourceInput,
+  ConfigureExtensionTypescriptApiInput,
+  ConfigureExtensionTypescriptApiResult,
+  ExtensionSnapshotSummary,
+  ExtensionSnapshotsReadModel,
+  ExtensionDependencyReadiness,
+  ExtensionDependencyReadinessStatus,
+  ExtensionRegistryObservation,
+  ExtensionSourceBuildObservation,
+  IsoDateTimeString,
+  SourceDiagnostic,
+  RuntimeDeleteExtensionSnapshotInput,
+  RuntimeDeleteExtensionSnapshotResult,
+  RuntimeListExtensionSnapshotsInput,
+  RuntimeLoadExtensionSnapshotInput,
+  RuntimeLoadExtensionSnapshotResult,
+  RuntimeRenameExtensionSnapshotInput,
+  RuntimeSaveExtensionSnapshotInput,
   RuntimeSurfaceTarget,
   RuntimeSaveExtensionSourceEditInput,
   SourceEditSaveResult,
@@ -238,6 +266,11 @@ export interface ExtensionsReadModelRequest {
   extensionId?: string;
 }
 
+export interface ExternalInstructionsReadModelRequest {
+  kind: "externalInstructions";
+  workspaceId: WorkspaceId;
+}
+
 export interface SnippetsStateReadModelRequest {
   kind: "snippets";
   workspaceId: WorkspaceId;
@@ -343,16 +376,71 @@ export type ConfiguredAgentProfileReadModelRecord = StateConfiguredAgentProfileR
 export type GeneratedContextPreviewReadModelRecord = StateGeneratedContextPreviewReadModelRecord;
 
 export interface ExtensionsReadModel {
+  aggregateFingerprint: string | null;
+  diagnostics: readonly SourceDiagnostic[];
+  observedAt: IsoDateTimeString | null;
   records: readonly ExtensionReadModelRecord[];
-  dependencyReadiness: readonly unknown[];
+  dependencyReadiness: readonly ExtensionDependencyReadiness[];
 }
 
-export interface ExtensionReadModelRecord {
-  extensionId: string;
+export interface ExtensionCliReadinessReadModel {
+  requirementId: string;
+  requirementFingerprint: string;
+  required: boolean;
+  authorityStatus:
+    | "current"
+    | "missing"
+    | "requirement-fingerprint-mismatch"
+    | "registry-fingerprint-mismatch";
+  status: ExtensionDependencyReadinessStatus | "unknown";
+  readiness: ExtensionDependencyReadiness | null;
+  usable: boolean;
+  blocking: boolean;
+}
+
+export type ExtensionReadModelRecord = ExtensionRegistryObservation & {
+  buildAuthorityStatus:
+    | "current"
+    | "missing"
+    | "registry-fingerprint-mismatch"
+    | "build-requirement-mismatch"
+    | "source-fingerprint-mismatch";
+  buildObservation: ExtensionSourceBuildObservation | null;
+  buildRequired: boolean;
+  contextReady: boolean;
+  runtimeReady: boolean;
   readiness: "ready" | "not-ready" | "unknown";
   loadedByProfileIds: readonly string[];
   availableByProfileIds: readonly string[];
   generatedPackageStatus: "ready" | "failed" | "refresh-needed" | "unknown";
+  cliReadiness: readonly ExtensionCliReadinessReadModel[];
+  dependencyRequirements: readonly {
+    kind: "dependency" | "trusted_dependency";
+    name: string;
+    version: string;
+    packageManager: "bun";
+    source: "npm";
+    integrity: null;
+    resolution: null;
+    approval: "approved" | "needs_user_confirmation";
+    install: "installed" | "unknown";
+  }[];
+  env?: readonly {
+    envName: string;
+    required: boolean;
+    secret: boolean;
+    description: string | null;
+    hasDefault: boolean;
+    configured: boolean;
+    status: "configured" | "defaulted" | "missing" | "not-configured";
+  }[];
+};
+export type AgentExtensionCatalogItem = Pick<
+  ExtensionsReadModel["records"][number],
+  "category" | "title" | "description" | "usagePolicy"
+> & { extensionId: string };
+export interface AgentExtensionCatalogReadModel {
+  records: readonly AgentExtensionCatalogItem[];
 }
 
 export interface StateSnippetsReadModel {
@@ -486,6 +574,7 @@ export type StateReadModelRequest =
   | ApprovalsReadModelRequest
   | AgentsReadModelRequest
   | ExtensionsReadModelRequest
+  | ExternalInstructionsReadModelRequest
   | SnippetsStateReadModelRequest
   | WorkflowsGeneratedReadModelRequest
   | HandlerInspectorReadModelRequest
@@ -510,6 +599,7 @@ export type StateReadModelResult =
   | { kind: "approvals"; value: ApprovalsReadModel }
   | { kind: "agents"; value: AgentsReadModel }
   | { kind: "extensions"; value: ExtensionsReadModel }
+  | { kind: "externalInstructions"; value: ExternalInstructionsProjection }
   | { kind: "snippets"; value: StateSnippetsReadModel }
   | { kind: "workflowsGenerated"; value: WorkflowsGeneratedReadModel }
   | { kind: "handlerInspector"; value: WorkspaceHandlerThreadInspector | null }
@@ -579,249 +669,27 @@ export interface SettingsPaneTarget {
   surface: "settings";
 }
 
-export type ExtensionCliRequirementReadinessStatus = "available" | "missing" | "unknown";
-
-export interface ExtensionCliRequirementReadiness {
-  id: string;
-  binary: string;
-  package: string | null;
-  required: boolean;
-  defaultVersion: string | null;
-  currentVersion: string | null;
-  latestVersion: string | null;
-  status: ExtensionCliRequirementReadinessStatus;
-  updateAvailable: boolean;
-  detectedVersion: string | null;
-  path: string | null;
-  versionCommand: string | null;
-  installCommand: string | null;
-  updateCommand: string | null;
-}
-
-export type ExtensionEnvRequirementReadinessStatus =
-  | "configured"
-  | "defaulted"
-  | "missing"
-  | "optional_missing";
-
-export interface ExtensionEnvRequirementReadiness {
-  name: string;
-  required: boolean;
-  secret: boolean;
-  description: string;
-  status: ExtensionEnvRequirementReadinessStatus;
-}
-
-export interface ExtensionUsageReadiness {
-  actorKind: "orchestrator" | "handler" | "workflow-task";
-  agentProfile: string;
-  state: ExtensionUsageState;
-  configurable: boolean;
-  fixedReason?: string;
-}
-
-export interface ExtensionInventoryIssue {
-  code:
-    | "BUILD_REQUIRED"
-    | "CLI_MISSING"
-    | "CLI_STATUS_UNKNOWN"
-    | "DEPENDENCY_APPROVAL_REQUIRED"
-    | "DEPENDENCY_INSTALL_MISSING"
-    | "EXTENSION_ENV_MISSING"
-    | "EXTERNAL_INSTRUCTION_UNREADABLE"
-    | "NO_CURRENT_BUILD";
-  message: string;
-}
-
-export interface ExtensionInventoryItemReadModel {
-  id: string;
-  category: ExtensionCategory;
-  interface: ExtensionInterfaceKind;
-  title: string;
-  description: string;
-  customized: boolean;
-  minimalInstruction?: ExtensionInstructionFileReadModel;
-  loadedInstructionContributors: ExtensionLoadedInstructionContributorReadModel[];
-  externalInstruction?: {
-    sourceGroup: GeneratedAgentContextExternalSource["sourceGroup"];
-    rootId?: string;
-    rootLabel?: string;
-    path: string;
-    content: string;
-    contentHash: string;
-    order: number;
-    enabled: boolean;
-    actors: GeneratedAgentContextExternalSource["actors"];
-    readStatus: GeneratedAgentContextExternalSource["readStatus"];
-  };
-  typescriptApiEnabled: boolean;
-  tooling: ExtensionToolingReadModel;
-  usage: ExtensionUsageReadiness[];
-  requirements: {
-    cliRequirements: ExtensionCliRequirementReadiness[];
-    env: ExtensionEnvRequirementReadiness[];
-  };
-  state: {
-    ready: boolean;
-    issues: ExtensionInventoryIssue[];
-  };
-}
-
-export interface ExtensionInstructionFileReadModel {
-  name: string;
-  path: string;
-  content: string;
-  sourceVersion: string;
-  bypassed: boolean;
-  editable: boolean;
-  source?: OpenExtensionSourceEditInput;
-  tokenCount: {
-    tokens: number;
-    accuracy: "estimated";
-  };
-}
-
-export type ExtensionLoadedInstructionContributorReadModel =
-  | {
-      kind: "source";
-      file: ExtensionInstructionFileReadModel;
-    }
-  | {
-      kind: "scripted";
-      name: string;
-      bypassed: boolean;
-      script: ExtensionInstructionFileReadModel;
-      output: ExtensionInstructionFileReadModel;
-      regenerateCommand: string;
-    };
-
-export interface ExtensionGeneratedReadonlyBlockReadModel {
-  name: string;
-  path: string;
-  openable?: boolean;
-  content: string;
-  source?: OpenExtensionSourceEditInput;
-  tokenCount: {
-    tokens: number;
-    accuracy: "estimated";
-  };
-}
-
-export interface ExtensionToolingReadModel {
-  nativeToolSchema?: ExtensionGeneratedReadonlyBlockReadModel;
-  svvyxCommandSource?: ExtensionInstructionFileReadModel;
-  svvyxCommandSchema?: ExtensionGeneratedReadonlyBlockReadModel;
-  typescriptApiDeclaration?: ExtensionGeneratedReadonlyBlockReadModel;
-  typescriptApiStatus?: "disabled" | "emitted" | "not_emitted";
-}
-
-export interface ExtensionChangeCardReadModel {
-  id: string;
-  extensionId: string;
-  kind: "extension_files" | "extension_usage" | "extension_delete";
-  sourceChangeKind: string;
-  createdAt: string;
-  title: string;
-  description: string;
-  revertCommand: string;
-  reversible: true;
-}
-
-export interface ExtensionSnapshotReadModel {
-  id: string;
-  name: string;
-  extensionCount: number;
-  hasSecretState: boolean;
-  status: "available";
-}
-
-export interface ExtensionDefaultUsageReadModel {
-  actorKind: "orchestrator" | "workflow-task";
-  state: ExtensionUsageState;
-  customized: boolean;
-  configurable: boolean;
-  fixedReason?: string;
-}
-
-export interface ExtensionsInventoryReadModel {
-  extensions: ExtensionInventoryItemReadModel[];
-  defaults?: {
-    order: string[];
-    usage: Record<string, ExtensionDefaultUsageReadModel[]>;
-  };
-  reversibleChanges: ExtensionChangeCardReadModel[];
-  snapshots: ExtensionSnapshotReadModel[];
-}
-
-export interface SaveExtensionSnapshotRequest extends WorkspaceScopedRequest {
-  name: string;
-}
-
-export interface RenameExtensionSnapshotRequest extends WorkspaceScopedRequest {
-  snapshotId: string;
-  name: string;
-}
-
-export interface DeleteExtensionSnapshotRequest extends WorkspaceScopedRequest {
-  snapshotId: string;
-}
-
-export interface LoadExtensionSnapshotRequest extends WorkspaceScopedRequest {
-  snapshotId: string;
-}
-
-export interface CreateExtensionRequest extends WorkspaceScopedRequest {
-  id: string;
-  title: string;
-  description: string;
-}
-
-export interface DuplicateExtensionRequest extends WorkspaceScopedRequest {
-  extensionId: string;
-  id: string;
-  title: string;
-}
-
-export interface DeleteExtensionRequest extends WorkspaceScopedRequest {
-  extensionId: string;
-}
-
-export interface ResetExtensionRequest extends WorkspaceScopedRequest {
-  extensionId: string;
-}
-
-export interface BuildExtensionRequest extends WorkspaceScopedRequest {
-  extensionId: string;
-}
+export type CreateExtensionRequest = CreateExtensionSourceInput;
+export type DuplicateExtensionRequest = DuplicateExtensionSourceInput;
+export type DeleteExtensionRequest = DeleteExtensionSourceInput;
+export type ResetExtensionRequest = ResetExtensionInstructionsInput;
 
 export interface SetExtensionTypescriptApiRequest extends WorkspaceScopedRequest {
   extensionId: string;
   enabled: boolean;
 }
 
-export interface AddExtensionInstructionFileRequest extends WorkspaceScopedRequest {
-  extensionId: string;
-  name: string;
-}
+export type AddExtensionInstructionFileRequest = AddExtensionInstructionInput;
+export type RemoveExtensionInstructionFileRequest = RemoveExtensionInstructionInput;
+export type ConfigureExtensionInstructionFileRequest = ConfigureExtensionInstructionInput;
 
-export interface RemoveExtensionInstructionFileRequest extends WorkspaceScopedRequest {
-  extensionId: string;
-  name: string;
-}
-
-export interface ConfigureExtensionInstructionFileRequest extends WorkspaceScopedRequest {
-  extensionId: string;
-  name: string;
-  bypassed: boolean;
-}
-
-export interface SetExtensionEnvSecretRequest extends WorkspaceScopedRequest {
+export interface StateExtensionEnvSetSecretRequest extends WorkspaceScopedRequest {
   extensionId: string;
   envName: string;
   value: string;
 }
 
-export interface RemoveExtensionEnvSecretRequest extends WorkspaceScopedRequest {
+export interface StateExtensionEnvRemoveSecretRequest extends WorkspaceScopedRequest {
   extensionId: string;
   envName: string;
 }
@@ -1352,8 +1220,8 @@ export interface OpenWorkflowsGeneratedExportInEditorRequest {
   target: "source" | "generated";
 }
 
-export interface OpenGeneratedAgentContextExternalSourceInEditorRequest {
-  path: string;
+export interface OpenExternalInstructionSourceInEditorRequest {
+  sourceId: string;
 }
 
 export interface OpenSnippetSourceInEditorRequest {
@@ -1611,44 +1479,8 @@ export interface CreateSessionRequest {
   agentProfileId?: AgentProfileId;
 }
 
-export interface AgentContextPreviewRequest {
-  profileId?: AgentProfileId;
-  actor?: "orchestrator" | "handler" | "workflow-task";
-}
-
-export interface AgentContextPreviewExtension {
-  id: string;
-  title: string;
-  description: string;
-  state: ExtensionUsageState;
-  instruction: string;
-  tokenCount?: {
-    tokens: number;
-    accuracy: "estimated";
-  };
-  loadedTokenCount?: {
-    tokens: number;
-    accuracy: "estimated";
-  };
-  sourcePath?: string;
-}
-
-export interface AgentContextPreviewResponse {
-  actor: "orchestrator" | "handler" | "workflow-task";
-  profileId: AgentProfileId | WorkflowAgentKey;
-  profileName: string;
-  provider: string;
-  model: string;
-  reasoningEffort: ReasoningEffort;
-  loadedExtensionIds: string[];
-  availableExtensionIds: string[];
-  systemPrompt: string;
-  tokenCount: {
-    tokens: number;
-    accuracy: "estimated";
-  };
-  extensions: AgentContextPreviewExtension[];
-}
+export type AgentContextPreviewRequest = PreviewGeneratedContextInput;
+export type AgentContextPreviewResponse = GeneratedContextPreviewResult;
 
 export type AgentModelChoice = ModelInfo;
 
@@ -1752,10 +1584,6 @@ export interface ChatRPCSchema {
         params: WorkspaceScoped<SetExternalInstructionActorUsageCommandInput>;
         response: StateCommandResult;
       };
-      getGeneratedAgentContextExternalSources: {
-        params: WorkspaceScopedRequest;
-        response: GeneratedAgentContextExternalSource[];
-      };
       stateSnippetsCreateManaged: {
         params: CreateManagedSnippetCommandInput;
         response: StateCommandResult<{ snippetId: SnippetId }>;
@@ -1800,77 +1628,77 @@ export interface ChatRPCSchema {
         params: OpenSourceInEditorRequest;
         response: OpenWorkspaceSourceInEditorResponse;
       };
-      getAgentContextPreview: {
-        params: WorkspaceScoped<AgentContextPreviewRequest>;
-        response: AgentContextPreviewResponse;
+      previewGeneratedContext: {
+        params: PreviewGeneratedContextInput;
+        response: GeneratedContextPreviewResult;
       };
       listModelMetadata: {
         params: ListModelsInput;
         response: readonly ModelInfo[];
       };
-      getExtensionsInventory: {
-        params: WorkspaceScopedRequest;
-        response: ExtensionsInventoryReadModel;
+      getExtensionSnapshots: {
+        params: RuntimeListExtensionSnapshotsInput;
+        response: ExtensionSnapshotsReadModel;
       };
       saveExtensionSnapshot: {
-        params: SaveExtensionSnapshotRequest;
-        response: ExtensionsInventoryReadModel;
+        params: RuntimeSaveExtensionSnapshotInput;
+        response: ExtensionSnapshotSummary;
       };
       renameExtensionSnapshot: {
-        params: RenameExtensionSnapshotRequest;
-        response: ExtensionsInventoryReadModel;
+        params: RuntimeRenameExtensionSnapshotInput;
+        response: ExtensionSnapshotSummary;
       };
       deleteExtensionSnapshot: {
-        params: DeleteExtensionSnapshotRequest;
-        response: ExtensionsInventoryReadModel;
+        params: RuntimeDeleteExtensionSnapshotInput;
+        response: RuntimeDeleteExtensionSnapshotResult;
       };
       loadExtensionSnapshot: {
-        params: LoadExtensionSnapshotRequest;
-        response: ExtensionsInventoryReadModel;
+        params: RuntimeLoadExtensionSnapshotInput;
+        response: RuntimeLoadExtensionSnapshotResult;
       };
       createExtension: {
         params: CreateExtensionRequest;
-        response: ExtensionsInventoryReadModel;
+        response: CreateExtensionSourceResult;
       };
       duplicateExtension: {
         params: DuplicateExtensionRequest;
-        response: ExtensionsInventoryReadModel;
+        response: DuplicateExtensionSourceResult;
       };
       deleteExtension: {
         params: DeleteExtensionRequest;
-        response: ExtensionsInventoryReadModel;
+        response: DeleteExtensionSourceResult;
+      };
+      configureExtensionTypescriptApi: {
+        params: ConfigureExtensionTypescriptApiInput;
+        response: ConfigureExtensionTypescriptApiResult;
       };
       resetExtension: {
         params: ResetExtensionRequest;
-        response: ExtensionsInventoryReadModel;
+        response: RuntimeResetExtensionInstructionsResult;
       };
       buildExtension: {
-        params: BuildExtensionRequest;
-        response: ExtensionsInventoryReadModel;
-      };
-      setExtensionTypescriptApi: {
-        params: SetExtensionTypescriptApiRequest;
-        response: ExtensionsInventoryReadModel;
+        params: BuildRuntimeExtensionInput;
+        response: BuildRuntimeExtensionResult;
       };
       addExtensionInstructionFile: {
         params: AddExtensionInstructionFileRequest;
-        response: ExtensionsInventoryReadModel;
+        response: AddExtensionInstructionResult;
       };
       removeExtensionInstructionFile: {
         params: RemoveExtensionInstructionFileRequest;
-        response: ExtensionsInventoryReadModel;
+        response: RemoveExtensionInstructionResult;
       };
       configureExtensionInstructionFile: {
         params: ConfigureExtensionInstructionFileRequest;
-        response: ExtensionsInventoryReadModel;
+        response: ConfigureExtensionInstructionResult;
       };
-      setExtensionEnvSecret: {
-        params: SetExtensionEnvSecretRequest;
-        response: ExtensionsInventoryReadModel;
+      stateExtensionEnvSetSecret: {
+        params: StateExtensionEnvSetSecretRequest;
+        response: StateCommandResult<{ configured: true }>;
       };
-      removeExtensionEnvSecret: {
-        params: RemoveExtensionEnvSecretRequest;
-        response: ExtensionsInventoryReadModel;
+      stateExtensionEnvRemoveSecret: {
+        params: StateExtensionEnvRemoveSecretRequest;
+        response: StateCommandResult<{ configured: false }>;
       };
       stateExtensionEnvSetOverride: {
         params: SetExtensionEnvOverrideRequest;
@@ -1932,8 +1760,8 @@ export interface ChatRPCSchema {
         params: OpenWorkflowsGeneratedExportInEditorRequest;
         response: OpenWorkspaceSourceInEditorResponse;
       };
-      openGeneratedAgentContextExternalSourceInEditor: {
-        params: WorkspaceScoped<OpenGeneratedAgentContextExternalSourceInEditorRequest>;
+      openExternalInstructionSourceInEditor: {
+        params: WorkspaceScoped<OpenExternalInstructionSourceInEditorRequest>;
         response: OpenWorkspaceSourceInEditorResponse;
       };
       writeCommandStdin: {

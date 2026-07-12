@@ -1,536 +1,169 @@
 import { describe, expect, it } from "bun:test";
-import type { ExtensionInventoryItemReadModel } from "../shared/workspace-contract";
+import type { AgentExtensionCatalogItem } from "../shared/workspace-contract";
 import {
   canSelectExtensionUsageState,
   extensionUsageItems,
-  mergeActorExtensionDefaults,
   resolvedExtensionState,
   type ExtensionUsageControlItem,
 } from "./agents-pane-extension-usage";
 
-function extensionInventoryItem(
-  input: Partial<ExtensionInventoryItemReadModel> & Pick<ExtensionInventoryItemReadModel, "id">,
-): ExtensionInventoryItemReadModel {
-  const { id, ...overrides } = input;
+function catalogItem(
+  extensionId: string,
+  input: Partial<AgentExtensionCatalogItem> & {
+    baseline?: Partial<AgentExtensionCatalogItem["usagePolicy"]["baselineUsage"]>;
+    canonicalOrder?: number;
+    configurable?: boolean;
+    networkAccess?: "required" | "not-required";
+  } = {},
+): AgentExtensionCatalogItem {
   return {
+    extensionId,
     category: "builtin",
-    customized: false,
-    description: `${id} extension`,
-    id,
-    interface: "instructions",
-    minimalInstruction: {
-      name: "minimal.md",
-      path: "",
-      content: "",
-      sourceVersion: "",
-      bypassed: false,
-      editable: false,
-      tokenCount: {
-        tokens: 0,
-        accuracy: "estimated",
+    title: extensionId,
+    description: `${extensionId} extension`,
+    usagePolicy: {
+      canonicalOrder: (input.canonicalOrder ?? 0) as never,
+      baselineUsage: {
+        orchestrator: "unavailable",
+        handler: "unavailable",
+        "workflow-task": "unavailable",
+        ...input.baseline,
       },
+      networkAccess: input.networkAccess ?? "not-required",
+      configurable: input.configurable ?? true,
+      fixedReason: input.configurable === false ? "app_native_control" : null,
     },
-    loadedInstructionContributors: [],
-    requirements: {
-      cliRequirements: [],
-      env: [],
-    },
-    state: {
-      issues: [],
-      ready: true,
-    },
-    title: id,
-    typescriptApiEnabled: false,
-    tooling: {
-      typescriptApiStatus: "disabled",
-    },
-    usage: [],
-    ...overrides,
+    ...input,
   };
 }
 
 describe("Agents pane extension usage helpers", () => {
-  it("layers sparse state actor defaults over builtin inventory defaults", () => {
-    expect(
-      mergeActorExtensionDefaults({
-        actor: "orchestrator",
-        inventoryDefaults: {
-          order: ["shell", "smithers"],
-          usage: {
-            shell: [
-              {
-                actorKind: "orchestrator",
-                configurable: true,
-                customized: false,
-                state: "loaded",
-              },
-            ],
-            smithers: [
-              {
-                actorKind: "orchestrator",
-                configurable: true,
-                customized: false,
-                state: "available",
-              },
-            ],
-          },
-        },
-        stateDefaults: {
-          actor: "orchestrator",
-          extensionOrder: [],
-          extensionUsage: { smithers: "unavailable" },
-          updatedAt: "2026-07-11T12:00:00.000Z",
-        },
-      }),
-    ).toEqual({
-      order: ["shell", "smithers"],
-      usage: {
-        shell: [
-          {
-            actorKind: "orchestrator",
-            configurable: true,
-            customized: false,
-            state: "loaded",
-          },
-        ],
-        smithers: [
-          {
-            actorKind: "orchestrator",
-            configurable: true,
-            customized: true,
-            state: "unavailable",
-          },
-        ],
-      },
+  it("resolves package baselines, state actor defaults, and explicit profile overrides", () => {
+    const web = catalogItem("web", {
+      baseline: { orchestrator: "loaded" },
+      networkAccess: "required",
     });
-  });
-
-  it("resolves implicit builtin usage from inventory defaults", () => {
-    const web = extensionInventoryItem({
-      id: "web",
-      usage: [
-        {
-          actorKind: "orchestrator",
-          agentProfile: "default",
-          configurable: true,
-          state: "loaded",
-        },
-      ],
-    });
-
     expect(
       resolvedExtensionState({
         actor: "orchestrator",
         extension: web,
         explicitUsage: {},
-        inventoryDefaults: {
-          order: ["web"],
-          usage: {
-            web: [
-              {
-                actorKind: "orchestrator",
-                configurable: true,
-                customized: false,
-                state: "unavailable",
-              },
-            ],
-          },
-        },
-        inventoryUsage: web.usage[0] ?? null,
         networkAccess: false,
       }),
     ).toBe("unavailable");
-
     expect(
       resolvedExtensionState({
         actor: "orchestrator",
         extension: web,
         explicitUsage: {},
-        inventoryDefaults: {
-          order: ["web"],
-          usage: {
-            web: [
-              {
-                actorKind: "orchestrator",
-                configurable: true,
-                customized: false,
-                state: "loaded",
-              },
-            ],
-          },
+        actorDefaults: {
+          actor: "orchestrator",
+          extensionOrder: [],
+          extensionUsage: { web: "available" },
+          updatedAt: "2026-07-12T00:00:00.000Z",
         },
-        inventoryUsage: { ...web.usage[0]!, state: "unavailable" },
-        networkAccess: true,
+        networkAccess: false,
       }),
-    ).toBe("loaded");
-  });
-
-  it("keeps explicit overrides resolved through actor extension policy", () => {
-    const web = extensionInventoryItem({
-      id: "web",
-      usage: [
-        {
-          actorKind: "orchestrator",
-          agentProfile: "default",
-          configurable: true,
-          state: "loaded",
-        },
-      ],
-    });
-
+    ).toBe("available");
     expect(
       resolvedExtensionState({
         actor: "orchestrator",
         extension: web,
         explicitUsage: { web: "loaded" },
-        inventoryDefaults: {
-          order: ["web"],
-          usage: {
-            web: [
-              {
-                actorKind: "orchestrator",
-                configurable: true,
-                customized: false,
-                state: "unavailable",
-              },
-            ],
-          },
-        },
-        inventoryUsage: web.usage[0] ?? null,
         networkAccess: false,
       }),
     ).toBe("loaded");
-
-    expect(
-      resolvedExtensionState({
-        actor: "orchestrator",
-        extension: web,
-        explicitUsage: { web: "unavailable" },
-        inventoryDefaults: {
-          order: ["web"],
-          usage: {
-            web: [
-              {
-                actorKind: "orchestrator",
-                configurable: true,
-                customized: false,
-                state: "loaded",
-              },
-            ],
-          },
-        },
-        inventoryUsage: web.usage[0] ?? null,
-        networkAccess: true,
-      }),
-    ).toBe("unavailable");
   });
 
-  it("preserves inventory defaults for user extensions", () => {
-    const userExtension = extensionInventoryItem({
+  it("uses canonical policy order unless persisted actor order overrides it", () => {
+    const alpha = catalogItem("alpha", {
       category: "user",
-      id: "team-notes",
-      usage: [
-        {
-          actorKind: "handler",
-          agentProfile: "threadHandler",
-          configurable: true,
-          state: "available",
-        },
-      ],
+      canonicalOrder: 1,
+      baseline: { orchestrator: "loaded" },
     });
-
-    expect(
-      extensionUsageItems({
-        actor: "handler",
-        extensionInventoryItems: [userExtension],
-        networkAccess: false,
-        profileId: "threadHandler",
-        usage: {},
-      }),
-    ).toEqual([
-      expect.objectContaining({
-        explicit: false,
-        id: "team-notes",
-        state: "available",
-      }),
-    ]);
-  });
-
-  it("does not count stored no-op usage entries as overrides", () => {
-    const items = extensionUsageItems({
+    const beta = catalogItem("beta", {
+      category: "user",
+      canonicalOrder: 2,
+      baseline: { orchestrator: "available" },
+    });
+    const canonical = extensionUsageItems({
       actor: "orchestrator",
-      extensionInventoryItems: [
-        extensionInventoryItem({
-          id: "smithers",
-          title: "Smithers",
-          usage: [
-            {
-              actorKind: "orchestrator",
-              agentProfile: "default",
-              configurable: true,
-              state: "available",
-            },
-          ],
-        }),
-      ],
-      inventoryDefaults: {
-        order: ["smithers"],
-        usage: {
-          smithers: [
-            {
-              actorKind: "orchestrator",
-              configurable: true,
-              customized: false,
-              state: "available",
-            },
-          ],
-        },
+      extensionCatalogItems: [beta, alpha],
+      networkAccess: true,
+      profileId: "default",
+      usage: {},
+    });
+    expect(canonical.map((item) => `${item.id}:${item.state}`)).toEqual([
+      "alpha:loaded",
+      "beta:available",
+    ]);
+
+    const persisted = extensionUsageItems({
+      actor: "orchestrator",
+      extensionCatalogItems: [alpha, beta],
+      actorDefaults: {
+        actor: "orchestrator",
+        extensionOrder: ["beta" as never],
+        extensionUsage: {},
+        updatedAt: "2026-07-12T00:00:00.000Z",
       },
       networkAccess: true,
       profileId: "default",
-      usage: { smithers: "available" },
+      usage: {},
     });
-
-    expect(items).toEqual([
-      expect.objectContaining({
-        defaultState: "available",
-        explicit: false,
-        id: "smithers",
-        state: "available",
-      }),
-    ]);
+    expect(persisted.map((item) => item.id)).toEqual(["beta", "alpha"]);
   });
 
-  it("marks true usage overrides against the default state", () => {
-    const items = extensionUsageItems({
-      actor: "orchestrator",
-      extensionInventoryItems: [
-        extensionInventoryItem({
-          id: "smithers",
-          title: "Smithers",
-          usage: [
-            {
-              actorKind: "orchestrator",
-              agentProfile: "default",
-              configurable: true,
-              state: "available",
-            },
-          ],
-        }),
-      ],
-      inventoryDefaults: {
-        order: ["smithers"],
-        usage: {
-          smithers: [
-            {
-              actorKind: "orchestrator",
-              configurable: true,
-              customized: false,
-              state: "available",
-            },
-          ],
-        },
-      },
-      networkAccess: true,
-      profileId: "default",
-      usage: { smithers: "loaded" },
+  it("marks only real profile overrides explicit", () => {
+    const smithers = catalogItem("smithers", {
+      baseline: { orchestrator: "available" },
     });
-
-    expect(items).toEqual([
-      expect.objectContaining({
-        defaultState: "available",
-        explicit: true,
-        id: "smithers",
-        state: "loaded",
-      }),
-    ]);
-  });
-
-  it("keeps extension order stable independent of resolved usage state", () => {
-    const first = extensionInventoryItem({
-      category: "user",
-      id: "first-extension",
-      title: "First Extension",
-      usage: [
-        {
-          actorKind: "orchestrator",
-          agentProfile: "default",
-          configurable: true,
-          state: "unavailable",
-        },
-      ],
-    });
-    const second = extensionInventoryItem({
-      category: "user",
-      id: "second-extension",
-      title: "Second Extension",
-      usage: [
-        {
-          actorKind: "orchestrator",
-          agentProfile: "default",
-          configurable: true,
-          state: "loaded",
-        },
-      ],
-    });
-    const third = extensionInventoryItem({
-      category: "user",
-      id: "third-extension",
-      title: "Third Extension",
-      usage: [
-        {
-          actorKind: "orchestrator",
-          agentProfile: "default",
-          configurable: true,
-          state: "available",
-        },
-      ],
-    });
-
     expect(
       extensionUsageItems({
         actor: "orchestrator",
-        extensionInventoryItems: [first, second, third],
+        extensionCatalogItems: [smithers],
         networkAccess: true,
         profileId: "default",
-        usage: {},
-      }).map((item) => `${item.id}:${item.state}`),
-    ).toEqual([
-      "first-extension:unavailable",
-      "second-extension:loaded",
-      "third-extension:available",
-    ]);
+        usage: { smithers: "available" },
+      })[0],
+    ).toMatchObject({ state: "available", defaultState: "available", explicit: false });
+    expect(
+      extensionUsageItems({
+        actor: "orchestrator",
+        extensionCatalogItems: [smithers],
+        networkAccess: true,
+        profileId: "default",
+        usage: { smithers: "loaded" },
+      })[0],
+    ).toMatchObject({ state: "loaded", defaultState: "available", explicit: true });
   });
 
-  it("projects app extension defaults into non-handler profile rows", () => {
-    const items = extensionUsageItems({
+  it("preserves fixed package policy and unknown explicit extension rows", () => {
+    const fixed = catalogItem("extension-loading", {
+      baseline: { orchestrator: "loaded" },
+      configurable: false,
+    });
+    const rows = extensionUsageItems({
       actor: "orchestrator",
-      inventoryDefaults: {
-        order: ["team-notes", "smithers"],
-        usage: {
-          "team-notes": [
-            {
-              actorKind: "orchestrator",
-              configurable: true,
-              customized: false,
-              state: "loaded",
-            },
-          ],
-          smithers: [
-            {
-              actorKind: "orchestrator",
-              configurable: true,
-              customized: false,
-              state: "loaded",
-            },
-          ],
-        },
-      },
-      extensionInventoryItems: [
-        extensionInventoryItem({
-          category: "user",
-          id: "team-notes",
-          title: "Team Notes",
-          usage: [],
-        }),
-        extensionInventoryItem({
-          id: "smithers",
-          title: "Smithers",
-          usage: [],
-        }),
-      ],
+      extensionCatalogItems: [fixed],
       networkAccess: true,
       profileId: "default",
-      usage: {},
+      usage: { unknown: "available" },
     });
-
-    expect(items.map((item) => `${item.id}:${item.state}:${item.explicit}`)).toEqual([
-      "team-notes:loaded:false",
-      "smithers:loaded:false",
-    ]);
+    expect(rows.find((item) => item.id === "extension-loading")).toMatchObject({
+      configurable: false,
+      fixedReason: "app_native_control",
+    });
+    expect(rows.find((item) => item.id === "unknown")).toMatchObject({
+      category: "user",
+      configurable: true,
+      state: "available",
+    });
   });
 
-  it("keeps actor-default Off rows editable when the builtin extension supports the actor", () => {
-    const items = extensionUsageItems({
-      actor: "orchestrator",
-      inventoryDefaults: {
-        order: [],
-        usage: {
-          web: [
-            {
-              actorKind: "orchestrator",
-              configurable: true,
-              customized: false,
-              state: "unavailable",
-            },
-          ],
-        },
-      },
-      extensionInventoryItems: [
-        extensionInventoryItem({
-          id: "web",
-          title: "Web",
-          usage: [],
-        }),
-      ],
-      networkAccess: true,
-      profileId: "default",
-      usage: {},
-    });
-
-    expect(items).toEqual([
-      expect.objectContaining({
-        allowedStates: {
-          available: true,
-          loaded: true,
-          unavailable: true,
-        },
-        configurable: true,
-        defaultState: "unavailable",
-        explicit: false,
-        id: "web",
-        state: "unavailable",
-      }),
-    ]);
-  });
-
-  it("keeps handler profile rows owned by Agents instead of app extension defaults", () => {
-    const items = extensionUsageItems({
-      actor: "handler",
-      inventoryDefaults: {
-        order: ["team-notes"],
-        usage: {},
-      },
-      extensionInventoryItems: [
-        extensionInventoryItem({
-          category: "user",
-          id: "team-notes",
-          title: "Team Notes",
-          usage: [],
-        }),
-      ],
-      networkAccess: true,
-      profileId: "threadHandler",
-      usage: {},
-    });
-
-    expect(items).toEqual([
-      expect.objectContaining({
-        defaultState: "unavailable",
-        explicit: false,
-        id: "team-notes",
-        state: "unavailable",
-      }),
-    ]);
-  });
-
-  it("does not allow selecting the already active usage state", () => {
+  it("does not allow selecting the active or a policy-disabled state", () => {
     const item: ExtensionUsageControlItem = {
-      allowedStates: {
-        available: true,
-        loaded: true,
-        unavailable: true,
-      },
+      allowedStates: { available: true, loaded: true, unavailable: true },
       category: "builtin",
       configurable: true,
       defaultState: "available",
@@ -540,22 +173,19 @@ describe("Agents pane extension usage helpers", () => {
       state: "available",
       title: "Web",
     };
-
     expect(
-      canSelectExtensionUsageState({
-        disabled: false,
-        item,
-        pending: false,
-        state: "available",
-      }),
+      canSelectExtensionUsageState({ disabled: false, pending: false, item, state: "available" }),
     ).toBe(false);
     expect(
+      canSelectExtensionUsageState({ disabled: false, pending: false, item, state: "loaded" }),
+    ).toBe(true);
+    expect(
       canSelectExtensionUsageState({
         disabled: false,
-        item,
         pending: false,
-        state: "unavailable",
+        item: { ...item, configurable: false },
+        state: "loaded",
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 });

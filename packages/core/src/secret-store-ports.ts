@@ -12,10 +12,22 @@ export const ExtensionEnvName = Schema.String.check(
 ).pipe(Schema.brand("ExtensionEnvName"));
 export type ExtensionEnvName = typeof ExtensionEnvName.Type;
 
-export const ExtensionEnvSecretRefSchema = Schema.Struct({
+export const ExtensionEnvSecretTargetSchema = Schema.Struct({
   kind: Schema.Literal("extension-env"),
   extensionId: ExtensionId,
   envName: ExtensionEnvName,
+});
+export type ExtensionEnvSecretTarget = typeof ExtensionEnvSecretTargetSchema.Type;
+
+export const ExtensionEnvSecretMaterialId = Schema.String.check(
+  Schema.isNonEmpty(),
+  Schema.isPattern(/^[A-Za-z0-9_-]+$/),
+).pipe(Schema.brand("ExtensionEnvSecretMaterialId"));
+export type ExtensionEnvSecretMaterialId = typeof ExtensionEnvSecretMaterialId.Type;
+
+export const ExtensionEnvSecretRefSchema = Schema.Struct({
+  ...ExtensionEnvSecretTargetSchema.fields,
+  materialId: ExtensionEnvSecretMaterialId,
 });
 export type ExtensionEnvSecretRef = typeof ExtensionEnvSecretRefSchema.Type;
 
@@ -42,8 +54,7 @@ export const GetSecretStatusInputSchema = ExtensionEnvSecretRefSchema;
 export type GetSecretStatusInput = typeof GetSecretStatusInputSchema.Type;
 
 export const ListSecretStatusInputSchema = Schema.Struct({
-  kind: Schema.optionalKey(Schema.Literal("extension-env")),
-  extensionId: Schema.optionalKey(ExtensionId),
+  refs: Schema.Array(ExtensionEnvSecretRefSchema),
 });
 export type ListSecretStatusInput = typeof ListSecretStatusInputSchema.Type;
 
@@ -51,12 +62,18 @@ export const ResolveSecretInvocationValueInputSchema = ExtensionEnvSecretRefSche
 export type ResolveSecretInvocationValueInput = typeof ResolveSecretInvocationValueInputSchema.Type;
 
 export const WriteSecretValueInputSchema = Schema.Struct({
-  ref: ExtensionEnvSecretRefSchema,
+  target: ExtensionEnvSecretTargetSchema,
+  materialId: Schema.optionalKey(ExtensionEnvSecretMaterialId),
   value: Schema.Redacted(Schema.String.check(Schema.isNonEmpty()), {
     label: "extension-env-secret",
     disallowJsonEncode: true,
   }),
-  expectedRevisionFingerprint: Schema.optionalKey(Schema.String.check(Schema.isNonEmpty())),
+  replaces: Schema.optionalKey(
+    Schema.Struct({
+      ref: ExtensionEnvSecretRefSchema,
+      expectedRevisionFingerprint: Schema.String.check(Schema.isNonEmpty()),
+    }),
+  ),
 });
 export type WriteSecretValueInput = typeof WriteSecretValueInputSchema.Type;
 

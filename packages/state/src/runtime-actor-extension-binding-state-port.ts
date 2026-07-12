@@ -111,6 +111,75 @@ export function runtimeActorExtensionBindingStatePortFromStructuredSessionState(
           updateExtensionContextBeforeNextTurn: thread.updateExtensionContextBeforeNextTurn,
         });
       }),
+    readGeneratedContextBuildSubject: (input) =>
+      Effect.gen(function* () {
+        const target = input.target;
+        const snapshot = yield* state.getSessionState(target.workspaceSessionId);
+        const extensionState =
+          target.surface === "orchestrator"
+            ? {
+                loadedExtensionIds: snapshot.pi.loadedExtensionIds ?? [],
+                availableExtensionIds: snapshot.pi.availableExtensionIds ?? [],
+              }
+            : target.surface === "handler"
+              ? (() => {
+                  const thread = getStructuredThread(snapshot, target.threadId);
+                  if (!thread || thread.surfacePiSessionId !== target.surfacePiSessionId)
+                    return null;
+                  return {
+                    loadedExtensionIds: thread.loadedExtensionIds,
+                    availableExtensionIds: thread.availableExtensionIds,
+                  };
+                })()
+              : (() => {
+                  const binding = snapshot.generatedAgentContextBindings.find(
+                    (item) => item.surfacePiSessionId === target.surfacePiSessionId,
+                  );
+                  return binding
+                    ? {
+                        loadedExtensionIds: binding.loadedExtensionIds,
+                        availableExtensionIds: binding.availableExtensionIds,
+                      }
+                    : null;
+                })();
+        if (!extensionState) {
+          return yield* Effect.fail(unboundPromptBindingError(input));
+        }
+        const profileId =
+          target.surface === "orchestrator"
+            ? (snapshot.pi.orchestratorAgentProfileId ?? null)
+            : target.surface === "handler"
+              ? "thread-handler"
+              : (snapshot.workflowTaskAttempts.find(
+                  (attempt) => attempt.id === target.workflowTaskAttemptId,
+                )?.agentId ?? null);
+        return {
+          target,
+          actorKind:
+            target.surface === "orchestrator"
+              ? "orchestrator"
+              : target.surface === "handler"
+                ? "handler"
+                : "workflow-task",
+          profileId,
+          loadedExtensionIds: toExtensionIds(extensionState.loadedExtensionIds),
+          availableExtensionIds: toExtensionIds(extensionState.availableExtensionIds),
+        };
+      }),
+    bindGeneratedContext: (input) =>
+      state.bindRuntimeGeneratedContext(input).pipe(
+        Effect.map((binding) =>
+          mutationResult(
+            toRuntimePromptBindingRecord({ target: input.target }, binding, {
+              updateExtensionContextBeforeNextTurn: false,
+            }),
+            surfaceAndSessionNavigationInvalidations(
+              state.workspaceId,
+              input.target.surfacePiSessionId,
+            ),
+          ),
+        ),
+      ),
     updateActorExtensionBinding: (input) =>
       Effect.gen(function* () {
         const snapshot = yield* state.getSessionState(input.target.workspaceSessionId);

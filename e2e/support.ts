@@ -315,6 +315,26 @@ export async function seedSessions(
         createdAt,
         updatedAt,
       });
+      store.savePiSessionReference({
+        surfacePiSessionId: seeded.id as never,
+        reference: {
+          surfacePiSessionId: seeded.id as never,
+          referenceFingerprint: `svvy-pi-adapter:0.0.0:${getTestWorkspaceId(canonicalWorkspace)}:${seeded.id}:${seeded.id}:seeded-e2e-context`,
+          adapterKind: "svvy-pi-adapter",
+          adapterVersion: "0.0.0",
+          storageLocator: seeded.file,
+          piSessionId: seeded.id,
+          metadata: {
+            actorKind: "orchestrator",
+            generatedContextFingerprint: "seeded-e2e-context",
+            modelId: session.model ?? DEFAULT_AGENT_SETTINGS.model,
+            providerId: session.provider ?? DEFAULT_AGENT_SETTINGS.provider,
+            reasoningEffort: session.thinkingLevel ?? DEFAULT_AGENT_SETTINGS.reasoningEffort,
+            workspaceId: getTestWorkspaceId(canonicalWorkspace),
+            workspaceSessionId: seeded.id,
+          },
+        },
+      });
       let activeTurn: ReturnType<typeof store.startTurn> | null = null;
       let transcriptCursor:
         | ReturnType<typeof store.commitRuntimeTranscriptUserMessage>["cursor"]

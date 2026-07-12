@@ -261,7 +261,6 @@ function seedHandlerThread(
         worktreeId: null,
         agentProfileJson: JSON.stringify(defaults),
         generatedAgentContextBinding: {
-          aggregateCacheKey: "prompt-defaults-handler-cache",
           generatedAgentContextFingerprint: "prompt-defaults-handler-fingerprint",
           generatedAgentContextRevision: 1,
           externalSourceHashes: [],

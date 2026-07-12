@@ -15,6 +15,7 @@ import {
   GeneratedContextSchema,
 } from "./extension-contracts";
 import { ExtensionStatePort } from "./extension-state-ports";
+import { ExtensionSnapshotStatePort } from "./extension-snapshot-contracts";
 import { RuntimeEffectRequestSchema } from "./runtime-effect-requests";
 import { SecretStoreMutationPort, SecretStorePort } from "./secret-store-ports";
 import { SourceReconcileRequestSchema } from "./runtime-source-invalidation";
@@ -46,6 +47,7 @@ describe("@svvy/core public contract modules", () => {
     expect(isPublicSchemaAnnotationKey("svvy.internal")).toBe(false);
     expect(isPublicSchemaAnnotationKey("description")).toBe(false);
     expect(ExtensionStatePort.key).toBe("@svvy/core/ExtensionStatePort");
+    expect(ExtensionSnapshotStatePort.key).toBe("@svvy/core/ExtensionSnapshotStatePort");
     expect(SecretStorePort.key).toBe("@svvy/core/SecretStorePort");
     expect(SecretStoreMutationPort.key).toBe("@svvy/core/SecretStoreMutationPort");
     expect(existsSync(join(import.meta.dir, "app-log-ports.ts"))).toBe(false);
@@ -185,6 +187,7 @@ describe("@svvy/core public contract modules", () => {
             tokenEstimate: 5,
           },
         ],
+        externalInstructionBlocks: [],
         nativeToolDeclarations: [
           {
             name: "thread_report",
@@ -217,6 +220,7 @@ describe("@svvy/core public contract modules", () => {
       decodeGeneratedContext({
         fingerprint: "generated-context-fingerprint-01",
         promptBlocks: [],
+        externalInstructionBlocks: [],
         nativeToolDeclarations: [],
         svvyxGuidanceBlocks: [],
         executeTypescriptFacadeDeclarations: {
@@ -234,6 +238,7 @@ describe("@svvy/core public contract modules", () => {
       decodeGeneratedContext({
         fingerprint: "generated-context-fingerprint-01",
         promptBlocks: [],
+        externalInstructionBlocks: [],
         nativeToolDeclarations: [],
         svvyxGuidanceBlocks: [],
         executeTypescriptFacadeDeclarations: {
@@ -250,6 +255,7 @@ describe("@svvy/core public contract modules", () => {
       decodeGeneratedContext({
         fingerprint: "generated-context-fingerprint-01",
         promptBlocks: [],
+        externalInstructionBlocks: [],
         nativeToolDeclarations: [],
         svvyxGuidanceBlocks: [],
         executeTypescriptFacadeDeclarations: {

@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"shell","interface":"native_tool","title":"Shell","description":"Command execution through the shared tool pipeline.","typescriptApiEnabled":false,"instructionFiles":[{"file":"010-shell.mdx","bypassed":false},{"file":"020-incur-cli-usage.mdx","bypassed":false}]}

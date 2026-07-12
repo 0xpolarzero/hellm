@@ -264,7 +264,6 @@ function createSessionSnapshot(
         ownerKind: "workflow-task-attempt",
         ownerId: "workflow-task-attempt-001",
         actorKind: "workflow-task",
-        aggregateCacheKey: "workflow-task-aggregate-001",
         systemPrompt: "Use the bound workflow task context.",
         svvyxGuidance: "",
         commandsDts: "declare const workflowTask: true;",

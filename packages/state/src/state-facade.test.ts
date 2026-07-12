@@ -5,6 +5,7 @@ import { join } from "node:path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import {
   AppLogWritePort,
@@ -15,8 +16,10 @@ import {
   ProviderAuthStatusStatePort,
   RuntimeWorkspaceStatePort,
   SandboxPolicySource,
+  SecretStoreMutationPort,
   StateCommandPostCommitNotificationPort,
   StateContractError,
+  SecretStorePortError,
 } from "@svvy/core";
 import type {
   AppLogEntryId,
@@ -24,6 +27,8 @@ import type {
   AgentProfileId,
   ExtensionId,
   ExtensionEnvName,
+  ExtensionRegistryObservationResult,
+  ExtensionSourceBuildObservation,
   ExternalInstructionsSettings,
   GeneratedPackageBuildId,
   ModelId,
@@ -43,6 +48,7 @@ import type {
   WorkspaceSessionId,
   WorkspacePaneId,
   WorkspaceTabId,
+  SecretStoreMutationPortService,
 } from "@svvy/core";
 import {
   StateCommands,
@@ -80,9 +86,67 @@ const stateLayerConfig = () =>
 const testDigest = {
   sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
 };
+const extensionRegistryObservation = (
+  extensionIds: readonly ExtensionId[],
+  envDeclarations: ExtensionRegistryObservationResult["observations"][number]["envDeclarations"] = [],
+  cliDeclarationsByExtension: Readonly<
+    Record<string, ExtensionRegistryObservationResult["observations"][number]["cliDeclarations"]>
+  > = {},
+  envDeclarationsByExtension: Readonly<
+    Record<string, ExtensionRegistryObservationResult["observations"][number]["envDeclarations"]>
+  > = {},
+): ExtensionRegistryObservationResult => ({
+  aggregateFingerprint: `sha256:${extensionIds.join("-")}`,
+  observations: extensionIds.map((extensionId, canonicalOrder) => ({
+    extensionId,
+    category: "builtin",
+    interfaceKind: "instructions",
+    svvyxImplementation: null,
+    usagePolicy: {
+      canonicalOrder,
+      baselineUsage: {
+        orchestrator: "available",
+        handler: "available",
+        "workflow-task": "available",
+      },
+      networkAccess: "not-required",
+      configurable: true,
+      fixedReason: null,
+    },
+    title: extensionId,
+    description: `${extensionId} extension`,
+    customized: false,
+    buildRequirement: "not-required",
+    materializationPlan: null,
+    capabilities: {
+      resettable: true,
+      deletable: false,
+      typescriptApiEnabled: false,
+      materializationRequired: false,
+    },
+    contributors: [],
+    tooling: [],
+    cliDeclarations: cliDeclarationsByExtension[extensionId] ?? [],
+    envDeclarations:
+      envDeclarationsByExtension[extensionId] ?? (extensionIds.length === 1 ? envDeclarations : []),
+    dependencyDeclarations: [],
+    sourceFingerprint: `sha256:${createHash("sha256").update(extensionId).digest("hex")}`,
+    diagnostics: [],
+  })),
+  diagnostics: [],
+});
+const unavailableSecretStoreMutation = SecretStoreMutationPort.of({
+  writeSecretValue: () => Effect.die("unexpected secret-store write"),
+  removeSecretValue: () => Effect.die("unexpected secret-store removal"),
+});
+const testStateDependencies = () =>
+  Layer.merge(
+    testPlatformLayer(),
+    Layer.succeed(SecretStoreMutationPort, unavailableSecretStoreMutation),
+  );
 const stateLayer = () =>
   layer({ config: stateLayerConfig(), digest: testDigest }).pipe(
-    Layer.provide(testPlatformLayer()),
+    Layer.provide(testStateDependencies()),
   );
 const stateLayerWithNotifications = (published: StateCommandPostCommitNotificationInput[] = []) =>
   Layer.merge(
@@ -213,7 +277,7 @@ describe("State app-log facade slice", () => {
           },
         }),
         digest: testDigest,
-      }).pipe(Layer.provide(testPlatformLayer())),
+      }).pipe(Layer.provide(testStateDependencies())),
     );
     try {
       await managedRuntime.runPromise(
@@ -1250,6 +1314,341 @@ describe("State app-log facade slice", () => {
   });
 });
 
+describe("State extension env secret commands", () => {
+  it("owns versioned secret persistence, replay, replacement, removal, and cleanup recovery", async () => {
+    const sentinel = "SVVY_SENTINEL_SECRET_DO_NOT_PERSIST";
+    const extensionId = "secret-test" as ExtensionId;
+    const envName = "API_TOKEN" as ExtensionEnvName;
+    const store = createStructuredSessionStateStore({
+      databasePath: ":memory:",
+      digest: testDigest,
+      now: () => "2026-07-12T10:00:00.000Z",
+      workspace: {
+        id: rootWorkspaceId,
+        label: "Secret state",
+        cwd: "/tmp/svvy-secret-state" as typeof AbsolutePath.Type,
+        artifactDir: "/tmp/svvy-secret-state-artifacts" as typeof AbsolutePath.Type,
+      },
+    });
+    const appLogStore = createAppLogStore({ now: () => "2026-07-12T10:00:00.000Z" });
+    const material = new Set<string>();
+    const calls: string[] = [];
+    let nextMaterial = 0;
+    let failRemovalFor: string | null = null;
+    let failNextWrite = false;
+    const secretStoreMutation: SecretStoreMutationPortService = {
+      writeSecretValue: (input) =>
+        Effect.gen(function* () {
+          if (failNextWrite) {
+            failNextWrite = false;
+            return yield* Effect.fail(
+              new SecretStorePortError({
+                operation: "test.write",
+                reason: "persistence-failed",
+                message: "Secret write failed.",
+              }),
+            );
+          }
+          const materialId = `material_${++nextMaterial}`;
+          calls.push(`write:${materialId}`);
+          if (input.replaces && !material.has(input.replaces.ref.materialId)) {
+            throw new Error("replacement removed prior material before the new write");
+          }
+          material.add(materialId);
+          return {
+            ref: { ...input.target, materialId } as never,
+            revisionFingerprint: `revision_${materialId}`,
+          };
+        }),
+      removeSecretValue: (input) =>
+        Effect.gen(function* () {
+          calls.push(`remove:${input.ref.materialId}`);
+          const persisted = store.listExtensionEnvSecrets();
+          if (persisted.some((record) => record.ref.materialId === input.ref.materialId)) {
+            return yield* Effect.die("host removal ran before the DB ref changed");
+          }
+          if (failRemovalFor === input.ref.materialId) {
+            return yield* Effect.fail(
+              new SecretStorePortError({
+                operation: "test.remove",
+                reason: "persistence-failed",
+                message: "Secret cleanup failed.",
+              }),
+            );
+          }
+          material.delete(input.ref.materialId);
+          return {
+            ref: input.ref,
+            removed: true,
+            revisionFingerprint: input.expectedRevisionFingerprint ?? "unknown",
+          };
+        }),
+    };
+    const router = createWorkspaceStateRouter({ appGlobalStore: store, workspaceStores: [] });
+    const commands = stateCommandsFromRouter({
+      router,
+      appLogs: appLogStateFromStore(appLogStore),
+      secretStoreMutation,
+    });
+    const readModels = stateReadModelsFromRouter({
+      router,
+      appLogs: appLogStateFromStore(appLogStore),
+    });
+    const submission = (clientRequestId: string) => ({
+      clientRequestId: clientRequestId as RuntimeClientRequestId,
+      source: "test" as RuntimeClientSubmissionSource,
+    });
+
+    try {
+      await expect(
+        runTestEffect(
+          commands.extensionEnv.setSecret({
+            extensionId,
+            envName,
+            secretValue: Redacted.make(sentinel, { label: "extension-env-secret" }),
+            clientSubmission: submission("invalid-target"),
+          }),
+        ),
+      ).rejects.toBeInstanceOf(StateContractError);
+      expect(calls).toEqual([]);
+
+      store.reconcileExtensionEnvDeclarations({
+        declarations: [
+          { extensionId, envName, required: true, secret: true, description: "Test token" },
+          {
+            extensionId,
+            envName: "PUBLIC_ENDPOINT",
+            required: true,
+            secret: false,
+            description: "Not a secret",
+          },
+          {
+            extensionId,
+            envName: "FAIL_TOKEN",
+            required: false,
+            secret: true,
+            description: "Failure probe",
+          },
+        ],
+      });
+      await expect(
+        runTestEffect(
+          commands.extensionEnv.setSecret({
+            extensionId,
+            envName: "PUBLIC_ENDPOINT" as ExtensionEnvName,
+            secretValue: Redacted.make(sentinel, { label: "extension-env-secret" }),
+            clientSubmission: submission("non-secret-target"),
+          }),
+        ),
+      ).rejects.toBeInstanceOf(StateContractError);
+      expect(calls).toEqual([]);
+      failNextWrite = true;
+      await expect(
+        runTestEffect(
+          commands.extensionEnv.setSecret({
+            extensionId,
+            envName: "FAIL_TOKEN" as ExtensionEnvName,
+            secretValue: Redacted.make(sentinel, { label: "extension-env-secret" }),
+            clientSubmission: submission("failed-host-write"),
+          }),
+        ),
+      ).rejects.toBeInstanceOf(StateContractError);
+      expect(store.listExtensionEnvSecrets()).toEqual([]);
+      expect(
+        store.readExtensionEnvSecretCommandState({
+          operation: "set",
+          clientRequestId: "failed-host-write",
+          extensionId,
+          envName: "FAIL_TOKEN",
+        }).receipt,
+      ).toBeNull();
+      const first = await runTestEffect(
+        commands.extensionEnv.setSecret({
+          extensionId,
+          envName,
+          secretValue: Redacted.make(sentinel, { label: "extension-env-secret" }),
+          clientSubmission: submission("set-first"),
+        }),
+      );
+      expect(first.value).toMatchObject({ configured: true, receipt: { outcome: "applied" } });
+      const duplicate = await runTestEffect(
+        commands.extensionEnv.setSecret({
+          extensionId,
+          envName,
+          secretValue: Redacted.make(sentinel, { label: "extension-env-secret" }),
+          clientSubmission: submission("set-first"),
+        }),
+      );
+      expect(duplicate.value.receipt.outcome).toBe("duplicate");
+      expect(calls).toEqual(["write:material_1"]);
+      await expect(
+        runTestEffect(
+          commands.extensionEnv.setSecret({
+            extensionId,
+            envName,
+            secretValue: Redacted.make(sentinel, { label: "extension-env-secret" }),
+            expectedRevisionFingerprint: "stale-revision",
+            clientSubmission: submission("stale-replacement"),
+          }),
+        ),
+      ).rejects.toBeInstanceOf(StateContractError);
+      expect(calls).toEqual(["write:material_1"]);
+      await expect(
+        runTestEffect(
+          commands.extensionEnv.removeSecret({
+            extensionId,
+            envName,
+            clientSubmission: submission("set-first"),
+          }),
+        ),
+      ).rejects.toBeInstanceOf(StateContractError);
+      expect(calls).toEqual(["write:material_1"]);
+
+      failRemovalFor = "material_1";
+      const replacement = await runTestEffect(
+        commands.extensionEnv.setSecret({
+          extensionId,
+          envName,
+          secretValue: Redacted.make(`${sentinel}_replacement`, {
+            label: "extension-env-secret",
+          }),
+          expectedRevisionFingerprint: "revision_material_1",
+          clientSubmission: submission("set-replacement"),
+        }),
+      );
+      expect(replacement.value.configured).toBe(true);
+      expect(calls).toEqual(["write:material_1", "write:material_2", "remove:material_1"]);
+      expect(String(store.listExtensionEnvSecrets()[0]?.ref.materialId)).toBe("material_2");
+      expect(store.listExtensionEnvSecretCleanupRecords()).toContainEqual(
+        expect.objectContaining({
+          reason: "replaced",
+          revisionFingerprint: "revision_material_1",
+        }),
+      );
+      failRemovalFor = null;
+
+      store.reconcileExtensionRegistryObservation({
+        observation: extensionRegistryObservation(
+          [extensionId],
+          [
+            {
+              name: envName,
+              required: true,
+              secret: true,
+              description: "Test token",
+              hasDefault: false,
+            },
+          ],
+        ),
+        observedAt: iso("2026-07-12T10:00:00.000Z"),
+      });
+
+      const projected = await runTestEffect(readModels.fetch({ kind: "extensions", extensionId }));
+      expect(projected.kind).toBe("extensions");
+      if (projected.kind !== "extensions") throw new Error("Expected extensions read model.");
+      expect(
+        projected.value.records
+          .find((record) => record.extensionId === extensionId)
+          ?.env?.find((entry) => entry.envName === envName),
+      ).toMatchObject({ envName, configured: true, status: "configured" });
+      const persistedAndProjected = JSON.stringify({
+        declarations: store.listExtensionEnvDeclarations(),
+        secrets: store.listExtensionEnvSecrets(),
+        cleanup: store.listExtensionEnvSecretCleanupRecords(),
+        projected,
+        replacement,
+      });
+      expect(persistedAndProjected).not.toContain(sentinel);
+      expect(JSON.stringify(projected)).not.toContain("material_2");
+      expect(JSON.stringify(replacement)).not.toContain("material_");
+      expect(JSON.stringify(replacement)).not.toContain('"ref"');
+
+      const material2 = store.listExtensionEnvSecrets()[0]!;
+      failRemovalFor = "material_2";
+      const removed = await runTestEffect(
+        commands.extensionEnv.removeSecret({
+          extensionId,
+          envName,
+          expectedRevisionFingerprint: "revision_material_2",
+          clientSubmission: submission("remove-current"),
+        }),
+      );
+      expect(removed.value.configured).toBe(false);
+      expect(store.listExtensionEnvSecrets()).toEqual([]);
+      expect(calls.at(-1)).toBe("remove:material_2");
+      expect(store.listExtensionEnvSecretCleanupRecords()).toContainEqual(
+        expect.objectContaining({
+          reason: "removed",
+          revisionFingerprint: "revision_material_2",
+        }),
+      );
+      failRemovalFor = null;
+      await runTestEffect(
+        secretStoreMutation.removeSecretValue({
+          ref: material2.ref,
+          expectedRevisionFingerprint: material2.revisionFingerprint,
+        }),
+      );
+      store.completeExtensionEnvSecretCleanup(material2.ref);
+      expect(
+        store
+          .listExtensionEnvSecretCleanupRecords()
+          .some((record) => record.ref.materialId === material2.ref.materialId),
+      ).toBe(false);
+      const callsBeforeMissingRemove = calls.length;
+      await runTestEffect(
+        commands.extensionEnv.removeSecret({
+          extensionId,
+          envName,
+          clientSubmission: submission("remove-missing"),
+        }),
+      );
+      expect(calls).toHaveLength(callsBeforeMissingRemove);
+
+      const orphanInput = {
+        extensionId,
+        envName,
+        secretValue: Redacted.make(sentinel, { label: "extension-env-secret" }),
+        clientSubmission: submission("orphan-write"),
+      };
+      const originalCommit = store.commitExtensionEnvSecretSet.bind(store);
+      store.commitExtensionEnvSecretSet = () => {
+        throw new Error("injected DB commit failure");
+      };
+      failRemovalFor = "material_3";
+      await expect(
+        runTestEffect(commands.extensionEnv.setSecret(orphanInput)),
+      ).rejects.toBeInstanceOf(StateContractError);
+      store.commitExtensionEnvSecretSet = originalCommit;
+      expect(store.listExtensionEnvSecretCleanupRecords()).toContainEqual(
+        expect.objectContaining({
+          reason: "orphaned",
+          revisionFingerprint: "revision_material_3",
+        }),
+      );
+      expect(JSON.stringify(store.listExtensionEnvSecretCleanupRecords())).not.toContain(sentinel);
+
+      failRemovalFor = null;
+      await runTestEffect(
+        commands.extensionEnv.setSecret({
+          extensionId,
+          envName,
+          secretValue: Redacted.make(sentinel, { label: "extension-env-secret" }),
+          clientSubmission: submission("declaration-removal"),
+        }),
+      );
+      store.reconcileExtensionEnvDeclarations({ declarations: [] });
+      expect(store.listExtensionEnvSecrets()).toEqual([]);
+      expect(store.listExtensionEnvSecretCleanupRecords()).toContainEqual(
+        expect.objectContaining({ reason: "removed" }),
+      );
+    } finally {
+      appLogStore.close();
+      store.close();
+    }
+  });
+});
+
 describe("State read-model kind expansion", () => {
   it("requires explicit workspace routing for workspace inspector reads", () => {
     for (const request of [
@@ -1471,7 +1870,6 @@ describe("State read-model kind expansion", () => {
         ownerKind: "thread",
         ownerId: handlerThread.id,
         actorKind: "handler",
-        aggregateCacheKey: "handler-context-cache",
         systemPrompt: "Handle the delegated task.",
         svvyxGuidance: "Use svvyx carefully.",
         commandsDts: "declare const handler: true;",
@@ -1525,7 +1923,6 @@ describe("State read-model kind expansion", () => {
         agentEngine: "openai",
         generatedAgentContextFingerprint: "workflow-task-context-fingerprint",
         generatedAgentContextBinding: {
-          aggregateCacheKey: "workflow-task-context-cache",
           systemPrompt: "Run the Smithers task agent.",
           svvyxGuidance: "Use the task bridge.",
           commandsDts: "declare const workflowTask: true;",
@@ -2377,29 +2774,306 @@ describe("State read-model kind expansion", () => {
         },
       });
 
-      const extensions = await runTestEffect(readModels.fetch({ kind: "extensions" }));
-      expect(extensions).toEqual({
+      store.reconcileExtensionRegistryObservation({
+        observation: extensionRegistryObservation(
+          ["shell" as ExtensionId, "smithers" as ExtensionId],
+          [],
+          {
+            shell: [
+              {
+                id: "shell-cli",
+                requirementFingerprint: "sha256:shell-cli-v1",
+                binary: "shell",
+                package: null,
+                required: true,
+                defaultVersion: null,
+                versionCommand: null,
+                installCommand: null,
+                nodeRequirement: null,
+              },
+            ],
+            smithers: [
+              {
+                id: "smithers-cli",
+                requirementFingerprint: "sha256:smithers-cli-v1",
+                binary: "smithers",
+                package: "smithers-orchestrator",
+                required: false,
+                defaultVersion: "0.22.0",
+                versionCommand: "smithers --version",
+                installCommand: null,
+                nodeRequirement: null,
+              },
+            ],
+          },
+          {
+            smithers: [
+              {
+                name: "SMITHERS_TOKEN",
+                required: true,
+                secret: true,
+                description: "Smithers token",
+                hasDefault: false,
+              },
+            ],
+          },
+        ),
+        observedAt: iso("2026-06-21T12:30:00.000Z"),
+      });
+      const registryWithDependency = store.readExtensionRegistryObservation()!.observation;
+      const shellDependency = {
+        kind: "dependency" as const,
+        packageManager: "bun" as const,
+        source: "npm" as const,
+        name: "shell-runtime",
+        version: "1.0.0",
+        integrity: null,
+        resolution: null,
+      };
+      store.reconcileExtensionRegistryObservation({
+        observation: {
+          ...registryWithDependency,
+          observations: registryWithDependency.observations.map((observation) =>
+            observation.extensionId === "shell"
+              ? { ...observation, dependencyDeclarations: [shellDependency] }
+              : observation,
+          ),
+        },
+        observedAt: iso("2026-06-21T12:30:00.000Z"),
+      });
+      store.recordExtensionDependencyApproval({
+        dependency: shellDependency,
+        approvedBy: "user",
+        approvedAt: iso("2026-06-21T12:30:00.000Z"),
+      });
+      const buildRegistry = store.readExtensionRegistryObservation()!.observation;
+      const extensionsWithoutBuildEvidence = await runTestEffect(
+        readModels.fetch({ kind: "extensions" }),
+      );
+      expect(extensionsWithoutBuildEvidence).toMatchObject({
         kind: "extensions",
         value: {
           records: [
             {
               extensionId: "shell",
-              readiness: "ready",
-              loadedByProfileIds: ["thread-handler"],
-              availableByProfileIds: ["review-orchestrator"],
+              buildAuthorityStatus: "missing",
+              buildObservation: null,
+              contextReady: false,
+              runtimeReady: false,
+              readiness: "not-ready",
               generatedPackageStatus: "ready",
             },
             {
               extensionId: "smithers",
-              readiness: "ready",
+              buildAuthorityStatus: "missing",
+              contextReady: false,
+              runtimeReady: false,
+            },
+          ],
+        },
+      });
+      store.reconcileExtensionSourceBuildEvidence({
+        registryAggregateFingerprint: buildRegistry.aggregateFingerprint,
+        observations: buildRegistry.observations.map(
+          (observation): ExtensionSourceBuildObservation => ({
+            extensionId: observation.extensionId,
+            category: observation.category,
+            buildRequirement: "not-required",
+            sourceStatus: "materialized",
+            sourceFingerprint:
+              observation.sourceFingerprint as ExtensionSourceBuildObservation["sourceFingerprint"],
+            currentBuildStatus: "not-required",
+            currentBuild: null,
+            buildRequired: false,
+            diagnostics: [],
+          }),
+        ),
+        observedAt: iso("2026-06-21T12:30:00.500Z"),
+      });
+      const extensionsWithoutCliFacts = await runTestEffect(
+        readModels.fetch({ kind: "extensions" }),
+      );
+      expect(extensionsWithoutCliFacts).toMatchObject({
+        kind: "extensions",
+        value: {
+          records: [
+            {
+              extensionId: "shell",
+              readiness: "not-ready",
+              cliReadiness: [
+                {
+                  authorityStatus: "missing",
+                  status: "unknown",
+                  usable: false,
+                  blocking: true,
+                },
+              ],
+              dependencyRequirements: [
+                {
+                  name: "shell-runtime",
+                  approval: "approved",
+                  install: "unknown",
+                },
+              ],
+            },
+            { extensionId: "smithers", readiness: "not-ready" },
+          ],
+        },
+      });
+      store.reconcileExtensionDependencyReadiness({
+        registryAggregateFingerprint: "sha256:shell-smithers",
+        readiness: [
+          {
+            extensionId: "smithers" as ExtensionId,
+            requirementId: "smithers-cli",
+            requirementFingerprint: "sha256:smithers-cli-v1",
+            status: "missing",
+            detectedVersion: null,
+            expectedVersion: "0.22.0",
+            diagnostics: ["optional CLI missing"],
+            checkedAt: iso("2026-06-21T12:30:01.000Z"),
+          },
+          {
+            extensionId: "shell" as ExtensionId,
+            requirementId: "shell-cli",
+            requirementFingerprint: "sha256:shell-cli-v1",
+            status: "update-available",
+            detectedVersion: "1.0.0",
+            expectedVersion: null,
+            diagnostics: [],
+            checkedAt: iso("2026-06-21T12:30:01.000Z"),
+          },
+        ],
+        recordedAt: iso("2026-06-21T12:30:02.000Z"),
+      });
+      const extensions = await runTestEffect(readModels.fetch({ kind: "extensions" }));
+      expect(extensions).toMatchObject({
+        kind: "extensions",
+        value: {
+          aggregateFingerprint: "sha256:shell-smithers",
+          diagnostics: [],
+          observedAt: "2026-06-21T12:30:00.000Z",
+          records: [
+            {
+              extensionId: "shell",
+              buildAuthorityStatus: "current",
+              buildRequired: false,
+              contextReady: true,
+              runtimeReady: false,
+              readiness: "not-ready",
+              loadedByProfileIds: ["thread-handler"],
+              availableByProfileIds: ["review-orchestrator"],
+              generatedPackageStatus: "ready",
+              cliReadiness: [
+                {
+                  requirementId: "shell-cli",
+                  authorityStatus: "current",
+                  status: "update-available",
+                  usable: true,
+                  blocking: false,
+                },
+              ],
+            },
+            {
+              extensionId: "smithers",
+              readiness: "not-ready",
               loadedByProfileIds: [],
               availableByProfileIds: ["thread-handler"],
               generatedPackageStatus: "ready",
+              cliReadiness: [
+                {
+                  requirementId: "smithers-cli",
+                  authorityStatus: "current",
+                  status: "missing",
+                  usable: false,
+                  blocking: false,
+                },
+              ],
             },
           ],
-          dependencyReadiness: [],
+          dependencyReadiness: [
+            {
+              extensionId: "shell",
+              requirementId: "shell-cli",
+              requirementFingerprint: "sha256:shell-cli-v1",
+              status: "update-available",
+            },
+            {
+              extensionId: "smithers",
+              requirementId: "smithers-cli",
+              requirementFingerprint: "sha256:smithers-cli-v1",
+              status: "missing",
+            },
+          ],
         },
       } as unknown as typeof extensions);
+
+      const currentRegistry = store.readExtensionRegistryObservation()!;
+      store.reconcileExtensionRegistryObservation({
+        observation: {
+          ...currentRegistry.observation,
+          observations: currentRegistry.observation.observations.map((observation) =>
+            observation.extensionId === "shell"
+              ? {
+                  ...observation,
+                  cliDeclarations: observation.cliDeclarations.map((declaration) => ({
+                    ...declaration,
+                    requirementFingerprint: "sha256:shell-cli-v2",
+                  })),
+                }
+              : observation,
+          ),
+        },
+        observedAt: iso("2026-06-21T12:31:02.000Z"),
+      });
+      const extensionsWithStaleCliFact = await runTestEffect(
+        readModels.fetch({ kind: "extensions" }),
+      );
+      expect(extensionsWithStaleCliFact.kind).toBe("extensions");
+      if (extensionsWithStaleCliFact.kind !== "extensions") {
+        throw new Error("Expected extensions read model.");
+      }
+      expect(
+        extensionsWithStaleCliFact.value.records.find((record) => record.extensionId === "shell"),
+      ).toMatchObject({
+        extensionId: "shell",
+        readiness: "not-ready",
+        cliReadiness: [
+          {
+            authorityStatus: "requirement-fingerprint-mismatch",
+            status: "unknown",
+            readiness: null,
+            blocking: true,
+          },
+        ],
+      });
+
+      const registryBeforeAuthorityChange = store.readExtensionRegistryObservation()!;
+      store.reconcileExtensionRegistryObservation({
+        observation: {
+          ...registryBeforeAuthorityChange.observation,
+          aggregateFingerprint: "sha256:shell-smithers-v2",
+        },
+        observedAt: iso("2026-06-21T12:32:02.000Z"),
+      });
+      const extensionsWithStaleBuildBatch = await runTestEffect(
+        readModels.fetch({ kind: "extensions" }),
+      );
+      expect(extensionsWithStaleBuildBatch.kind).toBe("extensions");
+      if (extensionsWithStaleBuildBatch.kind !== "extensions") {
+        throw new Error("Expected extensions read model.");
+      }
+      expect(
+        extensionsWithStaleBuildBatch.value.records.find(
+          (record) => record.extensionId === "shell",
+        ),
+      ).toMatchObject({
+        buildAuthorityStatus: "registry-fingerprint-mismatch",
+        buildObservation: null,
+        contextReady: false,
+        runtimeReady: false,
+        readiness: "not-ready",
+      });
 
       const snippets = await runTestEffect(
         readModels.fetch({
@@ -2771,6 +3445,7 @@ describe("State read-model kind expansion", () => {
     const service = stateCommandsFromRouter({
       router,
       appLogs: appLogStateFromStore(appLogStore),
+      secretStoreMutation: unavailableSecretStoreMutation,
     });
     const published: StateCommandPostCommitNotificationInput[] = [];
     const managedRuntime = ManagedRuntime.make(
@@ -2867,6 +3542,7 @@ describe("State read-model kind expansion", () => {
     const service = stateCommandsFromRouter({
       router,
       appLogs: appLogStateFromStore(appLogStore),
+      secretStoreMutation: unavailableSecretStoreMutation,
     });
     const published: StateCommandPostCommitNotificationInput[] = [];
     const managedRuntime = ManagedRuntime.make(
@@ -3030,6 +3706,7 @@ describe("State read-model kind expansion", () => {
       const commands = stateCommandsFromRouter({
         router,
         appLogs: appLogStateFromStore(appLogStore),
+        secretStoreMutation: unavailableSecretStoreMutation,
       });
       const readModels = stateReadModelsFromRouter({
         router,
@@ -3217,6 +3894,7 @@ describe("State read-model kind expansion", () => {
       const commands = stateCommandsFromRouter({
         router,
         appLogs: appLogStateFromStore(appLogStore),
+        secretStoreMutation: unavailableSecretStoreMutation,
       });
       const readWorkspaceChrome = appGlobalStore.readWorkspaceChrome.bind(appGlobalStore);
       appGlobalStore.readWorkspaceChrome = () => {

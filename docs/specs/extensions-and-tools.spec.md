@@ -118,6 +118,10 @@ no reset/delete controls.
 
 The builtin extension inventory above is exhaustive for the base design.
 
+User extensions enter the canonical catalogue after builtins in extension-id order. Their baseline
+usage is loaded for orchestrators, unavailable for handlers, and loaded for workflow task agents;
+profile and actor usage state may override that configurable baseline.
+
 Usage states are `loaded`, `available`, and `unavailable` (displayed as Off in UI). `unavailable`
 means the extension is configured off for that actor's resolved default or profile binding; it is not
 by itself a hard actor boundary. Configurable extensions may be moved between loaded, available, and

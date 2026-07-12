@@ -175,7 +175,6 @@ describe("RuntimeThreadStatePort", () => {
                 worktreeId: null,
                 agentProfileJson: JSON.stringify({ profile: "handler" }),
                 generatedAgentContextBinding: {
-                  aggregateCacheKey: "handler-a-cache",
                   generatedAgentContextFingerprint: "fingerprint-handler-a",
                   generatedAgentContextRevision: 3,
                   externalSourceHashes: ["hash-a"],
@@ -196,7 +195,6 @@ describe("RuntimeThreadStatePort", () => {
                 historyMode: "forked" as const,
                 worktreeId: null,
                 generatedAgentContextBinding: {
-                  aggregateCacheKey: "handler-b-cache",
                   generatedAgentContextFingerprint: "fingerprint-handler-b",
                   generatedAgentContextRevision: 3,
                   externalSourceHashes: ["hash-b"],

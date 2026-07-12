@@ -31,7 +31,6 @@ it("closes the mounted dev browser-tools registration idempotently", async () =>
     webviewId: 2,
   } as never;
   const bridge = await mountDevBrowserToolsBridge({
-    defaultSystemPrompt: "system",
     getDefaultAgentSettings: () => ({
       provider: "openai",
       model: "gpt-5",
@@ -58,7 +57,6 @@ it("uses canonical active-tab identity before that runtime appears in open works
   const requestedSessionWorkspaces: string[] = [];
   const mainWindow = { id: 1, webviewId: 2 } as never;
   const bridge = await mountDevBrowserToolsBridge({
-    defaultSystemPrompt: "system",
     getDefaultAgentSettings: () => ({
       provider: "openai",
       model: "gpt-5",
@@ -151,7 +149,6 @@ it("projects open surfaces from renderer-safe state read-model bundles", async (
     },
   };
   const bridge = await mountDevBrowserToolsBridge({
-    defaultSystemPrompt: "system",
     getDefaultAgentSettings: () => ({
       provider: "openai",
       model: "gpt-5",

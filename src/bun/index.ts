@@ -2,6 +2,7 @@ import { Updater, Utils } from "electrobun/bun";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import { IsoDateTimeStringSchema, normalizeDesktopBridgeErrorContract } from "@svvy/core";
 import { createDesktopApp, type DesktopApp } from "@svvy/desktop";
 import type {
@@ -52,7 +53,6 @@ import {
   startOAuthLogin,
   supportsOAuth,
 } from "./oauth-login";
-import { DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt";
 import { decodePromptClientSubmissionToRuntimeInput } from "./session-catalog";
 import { assertAgentModelSelection } from "./svvyx-workflows-command";
 import { resolveWorkspaceCwd } from "./workspace-context";
@@ -77,11 +77,11 @@ import { showStartupFailureSurface } from "./startup-failure-surface";
 import {
   assertExtensionEnvSecretTarget,
   assertExtensionEnvWriteValue,
-  readBuiltinExtensionsInventory,
-  runSvvyxExtensionsCommand,
 } from "./svvyx-extensions-command";
 import { mapAppRuntimeLogSource } from "./app-runtime-log-source";
-import { createMacOsKeychainExtensionEnvSecretStore } from "./extension-env-secret-store";
+import { createExtensionCliRequirementProbeService } from "./extension-cli-requirement-probe";
+import { createExtensionBuildProcessService } from "./extension-build-process";
+import { createMacOsKeychainSecretStoreServices } from "./extension-env-secret-store";
 import type {
   ProviderAuthReadModel,
   StateReadModelBaseline,
@@ -93,7 +93,7 @@ const DEV_SERVER_PORT = 5173;
 
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
 const DEV_SERVER_WAIT_TIMEOUT_MS = 15_000;
-const extensionEnvSecretStore = createMacOsKeychainExtensionEnvSecretStore();
+const extensionSecretStoreServices = createMacOsKeychainSecretStoreServices();
 const DEV_SERVER_POLL_INTERVAL_MS = 250;
 const DEFAULT_RPC_TIMEOUT_MS = 120000;
 const ENV_FILES = [".env.local", ".env"];
@@ -161,40 +161,6 @@ function getRpcRequestTimeoutMs(): number {
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_RPC_TIMEOUT_MS;
 
   return Math.trunc(parsed);
-}
-
-function quoteSvvyxCommandArg(value: string): string {
-  return JSON.stringify(value);
-}
-
-async function readWorkspaceExtensionsInventory(runtime: WorkspaceRuntime) {
-  const agentProfileStore = await runtime.catalog.getAgentProfileMutationStore();
-  return readBuiltinExtensionsInventory({
-    agentProfileStore,
-    agentSettingsStore: runtime.agentSettingsStore,
-    cwd: runtime.cwd,
-    envSecretStore: extensionEnvSecretStore,
-    extensionsRoot: runtime.catalog.getExtensionsRoot(),
-    externalInstructionSources: await runtime.catalog.getGeneratedAgentContextExternalSources(),
-    includeUserExtensions: true,
-    requestInputVariant: runtime.catalog.getRequestInputSettings().mode,
-  });
-}
-
-async function runWorkspaceExtensionsCommand(runtime: WorkspaceRuntime, command: string) {
-  const agentProfileStore = await runtime.catalog.getAgentProfileMutationStore();
-  const result = await runSvvyxExtensionsCommand({
-    agentProfileStore,
-    agentSettingsStore: runtime.agentSettingsStore,
-    command,
-    cwd: runtime.cwd,
-    envSecretStore: extensionEnvSecretStore,
-    extensionContextImpactState: runtime.catalog.getRuntimeExtensionContextImpactState(),
-    extensionsRoot: runtime.catalog.getExtensionsRoot(),
-    requestInputVariant: runtime.catalog.getRequestInputSettings().mode,
-  });
-  await runtime.catalog.applyAgentProfileMutations(agentProfileStore.takeMutations());
-  return result;
 }
 
 type DevBrowserToolsRecorder = {
@@ -467,12 +433,23 @@ const runtimeConfigEnv = Object.fromEntries(
 const runtimeLayerConfig = Effect.runSync(
   RuntimeLayerConfigFromEnv.parse(ConfigProvider.fromEnv({ env: runtimeConfigEnv })),
 );
+const extensionCliRequirementProbe = createExtensionCliRequirementProbeService({
+  executableSearchPath: runtimeConfigEnv.PATH ?? "",
+});
+const extensionBuildProcess = createExtensionBuildProcessService({
+  executable: process.execPath,
+  env: {},
+});
 
 const workspaceRuntimeRegistry = new WorkspaceRuntimeRegistry({
   initialCwd: startupWorkspaceCwd,
   openInitialWorkspace: !!process.env.SVVY_WORKSPACE_CWD,
   runtimeLayerConfig,
   sandboxHostSupport: createPackagedSandboxHostSupportServices(),
+  extensionCliRequirementProbe,
+  extensionBuildProcess,
+  secretStore: extensionSecretStoreServices.secretStore,
+  secretStoreMutation: extensionSecretStoreServices.secretStoreMutation,
   forwardBridgeLog: (level, message, source, details, error) => {
     if (level === "error") {
       recordDevBrowserToolsError("app", message, source, details, error);
@@ -746,199 +723,52 @@ function buildDesktopRpcHandlers(
         lifecycle.rendererReady();
         return { ok: true };
       },
-      getAgentContextPreview: async (input) => {
-        return getWorkspaceRuntime(input).catalog.getAgentContextPreview(stripWorkspaceId(input));
-      },
+      previewGeneratedContext: (input) => facades.runtime.generatedContext.preview(input),
       listModelMetadata: (input) => facades.modelMetadata.list(input),
-      getExtensionsInventory: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      saveExtensionSnapshot: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const name = input.name.trim();
-        if (!name) {
-          throw new Error("Snapshot name cannot be empty.");
-        }
-        const result = await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions snapshots save --name ${quoteSvvyxCommandArg(name)} --json`,
-        );
-        const snapshotId =
-          typeof (result.output as { snapshot?: { id?: unknown } }).snapshot?.id === "string"
-            ? (result.output as { snapshot: { id: string } }).snapshot.id
-            : null;
-        runtime.appLog.info("settings", "Extension snapshot saved from UI.", {
-          snapshotId,
-          name,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      renameExtensionSnapshot: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const name = input.name.trim();
-        if (!name) {
-          throw new Error("Snapshot name cannot be empty.");
-        }
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions snapshots rename ${quoteSvvyxCommandArg(input.snapshotId)} --name ${quoteSvvyxCommandArg(name)} --json`,
-        );
-        runtime.appLog.info("settings", "Extension snapshot renamed from UI.", {
-          snapshotId: input.snapshotId,
-          name,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      deleteExtensionSnapshot: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions snapshots delete ${quoteSvvyxCommandArg(input.snapshotId)} --json`,
-        );
-        runtime.appLog.info("settings", "Extension snapshot deleted from UI.", {
-          snapshotId: input.snapshotId,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      loadExtensionSnapshot: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions snapshots load ${quoteSvvyxCommandArg(input.snapshotId)} --json`,
-        );
-        runtime.appLog.info("settings", "Extension snapshot loaded from UI.", {
-          snapshotId: input.snapshotId,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      createExtension: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions create --id ${quoteSvvyxCommandArg(input.id)} --title ${quoteSvvyxCommandArg(input.title)} --description ${quoteSvvyxCommandArg(input.description)} --interface instructions --json`,
-        );
-        runtime.appLog.info("settings", "Extension created from UI.", {
-          extensionId: input.id,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      duplicateExtension: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions duplicate --from ${quoteSvvyxCommandArg(input.extensionId)} --id ${quoteSvvyxCommandArg(input.id)} --title ${quoteSvvyxCommandArg(input.title)} --json`,
-        );
-        runtime.appLog.info("settings", "Extension duplicated from UI.", {
-          extensionId: input.id,
-          duplicatedFrom: input.extensionId,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      deleteExtension: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions delete ${quoteSvvyxCommandArg(input.extensionId)} --json`,
-        );
-        runtime.appLog.info("settings", "Extension deleted from UI.", {
-          extensionId: input.extensionId,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      resetExtension: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions reset ${quoteSvvyxCommandArg(input.extensionId)} --scope instructions --json`,
-        );
-        runtime.appLog.info("settings", "Extension reset from UI.", {
-          extensionId: input.extensionId,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      buildExtension: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions build ${quoteSvvyxCommandArg(input.extensionId)} --json`,
-        );
-        runtime.appLog.info("settings", "Extension built from UI.", {
-          extensionId: input.extensionId,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      setExtensionTypescriptApi: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions configure --extension ${quoteSvvyxCommandArg(input.extensionId)} --typescript-api ${input.enabled ? "true" : "false"} --json`,
-        );
-        runtime.appLog.info("settings", "Extension TypeScript API setting updated from UI.", {
-          extensionId: input.extensionId,
-          enabled: input.enabled,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      addExtensionInstructionFile: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions instructions add ${quoteSvvyxCommandArg(input.extensionId)} --name ${quoteSvvyxCommandArg(input.name)} --json`,
-        );
-        runtime.appLog.info("settings", "Extension instruction file added from UI.", {
-          extensionId: input.extensionId,
-          name: input.name,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      removeExtensionInstructionFile: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions instructions remove ${quoteSvvyxCommandArg(input.extensionId)} --name ${quoteSvvyxCommandArg(input.name)} --json`,
-        );
-        runtime.appLog.info("settings", "Extension instruction file removed from UI.", {
-          extensionId: input.extensionId,
-          name: input.name,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      configureExtensionInstructionFile: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        await runWorkspaceExtensionsCommand(
-          runtime,
-          `svvyx extensions instructions configure ${quoteSvvyxCommandArg(input.extensionId)} --file ${quoteSvvyxCommandArg(input.name)} --bypassed ${input.bypassed ? "true" : "false"} --json`,
-        );
-        runtime.appLog.info("settings", "Extension instruction file configured from UI.", {
-          extensionId: input.extensionId,
-          name: input.name,
-          bypassed: input.bypassed,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      setExtensionEnvSecret: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
+      getExtensionSnapshots: (input) => facades.runtime.extensions.snapshots.list(input),
+      saveExtensionSnapshot: (input) => facades.runtime.extensions.snapshots.save(input),
+      renameExtensionSnapshot: (input) => facades.runtime.extensions.snapshots.rename(input),
+      deleteExtensionSnapshot: (input) => facades.runtime.extensions.snapshots.delete(input),
+      loadExtensionSnapshot: (input) => facades.runtime.extensions.snapshots.load(input),
+      createExtension: (input) => facades.runtime.extensions.create(input),
+      duplicateExtension: (input) => facades.runtime.extensions.duplicate(input),
+      deleteExtension: (input) => facades.runtime.extensions.delete(input),
+      configureExtensionTypescriptApi: (input) =>
+        facades.runtime.sourceEdits.configureTypescriptApi(input),
+      resetExtension: (input) => facades.runtime.extensions.reset(input),
+      buildExtension: (input) => facades.runtime.extensions.build(input),
+      addExtensionInstructionFile: (input) => facades.runtime.extensions.addInstruction(input),
+      removeExtensionInstructionFile: (input) =>
+        facades.runtime.extensions.removeInstruction(input),
+      configureExtensionInstructionFile: (input) =>
+        facades.runtime.extensions.configureInstruction(input),
+      stateExtensionEnvSetSecret: async (input) => {
+        getWorkspaceRuntime(input);
         const { extensionId, envName, value } = input;
         assertExtensionEnvSecretTarget({ extensionId, envName });
         assertExtensionEnvWriteValue(value);
-        extensionEnvSecretStore.set({ kind: "extension-env", extensionId, envName }, value);
-        runtime.appLog.info("settings", "Extension env secret updated.", {
+        const stateCommands = await workspaceRuntimeRegistry.getStateCommandsFacade();
+        return stateCommands.extensionEnv.setSecret({
           extensionId,
           envName,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
+          secretValue: Redacted.make(value, { label: "extension-env-secret" }),
+          clientSubmission: rpcClientSubmission(
+            `extension-env:set-secret:${extensionId}:${envName}`,
+          ),
+        } as never);
       },
-      removeExtensionEnvSecret: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
+      stateExtensionEnvRemoveSecret: async (input) => {
+        getWorkspaceRuntime(input);
         const { extensionId, envName } = input;
         assertExtensionEnvSecretTarget({ extensionId, envName });
-        extensionEnvSecretStore.remove({ kind: "extension-env", extensionId, envName });
-        runtime.appLog.info("settings", "Extension env secret removed.", {
+        const stateCommands = await workspaceRuntimeRegistry.getStateCommandsFacade();
+        return stateCommands.extensionEnv.removeSecret({
           extensionId,
           envName,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
+          clientSubmission: rpcClientSubmission(
+            `extension-env:remove-secret:${extensionId}:${envName}`,
+          ),
+        } as never);
       },
       stateExtensionEnvSetOverride: (input) =>
         facades.commands.state.extensionEnv.setOverride(stripWorkspaceId(input) as never),
@@ -1019,9 +849,6 @@ function buildDesktopRpcHandlers(
         facades.commands.state.agentProfiles.setExternalInstructionActorUsage(
           stripWorkspaceId(request),
         ),
-      getGeneratedAgentContextExternalSources: async (input) => {
-        return getWorkspaceRuntime(input).catalog.getGeneratedAgentContextExternalSources();
-      },
       stateSnippetsCreateManaged: (request) =>
         facades.commands.state.snippets.createManaged(request),
       stateSnippetsUpdateManaged: (request) =>
@@ -1200,27 +1027,23 @@ function buildDesktopRpcHandlers(
         });
         return { ...result, path };
       },
-      openGeneratedAgentContextExternalSourceInEditor: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const sources = await runtime.catalog.getGeneratedAgentContextExternalSources();
-        const source = sources.find((candidate) => candidate.path === input.path);
-        if (!source || getWorkspacePathKind(source.path) === "missing") {
-          runtime.appLog.warning("external-editor", "Prompt standards source does not exist.", {
-            path: input.path,
-          });
-          throw new Error(`Prompt standards source does not exist: ${input.path}`);
-        }
-        const result = await openPathInPreferredEditor(runtime, facades.hostActions, source.path);
-        runtime.appLog.info(
-          "external-editor",
-          "Prompt standards source opened in external editor.",
-          {
-            path: source.path,
-            editor: result.editor,
-            opened: result.opened,
-          },
-        );
-        return { ...result, path: source.path };
+      openExternalInstructionSourceInEditor: async (input) => {
+        const target = await facades.appActions.externalInstructions.resolveEditorTarget(input);
+        const result = await facades.hostActions.editor.open({
+          path: target.path,
+          cwd: target.cwd,
+          editor: target.editor,
+          customCommand: target.customCommand,
+        });
+        await facades.appActions.externalInstructions.recordEditorResult({
+          workspaceId: input.workspaceId,
+          sourceId: target.sourceId,
+          path: target.path,
+          opened: result.opened,
+          editor: result.editor,
+          ...(result.failure ? { failure: result.failure } : {}),
+        });
+        return { opened: result.opened, editor: result.editor, path: target.path };
       },
       writeCommandStdin: async (input) => {
         return await writeCommandStdinFromDesktop({
@@ -1742,7 +1565,6 @@ desktopHost = createElectrobunDesktopHostAdapter({
     }
     const { mountDevBrowserToolsBridge } = await import("./dev-browser-tools-bridge");
     const mountedDevBrowserToolsBridge = await mountDevBrowserToolsBridge({
-      defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
       getDefaultAgentSettings,
       getMainWindow: () => mainWindow,
       getActiveWorkspace: readActiveWorkspaceFromState,

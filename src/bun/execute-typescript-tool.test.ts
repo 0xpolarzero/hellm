@@ -133,6 +133,7 @@ function createExecuteTypescriptTool(
 ): ReturnType<typeof createExecuteTypescriptToolBase> {
   return createExecuteTypescriptToolBase({
     ...options,
+    extensionsRoot: options.extensionsRoot ?? join(options.cwd, ".test-extensions"),
     workspaceId: options.workspaceId ?? options.cwd,
     acquireExecuteTypescriptLaunch:
       options.acquireExecuteTypescriptLaunch ?? testExecuteTypescriptLaunchAcquisition,
@@ -350,6 +351,7 @@ function createUserSvvyxExtensionSource(input: {
 }): void {
   const sourceRoot = join(input.extensionsRoot, "sources", "user", input.extensionId);
   mkdirSync(join(sourceRoot, "source"), { recursive: true });
+  mkdirSync(join(sourceRoot, "instructions", "full"), { recursive: true });
   writeFileSync(
     join(sourceRoot, "manifest.json"),
     JSON.stringify(
@@ -384,6 +386,7 @@ function createUserSvvyxExtensionSource(input: {
       "",
     ].join("\n"),
   );
+  writeFileSync(join(sourceRoot, "instructions", "minimal.mdx"), "");
 }
 
 function defaultLinearCommandManifest(): Record<string, unknown> {
@@ -637,6 +640,39 @@ describe("execute_typescript tool", () => {
         }),
       }),
     ]);
+  });
+
+  it("returns a typed diagnostic when a loaded extension source cannot be resolved", async () => {
+    const workspaceCwd = createWorkspaceRoot();
+    const extensionsRoot = createWorkspaceRoot();
+    const store = createStore("session-missing-extension-source", workspaceCwd);
+    const runtime = createRuntime(store, "session-missing-extension-source", undefined, [
+      "execute-typescript",
+      "missing-extension",
+    ]);
+    const tool = createExecuteTypescriptTool({
+      cwd: workspaceCwd,
+      extensionsRoot,
+      runtime,
+      store,
+    });
+
+    const result = await tool.execute("tool-call-missing-extension-source", {
+      typescriptCode: "return { ok: true };",
+    });
+
+    expect(tsFacts(result)).toMatchObject({
+      success: false,
+      error: {
+        stage: "typecheck",
+        message: "Extension source cannot be resolved: missing-extension",
+      },
+    });
+    const command = store.getSessionState("session-missing-extension-source").commands[0];
+    expect(command).toMatchObject({
+      status: "failed",
+      error: "Extension source cannot be resolved: missing-extension",
+    });
   });
 
   it("stops at the approval boundary after persisting source and before diagnostics or runtime", async () => {
@@ -1625,6 +1661,17 @@ describe("execute_typescript tool", () => {
       onWorkflowsGeneratedPackageChanged: (event) => {
         generatedPackageEvents.push(event);
       },
+      requestWorkflowsRuntime: async () => {
+        mkdirSync(join(workflowsGeneratedPackagePath, "prompts"), { recursive: true });
+        writeFileSync(
+          join(workflowsGeneratedPackagePath, "prompts", "ReviewPrompt.ts"),
+          'export const ReviewPrompt = "# Review prompt";\n',
+        );
+        return {
+          output: { ok: true, generatedPackagePath: workflowsGeneratedPackagePath },
+          commandFacts: { workflowBuildOk: true, workflowExportCount: 1 },
+        };
+      },
       workflowsGeneratedPackagePath,
       workflowsModelCatalog: () => [
         {
@@ -1799,12 +1846,22 @@ describe("execute_typescript tool", () => {
       ].join("\n"),
     );
     const appliedMutations: AgentProfileMutation[] = [];
+    const parentOrder: string[] = [];
     const store = createStore("session-workflows-agent-save", workspaceCwd);
     const runtime = createHandlerRuntime(store, "session-workflows-agent-save");
     const tool = createExecuteTypescriptTool({
       agentProfileSnapshot: createAgentProfileSnapshot(),
       applyAgentProfileMutations: async (mutations) => {
         appliedMutations.push(...structuredClone(mutations));
+        parentOrder.push("mutation-committed");
+      },
+      requestWorkflowsRuntime: async () => {
+        expect(appliedMutations).toHaveLength(1);
+        parentOrder.push("runtime-build-committed");
+        return {
+          output: { ok: true },
+          commandFacts: { workflowBuildOk: true, workflowExportCount: 1 },
+        };
       },
       cwd: workspaceCwd,
       runtime,
@@ -1832,6 +1889,7 @@ describe("execute_typescript tool", () => {
     });
     expect(existsSync(join(workflowsSourceRoot, "agents", "reviewerAgent.agent.json"))).toBe(false);
     expect(appliedMutations).toHaveLength(1);
+    expect(parentOrder).toEqual(["mutation-committed", "runtime-build-committed"]);
     expect(appliedMutations[0]).toMatchObject({
       kind: "workflow-agent-source.upsert",
       sourceId: "reviewerAgent",
@@ -1853,7 +1911,7 @@ describe("execute_typescript tool", () => {
     ).toBe("succeeded");
   });
 
-  it("forwards Extension prebuild CLI failures through the Workflows generated runtime facade", async () => {
+  it("requires an explicit Runtime extension build through the Workflows generated runtime facade", async () => {
     const workspaceCwd = createWorkspaceRoot();
     const workflowsSourceRoot = join(workspaceCwd, "app-workflows-source");
     const workflowsGeneratedPackagePath = join(workspaceCwd, "generated-workflows-package");
@@ -1863,7 +1921,6 @@ describe("execute_typescript tool", () => {
     );
     const extensionsRoot = join(workspaceCwd, "extensions");
     const appLogEvents: AppLoggerEvent[] = [];
-    const probedRequirements: string[] = [];
     mkdirSync(join(workflowsSourceRoot, "agents"), { recursive: true });
     createUserSvvyxExtensionSource({
       cliRequirements: [
@@ -1902,27 +1959,24 @@ describe("execute_typescript tool", () => {
       cwd: workspaceCwd,
       runtime,
       store,
-      extensionsCliProbe: (requirement) => {
-        probedRequirements.push(requirement.id);
-        return {
-          id: requirement.id,
-          binary: requirement.binary,
-          package: requirement.package ?? null,
-          required: requirement.required,
-          defaultVersion: requirement.version ?? null,
-          currentVersion: null,
-          latestVersion: null,
-          status: "missing",
-          updateAvailable: false,
-          detectedVersion: null,
-          path: null,
-          versionCommand: requirement.versionCommand ?? null,
-          installCommand: requirement.installCommand ?? null,
-          updateCommand: null,
-        };
-      },
       extensionsRoot,
       onAppLog: (event) => appLogEvents.push(event),
+      requestWorkflowsRuntime: async () => ({
+        output: {
+          ok: false,
+          error: {
+            code: "build_failed",
+            message: "Workflows build failed.",
+            diagnostics: [
+              {
+                code: "extension_build_required",
+                message: "Extension needs-cli must have a current successful build.",
+              },
+            ],
+          },
+        },
+        commandFacts: { workflowBuildOk: false, workflowDiagnosticCount: 1 },
+      }),
       workflowsExtensionsGeneratedPackagePath,
       workflowsGeneratedPackagePath,
       workflowsModelCatalog: () => [
@@ -1964,7 +2018,6 @@ describe("execute_typescript tool", () => {
         message: "Workflows build failed.",
       },
     });
-    expect(probedRequirements).toEqual(["needs-cli"]);
     expect(existsSync(workflowsGeneratedPackagePath)).toBe(false);
     expect(existsSync(workflowsExtensionsGeneratedPackagePath)).toBe(false);
 
@@ -1986,7 +2039,9 @@ describe("execute_typescript tool", () => {
         errorCode: "build_failed",
       },
     });
-    expect(workflowCommand?.error).toContain("needs-cli 1.2.3 is required by needs-cli");
+    expect(workflowCommand?.error).toContain(
+      "Extension needs-cli must have a current successful build",
+    );
     expect(workflowCommand?.error).not.toContain("missing-workflow-extension");
     expect(appLogEvents).toContainEqual(
       expect.objectContaining({

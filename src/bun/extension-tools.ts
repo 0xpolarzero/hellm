@@ -3,12 +3,12 @@ import {
   type NativeToolDefinition,
   listExtensionsForActor,
   summarizeListExtensions,
+  type ExtensionRecord,
 } from "@svvy/extensions";
 import { Type, type Static } from "typebox";
 import type { PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
 import type { CommandFactsPayload } from "@svvy/core";
 import { nativeToolParameters } from "./native-tool-parameters";
-import { resolveVisibleExtensionRecords } from "./svvyx-extensions-command";
 import {
   type PromptTarget,
   type CommandId,
@@ -22,10 +22,52 @@ import {
   type ToolItemId,
   type TurnId,
 } from "@svvy/core";
+import type { ExtensionRegistryObservation } from "@svvy/core";
 import * as Effect from "effect/Effect";
 
 export const LIST_EXTENSIONS_TOOL_NAME = "list_extensions";
 export const LOAD_EXTENSION_TOOL_NAME = "load_extension";
+
+export function extensionRecordFromRegistryObservation(
+  observation: ExtensionRegistryObservation,
+): ExtensionRecord {
+  return {
+    id: observation.extensionId,
+    category: observation.category,
+    interface: observation.interfaceKind,
+    title: observation.title,
+    description: observation.description,
+    instructionSourceFiles: observation.contributors.flatMap((contributor) =>
+      contributor.source ? [contributor.source.sourceId] : [],
+    ),
+    minimalLoadingHint: "",
+    typescriptApiEnabled: observation.capabilities.typescriptApiEnabled,
+    envReadiness: observation.envDeclarations.length > 0 ? "ready" : "not_required",
+    dependencyReadiness: observation.dependencyDeclarations.length > 0 ? "ready" : "not_required",
+    cliRequirements: observation.cliDeclarations.map((requirement) => ({
+      id: requirement.id,
+      binary: requirement.binary,
+      required: requirement.required,
+      ...(requirement.package ? { package: requirement.package } : {}),
+      ...(requirement.defaultVersion ? { version: requirement.defaultVersion } : {}),
+      ...(requirement.nodeRequirement ? { nodeRequirement: requirement.nodeRequirement } : {}),
+      ...(requirement.versionCommand ? { versionCommand: requirement.versionCommand } : {}),
+      ...(requirement.installCommand ? { installCommand: requirement.installCommand } : {}),
+    })),
+    generatedInstructions: observation.contributors.flatMap((contributor) =>
+      contributor.kind === "generated-instruction"
+        ? [{ output: contributor.name, script: contributor.name }]
+        : [],
+    ),
+    instructionFiles: observation.contributors.flatMap((contributor) =>
+      contributor.kind === "instruction" || contributor.kind === "generated-instruction"
+        ? [{ file: contributor.name, bypassed: contributor.bypassed }]
+        : [],
+    ),
+    resetBehavior: observation.category === "builtin" ? "builtin_reset" : "user_reset",
+    deleteBehavior: observation.capabilities.deletable ? "trash_allowed" : "not_allowed",
+  };
+}
 
 const listExtensionsParamsSchema = Type.Object({}, { additionalProperties: false });
 const loadExtensionParamsSchema = Type.Object(
@@ -57,8 +99,8 @@ export type RunAcceptedLoadExtension = (input: {
   actorBinding: {
     loadedExtensionIds: readonly string[];
     availableExtensionIds: readonly string[];
-    loadedExtensionRecords: ReturnType<typeof resolveVisibleExtensionRecords>;
-    availableExtensionRecords: ReturnType<typeof resolveVisibleExtensionRecords>;
+    loadedExtensionRecords: readonly ExtensionRecord[];
+    availableExtensionRecords: readonly ExtensionRecord[];
   };
   command: {
     commandId: CommandId;
@@ -88,7 +130,7 @@ export type RunAcceptedLoadExtension = (input: {
 export function createListExtensionsTool(options: {
   runtime: PromptExecutionRuntimeHandle;
   state: ExtensionToolState;
-  extensionsRoot?: string;
+  resolveVisibleRecords: (ids: readonly string[]) => Promise<readonly ExtensionRecord[]>;
 }): NativeToolDefinition<ListExtensionsParams> {
   return {
     label: "List Extensions",
@@ -136,15 +178,9 @@ export function createListExtensionsTool(options: {
         const details = listExtensionsForActor({
           actor: runtime.surfaceKind,
           loadedExtensionIds,
-          loadedExtensionRecords: resolveVisibleExtensionRecords(
-            loadedExtensionIds,
-            options.extensionsRoot,
-          ),
+          loadedExtensionRecords: await options.resolveVisibleRecords(loadedExtensionIds),
           availableExtensionIds,
-          availableExtensionRecords: resolveVisibleExtensionRecords(
-            availableExtensionIds,
-            options.extensionsRoot,
-          ),
+          availableExtensionRecords: await options.resolveVisibleRecords(availableExtensionIds),
           externalInstructionSources: runtime.externalInstructionSources ?? [],
         });
         options.state.runState(
@@ -188,7 +224,7 @@ export function createListExtensionsTool(options: {
 export function createLoadExtensionTool(options: {
   runtime: PromptExecutionRuntimeHandle;
   state: ExtensionToolState;
-  extensionsRoot?: string;
+  resolveVisibleRecords: (ids: readonly string[]) => Promise<readonly ExtensionRecord[]>;
   runAcceptedLoadExtension: RunAcceptedLoadExtension;
 }): NativeToolDefinition<LoadExtensionParams> {
   return {
@@ -235,13 +271,11 @@ export function createLoadExtensionTool(options: {
       options.state.runState(options.state.commandState.startCommand({ commandId: command.id }));
       try {
         const target = promptTargetFromRuntime(runtime, LOAD_EXTENSION_TOOL_NAME);
-        const loadedExtensionRecords = resolveVisibleExtensionRecords(
+        const loadedExtensionRecords = await options.resolveVisibleRecords(
           runtime.loadedExtensionIds ?? [],
-          options.extensionsRoot,
         );
-        const availableExtensionRecords = resolveVisibleExtensionRecords(
+        const availableExtensionRecords = await options.resolveVisibleRecords(
           runtime.availableExtensionIds ?? [],
-          options.extensionsRoot,
         );
         const executed = await options.runAcceptedLoadExtension({
           toolCallId: _toolCallId as ToolCallId,
@@ -280,14 +314,12 @@ export function createLoadExtensionTool(options: {
         const postLoadDetails = listExtensionsForActor({
           actor: runtime.surfaceKind,
           loadedExtensionIds: runtime.loadedExtensionIds ?? [],
-          loadedExtensionRecords: resolveVisibleExtensionRecords(
+          loadedExtensionRecords: await options.resolveVisibleRecords(
             runtime.loadedExtensionIds ?? [],
-            options.extensionsRoot,
           ),
           availableExtensionIds: runtime.availableExtensionIds ?? [],
-          availableExtensionRecords: resolveVisibleExtensionRecords(
+          availableExtensionRecords: await options.resolveVisibleRecords(
             runtime.availableExtensionIds ?? [],
-            options.extensionsRoot,
           ),
           externalInstructionSources: runtime.externalInstructionSources ?? [],
         });

@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"workflows","interface":"svvyx","title":"Workflows","description":"Reusable Smithers workflow authoring assets and generated imports.","typescriptApiEnabled":true,"instructionFiles":[{"file":"010-workflows.mdx","bypassed":false}]}

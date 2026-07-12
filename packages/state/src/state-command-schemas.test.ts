@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import * as Exit from "effect/Exit";
+import * as Redacted from "effect/Redacted";
 
 import {
   decodeUnknownMarkAppLogReadCommandInputExit,
@@ -8,12 +9,14 @@ import {
   decodeUnknownCreateManagedSnippetCommandInputExit,
   decodeUnknownDeleteManagedSnippetCommandInputExit,
   decodeUnknownRecordProviderAuthStatusCommandInputExit,
+  decodeUnknownRemoveExtensionEnvSecretCommandInputExit,
   decodeUnknownSaveWorkspaceLayoutSlotCommandInputExit,
   decodeUnknownSetSnippetEnabledCommandInputExit,
   decodeUnknownSetSessionArchivedCommandInputExit,
   decodeUnknownSetSessionNavigationSectionStateCommandInputExit,
   decodeUnknownSetSessionPinnedCommandInputExit,
   decodeUnknownSetAgentActorExtensionDefaultsCommandInputExit,
+  decodeUnknownSetExtensionEnvSecretCommandInputExit,
   decodeUnknownSetWorkspaceTabsCommandInputExit,
   decodeUnknownUpdateAppPreferencesCommandInputExit,
   decodeUnknownUpdateManagedSnippetCommandInputExit,
@@ -35,6 +38,34 @@ import {
 } from "./state-command-schemas";
 
 describe("@svvy/state command schemas", () => {
+  it("keeps extension secret command values process-local and validates CAS fields", () => {
+    const decoded = decodeUnknownSetExtensionEnvSecretCommandInputExit({
+      extensionId: "extension_schema",
+      envName: "API_TOKEN",
+      secretValue: Redacted.make("sk-test-secret", { label: "extension-env-secret" }),
+      expectedRevisionFingerprint: "revision_01",
+      clientSubmission: { clientRequestId: "secret_schema_01", source: "desktop" },
+    });
+    expect(Exit.isSuccess(decoded)).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeUnknownSetExtensionEnvSecretCommandInputExit({
+          extensionId: "extension_schema",
+          envName: "API_TOKEN",
+          secretValue: Redacted.make("", { label: "extension-env-secret" }),
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeUnknownRemoveExtensionEnvSecretCommandInputExit({
+          extensionId: "extension_schema",
+          envName: "API_TOKEN",
+          expectedRevisionFingerprint: "",
+        }),
+      ),
+    ).toBe(true);
+  });
   it("strictly decodes and encodes full actor extension-default commands", () => {
     const decoded = decodeUnknownSetAgentActorExtensionDefaultsCommandInputExit({
       actor: "workflow-task",

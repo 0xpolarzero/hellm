@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"git","interface":"instructions","title":"Git","description":"Prompt-only Git CLI guidance.","typescriptApiEnabled":false,"instructionFiles":[{"file":"010-git.mdx","bypassed":false}],"cliRequirements":[{"id":"git","binary":"git","required":true,"versionCommand":"git --version"}]}

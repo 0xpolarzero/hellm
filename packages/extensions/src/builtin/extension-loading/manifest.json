@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"extension-loading","interface":"native_tool","title":"Extension Loading","description":"Actor-local inspection and loading of ready extensions.","typescriptApiEnabled":false,"instructionFiles":[{"file":"010-extension-loading.mdx","bypassed":false}]}

@@ -16,11 +16,18 @@ import {
   type SvvyxArtifactsOperationInput,
   type SvvyxArtifactsRuntimeContext,
 } from "./svvyx-artifacts-command";
-import { formatSvvyxExtensionsError, runSvvyxExtensionsCommand } from "./svvyx-extensions-command";
+import {
+  formatSvvyxExtensionsError,
+  parseSvvyxExtensionManagementRuntimeRequest,
+  runSvvyxExtensionsCommand,
+} from "./svvyx-extensions-command";
+import { createPackageBackedExtensionLifecycleAdapter } from "./extension-lifecycle-authority";
+import { resolvePackagedExtensionTemplatesRoot } from "./packaged-extension-templates";
 import {
   formatSvvyxRuntimeError,
   runSvvyxRuntimeCommand,
   type SvvyxRuntimeEnvValues,
+  type SvvyxRuntimeExtensionPlan,
 } from "./svvyx-runtime-command";
 import {
   formatSvvyxWorkflowsError,
@@ -31,6 +38,10 @@ import type {
   PromptExecutionExternalInstructionSource,
   RuntimeExtensionContextImpactStateFacade,
   SvvyxRuntimeEffectTransportIntent,
+  SvvyxExtensionManagementRuntimeIntent,
+  SvvyxWorkflowsRuntimeIntent,
+  RuntimeClientRequestId,
+  WorkspaceId,
 } from "@svvy/core";
 
 type SvvyxSubprocessContext = {
@@ -38,9 +49,11 @@ type SvvyxSubprocessContext = {
   agentSettingsState?: AgentSettingsState | null;
   cwd: string;
   extensionEnvValues?: SvvyxRuntimeEnvValues | null;
+  extensionRuntimePlans?: readonly SvvyxRuntimeExtensionPlan[];
   extensionsBuildRoot?: string;
   extensionsGeneratedPackagePath?: string;
   extensionsRoot?: string;
+  packagedExtensionTemplatesRoot?: string;
   externalInstructionSources?: readonly PromptExecutionExternalInstructionSource[];
   resultPath?: string;
   runtime?: SvvyxArtifactsRuntimeContext | null;
@@ -48,6 +61,7 @@ type SvvyxSubprocessContext = {
   workflowModelCatalog?: readonly SvvyxWorkflowsModelChoice[] | null;
   workflowsGeneratedPackagePath?: string;
   workflowsSourceRoot?: string;
+  workspaceId?: string;
   workspaceCwd?: string;
 };
 
@@ -68,7 +82,9 @@ type SvvyxSubprocessIntent =
       kind: "artifact.operation";
       operation: SvvyxArtifactsOperationInput;
     }
-  | SvvyxRuntimeEffectTransportIntent;
+  | SvvyxRuntimeEffectTransportIntent
+  | SvvyxExtensionManagementRuntimeIntent
+  | SvvyxWorkflowsRuntimeIntent;
 
 type SvvyxSubprocessProgressEvent = {
   facts?: Record<string, unknown>;
@@ -124,11 +140,8 @@ async function main(): Promise<number> {
     } else if (namespace === "workflows") {
       const result = await runSvvyxWorkflowsCommand({
         agentProfileStore: agentProfileStore ?? undefined,
-        agentSettingsStore,
         command,
         cwd: context.cwd,
-        envSecretStore,
-        extensionsBuildRoot: context.extensionsBuildRoot,
         extensionsRoot: context.extensionsRoot,
         extensionsGeneratedPackagePath: context.extensionsGeneratedPackagePath,
         generatedPackagePath: context.workflowsGeneratedPackagePath,
@@ -137,6 +150,17 @@ async function main(): Promise<number> {
           : undefined,
         sourceRoot: context.workflowsSourceRoot,
         sourceCommandId: context.sourceCommandId ?? undefined,
+        requestWorkflowsRuntime: async (request) => {
+          intents.push({
+            id: `workflows-runtime-${intents.length + 1}`,
+            kind: "workflows.runtime_request",
+            request,
+          });
+          return {
+            output: { ok: true, pendingRuntimeBuild: true },
+            commandFacts: {},
+          };
+        },
         workspaceCwd: context.workspaceCwd,
       });
       output = result.output;
@@ -150,25 +174,56 @@ async function main(): Promise<number> {
         });
       }
     } else if (namespace === "extensions") {
-      const result = await runSvvyxExtensionsCommand({
-        agentProfileStore: agentProfileStore ?? undefined,
-        agentSettingsStore,
-        buildRoot: context.extensionsBuildRoot,
+      if (!context.extensionsRoot) {
+        throw new Error("Extension commands require the configured extensions source root.");
+      }
+      const runtimeRequest = parseSvvyxExtensionManagementRuntimeRequest({
         command,
-        cwd: context.cwd,
-        envSecretStore,
-        extensionContextImpactState,
-        externalInstructionSources: context.externalInstructionSources ?? [],
-        extensionsRoot: context.extensionsRoot,
+        clientRequestId:
+          `runtime-client:svvyx:${context.sourceCommandId ?? "detached"}` as RuntimeClientRequestId,
       });
-      output = result.output;
-      commandFacts = result.commandFacts;
+      if (runtimeRequest) {
+        intents.push({
+          id: "extension-management-runtime-request",
+          kind: "extension_management.runtime_request",
+          request: runtimeRequest,
+        });
+        output = { ok: true };
+        commandFacts = { extensionManagementRuntimeRequest: runtimeRequest.operation };
+      } else {
+        const result = await runSvvyxExtensionsCommand({
+          agentProfileStore: agentProfileStore ?? undefined,
+          agentSettingsStore,
+          buildRoot: context.extensionsBuildRoot,
+          command,
+          cwd: context.cwd,
+          extensionContextImpactState,
+          extensionsRoot: context.extensionsRoot,
+          workspaceId: context.workspaceId as WorkspaceId | undefined,
+          lifecycle: createPackageBackedExtensionLifecycleAdapter({
+            extensionsRoot: context.extensionsRoot,
+            onRuntimeEffectRequest: (request) =>
+              intents.push({
+                id: `runtime-effect-${intents.length + 1}`,
+                kind: "runtime_effect.request",
+                request,
+              }),
+            packagedExtensionTemplatesRoot: resolvePackagedExtensionTemplatesRoot({
+              explicitRoot: context.packagedExtensionTemplatesRoot,
+              cwd: context.cwd,
+            }),
+          }),
+        });
+        output = result.output;
+        commandFacts = result.commandFacts;
+      }
     } else {
       const result = await runSvvyxRuntimeCommand({
         command,
         envSecretStore,
         envValues: context.extensionEnvValues ?? undefined,
         extensionsRoot: context.extensionsRoot,
+        extensionRuntimePlans: context.extensionRuntimePlans,
       });
       output = result.output;
       commandFacts = result.commandFacts;

@@ -7,8 +7,15 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import {
+  DEFAULT_EXTERNAL_INSTRUCTIONS,
   AppLogWritePort,
   ExtensionStatePort,
+  ExtensionSnapshotPayloadStorePort,
+  ExtensionSnapshotSecretStorePort,
+  ExtensionSnapshotSecretValuesPort,
+  ExtensionSnapshotSettingsStatePort,
+  ExtensionSnapshotStatePort,
+  ExtensionUsageStatePort,
   RuntimeActorExtensionBindingStatePort,
   RuntimeApprovalStatePort,
   RuntimeCommandStatePort,
@@ -16,6 +23,10 @@ import {
   RuntimeComposerProfileStatePort,
   RuntimeContractError,
   RuntimeEpisodeStatePort,
+  RuntimeExtensionStatePort,
+  RuntimeExtensionContextImpactStatePort,
+  RuntimeExternalInstructionStatePort,
+  GeneratedContextPreviewSubjectStatePort,
   RuntimeEventStreamError,
   RuntimeGeneratedPackageStatePort,
   RuntimeQueueStatePort,
@@ -64,6 +75,9 @@ import {
   type RuntimeCommandRecord,
   type RuntimeCommandStatePortService,
   type RuntimeEventSequence,
+  type ExtensionUsageStatePortService,
+  type RuntimeExtensionContextImpactStatePortService,
+  type StateRevision,
   type RuntimeGeneratedPackageFactRecord,
   type RuntimeGeneratedPackageStatePortService,
   type RuntimeRecoveryStatePortService,
@@ -93,6 +107,8 @@ import {
 } from "@svvy/core";
 import { PiAdapter, layer as PiAdapterLayer } from "@svvy/pi-adapter";
 import {
+  ExtensionBuildProcessPort,
+  ExtensionCliRequirementProbePort,
   Extensions,
   layer,
   layerExtensionSourceRootsPort,
@@ -111,6 +127,7 @@ import {
   RuntimeGeneratedPackageRefreshHostPort,
   RuntimeLayerModelResolverPort,
   RuntimeLayerProviderAuthPort,
+  RuntimeExternalInstructionScanInputPort,
   RuntimeSourceInvalidationScanPort,
   makeRuntimeService,
   type RuntimeLayerCommandControlPortService,
@@ -125,6 +142,10 @@ import { RuntimeRequestInputWaitService } from "./runtime-request-input-wait-ser
 import { RuntimePromptDefaultsService } from "./runtime-prompt-defaults-service";
 import { RuntimeQueueWakeService } from "./runtime-queue-wake-service";
 import { RuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
+import { RuntimeExtensionBuildService } from "./runtime-extension-build-service";
+import { RuntimeExtensionLifecycleService } from "./runtime-extension-lifecycle-service";
+import { RuntimeExtensionSnapshotService } from "./runtime-extension-snapshot-service";
+import { RuntimeGeneratedContextPreviewService } from "./runtime-generated-context-preview-service";
 import { RuntimeSourceReconcileRecoveryWorker } from "./runtime-source-reconcile-recovery-worker";
 import { RuntimeSurfaceEventPublisher } from "./runtime-surface-event-publisher";
 import {
@@ -179,6 +200,12 @@ const commandInvalidation = {
 function testExtensionsPackageDataLayer() {
   return Layer.mergeAll(
     testEffectPlatformLayer(),
+    Layer.succeed(ExtensionBuildProcessPort, {
+      run: () => Effect.die("Unexpected extension build process execution."),
+    }),
+    Layer.succeed(ExtensionCliRequirementProbePort, {
+      probe: () => Effect.succeed({ status: "missing" as const }),
+    }),
     Layer.succeed(ExtensionStatePort, {
       records: {
         readSourceFingerprint: () => Effect.succeed(null),
@@ -300,6 +327,8 @@ function fakeRuntimeActorExtensionBindingStatePort(): RuntimeActorExtensionBindi
   });
   return {
     readRuntimePromptBinding: (input) => Effect.succeed(binding ?? makeBinding(input.target)),
+    readGeneratedContextBuildSubject: () => Effect.die("Unexpected context subject read."),
+    bindGeneratedContext: () => Effect.die("Unexpected context binding write."),
     updateActorExtensionBinding: (input) =>
       Effect.succeed({
         value: {
@@ -808,6 +837,7 @@ describe("@svvy/runtime Runtime.layer", () => {
           saveEditSession: () =>
             Effect.succeed({
               status: "saved",
+              path: original.path,
               sourceVersion: "version_saved",
               fingerprint: "version_saved",
               diagnostics: [],
@@ -1022,6 +1052,7 @@ describe("@svvy/runtime Runtime.layer", () => {
               saveCalls += 1;
               return {
                 status: "saved" as const,
+                path: current.path,
                 sourceVersion: "version_saved",
                 fingerprint: "version_saved",
                 diagnostics: [],
@@ -1124,6 +1155,7 @@ describe("@svvy/runtime Runtime.layer", () => {
         saveEditSession: () =>
           Effect.succeed({
             status: "saved",
+            path: "/tmp/svvy-runtime-layer-effect/extensions/custom-tools/index.ts" as AbsolutePath,
             sourceVersion: "version_extension_saved",
             fingerprint: "version_extension_saved",
             diagnostics: [],
@@ -1544,6 +1576,175 @@ describe("@svvy/runtime Runtime.layer", () => {
       assert.strictEqual(bridgeRejected.reason, "runtime-shutdown");
     }).pipe(Effect.provide(testRuntimeRootLayer())),
   );
+
+  it.effect("routes set and revert usage context impact with canonical profile identities", () => {
+    const affected: Array<{ agentProfile: string; profileId: string }> = [];
+    const changes = new Map<string, any>();
+    let registryObservations: any[] = [
+      {
+        extensionId: "smithers",
+        usagePolicy: { configurable: true, fixedReason: null, networkAccess: "not-required" },
+      },
+    ];
+    let networkAccess = true;
+    const targets = {
+      "default-orchestrator": {
+        actor: "orchestrator",
+        agentProfile: "default-orchestrator",
+        profileId: "default-orchestrator",
+      },
+      threadHandler: {
+        actor: "handler",
+        agentProfile: "threadHandler",
+        profileId: "thread-handler",
+      },
+      reviewer: { actor: "workflow-task", agentProfile: "reviewer", profileId: "reviewer" },
+    } as const;
+    return Effect.gen(function* () {
+      const runtime = yield* Runtime;
+      for (const agentProfile of Object.keys(targets) as Array<keyof typeof targets>) {
+        const set = yield* runtime.extensions.setUsage({
+          clientRequestId: `runtime-client:set:${agentProfile}` as never,
+          extensionId: "smithers" as never,
+          agentProfile,
+          usage: "loaded",
+        });
+        yield* runtime.extensions.revertUsage({
+          clientRequestId: `runtime-client:revert:${agentProfile}` as never,
+          changeId: set.change.changeId,
+        });
+      }
+      registryObservations = [];
+      const unknown = yield* runtime.extensions
+        .setUsage({
+          clientRequestId: "runtime-client:set:unknown" as never,
+          extensionId: "unknown" as never,
+          agentProfile: "default-orchestrator",
+          usage: "loaded",
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(unknown.reason, "target-not-found");
+      registryObservations = [
+        {
+          extensionId: "extension-loading",
+          usagePolicy: { configurable: false, fixedReason: "fixed by policy" },
+        },
+      ];
+      const fixed = yield* runtime.extensions
+        .setUsage({
+          clientRequestId: "runtime-client:set:fixed" as never,
+          extensionId: "extension-loading" as never,
+          agentProfile: "default-orchestrator",
+          usage: "unavailable",
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(fixed.reason, "invalid-input");
+      assert.strictEqual(changes.size, 6);
+      registryObservations = [
+        {
+          extensionId: "web",
+          usagePolicy: { configurable: true, fixedReason: null, networkAccess: "required" },
+        },
+      ];
+      networkAccess = false;
+      const networkDisabled = yield* runtime.extensions
+        .setUsage({
+          clientRequestId: "runtime-client:set:web" as never,
+          extensionId: "web" as never,
+          agentProfile: "default-orchestrator",
+          usage: "available",
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(networkDisabled.reason, "invalid-input");
+      const webChange = {
+        changeId: "extension-usage-change:web-before" as never,
+        clientRequestId: "runtime-client:web-before" as never,
+        extensionId: "web" as never,
+        target: targets["default-orchestrator"],
+        before: "loaded" as const,
+        after: "unavailable" as const,
+        revertedChangeId: null,
+        createdAt: "2026-07-12T00:00:00.000Z",
+        stateRevision: 3 as never,
+      };
+      changes.set(webChange.changeId, webChange);
+      const networkDisabledRevert = yield* runtime.extensions
+        .revertUsage({
+          clientRequestId: "runtime-client:revert:web" as never,
+          changeId: webChange.changeId,
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(networkDisabledRevert.reason, "invalid-input");
+      assert.deepStrictEqual(
+        affected,
+        [
+          targets["default-orchestrator"],
+          targets["default-orchestrator"],
+          targets.threadHandler,
+          targets.threadHandler,
+          targets.reviewer,
+          targets.reviewer,
+        ].map(({ agentProfile, profileId }) => ({ agentProfile, profileId })),
+      );
+    }).pipe(
+      Effect.provide(
+        testRuntimeLayer({
+          published: [],
+          extensions: {
+            registry: {
+              list: () => Effect.die("unused"),
+              inspect: () => Effect.die("unused"),
+              observe: () => Effect.succeed({ observations: registryObservations } as never),
+            },
+          } as unknown as ExtensionsService,
+          extensionUsageState: {
+            readNetworkAccess: () => Effect.succeed(networkAccess),
+            resolveTarget: (name) => Effect.succeed(targets[name as keyof typeof targets]),
+            set: (input) =>
+              Effect.sync(() => {
+                const change = {
+                  changeId: `extension-usage-change:${input.clientRequestId}` as never,
+                  clientRequestId: input.clientRequestId,
+                  extensionId: input.extensionId,
+                  target: input.target,
+                  before: null,
+                  after: input.usage,
+                  revertedChangeId: null,
+                  createdAt: "2026-07-12T00:00:00.000Z",
+                  stateRevision: 1 as never,
+                };
+                changes.set(change.changeId, change);
+                return { value: change, afterCommit: [] };
+              }),
+            revert: (input) =>
+              Effect.sync(() => {
+                const original = changes.get(input.changeId)!;
+                const change = {
+                  ...original,
+                  changeId: `extension-usage-change:${input.clientRequestId}` as never,
+                  clientRequestId: input.clientRequestId,
+                  before: original.after,
+                  after: original.before,
+                  revertedChangeId: original.changeId,
+                  stateRevision: 2 as never,
+                };
+                changes.set(change.changeId, change);
+                return { value: change, afterCommit: [] };
+              }),
+            read: (changeId) => Effect.succeed(changes.get(changeId) ?? null),
+          },
+          extensionContextImpact: {
+            listUsageContextAffectedSurfaces: (input) =>
+              Effect.sync(() => {
+                affected.push({ agentProfile: input.agentProfile, profileId: input.profileId });
+                return [];
+              }),
+            applySnapshotContextImpact: () => Effect.die("unused"),
+          },
+        }),
+      ),
+    );
+  });
 });
 
 const sourceFactInvalidation = {
@@ -1820,6 +2021,8 @@ interface TestLayerOverrides {
   readonly failRecoveryStatusPublication?: boolean;
   readonly sourceInvalidation?: RuntimeSourceInvalidationService["Service"];
   readonly onRestoreOpenBlockingRequests?: () => void;
+  readonly extensionUsageState?: ExtensionUsageStatePortService;
+  readonly extensionContextImpact?: RuntimeExtensionContextImpactStatePortService;
 }
 
 function testRuntimeLayer(overrides: TestLayerOverrides) {
@@ -1869,6 +2072,36 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
         createRuntimeLayerConfigLayer({
           ...defaultRuntimeLayerConfig,
           ...overrides.config,
+        }),
+        Layer.succeed(RuntimeExtensionBuildService, {
+          build: () => Effect.die("unused extension build"),
+          buildOutcome: () => Effect.die("unused extension build outcome"),
+        }),
+        Layer.succeed(RuntimeExtensionLifecycleService, {
+          reconcileMutation: () => Effect.die("unused extension reconcile"),
+          create: () => Effect.die("unused extension create"),
+          duplicate: () => Effect.die("unused extension duplicate"),
+          delete: () => Effect.die("unused extension delete"),
+          reset: () => Effect.die("unused extension reset"),
+          addInstruction: () => Effect.die("unused instruction add"),
+          removeInstruction: () => Effect.die("unused instruction remove"),
+          configureInstruction: () => Effect.die("unused instruction configure"),
+          renameInstruction: () => Effect.die("unused instruction rename"),
+          reorderInstructions: () => Effect.die("unused instruction reorder"),
+          revertMutation: () => Effect.die("unused lifecycle revert"),
+        }),
+        Layer.succeed(RuntimeExtensionSnapshotService, {
+          list: () => Effect.die("unused snapshot list"),
+          save: () => Effect.die("unused snapshot save"),
+          rename: () => Effect.die("unused snapshot rename"),
+          delete: () => Effect.die("unused snapshot delete"),
+          load: () => Effect.die("unused snapshot load"),
+          ensureInitial: () => Effect.die("unused snapshot initial"),
+          recover: () => Effect.die("unused snapshot recovery"),
+          processCleanup: () => Effect.die("unused snapshot cleanup"),
+        }),
+        Layer.succeed(RuntimeGeneratedContextPreviewService, {
+          preview: () => Effect.die("unused generated-context preview"),
         }),
         Layer.succeed(RuntimeSourceReconcileRecoveryWorker, {
           wake: () =>
@@ -1939,6 +2172,31 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
         Layer.succeed(RuntimeWorkflowTaskAgentBridgeBearerVerifier, {
           verify: () => Effect.succeed(true),
         }),
+        Layer.succeed(ExtensionSnapshotStatePort, unusedPort("ExtensionSnapshotStatePort")),
+        Layer.succeed(
+          ExtensionUsageStatePort,
+          overrides.extensionUsageState ?? unusedPort("ExtensionUsageStatePort"),
+        ),
+        Layer.succeed(
+          ExtensionSnapshotSettingsStatePort,
+          unusedPort("ExtensionSnapshotSettingsStatePort"),
+        ),
+        Layer.succeed(
+          ExtensionSnapshotPayloadStorePort,
+          unusedPort("ExtensionSnapshotPayloadStorePort"),
+        ),
+        Layer.succeed(
+          ExtensionSnapshotSecretStorePort,
+          unusedPort("ExtensionSnapshotSecretStorePort"),
+        ),
+        Layer.succeed(
+          ExtensionSnapshotSecretValuesPort,
+          unusedPort("ExtensionSnapshotSecretValuesPort"),
+        ),
+        Layer.succeed(
+          RuntimeExtensionContextImpactStatePort,
+          overrides.extensionContextImpact ?? unusedPort("RuntimeExtensionContextImpactStatePort"),
+        ),
         Layer.succeed(RuntimeSurfaceScopeService, fakeRuntimeSurfaceScopeService()),
         Layer.succeed(
           RuntimeActorExtensionBindingStatePort,
@@ -2037,6 +2295,37 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
           listAcquiredWorkspaceIds: () => Effect.succeed([workspaceId]),
           requestScan: () => Effect.void,
           reconcile: () => Effect.succeed(null),
+        }),
+        Layer.succeed(RuntimeExternalInstructionScanInputPort, {
+          resolve: (requestedWorkspaceId) =>
+            Effect.succeed({
+              workspaceId: requestedWorkspaceId,
+              workspaceRoot: "/tmp/svvy-runtime-layer-effect" as AbsolutePath,
+              cwd: "/tmp/svvy-runtime-layer-effect" as AbsolutePath,
+              homeDirectory: "/tmp" as AbsolutePath,
+              settings: DEFAULT_EXTERNAL_INSTRUCTIONS,
+            }),
+        }),
+        Layer.succeed(RuntimeExternalInstructionStatePort, {
+          reconcileExternalInstructions: ({ workspaceId: requestedWorkspaceId }) =>
+            Effect.succeed({
+              value: {
+                changed: false,
+                projection: {
+                  workspaceId: requestedWorkspaceId,
+                  sources: [],
+                  diagnostics: [],
+                  observedAt: null,
+                  revision: 0 as StateRevision,
+                },
+              },
+              afterCommit: [],
+            }),
+          readExternalInstructions: () =>
+            Effect.die("external instruction projection read was not expected"),
+        }),
+        Layer.succeed(GeneratedContextPreviewSubjectStatePort, {
+          readSubject: () => Effect.die("generated context preview subject read was not expected"),
         }),
         Layer.succeed(RuntimeLayerCommandStdinPort, {
           writeStdin: () =>
@@ -2229,6 +2518,28 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
         Layer.succeed(RuntimeWorkflowTaskAgentBridgeBearerVerifier, {
           verify: () => Effect.succeed(true),
         }),
+        Layer.succeed(ExtensionSnapshotStatePort, unusedPort("ExtensionSnapshotStatePort")),
+        Layer.succeed(ExtensionUsageStatePort, unusedPort("ExtensionUsageStatePort")),
+        Layer.succeed(
+          ExtensionSnapshotSettingsStatePort,
+          unusedPort("ExtensionSnapshotSettingsStatePort"),
+        ),
+        Layer.succeed(
+          ExtensionSnapshotPayloadStorePort,
+          unusedPort("ExtensionSnapshotPayloadStorePort"),
+        ),
+        Layer.succeed(
+          ExtensionSnapshotSecretStorePort,
+          unusedPort("ExtensionSnapshotSecretStorePort"),
+        ),
+        Layer.succeed(
+          ExtensionSnapshotSecretValuesPort,
+          unusedPort("ExtensionSnapshotSecretValuesPort"),
+        ),
+        Layer.succeed(
+          RuntimeExtensionContextImpactStatePort,
+          unusedPort("RuntimeExtensionContextImpactStatePort"),
+        ),
         Layer.succeed(SandboxPolicySource, unusedSandboxPolicySource()),
         Layer.succeed(SandboxHelperCandidatesPort, {
           getSnapshot: () => Effect.succeed({ candidates: [], allowedRoots: [] }),
@@ -2246,6 +2557,32 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
         Layer.succeed(
           Extensions,
           Extensions.of({
+            registry: {
+              observe: () =>
+                Effect.succeed({
+                  aggregateFingerprint: "runtime_layer_registry_fingerprint",
+                  observations: [],
+                  diagnostics: [],
+                }),
+            },
+            builds: {
+              observeCurrent: ({
+                registryObservation,
+              }: Parameters<Extensions["Service"]["builds"]["observeCurrent"]>[0]) =>
+                Effect.succeed({
+                  registryAggregateFingerprint: registryObservation.aggregateFingerprint,
+                  observations: [],
+                }),
+            },
+            dependencies: {
+              refreshReadiness: ({
+                registryObservation,
+              }: Parameters<Extensions["Service"]["dependencies"]["refreshReadiness"]>[0]) =>
+                Effect.succeed({
+                  registryAggregateFingerprint: registryObservation.aggregateFingerprint,
+                  readiness: [],
+                }),
+            },
             generatedPackages: {
               refresh: (input: GeneratedPackageBuildInput) =>
                 Effect.sync(
@@ -2258,6 +2595,11 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
                     },
                 ),
               planWorkspaceLink: () => Effect.die("unused"),
+            },
+            externalInstructions: {
+              scan: () => Effect.succeed({ sources: [], contents: [], diagnostics: [] }),
+              resolveSource: () => Effect.die("unused"),
+              saveSource: () => Effect.die("unused"),
             },
             sources: {
               openEditSession: () => Effect.die("unused"),
@@ -2305,6 +2647,56 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
             }).pipe(Effect.asVoid),
           reconcile: (input) =>
             Effect.sync(() => overrides.onReconcileSourceInvalidation?.(input) ?? null),
+        }),
+        Layer.succeed(RuntimeExternalInstructionScanInputPort, {
+          resolve: (requestedWorkspaceId) =>
+            Effect.succeed({
+              workspaceId: requestedWorkspaceId,
+              workspaceRoot: "/tmp/svvy-runtime-layer-effect" as AbsolutePath,
+              cwd: "/tmp/svvy-runtime-layer-effect" as AbsolutePath,
+              homeDirectory: "/tmp" as AbsolutePath,
+              settings: DEFAULT_EXTERNAL_INSTRUCTIONS,
+            }),
+        }),
+        Layer.succeed(RuntimeExternalInstructionStatePort, {
+          reconcileExternalInstructions: ({ workspaceId: requestedWorkspaceId }) =>
+            Effect.succeed({
+              value: {
+                changed: false,
+                projection: {
+                  workspaceId: requestedWorkspaceId,
+                  sources: [],
+                  diagnostics: [],
+                  observedAt: null,
+                  revision: 0 as StateRevision,
+                },
+              },
+              afterCommit: [],
+            }),
+          readExternalInstructions: () =>
+            Effect.die("external instruction projection read was not expected"),
+        }),
+        Layer.succeed(GeneratedContextPreviewSubjectStatePort, {
+          readSubject: () => Effect.die("unused generated context preview subject"),
+        }),
+        Layer.succeed(RuntimeExtensionStatePort, {
+          readBuildAttemptByClientRequestId: () => Effect.succeed(null),
+          reconcileRegistryObservation: ({ observation, observedAt }) =>
+            Effect.succeed({
+              value: { observation, observedAt },
+              afterCommit: [{ scope: "app", invalidation: { model: "extensions" } }],
+            }),
+          reconcileBuildEvidence: () => Effect.die("unused extension build evidence"),
+          startBuildAttempt: () => Effect.die("unused extension build attempt start"),
+          recordBuildSuccess: () => Effect.die("unused extension build success"),
+          recordBuildFailure: () => Effect.die("unused extension build failure"),
+          reconcileDependencyReadiness: ({ readiness }) =>
+            Effect.succeed({
+              value: { changed: false, readiness },
+              afterCommit: [],
+            }),
+          recordDependencyApproval: () => Effect.die("unused dependency approval"),
+          recordDependencyReadiness: () => Effect.die("unused dependency readiness"),
         }),
         Layer.succeed(RuntimeLayerCommandStdinPort, {
           writeStdin: () =>

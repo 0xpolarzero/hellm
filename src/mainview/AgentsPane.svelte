@@ -13,12 +13,11 @@
     type WorkflowAgentSettings,
   } from "../shared/agent-settings";
   import type {
-    AgentContextPreviewRequest,
     AgentContextPreviewResponse,
+    AgentExtensionCatalogItem,
     AgentModelChoice,
     AgentsReadModel,
     ConfiguredAgentProfileReadModelRecord,
-    ExtensionInventoryItemReadModel,
   } from "../shared/workspace-contract";
   import type {
     AgentProfileId as StateAgentProfileId,
@@ -40,7 +39,6 @@
   import {
     type AgentContextActor,
     extensionUsageItems as buildExtensionUsageItems,
-    mergeActorExtensionDefaults,
   } from "./agents-pane-extension-usage";
   import type { ExtensionUsageControlItem } from "./agents-pane-extension-usage";
   import ProfileExtensionEditor from "./ProfileExtensionEditor.svelte";
@@ -77,7 +75,7 @@
   let confirmingDeleteProfileId = $state<string | null>(null);
   let expandedProfileIds = $state<Set<string>>(new Set());
   let modelChoices = $state<AgentModelChoice[]>([]);
-  let extensionInventoryItems = $state<ExtensionInventoryItemReadModel[]>([]);
+  let extensionCatalogItems = $state<AgentExtensionCatalogItem[]>([]);
   let contextPreviewByProfileId = $state<Record<string, AgentContextPreviewResponse>>({});
   let contextPreviewErrorsByProfileId = $state<Record<string, string>>({});
   let workflowAgentInstructionDrafts = $state<Record<string, string>>({});
@@ -159,7 +157,7 @@
       agents = nextAgents;
       loading = false;
       void loadAgentModelChoices(requestId);
-      void loadExtensionsInventory(requestId);
+      void loadExtensionCatalog(requestId);
     } catch (error) {
       if (requestId !== settingsLoadRequest) return;
       errorMessage = error instanceof Error ? error.message : "Unable to load agent profiles.";
@@ -187,19 +185,19 @@
     }
   }
 
-  async function loadExtensionsInventory(requestId: number) {
-    const snapshot = runtime.extensionsInventorySnapshot;
+  async function loadExtensionCatalog(requestId: number) {
+    const snapshot = runtime.agentExtensionsCatalogSnapshot;
     if (snapshot && requestId === settingsLoadRequest) {
-      extensionInventoryItems = snapshot.extensions;
+      extensionCatalogItems = [...snapshot.records];
     }
     try {
-      const nextExtensionsInventory = await runtime.getExtensionsInventory();
+      const nextCatalog = await runtime.getAgentExtensionsCatalog();
       if (requestId === settingsLoadRequest) {
-        extensionInventoryItems = nextExtensionsInventory.extensions;
+        extensionCatalogItems = [...nextCatalog.records];
       }
     } catch {
       if (requestId === settingsLoadRequest) {
-        extensionInventoryItems = [];
+        extensionCatalogItems = [];
       }
     }
   }
@@ -329,8 +327,7 @@
   }
 
   function workflowAgentInstructionPromptText(instructions: string): string {
-    const trimmed = instructions.trim();
-    return trimmed ? `## Custom Instructions\n${trimmed}` : "";
+    return instructions.trim();
   }
 
   function workflowAgentInstructionTokenCount(agent: WorkflowAgentSettings): number {
@@ -352,26 +349,22 @@
     const currentInstructions = workflowAgentInstructionText(agent);
     if (currentInstructions === agent.instructions) return preview;
 
-    const savedInstructionTokens = countPromptTokens({
-      provider: preview.provider,
-      model: preview.model,
-      text: workflowAgentInstructionPromptText(agent.instructions),
-    }).tokens;
+    const savedInstructionTokens =
+      preview.generatedContext.promptBlocks.find(
+        (block) => block.contributorId === "workflow-task-inline-instructions",
+      )?.tokenEstimate ?? 0;
     const currentInstructionTokens = countPromptTokens({
-      provider: preview.provider,
-      model: preview.model,
+      provider: preview.providerId,
+      model: preview.modelId,
       text: workflowAgentInstructionPromptText(currentInstructions),
     }).tokens;
     const tokens = Math.max(
       0,
-      preview.tokenCount.tokens - savedInstructionTokens + currentInstructionTokens,
+      preview.tokenEstimate - savedInstructionTokens + currentInstructionTokens,
     );
     return {
       ...preview,
-      tokenCount: {
-        ...preview.tokenCount,
-        tokens,
-      },
+      tokenEstimate: tokens,
     };
   }
 
@@ -389,7 +382,23 @@
       contextPreviewErrorsByProfileId;
     contextPreviewErrorsByProfileId = remainingPreviewErrors;
     try {
-      const preview = await runtime.getAgentContextPreview({ profileId, actor });
+      const preview = await runtime.previewGeneratedContext(
+        actor === "workflow-task"
+          ? {
+              subject: {
+                kind: "workflow-agent",
+                actorKind: "workflow-task",
+                sourceId: profileId,
+              },
+            }
+          : {
+              subject: {
+                kind: "configured-profile",
+                actorKind: actor,
+                profileId: profileId as StateAgentProfileId,
+              },
+            },
+      );
       if (activeContextPreviewRequests.get(key) !== requestId) return;
       contextPreviewByProfileId = {
         ...contextPreviewByProfileId,
@@ -1055,14 +1064,17 @@
   }
 
   function toggleExpanded(profileId: string, actor: AgentContextActor) {
-    if (expandedProfileIds.has(profileId)) {
+    const expanding = !expandedProfileIds.has(profileId);
+    if (!expanding) {
       expandedProfileIds.delete(profileId);
       activeContextPreviewRequests.delete(contextPreviewKey(actor, profileId));
     } else {
       expandedProfileIds.add(profileId);
-      void loadAgentContextPreview(profileId, actor);
     }
     expandedProfileIds = new Set(expandedProfileIds);
+    if (expanding) {
+      void loadAgentContextPreview(profileId, actor);
+    }
   }
 
   function extensionUsageItems(input: {
@@ -1074,18 +1086,10 @@
       input.actor === "orchestrator" || input.actor === "workflow-task"
         ? agents?.actorExtensionDefaults.find((record) => record.actor === input.actor)
         : null;
-    const inventoryDefaults =
-      input.actor === "orchestrator" || input.actor === "workflow-task"
-        ? mergeActorExtensionDefaults({
-            actor: input.actor,
-            inventoryDefaults: runtime.extensionsInventorySnapshot?.defaults,
-            stateDefaults: stateActorDefaults,
-          })
-        : (runtime.extensionsInventorySnapshot?.defaults ?? null);
     return buildExtensionUsageItems({
       ...input,
-      extensionInventoryItems,
-      inventoryDefaults,
+      extensionCatalogItems,
+      actorDefaults: stateActorDefaults,
       networkAccess:
         runtime.appPreferencesSnapshot?.networkAccess ?? true,
     });
@@ -1105,7 +1109,7 @@
   function syncRuntimeSnapshots() {
     const nextAgents = runtime.agentsSnapshot;
     const nextModelChoices = runtime.modelMetadataSnapshot;
-    const nextExtensionsInventory = runtime.extensionsInventorySnapshot;
+    const nextExtensionCatalog = runtime.agentExtensionsCatalogSnapshot;
     if (nextAgents) {
       agents = nextAgents;
       loading = false;
@@ -1113,8 +1117,8 @@
     if (nextModelChoices) {
       modelChoices = [...nextModelChoices];
     }
-    if (nextExtensionsInventory) {
-      extensionInventoryItems = nextExtensionsInventory.extensions;
+    if (nextExtensionCatalog) {
+      extensionCatalogItems = [...nextExtensionCatalog.records];
     }
   }
 
@@ -1475,12 +1479,12 @@
           <span class="context-preview-eyebrow">Generated context preview</span>
           <strong>{preview.profileName}</strong>
         </div>
-        <span class="context-preview-model">{preview.provider}/{preview.model} · {preview.reasoningEffort}</span>
+        <span class="context-preview-model">{preview.providerId}/{preview.modelId} · {preview.reasoningEffort}</span>
       </div>
       <div class="context-preview-meta">
-        <span>Actor: {preview.actor}</span>
-        <span>Loaded: {preview.loadedExtensionIds.join(", ") || "none"}</span>
-        <span>Available: {preview.availableExtensionIds.join(", ") || "none"}</span>
+        <span>Actor: {preview.actorBinding.actorKind}</span>
+        <span>Loaded: {preview.extensions.filter((extension) => extension.state === "loaded").map((extension) => extension.extensionId).join(", ") || "none"}</span>
+        <span>Available: {preview.extensions.filter((extension) => extension.state === "available").map((extension) => extension.extensionId).join(", ") || "none"}</span>
       </div>
       <pre class="context-preview-body">{preview.systemPrompt}</pre>
     {:else}

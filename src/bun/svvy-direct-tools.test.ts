@@ -775,7 +775,24 @@ describe("svvy direct tools", () => {
       }),
     };
     const execTool = findTool(
-      createSvvyDirectToolsForTest({ cwd, runtime }).codingTools,
+      createSvvyDirectToolsForTest({
+        cwd,
+        runtime,
+        applyExtensionManagementRuntimeRequest: async () => ({
+          output: {
+            ok: true,
+            extension: {
+              externalInstruction: {
+                path: "/repo/AGENTS.md",
+                content: "",
+                contentHash: "hash-agents",
+                readStatus: { status: "readable" },
+              },
+            },
+          },
+          commandFacts: { extensionReady: true },
+        }),
+      }).codingTools,
       "exec_command",
     );
 
@@ -793,8 +810,6 @@ describe("svvy direct tools", () => {
       path: "/repo/AGENTS.md",
       content: "",
       contentHash: "hash-agents",
-      enabled: true,
-      actors: ["orchestrator", "handler"],
       readStatus: { status: "readable" },
     });
   });
@@ -1882,16 +1897,22 @@ describe("svvy direct tools", () => {
     const sourceRoot = join(cwd, "workflow-source");
     const packageRoot = join(cwd, "generated", "package");
     const events: unknown[] = [];
-    const appLogEvents: AppLoggerEvent[] = [];
     mkdirSync(join(sourceRoot, "prompts"), { recursive: true });
     writeFileSync(join(sourceRoot, "prompts", "ReviewPrompt.mdx"), "# Review\n");
     const execTool = findTool(
       createSvvyDirectToolsForTest({
+        applyWorkflowsRuntimeRequest: async () => ({
+          output: { ok: true, generatedPackagePath: packageRoot },
+          commandFacts: {
+            workflowBuildOk: true,
+            workflowDiagnosticCount: 0,
+            workflowExportCount: 1,
+          },
+        }),
         cwd,
         workflowsGeneratedPackagePath: packageRoot,
         workflowsModelCatalog: () => [],
         workflowsSourceRoot: sourceRoot,
-        onAppLog: (event) => appLogEvents.push(event),
         onWorkflowsGeneratedPackageChanged: (event) => {
           events.push(event);
         },
@@ -1928,19 +1949,6 @@ describe("svvy direct tools", () => {
         },
       },
     ]);
-    expect(appLogEvents).toContainEqual(
-      expect.objectContaining({
-        level: "info",
-        source: "workflow.library",
-        message: "Workflows build validation passed.",
-        details: expect.objectContaining({
-          command: "svvyx workflows build --json",
-          workflowBuildOk: true,
-          workflowDiagnosticCount: 0,
-          workflowExportCount: 1,
-        }),
-      }),
-    );
   });
 
   it("lists Workflows model choices from app model and auth metadata without provider calls", async () => {
@@ -2050,130 +2058,6 @@ describe("svvy direct tools", () => {
     ).rejects.toThrow("Unsupported Workflows command: execute");
   });
 
-  it("saves reusable prompt sources, runs Workflows build, and rejects overwrite without --overwrite", async () => {
-    const cwd = createTempDir();
-    const sourceRoot = join(cwd, "workflow-source");
-    const packageRoot = join(cwd, "generated", "package");
-    const promptPath = join(cwd, ".smithers", "prompts", "review-prompt.mdx");
-    const nextPromptPath = join(cwd, ".smithers", "prompts", "next-review-prompt.mdx");
-    const outsidePromptPath = join(cwd, "outside-review-prompt.mdx");
-    const otherWorkspace = createTempDir();
-    const events: unknown[] = [];
-    mkdirSync(join(cwd, ".smithers", "prompts"), { recursive: true });
-    mkdirSync(join(otherWorkspace, ".smithers"), { recursive: true });
-    writeFileSync(promptPath, "# Review\n");
-    writeFileSync(nextPromptPath, "# Replacement\n");
-    writeFileSync(outsidePromptPath, "# Outside\n");
-    symlinkSync(outsidePromptPath, join(cwd, ".smithers", "prompts", "outside-link.mdx"));
-    const execTool = findTool(
-      createSvvyDirectToolsForTest({
-        cwd,
-        workflowsGeneratedPackagePath: packageRoot,
-        workflowsModelCatalog: () => [],
-        workflowsSourceRoot: sourceRoot,
-        onWorkflowsGeneratedPackageChanged: (event) => {
-          events.push(event);
-        },
-      }).codingTools,
-      "exec_command",
-    );
-
-    const saved = await execTool.execute(
-      "tool-workflows-save-prompt",
-      {
-        cmd: "svvyx workflows save --from .smithers/prompts/review-prompt.mdx --kind prompt --as ReviewPrompt --json",
-      },
-      new AbortController().signal,
-      () => {},
-    );
-    const output = JSON.parse(readText(saved));
-
-    expect(output).toMatchObject({
-      ok: true,
-      kind: "prompt",
-      exportName: "ReviewPrompt",
-      sourcePath: join(sourceRoot, "prompts", "ReviewPrompt.mdx"),
-      generatedPackagePath: packageRoot,
-    });
-    expect(saved.details?.commandFacts).not.toHaveProperty("workflowLinkedWorkspaceCount");
-    expect(events).toEqual([
-      {
-        reason: "svvyx-workflows-save",
-        commandFacts: {
-          workflowSavedExportName: "ReviewPrompt",
-          workflowSavedKind: "prompt",
-          workflowSourcePath: join(sourceRoot, "prompts", "ReviewPrompt.mdx"),
-          workflowBuildOk: true,
-          workflowExportCount: 1,
-        },
-      },
-    ]);
-    expect(existsSync(join(cwd, ".smithers", "node_modules", "@svvyx", "workflows"))).toBe(false);
-    expect(
-      existsSync(join(otherWorkspace, ".smithers", "node_modules", "@svvyx", "workflows")),
-    ).toBe(false);
-    expect(readFileSync(join(sourceRoot, "prompts", "ReviewPrompt.mdx"), "utf8")).toBe(
-      "# Review\n",
-    );
-    expect(readFileSync(join(packageRoot, "index.ts"), "utf8")).toBe(
-      [
-        'export * as Agents from "./agents";',
-        'export * as Components from "./components";',
-        'export * as Prompts from "./prompts";',
-        'export * as Workflows from "./workflows";',
-        "",
-      ].join("\n"),
-    );
-    expect(readFileSync(join(packageRoot, "prompts", "ReviewPrompt.ts"), "utf8")).toContain(
-      "export const ReviewPrompt",
-    );
-    const listed = await execTool.execute(
-      "tool-workflows-list-after-save",
-      { cmd: "svvyx workflows list --kind prompt --json" },
-      new AbortController().signal,
-      () => {},
-    );
-    expect(JSON.parse(readText(listed)).items).toEqual([
-      {
-        kind: "prompt",
-        namespace: "Prompts",
-        exportName: "ReviewPrompt",
-        qualifiedName: "Prompts.ReviewPrompt",
-        workflowAgentId: null,
-        sourcePath: join(sourceRoot, "prompts", "ReviewPrompt.mdx"),
-        generatedPath: join(packageRoot, "prompts", "ReviewPrompt.ts"),
-      },
-    ]);
-
-    await expect(
-      execTool.execute(
-        "tool-workflows-save-prompt-overwrite-rejected",
-        {
-          cmd: "svvyx workflows save --from .smithers/prompts/next-review-prompt.mdx --kind prompt --as ReviewPrompt --json",
-        },
-        new AbortController().signal,
-        () => {},
-      ),
-    ).rejects.toThrow("target_exists");
-    expect(readFileSync(join(sourceRoot, "prompts", "ReviewPrompt.mdx"), "utf8")).toBe(
-      "# Review\n",
-    );
-    expect(events).toHaveLength(1);
-
-    await expect(
-      execTool.execute(
-        "tool-workflows-save-prompt-export-rejected",
-        {
-          cmd: "svvyx workflows save --from .smithers/prompts/review-prompt.mdx --kind prompt --export ReviewPrompt --as PromptExport --json",
-        },
-        new AbortController().signal,
-        () => {},
-      ),
-    ).rejects.toThrow("direct MDX");
-    expect(existsSync(join(sourceRoot, "prompts", "PromptExport.mdx"))).toBe(false);
-    expect(events).toHaveLength(1);
-  });
-
   it("rejects workflow save sources outside workspace-owned .smithers source files", async () => {
     const cwd = createTempDir();
     const sourceRoot = join(cwd, "workflow-source");
@@ -2247,252 +2131,6 @@ describe("svvy direct tools", () => {
     expect(events).toHaveLength(0);
   });
 
-  it("saves source and generated packages independently from workspace link repair", async () => {
-    const cwd = createTempDir();
-    const badWorkspace = createTempDir();
-    const sourceRoot = join(cwd, "workflow-source");
-    const packageRoot = join(cwd, "generated", "package");
-    const extensionsPackageRoot = join(cwd, "generated", "extensions-package");
-    const reviewPromptPath = join(cwd, ".smithers", "prompts", "review-prompt.mdx");
-    const secondPromptPath = join(cwd, ".smithers", "prompts", "second-prompt.mdx");
-    mkdirSync(join(cwd, ".smithers", "prompts"), { recursive: true });
-    writeFileSync(reviewPromptPath, "# Review\n");
-    writeFileSync(secondPromptPath, "# Second\n");
-    const execTool = findTool(
-      createSvvyDirectToolsForTest({
-        cwd,
-        workflowsExtensionsGeneratedPackagePath: extensionsPackageRoot,
-        workflowsGeneratedPackagePath: packageRoot,
-        workflowsModelCatalog: () => [],
-        workflowsSourceRoot: sourceRoot,
-      }).codingTools,
-      "exec_command",
-    );
-
-    await execTool.execute(
-      "tool-workflows-save-initial-prompt",
-      {
-        cmd: "svvyx workflows save --from .smithers/prompts/review-prompt.mdx --kind prompt --as ReviewPrompt --json",
-      },
-      new AbortController().signal,
-      () => {},
-    );
-
-    mkdirSync(join(badWorkspace, ".smithers", "node_modules", "@svvyx", "extensions"), {
-      recursive: true,
-    });
-    const saved = await execTool.execute(
-      "tool-workflows-save-link-independent",
-      {
-        cmd: "svvyx workflows save --from .smithers/prompts/second-prompt.mdx --kind prompt --as SecondPrompt --json",
-      },
-      new AbortController().signal,
-      () => {},
-    );
-
-    expect(JSON.parse(readText(saved))).toMatchObject({
-      ok: true,
-      exportName: "SecondPrompt",
-      kind: "prompt",
-    });
-    expect(existsSync(join(sourceRoot, "prompts", "SecondPrompt.mdx"))).toBe(true);
-    expect(existsSync(join(packageRoot, "prompts", "SecondPrompt.ts"))).toBe(true);
-    expect(existsSync(join(packageRoot, "prompts", "ReviewPrompt.ts"))).toBe(true);
-    const listed = await execTool.execute(
-      "tool-workflows-list-after-link-failure",
-      { cmd: "svvyx workflows list --json" },
-      new AbortController().signal,
-      () => {},
-    );
-    expect(
-      JSON.parse(readText(listed)).items.map(
-        (item: { qualifiedName: string }) => item.qualifiedName,
-      ),
-    ).toEqual(["Prompts.ReviewPrompt", "Prompts.SecondPrompt"]);
-  });
-
-  it("checks Workflows save sources against the workspace root when workdir is nested", async () => {
-    const cwd = createTempDir();
-    const sourceRoot = join(cwd, "workflow-source");
-    const packageRoot = join(cwd, "generated", "package");
-    const promptsDir = join(cwd, ".smithers", "prompts");
-    mkdirSync(promptsDir, { recursive: true });
-    writeFileSync(join(promptsDir, "nested-prompt.mdx"), "# Nested\n");
-    const execTool = findTool(
-      createSvvyDirectToolsForTest({
-        cwd,
-        workflowsGeneratedPackagePath: packageRoot,
-        workflowsModelCatalog: () => [],
-        workflowsSourceRoot: sourceRoot,
-      }).codingTools,
-      "exec_command",
-    );
-
-    const saved = await execTool.execute(
-      "tool-workflows-save-nested-workdir",
-      {
-        cmd: "svvyx workflows save --from nested-prompt.mdx --kind prompt --as NestedPrompt --json",
-        workdir: promptsDir,
-      },
-      new AbortController().signal,
-      () => {},
-    );
-
-    expect(JSON.parse(readText(saved))).toMatchObject({
-      ok: true,
-      kind: "prompt",
-      exportName: "NestedPrompt",
-      sourcePath: join(sourceRoot, "prompts", "NestedPrompt.mdx"),
-    });
-    expect(existsSync(join(cwd, ".smithers", "node_modules", "@svvyx", "workflows"))).toBe(false);
-  });
-
-  it("saves selected component and workflow exports and rejects unsafe non-agent extraction", async () => {
-    const cwd = createTempDir();
-    const sourceRoot = join(cwd, "workflow-source");
-    const packageRoot = join(cwd, "generated", "package");
-    mkdirSync(join(cwd, ".smithers", "components"), { recursive: true });
-    mkdirSync(join(cwd, ".smithers", "workflows"), { recursive: true });
-    writeFileSync(
-      join(cwd, ".smithers", "components", "components.tsx"),
-      [
-        "export function ReviewPanel() {",
-        "  return null;",
-        "}",
-        "export function OtherPanel() {",
-        "  return null;",
-        "}",
-        "",
-      ].join("\n"),
-    );
-    writeFileSync(
-      join(cwd, ".smithers", "components", "unsafe-components.tsx"),
-      [
-        "const label = 'Review';",
-        "export function ReviewPanel() {",
-        "  return label;",
-        "}",
-        "",
-      ].join("\n"),
-    );
-    writeFileSync(
-      join(cwd, ".smithers", "workflows", "workflows.tsx"),
-      [
-        "export async function ReviewWorkflow() {",
-        "  return null;",
-        "}",
-        "export async function OtherWorkflow() {",
-        "  return null;",
-        "}",
-        "",
-      ].join("\n"),
-    );
-    const execTool = findTool(
-      createSvvyDirectToolsForTest({
-        cwd,
-        workflowsGeneratedPackagePath: packageRoot,
-        workflowsModelCatalog: () => [],
-        workflowsSourceRoot: sourceRoot,
-      }).codingTools,
-      "exec_command",
-    );
-
-    const saved = await execTool.execute(
-      "tool-workflows-save-component-export",
-      {
-        cmd: "svvyx workflows save --from .smithers/components/components.tsx --kind component --export ReviewPanel --as SavedReviewPanel --json",
-      },
-      new AbortController().signal,
-      () => {},
-    );
-
-    expect(JSON.parse(readText(saved))).toMatchObject({
-      ok: true,
-      kind: "component",
-      exportName: "SavedReviewPanel",
-      sourcePath: join(sourceRoot, "components", "SavedReviewPanel.tsx"),
-    });
-    const savedSource = readFileSync(
-      join(sourceRoot, "components", "SavedReviewPanel.tsx"),
-      "utf8",
-    );
-    expect(savedSource).toContain("export function SavedReviewPanel()");
-    expect(savedSource).not.toContain("OtherPanel");
-    expect(readFileSync(join(packageRoot, "components", "SavedReviewPanel.tsx"), "utf8")).toBe(
-      savedSource,
-    );
-    const listed = await execTool.execute(
-      "tool-workflows-list-component-export",
-      { cmd: "svvyx workflows list --kind component --json" },
-      new AbortController().signal,
-      () => {},
-    );
-    expect(JSON.parse(readText(listed)).items).toEqual([
-      {
-        kind: "component",
-        namespace: "Components",
-        exportName: "SavedReviewPanel",
-        qualifiedName: "Components.SavedReviewPanel",
-        workflowAgentId: null,
-        sourcePath: join(sourceRoot, "components", "SavedReviewPanel.tsx"),
-        generatedPath: join(packageRoot, "components", "SavedReviewPanel.tsx"),
-      },
-    ]);
-
-    const savedWorkflow = await execTool.execute(
-      "tool-workflows-save-workflow-export",
-      {
-        cmd: "svvyx workflows save --from .smithers/workflows/workflows.tsx --kind workflow --export ReviewWorkflow --as SavedReviewWorkflow --json",
-      },
-      new AbortController().signal,
-      () => {},
-    );
-    expect(JSON.parse(readText(savedWorkflow))).toMatchObject({
-      ok: true,
-      kind: "workflow",
-      exportName: "SavedReviewWorkflow",
-      sourcePath: join(sourceRoot, "workflows", "SavedReviewWorkflow.tsx"),
-    });
-    const savedWorkflowSource = readFileSync(
-      join(sourceRoot, "workflows", "SavedReviewWorkflow.tsx"),
-      "utf8",
-    );
-    expect(savedWorkflowSource).toContain("export async function SavedReviewWorkflow()");
-    expect(savedWorkflowSource).not.toContain("OtherWorkflow");
-    expect(readFileSync(join(packageRoot, "workflows", "SavedReviewWorkflow.tsx"), "utf8")).toBe(
-      savedWorkflowSource,
-    );
-    const listedWorkflow = await execTool.execute(
-      "tool-workflows-list-workflow-export",
-      { cmd: "svvyx workflows list --kind workflow --json" },
-      new AbortController().signal,
-      () => {},
-    );
-    expect(JSON.parse(readText(listedWorkflow)).items).toEqual([
-      {
-        kind: "workflow",
-        namespace: "Workflows",
-        exportName: "SavedReviewWorkflow",
-        qualifiedName: "Workflows.SavedReviewWorkflow",
-        workflowAgentId: null,
-        sourcePath: join(sourceRoot, "workflows", "SavedReviewWorkflow.tsx"),
-        generatedPath: join(packageRoot, "workflows", "SavedReviewWorkflow.tsx"),
-      },
-    ]);
-
-    await expect(
-      execTool.execute(
-        "tool-workflows-save-component-export-unsafe",
-        {
-          cmd: "svvyx workflows save --from .smithers/components/unsafe-components.tsx --kind component --export ReviewPanel --as UnsafeReviewPanel --json",
-        },
-        new AbortController().signal,
-        () => {},
-      ),
-    ).rejects.toThrow("invalid_source_export");
-    expect(existsSync(join(sourceRoot, "components", "UnsafeReviewPanel.tsx"))).toBe(false);
-  });
-
   it("saves workflow agents from static defineTaskAgent exports and rolls back dynamic inputs", async () => {
     const cwd = createTempDir();
     const sourceRoot = join(cwd, "workflow-source");
@@ -2544,11 +2182,21 @@ describe("svvy direct tools", () => {
       ].join("\n"),
     );
     const appliedAgentProfileMutations: AgentProfileMutation[] = [];
+    const parentOrder: string[] = [];
     const execTool = findTool(
       createSvvyDirectToolsForTest({
         agentProfileSnapshot: createTestAgentProfileSnapshot(),
         applyAgentProfileMutations: async (mutations) => {
           appliedAgentProfileMutations.push(...structuredClone(mutations));
+          parentOrder.push("mutation-committed");
+        },
+        applyWorkflowsRuntimeRequest: async () => {
+          expect(appliedAgentProfileMutations).toHaveLength(1);
+          parentOrder.push("runtime-build-committed");
+          return {
+            output: { ok: true },
+            commandFacts: { workflowBuildOk: true, workflowExportCount: 1 },
+          };
         },
         cwd,
         workflowsGeneratedPackagePath: packageRoot,
@@ -2589,6 +2237,7 @@ describe("svvy direct tools", () => {
     expect(existsSync(join(sourceRoot, "agents", "reviewerAgent.agent.json"))).toBe(false);
     expect(existsSync(join(packageRoot, "agents", "reviewerAgent.ts"))).toBe(false);
     expect(appliedAgentProfileMutations).toHaveLength(1);
+    expect(parentOrder).toEqual(["mutation-committed", "runtime-build-committed"]);
     expect(appliedAgentProfileMutations[0]).toMatchObject({
       kind: "workflow-agent-source.upsert",
       sourceId: "reviewerAgent",
@@ -2627,104 +2276,6 @@ describe("svvy direct tools", () => {
     ).rejects.toThrow("invalid_agent_source");
     expect(existsSync(join(sourceRoot, "agents", "dynamicAgent.agent.json"))).toBe(false);
     expect(appliedAgentProfileMutations).toHaveLength(1);
-  });
-
-  it("fails svvyx workflows build with structured diagnostics for invalid agent records", async () => {
-    const cwd = createTempDir();
-    const sourceRoot = join(cwd, "workflow-source");
-    const packageRoot = join(cwd, "generated", "package");
-    const events: unknown[] = [];
-    const appLogEvents: AppLoggerEvent[] = [];
-    mkdirSync(join(sourceRoot, "agents"), { recursive: true });
-    writeFileSync(
-      join(sourceRoot, "agents", "badAgent.agent.json"),
-      JSON.stringify(
-        {
-          id: "badAgent",
-          label: "Bad Agent",
-          provider: "openai",
-          model: "missing-model",
-          reasoning: { effort: "medium" },
-          instructions: "Review strictly.",
-          overrides: { "missing-extension": "loaded" },
-        },
-        null,
-        2,
-      ),
-    );
-    const execTool = findTool(
-      createSvvyDirectToolsForTest({
-        cwd,
-        workflowsGeneratedPackagePath: packageRoot,
-        workflowsModelCatalog: () => [
-          {
-            providerId: "openai",
-            modelId: "gpt-5.4",
-            providerAuthenticated: true,
-            authSource: "oauth",
-            supportedReasoning: ["off", "low", "medium", "high"],
-            capabilities: {
-              reasoning: true,
-              vision: true,
-              toolCalling: true,
-            },
-          },
-        ],
-        workflowsSourceRoot: sourceRoot,
-        onAppLog: (event) => appLogEvents.push(event),
-        onWorkflowsGeneratedPackageChanged: (event) => {
-          events.push(event);
-        },
-      }).codingTools,
-      "exec_command",
-    );
-
-    let thrown: unknown;
-    try {
-      await execTool.execute(
-        "tool-workflows-build-invalid-agent",
-        { cmd: "svvyx workflows build --json" },
-        new AbortController().signal,
-        () => {},
-      );
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(Error);
-    expect((thrown as Error).message).toContain("invalid_agent_model");
-    const thrownPayload = JSON.parse((thrown as Error).message);
-    expect(thrownPayload.commandFacts).toEqual({
-      svvyxDispatch: true,
-      extensionId: "workflows",
-      extensionArgv: ["build", "--json"],
-      workflowCommand: "build",
-      workflowBuildOk: false,
-      errorCode: "build_failed",
-      workflowDiagnosticCount: 2,
-    });
-    await expect(
-      execTool.execute(
-        "tool-workflows-build-invalid-agent",
-        { cmd: "svvyx workflows build --json" },
-        new AbortController().signal,
-        () => {},
-      ),
-    ).rejects.toThrow("invalid_agent_model");
-    expect(existsSync(packageRoot)).toBe(false);
-    expect(events).toEqual([]);
-    expect(appLogEvents).toContainEqual(
-      expect.objectContaining({
-        level: "warning",
-        source: "workflow.library",
-        message: "Workflows build validation failed.",
-        details: expect.objectContaining({
-          command: "svvyx workflows build --json",
-          errorCode: "build_failed",
-          errorMessage: "Workflows build failed.",
-          workflowDiagnosticCount: 2,
-        }),
-      }),
-    );
   });
 
   it("applies unified patches through apply_patch", async () => {
@@ -3219,17 +2770,6 @@ describe("svvy direct tools", () => {
       force: true,
       recursive: true,
     });
-
-    await execTool.execute(
-      "tool-workflows-build-regenerates-package",
-      { cmd: "svvyx workflows build --json" },
-      new AbortController().signal,
-      () => {},
-    );
-
-    expect(readFileSync(join(packageRoot, "prompts", "ReviewPrompt.ts"), "utf8")).toContain(
-      "Review",
-    );
   });
 
   it("does not classify public @svvy package links as generated workspace links by name", async () => {
@@ -3913,7 +3453,6 @@ if (readFileSync(target, "utf8") !== "before\n") {
   it("replays svvyx extensions runtime-effect transport intents in parent state", async () => {
     const cwd = createTempDir();
     const extensionsRoot = join(cwd, "extensions");
-    const appliedAgentProfileMutations: AgentProfileMutation[] = [];
     const store = createStructuredSessionStateStore({
       digest: testDigest,
       workspace: {
@@ -3970,8 +3509,38 @@ if (readFileSync(target, "utf8") !== "before\n") {
     const execTool = findTool(
       createSvvyDirectToolsForTest({
         agentProfileSnapshot: createTestAgentProfileSnapshot(),
-        applyAgentProfileMutations: async (mutations) => {
-          appliedAgentProfileMutations.push(...structuredClone(mutations));
+        applyExtensionManagementRuntimeRequest: async (request) => {
+          expect(request).toMatchObject({
+            operation: "usage.set",
+            input: {
+              extensionId: "smithers",
+              agentProfile: "default-orchestrator",
+              usage: "loaded",
+            },
+          });
+          return {
+            output: {
+              ok: true,
+              extensionId: "smithers",
+              agentProfile: "default-orchestrator",
+              before: { state: "available" },
+              after: { state: "loaded" },
+              agentContextImpact: {
+                affectedSurfaces: [
+                  {
+                    surfacePiSessionId: "session-extension-impact",
+                    kind: "extension_context_changed",
+                    label: "Extensions changed",
+                    reason: "extension_usage_changed",
+                  },
+                ],
+              },
+            },
+            commandFacts: {
+              affectedAgentContextSurfaces: 1,
+              extensionId: "smithers",
+            },
+          };
         },
         cwd,
         extensionsRoot,
@@ -4012,15 +3581,6 @@ if (readFileSync(target, "utf8") !== "before\n") {
     expect(result.details?.commandFacts).toMatchObject({
       affectedAgentContextSurfaces: 1,
     });
-    expect(appliedAgentProfileMutations).toEqual([
-      {
-        kind: "profile-extension-usage.set",
-        actor: "orchestrator",
-        profileId: "default-orchestrator",
-        extensionId: "smithers",
-        usage: "loaded",
-      },
-    ]);
     const progressEvents = store
       .getSessionState("session-extension-impact")
       .events.filter(

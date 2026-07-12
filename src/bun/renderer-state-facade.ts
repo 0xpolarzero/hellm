@@ -16,7 +16,10 @@ export interface RendererStateCommandsFacade {
   readonly appLogs: BootstrapStateCommandsFacade["appLogs"];
   readonly appPreferences: BootstrapStateCommandsFacade["appPreferences"];
   readonly providerAuth: BootstrapStateCommandsFacade["providerAuth"];
-  readonly extensionEnv: BootstrapStateCommandsFacade["extensionEnv"];
+  readonly extensionEnv: Pick<
+    BootstrapStateCommandsFacade["extensionEnv"],
+    "setOverride" | "removeOverride"
+  >;
   readonly agentProfiles: BootstrapStateCommandsFacade["agentProfiles"];
   readonly snippets: BootstrapStateCommandsFacade["snippets"];
 }
@@ -40,7 +43,10 @@ export function narrowRendererStateCommandsFacade(
     appLogs: commands.appLogs,
     appPreferences: commands.appPreferences,
     providerAuth: commands.providerAuth,
-    extensionEnv: commands.extensionEnv,
+    extensionEnv: {
+      setOverride: (input, options) => commands.extensionEnv.setOverride(input, options),
+      removeOverride: (input, options) => commands.extensionEnv.removeOverride(input, options),
+    },
     agentProfiles: commands.agentProfiles,
     snippets: commands.snippets,
   };

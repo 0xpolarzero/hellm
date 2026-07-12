@@ -1,13 +1,10 @@
 import type { ExtensionCategory, ExtensionUsageState } from "@svvy/core";
 import type {
+  AgentExtensionCatalogItem,
   AgentActorExtensionDefaultsReadModelRecord,
-  AgentContextPreviewRequest,
-  ExtensionsInventoryReadModel,
-  ExtensionInventoryItemReadModel,
-  ExtensionUsageReadiness,
 } from "../shared/workspace-contract";
 
-export type AgentContextActor = NonNullable<AgentContextPreviewRequest["actor"]>;
+export type AgentContextActor = "orchestrator" | "handler" | "workflow-task";
 
 export type ExtensionUsageControlItem = {
   id: string;
@@ -26,81 +23,42 @@ type ExtensionUsageInventoryInput = {
   actor: AgentContextActor;
   usage: Readonly<Record<string, ExtensionUsageState>>;
   profileId: string;
-  extensionInventoryItems: ExtensionInventoryItemReadModel[];
-  inventoryDefaults?: ExtensionsInventoryReadModel["defaults"] | null;
+  extensionCatalogItems: readonly AgentExtensionCatalogItem[];
+  actorDefaults?: AgentActorExtensionDefaultsReadModelRecord | null;
   networkAccess: boolean;
 };
 
-export function mergeActorExtensionDefaults(input: {
-  actor: "orchestrator" | "workflow-task";
-  inventoryDefaults?: ExtensionsInventoryReadModel["defaults"] | null;
-  stateDefaults?: AgentActorExtensionDefaultsReadModelRecord | null;
-}): ExtensionsInventoryReadModel["defaults"] | null {
-  const inventoryDefaults = input.inventoryDefaults ?? null;
-  const stateDefaults = input.stateDefaults ?? null;
-  if (!stateDefaults || stateDefaults.actor !== input.actor) {
-    return inventoryDefaults;
-  }
-
-  const usage = Object.fromEntries(
-    Object.entries(inventoryDefaults?.usage ?? {}).map(([extensionId, defaults]) => [
-      extensionId,
-      [...defaults],
-    ]),
-  );
-  for (const [extensionId, state] of Object.entries(stateDefaults.extensionUsage)) {
-    usage[extensionId] = [
-      ...(usage[extensionId] ?? []).filter((candidate) => candidate.actorKind !== input.actor),
-      {
-        actorKind: input.actor,
-        state,
-        customized: stateDefaults.updatedAt !== null,
-        configurable: true,
-      },
-    ];
-  }
-
-  return {
-    order:
-      stateDefaults.extensionOrder.length > 0
-        ? [...stateDefaults.extensionOrder]
-        : [...(inventoryDefaults?.order ?? [])],
-    usage,
-  };
-}
-
 export function baselineExtensionState(input: {
   actor: AgentContextActor;
-  extensionId: string;
-  inventoryDefaults?: ExtensionsInventoryReadModel["defaults"] | null;
+  extension: AgentExtensionCatalogItem;
+  actorDefaults?: AgentActorExtensionDefaultsReadModelRecord | null;
+  networkAccess: boolean;
 }): ExtensionUsageState {
-  return (
-    input.inventoryDefaults?.usage[input.extensionId]?.find(
-      (candidate) => candidate.actorKind === input.actor,
-    )?.state ?? "unavailable"
-  );
+  const persisted = input.actorDefaults?.extensionUsage[input.extension.extensionId];
+  if (persisted) return persisted;
+  if (input.extension.usagePolicy.networkAccess === "required" && !input.networkAccess) {
+    return "unavailable";
+  }
+  return input.extension.usagePolicy.baselineUsage[input.actor];
 }
 
 export function resolvedExtensionState(input: {
   actor: AgentContextActor;
-  extension: Pick<ExtensionInventoryItemReadModel, "category" | "id">;
+  extension: AgentExtensionCatalogItem;
   explicitUsage: Record<string, ExtensionUsageState>;
-  inventoryDefaults?: ExtensionsInventoryReadModel["defaults"] | null;
-  inventoryUsage: ExtensionUsageReadiness | null;
+  actorDefaults?: AgentActorExtensionDefaultsReadModelRecord | null;
   networkAccess: boolean;
 }): ExtensionUsageState {
-  if (input.explicitUsage[input.extension.id] === undefined) {
-    if (input.extension.category === "user" && input.inventoryUsage) {
-      return input.inventoryUsage.state;
-    }
+  if (input.explicitUsage[input.extension.extensionId] === undefined) {
     return baselineExtensionState({
       actor: input.actor,
-      extensionId: input.extension.id,
-      inventoryDefaults: input.inventoryDefaults,
+      extension: input.extension,
+      actorDefaults: input.actorDefaults,
+      networkAccess: input.networkAccess,
     });
   }
 
-  return input.explicitUsage[input.extension.id] ?? "unavailable";
+  return input.explicitUsage[input.extension.extensionId] ?? "unavailable";
 }
 
 export function canSelectExtensionUsageState(input: {
@@ -120,10 +78,9 @@ export function canSelectExtensionUsageState(input: {
 
 export function extensionStateAllowed(input: {
   actor: AgentContextActor;
-  extension: ExtensionInventoryItemReadModel;
+  extension: AgentExtensionCatalogItem;
   state: ExtensionUsageState;
   configurable: boolean;
-  inventoryDefaults?: ExtensionsInventoryReadModel["defaults"] | null;
   networkAccess: boolean;
 }): boolean {
   if (!input.configurable) return false;
@@ -133,74 +90,49 @@ export function extensionStateAllowed(input: {
 export function extensionUsageItems(
   input: ExtensionUsageInventoryInput,
 ): ExtensionUsageControlItem[] {
-  const inventoryById = new Map(
-    input.extensionInventoryItems.map((extension) => [extension.id, extension]),
+  const catalogById = new Map(
+    input.extensionCatalogItems.map((extension) => [extension.extensionId, extension]),
   );
-  const inventory = input.extensionInventoryItems;
-  const orderById = new Map(inventory.map((extension, index) => [extension.id, index]));
   const extensionIds = new Set([
-    ...inventory.map((extension) => extension.id),
+    ...input.extensionCatalogItems.map((extension) => extension.extensionId),
     ...Object.keys(input.usage),
   ]);
-  const defaultOrder = input.actor === "handler" ? [] : (input.inventoryDefaults?.order ?? []);
-  const defaultOrderById = new Map(defaultOrder.map((id, index) => [id, index]));
+  const persistedOrder = input.actorDefaults?.extensionOrder ?? [];
+  const persistedOrderById = new Map(
+    persistedOrder.map((id, index) => [id as string, index] as const),
+  );
 
   return [...extensionIds]
     .flatMap((extensionId): ExtensionUsageControlItem[] => {
-      const extension = inventoryById.get(extensionId) ?? {
-        id: extensionId,
+      const extension = catalogById.get(extensionId) ?? {
+        extensionId,
         category: "user" as const,
-        interface: "instructions" as const,
         title: extensionId,
         description: "Custom extension usage override.",
-        customized: false,
-        minimalInstruction: minimalInstructionPlaceholder(""),
-        loadedInstructionContributors: [],
-        typescriptApiEnabled: false,
-        tooling: {
-          typescriptApiStatus: "disabled",
-        },
-        usage: [],
-        requirements: {
-          cliRequirements: [],
-          env: [],
-        },
-        state: {
-          ready: true,
-          issues: [],
+        usagePolicy: {
+          canonicalOrder:
+            Number.MAX_SAFE_INTEGER as AgentExtensionCatalogItem["usagePolicy"]["canonicalOrder"],
+          baselineUsage: {
+            orchestrator: "unavailable" as const,
+            handler: "unavailable" as const,
+            "workflow-task": "unavailable" as const,
+          },
+          networkAccess: "not-required" as const,
+          configurable: true,
+          fixedReason: null,
         },
       };
-      const usage =
-        extension.usage.find(
-          (candidate) =>
-            candidate.actorKind === input.actor && candidate.agentProfile === input.profileId,
-        ) ?? null;
-      const hasStoredUsage = input.usage[extension.id] !== undefined;
-      const hasInventoryDefault =
-        input.inventoryDefaults?.usage[extension.id]?.some(
-          (candidate) => candidate.actorKind === input.actor,
-        ) ?? false;
+      const hasStoredUsage = input.usage[extension.extensionId] !== undefined;
       const productBaseline = baselineExtensionState({
         actor: input.actor,
-        extensionId: extension.id,
-        inventoryDefaults: input.inventoryDefaults,
+        extension,
+        actorDefaults: input.actorDefaults,
+        networkAccess: input.networkAccess,
       });
       if (
         extension.category !== "user" &&
         !hasStoredUsage &&
-        !hasInventoryDefault &&
-        extension.id !== "extension-loading" &&
-        !usage &&
-        productBaseline === "unavailable"
-      ) {
-        return [];
-      }
-      if (
-        extension.category !== "user" &&
-        !hasStoredUsage &&
-        !hasInventoryDefault &&
-        extension.id !== "extension-loading" &&
-        usage?.state === "unavailable" &&
+        extension.extensionId !== "extension-loading" &&
         productBaseline === "unavailable"
       ) {
         return [];
@@ -209,27 +141,23 @@ export function extensionUsageItems(
         actor: input.actor,
         extension,
         explicitUsage: input.usage,
-        inventoryDefaults: input.inventoryDefaults,
-        inventoryUsage: usage,
+        actorDefaults: input.actorDefaults,
         networkAccess: input.networkAccess,
       });
       const defaultUsage = { ...input.usage };
-      delete defaultUsage[extension.id];
+      delete defaultUsage[extension.extensionId];
       const defaultState = resolvedExtensionState({
         actor: input.actor,
         extension,
         explicitUsage: defaultUsage,
-        inventoryDefaults: input.inventoryDefaults,
-        inventoryUsage: usage,
+        actorDefaults: input.actorDefaults,
         networkAccess: input.networkAccess,
       });
       const explicit = state !== defaultState;
-      const configurable =
-        usage?.configurable ??
-        (extension.category !== "external_instruction" && extension.id !== "extension-loading");
+      const configurable = extension.usagePolicy.configurable;
       return [
         {
-          id: extension.id,
+          id: extension.extensionId,
           title: extension.title,
           description: extension.description,
           category: extension.category,
@@ -237,14 +165,15 @@ export function extensionUsageItems(
           defaultState,
           explicit,
           configurable,
-          fixedReason: usage?.fixedReason,
+          ...(extension.usagePolicy.fixedReason
+            ? { fixedReason: extension.usagePolicy.fixedReason }
+            : {}),
           allowedStates: {
             loaded: extensionStateAllowed({
               actor: input.actor,
               extension,
               state: "loaded",
               configurable,
-              inventoryDefaults: input.inventoryDefaults,
               networkAccess: input.networkAccess,
             }),
             available: extensionStateAllowed({
@@ -252,7 +181,6 @@ export function extensionUsageItems(
               extension,
               state: "available",
               configurable,
-              inventoryDefaults: input.inventoryDefaults,
               networkAccess: input.networkAccess,
             }),
             unavailable: extensionStateAllowed({
@@ -260,7 +188,6 @@ export function extensionUsageItems(
               extension,
               state: "unavailable",
               configurable,
-              inventoryDefaults: input.inventoryDefaults,
               networkAccess: input.networkAccess,
             }),
           },
@@ -271,30 +198,17 @@ export function extensionUsageItems(
       if (left.id === "extension-loading") return -1;
       if (right.id === "extension-loading") return 1;
       const leftOrder =
-        defaultOrderById.get(left.id) ?? orderById.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+        persistedOrderById.get(left.id) ??
+        catalogById.get(left.id)?.usagePolicy.canonicalOrder ??
+        Number.MAX_SAFE_INTEGER;
       const rightOrder =
-        defaultOrderById.get(right.id) ?? orderById.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+        persistedOrderById.get(right.id) ??
+        catalogById.get(right.id)?.usagePolicy.canonicalOrder ??
+        Number.MAX_SAFE_INTEGER;
       return (
         leftOrder - rightOrder ||
         left.title.localeCompare(right.title) ||
         left.id.localeCompare(right.id)
       );
     });
-}
-
-function minimalInstructionPlaceholder(
-  content: string,
-): ExtensionInventoryItemReadModel["minimalInstruction"] {
-  return {
-    name: "minimal.md",
-    path: "",
-    content,
-    sourceVersion: "",
-    bypassed: false,
-    editable: false,
-    tokenCount: {
-      tokens: 0,
-      accuracy: "estimated",
-    },
-  };
 }

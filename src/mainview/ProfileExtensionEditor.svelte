@@ -178,14 +178,14 @@
   function extensionTokenLabel(item: ExtensionUsageControlItem): string | null {
     if (item.state === "unavailable") return null;
     const previewExtension = previewExtensions.get(item.id);
-    const tokenCount = previewExtension?.tokenCount;
-    if (!tokenCount) return null;
-    if (item.state === "available" && previewExtension.loadedTokenCount) {
-      return `${formatPromptTokenCount(tokenCount.tokens)} (~${formatTokenCount(
-        previewExtension.loadedTokenCount.tokens,
+    const tokenEstimate = previewExtension?.tokenEstimate;
+    if (tokenEstimate === null || tokenEstimate === undefined) return null;
+    if (item.state === "available" && previewExtension.loadedTokenEstimate !== null) {
+      return `${formatPromptTokenCount(tokenEstimate)} (~${formatTokenCount(
+        previewExtension.loadedTokenEstimate,
       )} loaded)`;
     }
-    return formatPromptTokenCount(tokenCount.tokens);
+    return formatPromptTokenCount(tokenEstimate);
   }
 
   function stateLabel(state: ExtensionUsageState): string {
@@ -340,7 +340,7 @@
       </Tooltip>
     </div>
     {#if preview}
-      <span class="profile-extension-total">{formatPromptTokenCount(preview.tokenCount.tokens)} total</span>
+      <span class="profile-extension-total">{formatPromptTokenCount(preview.tokenEstimate)} total</span>
     {/if}
     {#if previewError}
       <span class="profile-extension-preview-error" title={previewError}>Preview failed</span>

@@ -1,6 +1,10 @@
 import * as Layer from "effect/Layer";
 import {
   ExtensionStatePort,
+  ExtensionSnapshotStatePort,
+  ExtensionSnapshotSettingsStatePort,
+  ExtensionUsageStatePort,
+  GeneratedContextPreviewSubjectStatePort,
   PiSessionReferencePort,
   ProviderAuthStatusStatePort,
   RuntimeActorExtensionBindingStatePort,
@@ -12,6 +16,7 @@ import {
   RuntimeEpisodeStatePort,
   RuntimeExtensionContextImpactStatePort,
   RuntimeExtensionStatePort,
+  RuntimeExternalInstructionStatePort,
   RuntimeGeneratedPackageStatePort,
   RuntimePromptDefaultsStatePort,
   RuntimeQueueStatePort,
@@ -29,6 +34,10 @@ import {
   StateContractError,
 } from "@svvy/core";
 import { layerExtensionStatePort } from "./extension-state-port";
+import { layerExtensionSnapshotStatePort } from "./extension-snapshot-state-port";
+import { layerExtensionSnapshotSettingsStatePort } from "./extension-snapshot-settings-state-port";
+import { layerExtensionUsageStatePort } from "./extension-usage-state-port";
+import { layerGeneratedContextPreviewSubjectStatePort } from "./generated-context-preview-subject-state-port";
 import { layerPiSessionReferencePort } from "./pi-session-reference-port";
 import { layerProviderAuthStatusStatePort } from "./provider-auth-status-state-port";
 import { layerRuntimeActorExtensionBindingStatePort } from "./runtime-actor-extension-binding-state-port";
@@ -40,6 +49,7 @@ import { layerRuntimeComposerProfileStatePort } from "./runtime-composer-profile
 import { layerRuntimeEpisodeStatePort } from "./runtime-episode-state-port";
 import { layerRuntimeExtensionContextImpactStatePort } from "./runtime-extension-context-impact-state-port";
 import { layerRuntimeExtensionStatePort } from "./runtime-extension-state-port";
+import { layerRuntimeExternalInstructionStatePort } from "./runtime-external-instruction-state-port";
 import { layerRuntimeGeneratedPackageStatePort } from "./runtime-generated-package-state-port";
 import { layerRuntimePromptDefaultsStatePort } from "./runtime-prompt-defaults-state-port";
 import { layerRuntimeQueueStatePort } from "./runtime-queue-state-port";
@@ -62,6 +72,10 @@ import { type StructuredSessionState } from "./structured-session-state";
 
 export type StructuredSessionStatePorts =
   | ExtensionStatePort
+  | ExtensionSnapshotStatePort
+  | ExtensionSnapshotSettingsStatePort
+  | ExtensionUsageStatePort
+  | GeneratedContextPreviewSubjectStatePort
   | RuntimeWorkspaceStatePort
   | RuntimeSurfaceLifecycleStatePort
   | RuntimeComposerDraftStatePort
@@ -73,6 +87,7 @@ export type StructuredSessionStatePorts =
   | RuntimeActorExtensionBindingStatePort
   | RuntimeEpisodeStatePort
   | RuntimeExtensionStatePort
+  | RuntimeExternalInstructionStatePort
   | RuntimeExtensionContextImpactStatePort
   | RuntimeGeneratedPackageStatePort
   | RuntimePromptDefaultsStatePort
@@ -90,6 +105,10 @@ export type StructuredSessionStatePorts =
 
 export const structuredSessionStatePortsLayer = Layer.mergeAll(
   layerExtensionStatePort,
+  layerExtensionSnapshotStatePort,
+  layerExtensionSnapshotSettingsStatePort,
+  layerExtensionUsageStatePort,
+  layerGeneratedContextPreviewSubjectStatePort,
   layerRuntimeWorkspaceStatePort,
   layerRuntimeSurfaceLifecycleStatePort,
   layerRuntimeComposerDraftStatePort,
@@ -101,6 +120,7 @@ export const structuredSessionStatePortsLayer = Layer.mergeAll(
   layerRuntimeActorExtensionBindingStatePort,
   layerRuntimeEpisodeStatePort,
   layerRuntimeExtensionStatePort,
+  layerRuntimeExternalInstructionStatePort,
   layerRuntimeExtensionContextImpactStatePort,
   layerRuntimeGeneratedPackageStatePort,
   layerRuntimePromptDefaultsStatePort,
@@ -122,6 +142,10 @@ export function structuredSessionStatePortsLayerWithSandboxPolicyConfig(
 ): Layer.Layer<StructuredSessionStatePorts, StateContractError, StructuredSessionState> {
   return Layer.mergeAll(
     layerExtensionStatePort,
+    layerExtensionSnapshotStatePort,
+    layerExtensionSnapshotSettingsStatePort,
+    layerExtensionUsageStatePort,
+    layerGeneratedContextPreviewSubjectStatePort,
     layerRuntimeWorkspaceStatePort,
     layerRuntimeSurfaceLifecycleStatePort,
     layerRuntimeComposerDraftStatePort,
@@ -133,6 +157,7 @@ export function structuredSessionStatePortsLayerWithSandboxPolicyConfig(
     layerRuntimeActorExtensionBindingStatePort,
     layerRuntimeEpisodeStatePort,
     layerRuntimeExtensionStatePort,
+    layerRuntimeExternalInstructionStatePort,
     layerRuntimeExtensionContextImpactStatePort,
     layerRuntimeGeneratedPackageStatePort,
     layerRuntimePromptDefaultsStatePort,

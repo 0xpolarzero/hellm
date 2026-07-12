@@ -232,6 +232,27 @@ export const RemoveExtensionEnvOverrideCommandInputSchema = Schema.Struct({
 export type RemoveExtensionEnvOverrideCommandInput =
   typeof RemoveExtensionEnvOverrideCommandInputSchema.Type;
 
+export const SetExtensionEnvSecretCommandInputSchema = Schema.Struct({
+  extensionId: ExtensionId,
+  envName: ExtensionEnvName,
+  secretValue: Schema.Redacted(Schema.String.check(Schema.isNonEmpty()), {
+    label: "extension-env-secret",
+    disallowJsonEncode: true,
+  }),
+  expectedRevisionFingerprint: Schema.optionalKey(Schema.String.check(Schema.isNonEmpty())),
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
+});
+export type SetExtensionEnvSecretCommandInput = typeof SetExtensionEnvSecretCommandInputSchema.Type;
+
+export const RemoveExtensionEnvSecretCommandInputSchema = Schema.Struct({
+  extensionId: ExtensionId,
+  envName: ExtensionEnvName,
+  expectedRevisionFingerprint: Schema.optionalKey(Schema.String.check(Schema.isNonEmpty())),
+  clientSubmission: Schema.optionalKey(RuntimeClientSubmissionInputSchema),
+});
+export type RemoveExtensionEnvSecretCommandInput =
+  typeof RemoveExtensionEnvSecretCommandInputSchema.Type;
+
 const AgentProfileBaseInputSchema = Schema.Struct({
   profileId: AgentProfileId,
   name: Schema.String,
@@ -644,6 +665,23 @@ export const encodeRemoveExtensionEnvOverrideCommandInputExit = Schema.encodeExi
 );
 export const encodeRemoveExtensionEnvOverrideCommandInputEffect = Schema.encodeEffect(
   RemoveExtensionEnvOverrideCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+
+export const decodeUnknownSetExtensionEnvSecretCommandInputExit = Schema.decodeUnknownExit(
+  SetExtensionEnvSecretCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownSetExtensionEnvSecretCommandInputEffect = Schema.decodeUnknownEffect(
+  SetExtensionEnvSecretCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownRemoveExtensionEnvSecretCommandInputExit = Schema.decodeUnknownExit(
+  RemoveExtensionEnvSecretCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownRemoveExtensionEnvSecretCommandInputEffect = Schema.decodeUnknownEffect(
+  RemoveExtensionEnvSecretCommandInputSchema,
   strictBoundaryParseOptions,
 );
 

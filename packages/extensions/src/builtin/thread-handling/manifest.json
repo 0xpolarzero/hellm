@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"thread-handling","interface":"native_tool","title":"Thread Handling","description":"Handler controls for current thread state and reporting.","typescriptApiEnabled":false,"instructionFiles":[{"file":"010-thread-handling.mdx","bypassed":false}]}

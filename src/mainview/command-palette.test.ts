@@ -943,7 +943,7 @@ describe("executeCommandAction", () => {
       "create:command-palette-abc",
       "prompt:new-session:Implement command palette",
     ]);
-    expect(runtime.createRequests).toEqual([{}]);
+    expect(runtime.createRequests).toEqual([{ title: "Implement command palette" }]);
     expect(createdTargets).toEqual([
       {
         workspaceSessionId: "new-session",

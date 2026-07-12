@@ -1,5 +1,8 @@
 export { layerAppLogWritePort } from "./app-log-write-port";
 export { layerExtensionStatePort } from "./extension-state-port";
+export { layerExtensionSnapshotStatePort } from "./extension-snapshot-state-port";
+export { layerExtensionSnapshotSettingsStatePort } from "./extension-snapshot-settings-state-port";
+export { layerGeneratedContextPreviewSubjectStatePort } from "./generated-context-preview-subject-state-port";
 export { layerPiSessionReferencePort } from "./pi-session-reference-port";
 export { layerProviderAuthStatusStatePort } from "./provider-auth-status-state-port";
 export { layerRuntimeActorExtensionBindingStatePort } from "./runtime-actor-extension-binding-state-port";
@@ -7,10 +10,12 @@ export { layerRuntimeApprovalStatePort } from "./runtime-approval-state-port";
 export { layerRuntimeArtifactStatePort } from "./runtime-artifact-state-port";
 export { layerRuntimeComposerDraftStatePort } from "./runtime-composer-draft-state-port";
 export { layerRuntimeComposerProfileStatePort } from "./runtime-composer-profile-state-port";
+export { layerExtensionUsageStatePort } from "./extension-usage-state-port";
 export { layerRuntimeCommandStatePort } from "./runtime-command-state-port";
 export { layerRuntimeEpisodeStatePort } from "./runtime-episode-state-port";
 export { layerRuntimeExtensionContextImpactStatePort } from "./runtime-extension-context-impact-state-port";
 export { layerRuntimeExtensionStatePort } from "./runtime-extension-state-port";
+export { layerRuntimeExternalInstructionStatePort } from "./runtime-external-instruction-state-port";
 export { layerRuntimeGeneratedPackageStatePort } from "./runtime-generated-package-state-port";
 export { layerRuntimePromptDefaultsStatePort } from "./runtime-prompt-defaults-state-port";
 export { layerRuntimeQueueStatePort } from "./runtime-queue-state-port";
@@ -57,6 +62,8 @@ export {
   decodeUnknownUpdateAppPreferencesCommandInputExit,
   decodeUnknownRemoveExtensionEnvOverrideCommandInputEffect,
   decodeUnknownRemoveExtensionEnvOverrideCommandInputExit,
+  decodeUnknownRemoveExtensionEnvSecretCommandInputEffect,
+  decodeUnknownRemoveExtensionEnvSecretCommandInputExit,
   decodeUnknownReorderOrchestratorProfilesCommandInputEffect,
   decodeUnknownReorderOrchestratorProfilesCommandInputExit,
   decodeUnknownResetActorExtensionDefaultsCommandInputEffect,
@@ -71,6 +78,8 @@ export {
   decodeUnknownSetExternalInstructionActorUsageCommandInputExit,
   decodeUnknownSetExtensionEnvOverrideCommandInputEffect,
   decodeUnknownSetExtensionEnvOverrideCommandInputExit,
+  decodeUnknownSetExtensionEnvSecretCommandInputEffect,
+  decodeUnknownSetExtensionEnvSecretCommandInputExit,
   decodeUnknownSetProfileExtensionUsageCommandInputEffect,
   decodeUnknownSetProfileExtensionUsageCommandInputExit,
   decodeUnknownSetSessionArchivedCommandInputEffect,
@@ -160,6 +169,7 @@ export {
   PromoteProfileExtensionDefaultCommandInputSchema,
   RecordProviderAuthStatusCommandInputSchema,
   RemoveExtensionEnvOverrideCommandInputSchema,
+  RemoveExtensionEnvSecretCommandInputSchema,
   ReorderOrchestratorProfilesCommandInputSchema,
   ResetActorExtensionDefaultsCommandInputSchema,
   SetAgentActorExtensionDefaultsCommandInputSchema,
@@ -168,6 +178,7 @@ export {
   SelectWorkspaceTabCommandInputSchema,
   SetExternalInstructionActorUsageCommandInputSchema,
   SetExtensionEnvOverrideCommandInputSchema,
+  SetExtensionEnvSecretCommandInputSchema,
   SetProfileExtensionUsageCommandInputSchema,
   SetSessionArchivedCommandInputSchema,
   SetSessionNavigationSectionStateCommandInputSchema,
@@ -200,6 +211,7 @@ export type {
   PromoteProfileExtensionDefaultCommandInput,
   RecordProviderAuthStatusCommandInput,
   RemoveExtensionEnvOverrideCommandInput,
+  RemoveExtensionEnvSecretCommandInput,
   ReorderOrchestratorProfilesCommandInput,
   ResetActorExtensionDefaultsCommandInput,
   SetAgentActorExtensionDefaultsCommandInput,
@@ -208,6 +220,7 @@ export type {
   SelectWorkspaceTabCommandInput,
   SetExternalInstructionActorUsageCommandInput,
   SetExtensionEnvOverrideCommandInput,
+  SetExtensionEnvSecretCommandInput,
   SetProfileExtensionUsageCommandInput,
   SetSessionArchivedCommandInput,
   SetSessionNavigationSectionStateCommandInput,
@@ -260,8 +273,10 @@ export type {
   CreateStateAppLogsFacadeOptions,
   ExtensionEnvStateCommands,
   ExtensionReadModelRecord,
+  ExtensionCliReadinessReadModel,
   ExtensionsReadModel,
   ExtensionsReadModelRequest,
+  ExternalInstructionsReadModelRequest,
   GeneratedContextPreviewReadModelRecord,
   WorkflowAgentSourceReadModelRecord,
   HandlerInspectorReadModel,

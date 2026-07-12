@@ -71,6 +71,7 @@ export type RuntimeSaveExtensionSourceEditInput =
 export const SourceEditSaveResultSchema = Schema.Union([
   Schema.Struct({
     status: Schema.Literal("saved"),
+    path: AbsolutePath,
     sourceVersion: Schema.String,
     fingerprint: Schema.String,
     diagnostics: Schema.Array(SourceDiagnosticSchema),
@@ -85,6 +86,7 @@ export const SourceEditSaveResultSchema = Schema.Union([
 export type SourceEditSaveResult =
   | {
       readonly status: "saved";
+      readonly path: AbsolutePath;
       readonly sourceVersion: string;
       readonly fingerprint: string;
       readonly diagnostics: readonly SourceDiagnostic[];
@@ -269,6 +271,23 @@ export const RuntimeDeleteWorkflowAgentSourceInputSchema = Schema.Struct({
 export type RuntimeDeleteWorkflowAgentSourceInput =
   typeof RuntimeDeleteWorkflowAgentSourceInputSchema.Type;
 
+export const ConfigureExtensionTypescriptApiInputSchema = Schema.Struct({
+  workspaceId: WorkspaceId,
+  extensionId: ExtensionId,
+  enabled: Schema.Boolean,
+});
+export type ConfigureExtensionTypescriptApiInput =
+  typeof ConfigureExtensionTypescriptApiInputSchema.Type;
+
+export const ConfigureExtensionTypescriptApiResultSchema = Schema.Struct({
+  extensionId: ExtensionId,
+  enabled: Schema.Boolean,
+  changed: Schema.Boolean,
+  reconcileRequired: Schema.Boolean,
+});
+export type ConfigureExtensionTypescriptApiResult =
+  typeof ConfigureExtensionTypescriptApiResultSchema.Type;
+
 const WorkflowAgentSourceEditSessionSchema = Schema.Struct({
   ...SourceEditSessionSchema.fields,
   sourceKind: Schema.Literal("workflow-agent"),
@@ -303,6 +322,15 @@ export const WorkflowAgentSourceDeleteResultSchema = Schema.Struct({
 });
 
 export type WorkflowAgentSourceDeleteResult = typeof WorkflowAgentSourceDeleteResultSchema.Type;
+
+export const decodeUnknownConfigureExtensionTypescriptApiInputEffect = Schema.decodeUnknownEffect(
+  ConfigureExtensionTypescriptApiInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownConfigureExtensionTypescriptApiResultEffect = Schema.decodeUnknownEffect(
+  ConfigureExtensionTypescriptApiResultSchema,
+  strictBoundaryParseOptions,
+);
 
 export const unsafeDecodeOpenExtensionSourceEditInputSyncForTestsAndBootstrap =
   Schema.decodeUnknownSync(OpenExtensionSourceEditInputSchema, strictBoundaryParseOptions);

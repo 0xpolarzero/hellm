@@ -18,16 +18,20 @@
     ExternalInstructionControl,
   } from "../shared/agent-settings";
   import { DEFAULT_EXTERNAL_INSTRUCTION_ACTORS } from "../shared/agent-settings";
+  import { DEFAULT_ORCHESTRATOR_PROFILE_ID } from "../shared/agent-settings";
   import type {
     AgentContextPreviewResponse,
-    ExtensionCliRequirementReadiness,
-    ExtensionEnvRequirementReadiness,
-    ExtensionInventoryItemReadModel,
-    ExtensionSnapshotReadModel,
-    ExtensionsInventoryReadModel,
+    ExtensionsReadModel,
     SettingsReadModel,
   } from "../shared/workspace-contract";
-  import type { ExtensionInterfaceKind } from "@svvy/core";
+  import type {
+    BuildRuntimeExtensionInput,
+    ExtensionSnapshotSummary,
+    ExtensionSnapshotsReadModel,
+    ExtensionInterfaceKind,
+    ExternalInstructionsProjection,
+    AgentProfileId,
+  } from "@svvy/core";
   import type { ChatRuntime } from "./chat-runtime";
   import Badge from "./ui/Badge.svelte";
   import Button from "./ui/Button.svelte";
@@ -37,7 +41,6 @@
   import Tooltip from "./ui/Tooltip.svelte";
   import { dismissConfirmation } from "./ui/dismiss-confirmation";
   import ExtensionEnvValueForm from "./ExtensionEnvValueForm.svelte";
-  import ExtensionGeneratedFileViewer from "./ExtensionGeneratedFileViewer.svelte";
   import ExtensionInstructionFileEditor from "./ExtensionInstructionFileEditor.svelte";
   import ExtensionListRow from "./ExtensionListRow.svelte";
 
@@ -51,7 +54,9 @@
   let settings = $state<SettingsReadModel | null>(null);
   let appPreferences = $state<AppPreferences | null>(null);
   let contextPreview = $state<AgentContextPreviewResponse | null>(null);
-  let extensionsInventory = $state<ExtensionsInventoryReadModel | null>(null);
+  let extensionSnapshots = $state<ExtensionSnapshotsReadModel | null>(null);
+  let extensions = $state<ExtensionsReadModel | null>(null);
+  let externalInstructions = $state<ExternalInstructionsProjection | null>(null);
   let settingsError = $state<string | null>(null);
   let inventoryError = $state<string | null>(null);
   let pendingSettings = $state(false);
@@ -77,8 +82,6 @@
   let expandedToolingIds = $state<Set<string>>(new Set());
   let extensionFilter = $state<"all" | ExtensionInterfaceKind>("all");
   let pendingExtensionActions = $state<Set<string>>(new Set());
-  let extensionInventoryMutationGeneration = 0;
-  let appliedExtensionInventoryMutationGeneration = 0;
   let extensionInventoryNeedsSettledRefresh = false;
   let newExtensionOpen = $state(false);
   let newExtensionTitle = $state("");
@@ -98,13 +101,20 @@
     { id: "svvyx", label: "svvyx" },
   ];
 
-  function inventoryRows(): ExtensionInventoryItemReadModel[] {
-    const rows = extensionsInventory?.extensions ?? [];
+  type ExtensionRow = ExtensionsReadModel["records"][number];
+
+  function inventoryRows(): ExtensionRow[] {
+    const rows = extensions?.records ?? [];
     return rows
       .toSorted(
-        (left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id),
+        (left, right) =>
+          left.title.localeCompare(right.title) ||
+          left.extensionId.localeCompare(right.extensionId),
       )
-      .filter((extension) => extensionFilter === "all" || extension.interface === extensionFilter);
+      .filter(
+        (extension) =>
+          extensionFilter === "all" || extension.interfaceKind === extensionFilter,
+      );
   }
 
   function registerExtensionRow(node: HTMLElement, extensionId: string) {
@@ -148,34 +158,24 @@
     return "Prompt extensions add instruction text and loading hints.";
   }
 
-  function contributorBypassed(
-    contributor: ExtensionInventoryItemReadModel["loadedInstructionContributors"][number],
-  ): boolean {
-    return contributor.kind === "source" ? contributor.file.bypassed : contributor.bypassed;
-  }
-
-  function generatedApiLabel(extension: ExtensionInventoryItemReadModel): string | null {
-    if (!extension.typescriptApiEnabled) return null;
+  function generatedApiLabel(extension: ExtensionRow): string | null {
+    if (!extension.capabilities.typescriptApiEnabled) return null;
     return "TS API";
   }
 
-  function customizedExtension(extension: ExtensionInventoryItemReadModel): boolean {
+  function customizedExtension(extension: ExtensionRow): boolean {
     return extension.customized;
   }
 
-  function extensionNeedsBuild(extension: ExtensionInventoryItemReadModel): boolean {
-    return extension.state.issues.some(
-      (issue) => issue.code === "BUILD_REQUIRED" || issue.code === "NO_CURRENT_BUILD",
-    );
+  function extensionNeedsBuild(extension: ExtensionRow): boolean {
+    return extension.buildRequired || extension.buildAuthorityStatus !== "current";
   }
 
-  function extensionHasCliIssue(extension: ExtensionInventoryItemReadModel): boolean {
-    return extension.state.issues.some(
-      (issue) => issue.code === "CLI_MISSING" || issue.code === "CLI_STATUS_UNKNOWN",
-    );
+  function extensionHasCliIssue(extension: ExtensionRow): boolean {
+    return extension.cliReadiness.some((requirement) => requirement.blocking);
   }
 
-  function extensionCanBuild(extension: ExtensionInventoryItemReadModel): boolean {
+  function extensionCanBuild(extension: ExtensionRow): boolean {
     return extensionNeedsBuild(extension) && !extensionHasCliIssue(extension);
   }
 
@@ -187,7 +187,7 @@
     return `${extensionId}:${name}`;
   }
 
-  function buildRequiredExtensions(): ExtensionInventoryItemReadModel[] {
+  function buildRequiredExtensions(): ExtensionRow[] {
     return inventoryRows().filter(extensionCanBuild);
   }
 
@@ -210,15 +210,11 @@
   }
 
   async function applyExtensionInventoryMutation(
-    mutation: Promise<ExtensionsInventoryReadModel>,
+    mutation: Promise<unknown>,
   ): Promise<void> {
-    const generation = ++extensionInventoryMutationGeneration;
-    const inventory = await mutation;
+    await mutation;
     extensionInventoryNeedsSettledRefresh = true;
-    if (generation >= appliedExtensionInventoryMutationGeneration) {
-      appliedExtensionInventoryMutationGeneration = generation;
-      extensionsInventory = inventory;
-    }
+    extensions = await runtime.getExtensions();
   }
 
   function newExtensionId(title: string): string {
@@ -243,6 +239,8 @@
           id,
           title,
           description: newExtensionDescription.trim() || `${title} prompt extension.`,
+          interfaceKind: "instructions",
+          typescriptApiEnabled: false,
         }),
       );
       newExtensionTitle = "";
@@ -257,9 +255,9 @@
     }
   }
 
-  async function duplicateExtension(extension: ExtensionInventoryItemReadModel) {
-    const actionKey = `duplicate:${extension.id}`;
-    if (isExtensionActionPending(actionKey) || extension.interface === "native_tool") return;
+  async function duplicateExtension(extension: ExtensionRow) {
+    const actionKey = `duplicate:${extension.extensionId}`;
+    if (isExtensionActionPending(actionKey) || extension.interfaceKind === "native_tool") return;
     const title = `${extension.title} Copy`;
     const id = uniqueExtensionId(newExtensionId(title));
     startExtensionAction(actionKey);
@@ -267,8 +265,8 @@
     try {
       await applyExtensionInventoryMutation(
         runtime.duplicateExtension({
-          extensionId: extension.id,
-          id,
+          sourceExtensionId: extension.extensionId,
+          targetExtensionId: id,
           title,
         }),
       );
@@ -282,7 +280,7 @@
   }
 
   function uniqueExtensionId(base: string): string {
-    const existing = new Set(inventoryRows().map((extension) => extension.id));
+    const existing = new Set(inventoryRows().map((extension) => extension.extensionId));
     if (!existing.has(base)) return base;
     for (let index = 2; index < 1000; index += 1) {
       const candidate = `${base}-${index}`;
@@ -291,19 +289,19 @@
     return `${base}-${Date.now().toString(36)}`;
   }
 
-  async function deleteExtension(extension: ExtensionInventoryItemReadModel) {
-    const actionKey = `delete:${extension.id}`;
+  async function deleteExtension(extension: ExtensionRow) {
+    const actionKey = `delete:${extension.extensionId}`;
     if (
       isExtensionActionPending(actionKey) ||
-      extension.category === "builtin" ||
-      confirmingDeleteExtensionId !== extension.id
+      !extension.capabilities.deletable ||
+      confirmingDeleteExtensionId !== extension.extensionId
     ) {
       return;
     }
     startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      await applyExtensionInventoryMutation(runtime.deleteExtension({ extensionId: extension.id }));
+      await applyExtensionInventoryMutation(runtime.deleteExtension({ extensionId: extension.extensionId }));
       confirmingDeleteExtensionId = null;
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to delete extension.";
@@ -312,12 +310,12 @@
     }
   }
 
-  function requestDeleteExtension(extension: ExtensionInventoryItemReadModel): void {
-    if (extension.category === "builtin" || isExtensionActionPending(`delete:${extension.id}`)) {
+  function requestDeleteExtension(extension: ExtensionRow): void {
+    if (!extension.capabilities.deletable || isExtensionActionPending(`delete:${extension.extensionId}`)) {
       return;
     }
     confirmingResetExtensionId = null;
-    confirmingDeleteExtensionId = extension.id;
+    confirmingDeleteExtensionId = extension.extensionId;
   }
 
   function cancelExtensionActionConfirmation(): void {
@@ -325,19 +323,21 @@
     confirmingResetExtensionId = null;
   }
 
-  async function resetExtension(extension: ExtensionInventoryItemReadModel) {
-    const actionKey = `reset:${extension.id}`;
+  async function resetExtension(extension: ExtensionRow) {
+    const actionKey = `reset:${extension.extensionId}`;
     if (
       isExtensionActionPending(actionKey) ||
-      extension.category !== "builtin" ||
-      confirmingResetExtensionId !== extension.id
+      !extension.capabilities.resettable ||
+      confirmingResetExtensionId !== extension.extensionId
     ) {
       return;
     }
     startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      await applyExtensionInventoryMutation(runtime.resetExtension({ extensionId: extension.id }));
+      await applyExtensionInventoryMutation(
+        runtime.resetExtension({ extensionId: extension.extensionId, scope: "instructions" }),
+      );
       confirmingResetExtensionId = null;
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to reset extension.";
@@ -346,12 +346,12 @@
     }
   }
 
-  function requestResetExtension(extension: ExtensionInventoryItemReadModel): void {
-    if (extension.category !== "builtin" || isExtensionActionPending(`reset:${extension.id}`)) {
+  function requestResetExtension(extension: ExtensionRow): void {
+    if (!extension.capabilities.resettable || isExtensionActionPending(`reset:${extension.extensionId}`)) {
       return;
     }
     confirmingDeleteExtensionId = null;
-    confirmingResetExtensionId = extension.id;
+    confirmingResetExtensionId = extension.extensionId;
   }
 
   async function buildExtension(extensionId: string) {
@@ -360,7 +360,11 @@
     startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      await applyExtensionInventoryMutation(runtime.buildExtension({ extensionId }));
+      await runtime.buildExtension({
+        extensionId,
+        clientRequestId: crypto.randomUUID() as BuildRuntimeExtensionInput["clientRequestId"],
+      });
+      extensions = await runtime.getExtensions();
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to build extension.";
     } finally {
@@ -369,20 +373,19 @@
   }
 
   async function buildRequiredExtensionSet() {
-    const extensions = buildRequiredExtensions();
+    const buildTargets = buildRequiredExtensions();
     const actionKey = "build-all";
-    if (extensions.length === 0 || isExtensionActionPending(actionKey)) return;
+    if (buildTargets.length === 0 || isExtensionActionPending(actionKey)) return;
     startExtensionAction(actionKey);
     inventoryError = null;
     try {
-      let inventory: ExtensionsInventoryReadModel | null = null;
-      for (const extension of extensions) {
-        inventory = await runtime.buildExtension({ extensionId: extension.id });
+      for (const extension of buildTargets) {
+        await runtime.buildExtension({
+          extensionId: extension.extensionId,
+          clientRequestId: crypto.randomUUID() as BuildRuntimeExtensionInput["clientRequestId"],
+        });
       }
-      if (inventory) {
-        extensionsInventory = inventory;
-      }
-      extensionInventoryNeedsSettledRefresh = true;
+      extensions = await runtime.getExtensions();
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to build extensions.";
     } finally {
@@ -390,17 +393,17 @@
     }
   }
 
-  async function addInstructionFile(extension: ExtensionInventoryItemReadModel) {
-    const actionKey = `instruction:add:${extension.id}`;
+  async function addInstructionFile(extension: ExtensionRow) {
+    const actionKey = `instruction:add:${extension.extensionId}`;
     if (isExtensionActionPending(actionKey)) return;
-    const nextIndex = extension.loadedInstructionContributors.length + 1;
-    const name = `${String(nextIndex * 10).padStart(3, "0")}-notes.md`;
+    const nextIndex = extension.contributors.length + 1;
+    const name = `${String(nextIndex * 10).padStart(3, "0")}-notes.mdx`;
     startExtensionAction(actionKey);
     inventoryError = null;
     try {
       await applyExtensionInventoryMutation(
         runtime.addExtensionInstructionFile({
-          extensionId: extension.id,
+          extensionId: extension.extensionId,
           name,
         }),
       );
@@ -462,19 +465,23 @@
     }
   }
 
-  async function setExtensionTypescriptApi(extension: ExtensionInventoryItemReadModel, enabled: boolean) {
-    const actionKey = `typescript-api:${extension.id}`;
-    if (isExtensionActionPending(actionKey) || extension.interface !== "svvyx") return;
+  async function setExtensionTypescriptApi(extension: ExtensionRow, enabled: boolean) {
+    const actionKey = `typescript-api:${extension.extensionId}`;
+    if (isExtensionActionPending(actionKey) || extension.interfaceKind !== "svvyx") return;
     startExtensionAction(actionKey);
     inventoryError = null;
     try {
       await applyExtensionInventoryMutation(
         runtime.setExtensionTypescriptApi({
-          extensionId: extension.id,
+          extensionId: extension.extensionId,
           enabled,
         }),
       );
-      await applyExtensionInventoryMutation(runtime.buildExtension({ extensionId: extension.id }));
+      await runtime.buildExtension({
+        extensionId: extension.extensionId,
+        clientRequestId: crypto.randomUUID() as BuildRuntimeExtensionInput["clientRequestId"],
+      });
+      extensions = await runtime.getExtensions();
     } catch (error) {
       inventoryError =
         error instanceof Error ? error.message : "Unable to update TypeScript API setting.";
@@ -490,25 +497,25 @@
     row.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
-  function snapshotRows(): ExtensionSnapshotReadModel[] {
-    return extensionsInventory?.snapshots ?? [];
+  function snapshotRows(): readonly ExtensionSnapshotSummary[] {
+    return extensionSnapshots?.snapshots ?? [];
   }
 
-  function selectedSnapshot(): ExtensionSnapshotReadModel | null {
-    return snapshotRows().find((snapshot) => snapshot.id === selectedSnapshotId) ?? null;
+  function selectedSnapshot(): ExtensionSnapshotSummary | null {
+    return snapshotRows().find((snapshot) => snapshot.snapshotId === selectedSnapshotId) ?? null;
   }
 
   function snapshotOptions(): CompactComboboxOption[] {
     return snapshotRows().map((snapshot) => {
       const details = [
         `${snapshot.extensionCount} extension${snapshot.extensionCount === 1 ? "" : "s"}`,
-        snapshot.hasSecretState ? "secret state" : null,
+        snapshot.secretState === "captured" ? "secret state" : null,
       ].filter(Boolean);
       return {
-        value: snapshot.id,
+        value: snapshot.snapshotId,
         label: `${snapshot.name} · ${details.join(" · ")}`,
         triggerLabel: snapshot.name,
-        searchText: `${snapshot.name} ${snapshot.id} ${details.join(" ")}`,
+        searchText: `${snapshot.name} ${snapshot.snapshotId} ${details.join(" ")}`,
         disabled: snapshotAction !== null,
       };
     });
@@ -530,59 +537,63 @@
     return hash ? hash.slice(0, 12) : "unreadable";
   }
 
-  function inventoryCliRequirements(extensionId: string): ExtensionCliRequirementReadiness[] {
-    return (
-      extensionsInventory?.extensions.find((extension) => extension.id === extensionId)?.requirements
-        .cliRequirements ?? []
-    );
+  type CliRequirement = ExtensionRow["cliReadiness"][number] & {
+    declaration: ExtensionRow["cliDeclarations"][number];
+  };
+
+  function inventoryCliRequirements(extension: ExtensionRow): CliRequirement[] {
+    return extension.cliReadiness.flatMap((readiness) => {
+      const declaration = extension.cliDeclarations.find(
+        (candidate) => candidate.id === readiness.requirementId,
+      );
+      return declaration ? [{ ...readiness, declaration }] : [];
+    });
   }
 
-  function inventoryEnvRequirements(extensionId: string): ExtensionEnvRequirementReadiness[] {
-    return (
-      extensionsInventory?.extensions.find((extension) => extension.id === extensionId)?.requirements
-        .env ?? []
-    );
+  function inventoryEnvRequirements(extension: ExtensionRow) {
+    return extension.env ?? [];
   }
 
   function cliRequirementTone(
-    requirement: ExtensionCliRequirementReadiness,
+    requirement: CliRequirement,
   ): "neutral" | "info" | "success" | "warning" | "danger" {
     if (requirement.status === "missing") return "danger";
     if (requirement.status === "unknown") return "warning";
-    if (requirement.updateAvailable) return "info";
+    if (requirement.status === "update-available") return "info";
     return "success";
   }
 
-  function cliRequirementLabel(requirement: ExtensionCliRequirementReadiness): string {
-    if (requirement.status === "missing") return `${requirement.binary}: missing`;
-    if (requirement.status === "unknown") return `${requirement.binary}: unknown`;
-    if (requirement.updateAvailable) return `${requirement.binary}: update`;
-    return `${requirement.binary}: available`;
+  function cliRequirementLabel(requirement: CliRequirement): string {
+    if (requirement.status === "missing") return `${requirement.declaration.binary}: missing`;
+    if (requirement.status === "unknown") return `${requirement.declaration.binary}: unknown`;
+    if (requirement.status === "update-available") return `${requirement.declaration.binary}: update`;
+    return `${requirement.declaration.binary}: available`;
   }
 
-  function cliRequirementVersions(requirement: ExtensionCliRequirementReadiness): string {
+  function cliRequirementVersions(requirement: CliRequirement): string {
     const parts: string[] = [];
-    if (requirement.currentVersion) parts.push(`current ${requirement.currentVersion}`);
-    if (!requirement.currentVersion && requirement.detectedVersion) {
-      parts.push(`detected ${requirement.detectedVersion}`);
+    if (requirement.readiness?.detectedVersion) {
+      parts.push(`current ${requirement.readiness.detectedVersion}`);
     }
-    if (requirement.defaultVersion) parts.push(`default ${requirement.defaultVersion}`);
-    if (requirement.latestVersion) parts.push(`latest ${requirement.latestVersion}`);
+    if (requirement.declaration.defaultVersion) parts.push(`default ${requirement.declaration.defaultVersion}`);
+    if (requirement.readiness?.expectedVersion) parts.push(`expected ${requirement.readiness.expectedVersion}`);
     return parts.join(" · ") || "version unavailable";
   }
 
-  function cliRequirementCommand(requirement: ExtensionCliRequirementReadiness): string | null {
-    if (requirement.status === "missing") return requirement.installCommand;
-    if (requirement.updateAvailable) return requirement.updateCommand;
+  function cliRequirementCommand(requirement: CliRequirement): string | null {
+    if (requirement.status === "missing") return requirement.declaration.installCommand;
+    if (requirement.status === "update-available") return requirement.declaration.installCommand;
     return null;
   }
 
-  function declaredCliRequirementBinaries(extension: ExtensionInventoryItemReadModel): string[] {
-    return extension.requirements.cliRequirements.map((requirement) => requirement.binary);
+  function declaredCliRequirementBinaries(extension: ExtensionRow): string[] {
+    return extension.cliDeclarations.map((requirement) => requirement.binary);
   }
 
+  type EnvRequirement = NonNullable<ExtensionRow["env"]>[number];
+
   function envRequirementTone(
-    requirement: ExtensionEnvRequirementReadiness,
+    requirement: EnvRequirement,
   ): "neutral" | "info" | "success" | "warning" | "danger" {
     if (requirement.status === "configured" || requirement.status === "defaulted") {
       return "success";
@@ -591,47 +602,47 @@
     return "neutral";
   }
 
-  function envRequirementLabel(requirement: ExtensionEnvRequirementReadiness): string {
-    if (requirement.status === "configured") return `${requirement.name}: configured`;
-    if (requirement.status === "defaulted") return `${requirement.name}: default`;
-    if (requirement.status === "missing") return `${requirement.name}: missing`;
-    return `${requirement.name}: optional`;
+  function envRequirementLabel(requirement: EnvRequirement): string {
+    if (requirement.status === "configured") return `${requirement.envName}: configured`;
+    if (requirement.status === "defaulted") return `${requirement.envName}: default`;
+    if (requirement.status === "missing") return `${requirement.envName}: missing`;
+    return `${requirement.envName}: optional`;
   }
 
   async function saveExtensionEnvValue(
     extensionId: string,
-    requirement: ExtensionEnvRequirementReadiness,
+    requirement: EnvRequirement,
     value: string,
   ): Promise<void> {
     if (requirement.secret) {
-      extensionsInventory = await runtime.setExtensionEnvSecret({
+      extensions = await runtime.setExtensionEnvSecret({
         extensionId,
-        envName: requirement.name,
+        envName: requirement.envName,
         value,
       });
       return;
     }
-    extensionsInventory = await runtime.setExtensionEnvOverride({
+    extensions = await runtime.setExtensionEnvOverride({
       extensionId,
-      envName: requirement.name,
+      envName: requirement.envName,
       value,
     });
   }
 
   async function removeExtensionEnvValue(
     extensionId: string,
-    requirement: ExtensionEnvRequirementReadiness,
+    requirement: EnvRequirement,
   ): Promise<void> {
     if (requirement.secret) {
-      extensionsInventory = await runtime.removeExtensionEnvSecret({
+      extensions = await runtime.removeExtensionEnvSecret({
         extensionId,
-        envName: requirement.name,
+        envName: requirement.envName,
       });
       return;
     }
-    extensionsInventory = await runtime.removeExtensionEnvOverride({
+    extensions = await runtime.removeExtensionEnvOverride({
       extensionId,
-      envName: requirement.name,
+      envName: requirement.envName,
     });
   }
 
@@ -654,15 +665,24 @@
   }
 
   async function loadExtensionsInventory(options: { clearError?: boolean } = {}): Promise<void> {
-    loadingInventory = !extensionsInventory;
+    loadingInventory = !extensions;
     if (options.clearError !== false) {
       inventoryError = null;
     }
     try {
-      extensionsInventory = await runtime.getExtensionsInventory();
+      [extensions, externalInstructions] = await Promise.all([
+        runtime.getExtensions(),
+        runtime.getExternalInstructions(),
+      ]);
+      try {
+        extensionSnapshots = await runtime.getExtensionSnapshots();
+      } catch (error) {
+        inventoryError =
+          error instanceof Error ? error.message : "Extension snapshots are unavailable.";
+      }
     } catch (error) {
       inventoryError =
-        error instanceof Error ? error.message : "Extension CLI readiness is unavailable.";
+        error instanceof Error ? error.message : "Extension state is unavailable.";
     } finally {
       loadingInventory = false;
     }
@@ -671,17 +691,21 @@
   function syncRuntimeSnapshots(): void {
     const nextSettings = runtime.settingsSnapshot;
     const nextPreferences = runtime.appPreferencesSnapshot;
-    const nextInventory = runtime.extensionsInventorySnapshot;
+    const nextExtensionSnapshots = runtime.extensionSnapshotsSnapshot;
+    const nextExtensions = runtime.extensionsSnapshot;
+    const nextExternalInstructions = runtime.externalInstructionsSnapshot;
     if (nextSettings) {
       settings = nextSettings;
     }
     if (nextPreferences) {
       appPreferences = nextPreferences;
     }
-    if (nextInventory) {
-      extensionsInventory = nextInventory;
+    if (nextExtensionSnapshots) {
+      extensionSnapshots = nextExtensionSnapshots;
       loadingInventory = false;
     }
+    if (nextExtensions) extensions = nextExtensions;
+    if (nextExternalInstructions) externalInstructions = nextExternalInstructions;
   }
 
   syncRuntimeSnapshots();
@@ -690,7 +714,13 @@
     loadingPreview = true;
     settingsError = null;
     try {
-      contextPreview = await runtime.getAgentContextPreview({ actor: "orchestrator" });
+      contextPreview = await runtime.previewGeneratedContext({
+        subject: {
+          kind: "configured-profile",
+          actorKind: "orchestrator",
+          profileId: DEFAULT_ORCHESTRATOR_PROFILE_ID as AgentProfileId,
+        },
+      });
     } catch (error) {
       settingsError =
         error instanceof Error ? error.message : "Generated context preview is unavailable.";
@@ -779,9 +809,9 @@
     snapshotAction = "save";
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.saveExtensionSnapshot(name);
-      const created = snapshotRows().find((snapshot) => snapshot.name === name);
-      selectedSnapshotId = created?.id ?? selectedSnapshotId;
+      const created = await runtime.saveExtensionSnapshot(name);
+      extensionSnapshots = await runtime.getExtensionSnapshots();
+      selectedSnapshotId = created.snapshotId;
       snapshotPopoverOpen = false;
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to save extension snapshot.";
@@ -792,13 +822,32 @@
 
   async function loadExtensionSnapshot(snapshotId: string): Promise<void> {
     if (!snapshotId || snapshotAction) return;
+    const snapshot = snapshotRows().find((candidate) => candidate.snapshotId === snapshotId);
+    if (!snapshot) return;
     selectedSnapshotId = snapshotId;
     snapshotAction = "load";
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.loadExtensionSnapshot(snapshotId);
+      const result = await runtime.loadExtensionSnapshot(snapshot);
+      [extensionSnapshots, extensions] = await Promise.all([
+        runtime.getExtensionSnapshots(),
+        runtime.getExtensions(),
+      ]);
+      if (result.status !== "completed") {
+        const blockedBuilds = result.builds
+          .filter((build) => build.status !== "succeeded")
+          .map((build) => build.extensionId)
+          .join(", ");
+        inventoryError = `Extension snapshot load ${result.status}${blockedBuilds ? `: ${blockedBuilds}` : "."}`;
+      }
     } catch (error) {
       inventoryError = error instanceof Error ? error.message : "Unable to load extension snapshot.";
+      void Promise.all([runtime.getExtensionSnapshots(), runtime.getExtensions()])
+        .then(([nextSnapshots, nextExtensions]) => {
+          extensionSnapshots = nextSnapshots;
+          extensions = nextExtensions;
+        })
+        .catch(() => undefined);
     } finally {
       snapshotAction = null;
     }
@@ -807,7 +856,7 @@
   async function startRenameSnapshot(): Promise<void> {
     const snapshot = selectedSnapshot();
     if (!snapshot || snapshotAction) return;
-    renamingSnapshotId = snapshot.id;
+    renamingSnapshotId = snapshot.snapshotId;
     renameSnapshotName = snapshot.name;
     snapshotPopoverOpen = false;
     confirmingDeleteSnapshotId = null;
@@ -823,7 +872,10 @@
     snapshotAction = "rename";
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.renameExtensionSnapshot(snapshotId, name);
+      const snapshot = snapshotRows().find((candidate) => candidate.snapshotId === snapshotId);
+      if (!snapshot) return;
+      await runtime.renameExtensionSnapshot(snapshot, name);
+      extensionSnapshots = await runtime.getExtensionSnapshots();
       selectedSnapshotId = snapshotId;
       renamingSnapshotId = null;
     } catch (error) {
@@ -837,7 +889,7 @@
   function requestDeleteSnapshot(): void {
     const snapshot = selectedSnapshot();
     if (!snapshot || snapshotAction) return;
-    confirmingDeleteSnapshotId = snapshot.id;
+    confirmingDeleteSnapshotId = snapshot.snapshotId;
     snapshotPopoverOpen = false;
     renamingSnapshotId = null;
   }
@@ -848,7 +900,10 @@
     snapshotAction = "delete";
     inventoryError = null;
     try {
-      extensionsInventory = await runtime.deleteExtensionSnapshot(snapshotId);
+      const snapshot = snapshotRows().find((candidate) => candidate.snapshotId === snapshotId);
+      if (!snapshot) return;
+      await runtime.deleteExtensionSnapshot(snapshot);
+      extensionSnapshots = await runtime.getExtensionSnapshots();
       if (selectedSnapshotId === snapshotId) selectedSnapshotId = "";
       confirmingDeleteSnapshotId = null;
     } catch (error) {
@@ -859,10 +914,10 @@
     }
   }
 
-  async function openExternalInstruction(path: string): Promise<void> {
+  async function openExternalInstruction(sourceId: string): Promise<void> {
     inventoryError = null;
     try {
-      await runtime.openGeneratedAgentContextExternalSourceInEditor(path);
+      await runtime.openExternalInstructionSourceInEditor(sourceId);
     } catch (error) {
       inventoryError =
         error instanceof Error ? error.message : "Unable to open external instruction source.";
@@ -925,20 +980,19 @@
   }
 
   function externalInstructionControl(
-    extension: ExtensionInventoryItemReadModel,
+    source: ExternalInstructionsProjection["sources"][number],
   ): ExternalInstructionControl {
     return {
-      enabled: extension.externalInstruction?.enabled === true,
-      actors: [...(extension.externalInstruction?.actors ?? [])],
+      enabled: source.defaultControl.enabled,
+      actors: [...source.defaultControl.eligibleActors],
     };
   }
 
   async function saveExternalInstructionControl(
-    extension: ExtensionInventoryItemReadModel,
+    source: ExternalInstructionsProjection["sources"][number],
     control: ExternalInstructionControl,
   ): Promise<void> {
-    if (!extension.externalInstruction || !appPreferences || pendingExternalInstructionPath) return;
-    const source = extension.externalInstruction;
+    if (!appPreferences || pendingExternalInstructionPath) return;
     const nextPreferences = copyAppPreferences(appPreferences);
     const nextControl: ExternalInstructionControl = {
       enabled: control.enabled,
@@ -946,7 +1000,7 @@
         DEFAULT_EXTERNAL_INSTRUCTION_ACTORS.includes(actor),
       ),
     };
-    pendingExternalInstructionPath = source.path;
+    pendingExternalInstructionPath = source.canonicalPath;
     inventoryError = null;
     try {
       if (source.sourceGroup === "workspace_chain") {
@@ -954,17 +1008,17 @@
           ...nextPreferences.externalInstructions.workspaceControls,
           [runtime.workspaceId]: {
             ...nextPreferences.externalInstructions.workspaceControls[runtime.workspaceId],
-            [source.path]: nextControl,
+            [source.canonicalPath]: nextControl,
           },
         };
       } else {
         nextPreferences.externalInstructions.globalControls = {
           ...nextPreferences.externalInstructions.globalControls,
-          [source.path]: nextControl,
+          [source.canonicalPath]: nextControl,
         };
       }
       appPreferences = await runtime.updateAppPreferences(nextPreferences);
-      extensionsInventory = await runtime.getExtensionsInventory();
+      externalInstructions = await runtime.getExternalInstructions();
     } catch (error) {
       inventoryError =
         error instanceof Error ? error.message : "Unable to save external instruction controls.";
@@ -974,28 +1028,28 @@
   }
 
   function setExternalInstructionEnabled(
-    extension: ExtensionInventoryItemReadModel,
+    source: ExternalInstructionsProjection["sources"][number],
     enabled: boolean,
   ): void {
-    void saveExternalInstructionControl(extension, {
-      ...externalInstructionControl(extension),
+    void saveExternalInstructionControl(source, {
+      ...externalInstructionControl(source),
       enabled,
     });
   }
 
   function setExternalInstructionActor(
-    extension: ExtensionInventoryItemReadModel,
+    source: ExternalInstructionsProjection["sources"][number],
     actor: ExternalInstructionActor,
     enabled: boolean,
   ): void {
-    const control = externalInstructionControl(extension);
+    const control = externalInstructionControl(source);
     const actors = new Set(control.actors);
     if (enabled) {
       actors.add(actor);
     } else {
       actors.delete(actor);
     }
-    void saveExternalInstructionControl(extension, {
+    void saveExternalInstructionControl(source, {
       ...control,
       actors: [...actors],
     });
@@ -1026,7 +1080,10 @@
 
   $effect(() => {
     const snapshots = snapshotRows();
-    if (selectedSnapshotId && !snapshots.some((snapshot) => snapshot.id === selectedSnapshotId)) {
+    if (
+      selectedSnapshotId &&
+      !snapshots.some((snapshot) => snapshot.snapshotId === selectedSnapshotId)
+    ) {
       selectedSnapshotId = "";
     }
   });
@@ -1046,11 +1103,11 @@
             <p>Generated Context Preview</p>
             <h3>{contextPreview.profileName}</h3>
           </div>
-          <span>{contextPreview.provider}/{contextPreview.model} · {contextPreview.reasoningEffort}</span>
+          <span>{contextPreview.providerId}/{contextPreview.modelId} · {contextPreview.reasoningEffort}</span>
         </div>
         <div class="generated-context-preview-tags">
-          <span>Loaded: {contextPreview.loadedExtensionIds.join(", ") || "none"}</span>
-          <span>Available: {contextPreview.availableExtensionIds.join(", ") || "none"}</span>
+          <span>Loaded: {contextPreview.extensions.filter((extension) => extension.state === "loaded").map((extension) => extension.extensionId).join(", ") || "none"}</span>
+          <span>Available: {contextPreview.extensions.filter((extension) => extension.state === "available").map((extension) => extension.extensionId).join(", ") || "none"}</span>
         </div>
         <pre>{contextPreview.systemPrompt}</pre>
       {/if}
@@ -1282,32 +1339,32 @@
     {/if}
 
   <div class="extensions-list" aria-label="Extension inventory">
-    {#each inventoryRows() as extension (extension.id)}
-      {@const cliRequirements = inventoryCliRequirements(extension.id)}
-      {@const envRequirements = inventoryEnvRequirements(extension.id)}
+    {#each inventoryRows() as extension (extension.extensionId)}
+      {@const cliRequirements = inventoryCliRequirements(extension)}
+      {@const envRequirements = inventoryEnvRequirements(extension)}
       {@const declaredCliBinaries = declaredCliRequirementBinaries(extension)}
-      {@const expanded = expandedExtensionIds.has(extension.id)}
+      {@const expanded = expandedExtensionIds.has(extension.extensionId)}
       <div
-        use:registerExtensionRow={extension.id}
-        data-extension-id={extension.id}
+        use:registerExtensionRow={extension.extensionId}
+        data-extension-id={extension.extensionId}
       >
         <ExtensionListRow
-          id={extension.id}
+          id={extension.extensionId}
           title={extension.title}
           description={extension.description}
           markerLabel="customized"
           markerVisible={customizedExtension(extension)}
           expanded={expanded}
           expandedInset={false}
-          target={extension.id === targetExtensionId}
-          onToggle={() => toggleExtensionExpanded(extension.id)}
+          target={extension.extensionId === targetExtensionId}
+          onToggle={() => toggleExtensionExpanded(extension.extensionId)}
         >
           {#snippet leading()}
-            <Tooltip label={extensionKindTooltip(extension.interface)}>
-              <span class={`extension-kind-icon ${extension.interface}`.trim()} aria-label={extensionKindTitle(extension.interface)}>
-                {#if extension.interface === "svvyx"}
+            <Tooltip label={extensionKindTooltip(extension.interfaceKind)}>
+              <span class={`extension-kind-icon ${extension.interfaceKind}`.trim()} aria-label={extensionKindTitle(extension.interfaceKind)}>
+                {#if extension.interfaceKind === "svvyx"}
                   <TerminalIcon size={14} aria-hidden="true" />
-                {:else if extension.interface === "native_tool"}
+                {:else if extension.interfaceKind === "native_tool"}
                   <Code2Icon size={14} aria-hidden="true" />
                 {:else}
                   <FileTextIcon size={14} aria-hidden="true" />
@@ -1316,15 +1373,21 @@
             </Tooltip>
           {/snippet}
           {#snippet meta()}
-            <Badge tone={extension.category === "external_instruction" ? "info" : "neutral"}>
+            <Badge tone="neutral">
               {categoryLabel(extension.category)}
             </Badge>
+            {#if !extension.usagePolicy.configurable}
+              <Badge tone="neutral">Fixed</Badge>
+            {/if}
+            {#if extension.usagePolicy.networkAccess === "required"}
+              <Badge tone="warning">Network</Badge>
+            {/if}
             {#if generatedApiLabel(extension)}
               <Badge tone="info">{generatedApiLabel(extension)}</Badge>
             {/if}
             {#if extensionHasCliIssue(extension)}
               <Badge tone="danger">CLI</Badge>
-            {:else if extension.state.issues.length > 0 && !extensionNeedsBuild(extension)}
+            {:else if (extension.diagnostics.length > 0 || !extension.runtimeReady) && !extensionNeedsBuild(extension)}
               <Badge tone="warning">Issue</Badge>
             {/if}
           {/snippet}
@@ -1333,8 +1396,8 @@
               class="extension-row-action-confirmation"
               use:dismissConfirmation={{
                 active:
-                  confirmingDeleteExtensionId === extension.id ||
-                  confirmingResetExtensionId === extension.id,
+                  confirmingDeleteExtensionId === extension.extensionId ||
+                  confirmingResetExtensionId === extension.extensionId,
                 onDismiss: cancelExtensionActionConfirmation,
               }}
             >
@@ -1343,31 +1406,31 @@
                   <button
                     type="button"
                     class="extension-status-action"
-                    disabled={isExtensionActionPending(`build:${extension.id}`)}
-                    onclick={() => void buildExtension(extension.id)}
+                    disabled={isExtensionActionPending(`build:${extension.extensionId}`)}
+                    onclick={() => void buildExtension(extension.extensionId)}
                   >
                     <HammerIcon size={12} aria-hidden="true" />
                     Build
                   </button>
                 </Tooltip>
               {/if}
-              <Tooltip label={extension.interface === "native_tool" ? "Native tool extensions cannot be duplicated" : "Duplicate extension"}>
+              <Tooltip label={extension.interfaceKind === "native_tool" ? "Native tool extensions cannot be duplicated" : "Duplicate extension"}>
                 <button
                   type="button"
                   class="extension-icon-action"
-                  disabled={extension.interface === "native_tool" || isExtensionActionPending(`duplicate:${extension.id}`)}
+                  disabled={extension.interfaceKind === "native_tool" || isExtensionActionPending(`duplicate:${extension.extensionId}`)}
                   aria-label={`Duplicate ${extension.title}`}
                   onclick={() => duplicateExtension(extension)}
                 >
                   <CopyPlusIcon size={13} aria-hidden="true" />
                 </button>
               </Tooltip>
-              {#if confirmingResetExtensionId === extension.id}
+              {#if confirmingResetExtensionId === extension.extensionId}
                 <Tooltip label="Confirm reset">
                   <button
                     type="button"
                     class="extension-icon-action"
-                    disabled={isExtensionActionPending(`reset:${extension.id}`)}
+                    disabled={isExtensionActionPending(`reset:${extension.extensionId}`)}
                     aria-label={`Confirm resetting ${extension.title}`}
                     onclick={() => resetExtension(extension)}
                   >
@@ -1375,11 +1438,11 @@
                   </button>
                 </Tooltip>
               {:else}
-                <Tooltip label={extension.category === "builtin" ? "Reset builtin extension" : "Only builtin extensions can be reset"}>
+                <Tooltip label={extension.capabilities.resettable ? "Reset builtin extension" : "Only builtin extensions can be reset"}>
                   <button
                     type="button"
                     class="extension-icon-action"
-                    disabled={extension.category !== "builtin" || isExtensionActionPending(`reset:${extension.id}`)}
+                    disabled={!extension.capabilities.resettable || isExtensionActionPending(`reset:${extension.extensionId}`)}
                     aria-label={`Reset ${extension.title}`}
                     onclick={() => requestResetExtension(extension)}
                   >
@@ -1387,12 +1450,12 @@
                   </button>
                 </Tooltip>
               {/if}
-              {#if confirmingDeleteExtensionId === extension.id}
+              {#if confirmingDeleteExtensionId === extension.extensionId}
                 <Tooltip label="Confirm delete">
                   <button
                     type="button"
                     class="extension-icon-action danger"
-                    disabled={isExtensionActionPending(`delete:${extension.id}`)}
+                    disabled={isExtensionActionPending(`delete:${extension.extensionId}`)}
                     aria-label={`Confirm deleting ${extension.title}`}
                     onclick={() => deleteExtension(extension)}
                   >
@@ -1400,11 +1463,11 @@
                   </button>
                 </Tooltip>
               {:else}
-                <Tooltip label={extension.category === "builtin" ? "builtin extensions cannot be deleted" : "Delete extension"}>
+                <Tooltip label={!extension.capabilities.deletable ? "builtin extensions cannot be deleted" : "Delete extension"}>
                   <button
                     type="button"
                     class="extension-icon-action danger"
-                    disabled={extension.category === "builtin" || isExtensionActionPending(`delete:${extension.id}`)}
+                    disabled={!extension.capabilities.deletable || isExtensionActionPending(`delete:${extension.extensionId}`)}
                     aria-label={`Delete ${extension.title}`}
                     onclick={() => requestDeleteExtension(extension)}
                   >
@@ -1415,14 +1478,14 @@
             </div>
           {/snippet}
           {#snippet expandedContent()}
-          {#if extension.interface === "svvyx"}
+          {#if extension.interfaceKind === "svvyx"}
             <section class="extension-top-controls" aria-label={`${extension.title} TypeScript API`}>
               <Tooltip label="Adds generated runtime facade declarations to the execute_typescript API for this extension. Toggling rebuilds the extension.">
                 <label class="extension-inline-checkbox">
                   <Checkbox
                     size="sm"
-                    checked={extension.typescriptApiEnabled}
-                    disabled={isExtensionActionPending(`typescript-api:${extension.id}`)}
+                    checked={extension.capabilities.typescriptApiEnabled}
+                    disabled={isExtensionActionPending(`typescript-api:${extension.extensionId}`)}
                     onchange={(event) =>
                       setExtensionTypescriptApi(
                         extension,
@@ -1434,7 +1497,7 @@
               </Tooltip>
             </section>
           {/if}
-          {#if extension.id === "request-user-input"}
+          {#if extension.extensionId === "request-user-input"}
             <section class="extension-top-controls" aria-label="Request User Input mode">
               {#if settingsError}
                 <p class="extension-settings-error" role="alert">{settingsError}</p>
@@ -1504,7 +1567,7 @@
           {/if}
           {#if cliRequirements.length}
             <div class="extension-cli-requirements" aria-label={`${extension.title} CLI readiness`}>
-              {#each cliRequirements as requirement (requirement.id)}
+              {#each cliRequirements as requirement (requirement.requirementId)}
                 {@const command = cliRequirementCommand(requirement)}
                 <div class="extension-cli-requirement">
                   <div class="extension-cli-requirement-main">
@@ -1526,75 +1589,65 @@
           {:else if declaredCliBinaries.length && inventoryError}
             <span class="extension-cli-error">{inventoryError}</span>
           {/if}
-          {#if extension.externalInstruction}
-            <div class="external-instruction-readonly" aria-label={`${extension.title} external instruction source`}>
-              <div class="external-instruction-meta">
-                <Badge tone={extension.externalInstruction.readStatus.status === "readable" ? "success" : "danger"}>
-                  {extension.externalInstruction.readStatus.status}
-                </Badge>
-                <span>{sourceGroupLabel(extension.externalInstruction.sourceGroup)}</span>
-                <span>order {extension.externalInstruction.order}</span>
-                <span>sha {shortHash(extension.externalInstruction.contentHash)}</span>
-              </div>
-              <code>{extension.externalInstruction.path}</code>
-              {#if extension.externalInstruction.readStatus.status === "unreadable"}
-                <span class="extension-cli-error">{extension.externalInstruction.readStatus.error ?? "Unable to read file."}</span>
-              {:else}
-                <pre>{extension.externalInstruction.content}</pre>
-              {/if}
-            </div>
-          {/if}
-          {#if extension.minimalInstruction}
+          {@const minimalContributor = extension.contributors.find((contributor) => contributor.kind === "minimal")}
+          {#if minimalContributor?.source}
             <div class="extension-minimal-instruction">
               <div class="extension-instruction-list-header">
                 <strong>Minimal instruction</strong>
               </div>
               <ExtensionInstructionFileEditor
                 runtime={runtime}
-                extensionId={extension.id}
-                kind="minimal"
-                file={extension.minimalInstruction}
+                name={minimalContributor.name}
+                source={minimalContributor.source}
+                bypassed={minimalContributor.bypassed}
+                editable={minimalContributor.editable}
+                openable={minimalContributor.openable}
                 editor={appPreferences?.preferredExternalEditor}
-                onSaved={() => void loadExtensionsInventory()}
+                onSaved={() => undefined}
               />
             </div>
           {/if}
-          {#if extension.loadedInstructionContributors.length}
+          {@const fullContributors = extension.contributors.filter((contributor) => contributor.kind !== "minimal")}
+          {#if fullContributors.length}
             <div class="extension-instruction-list">
               <div class="extension-instruction-list-header">
                 <strong>Loaded instructions</strong>
                 <Button
                   size="xs"
                   variant="ghost"
-                  disabled={isExtensionActionPending(`instruction:add:${extension.id}`) || extension.category === "external_instruction"}
+                  disabled={isExtensionActionPending(`instruction:add:${extension.extensionId}`)}
                   onclick={() => addInstructionFile(extension)}
                 >
                   <PlusIcon size={13} aria-hidden="true" />
                   Add
                 </Button>
               </div>
-              {#each extension.loadedInstructionContributors as contributor (contributor.kind === "source" ? contributor.file.name : contributor.name)}
+              {#each fullContributors as contributor (contributor.source?.sourceId ?? contributor.name)}
                 <div class="extension-instruction-row">
-                  {#if contributor.kind === "source"}
+                  {#if contributor.source}
                     <ExtensionInstructionFileEditor
                       runtime={runtime}
-                      extensionId={extension.id}
-                      file={contributor.file}
+                      name={contributor.name}
+                      source={contributor.source}
+                      bypassed={contributor.bypassed}
+                      editable={contributor.editable}
+                      openable={contributor.openable}
+                      showTokenCount={contributor.kind !== "script"}
                       editor={appPreferences?.preferredExternalEditor}
-                      onSaved={() => void loadExtensionsInventory()}
+                      onSaved={() => undefined}
                     >
                       {#snippet footerControls()}
-                        <Tooltip label={contributorBypassed(contributor) ? "Include in context" : "Bypass without deleting"}>
+                        <Tooltip label={contributor.bypassed ? "Include in context" : "Bypass without deleting"}>
                           <button
                             type="button"
-                            class={`extension-footer-icon-action ${contributorBypassed(contributor) ? "is-bypassed" : ""}`.trim()}
-                            disabled={isExtensionActionPending(instructionActionKey(extension.id, contributor.file.name, "bypass"))}
-                            aria-label={contributorBypassed(contributor) ? "Include contributor" : "Bypass contributor"}
+                            class={`extension-footer-icon-action ${contributor.bypassed ? "is-bypassed" : ""}`.trim()}
+                            disabled={isExtensionActionPending(instructionActionKey(extension.extensionId, contributor.name, "bypass"))}
+                            aria-label={contributor.bypassed ? "Include contributor" : "Bypass contributor"}
                             onclick={() =>
                               setInstructionBypassed(
-                                extension.id,
-                                contributor.file.name,
-                                !contributorBypassed(contributor),
+                                extension.extensionId,
+                                contributor.name,
+                                !contributor.bypassed,
                               )}
                           >
                             <BanIcon size={12} aria-hidden="true" />
@@ -1605,30 +1658,30 @@
                           use:dismissConfirmation={{
                             active:
                               confirmingDeleteInstructionKey ===
-                              instructionDeleteKey(extension.id, contributor.file.name),
+                              instructionDeleteKey(extension.extensionId, contributor.name),
                             onDismiss: cancelDeleteInstructionConfirmation,
                           }}
                         >
-                          {#if confirmingDeleteInstructionKey === instructionDeleteKey(extension.id, contributor.file.name)}
+                          {#if confirmingDeleteInstructionKey === instructionDeleteKey(extension.extensionId, contributor.name)}
                             <Tooltip label="Confirm delete">
                               <button
                                 type="button"
                                 class="extension-footer-icon-action danger"
-                                disabled={isExtensionActionPending(instructionActionKey(extension.id, contributor.file.name, "remove"))}
+                                disabled={isExtensionActionPending(instructionActionKey(extension.extensionId, contributor.name, "remove"))}
                                 aria-label="Confirm deleting instruction contributor"
-                                onclick={() => removeInstructionFile(extension.id, contributor.file.name)}
+                                onclick={() => removeInstructionFile(extension.extensionId, contributor.name)}
                               >
                                 <CheckIcon size={12} aria-hidden="true" />
                               </button>
                             </Tooltip>
                           {:else}
-                            <Tooltip label={contributor.file.editable ? "Delete instruction file" : "Only source instruction files can be removed"}>
+                            <Tooltip label={contributor.editable ? "Delete instruction file" : "Only source instruction files can be removed"}>
                               <button
                                 type="button"
                                 class="extension-footer-icon-action danger"
-                                disabled={isExtensionActionPending(instructionActionKey(extension.id, contributor.file.name, "remove")) || !contributor.file.editable}
+                                disabled={isExtensionActionPending(instructionActionKey(extension.extensionId, contributor.name, "remove")) || !contributor.editable}
                                 aria-label="Delete instruction contributor"
-                                onclick={() => requestDeleteInstructionFile(extension.id, contributor.file.name)}
+                                onclick={() => requestDeleteInstructionFile(extension.extensionId, contributor.name)}
                               >
                                 <Trash2Icon size={12} aria-hidden="true" />
                               </button>
@@ -1637,60 +1690,6 @@
                         </span>
                       {/snippet}
                     </ExtensionInstructionFileEditor>
-                  {:else}
-                    <div class="scripted-instruction-contributor">
-                      <ExtensionInstructionFileEditor
-                        runtime={runtime}
-                        extensionId={extension.id}
-                        kind="script"
-                        file={contributor.script}
-                        showTokenCount={false}
-                        editor={appPreferences?.preferredExternalEditor}
-                        onSaved={() => void loadExtensionsInventory()}
-                      >
-                        {#snippet footerControls()}
-                          {#if extensionCanBuild(extension)}
-                            <Tooltip label={`Build generated instruction with ${contributor.regenerateCommand}`}>
-                              <button
-                                type="button"
-                                class="extension-footer-text-action"
-                                disabled={isExtensionActionPending(`build:${extension.id}`)}
-                                onclick={() => void buildExtension(extension.id)}
-                              >
-                                <HammerIcon size={12} aria-hidden="true" />
-                                Build
-                              </button>
-                            </Tooltip>
-                          {/if}
-                        {/snippet}
-                      </ExtensionInstructionFileEditor>
-                      <ExtensionInstructionFileEditor
-                        runtime={runtime}
-                        extensionId={extension.id}
-                        file={contributor.output}
-                        editor={appPreferences?.preferredExternalEditor}
-                        onSaved={() => void loadExtensionsInventory()}
-                      >
-                        {#snippet footerControls()}
-                          <Tooltip label={contributorBypassed(contributor) ? "Include in context" : "Bypass without deleting"}>
-                            <button
-                              type="button"
-                              class={`extension-footer-icon-action ${contributorBypassed(contributor) ? "is-bypassed" : ""}`.trim()}
-                              disabled={isExtensionActionPending(instructionActionKey(extension.id, contributor.output.name, "bypass"))}
-                              aria-label={contributorBypassed(contributor) ? "Include contributor" : "Bypass contributor"}
-                              onclick={() =>
-                                setInstructionBypassed(
-                                  extension.id,
-                                  contributor.output.name,
-                                  !contributorBypassed(contributor),
-                                )}
-                            >
-                              <BanIcon size={12} aria-hidden="true" />
-                            </button>
-                          </Tooltip>
-                        {/snippet}
-                      </ExtensionInstructionFileEditor>
-                    </div>
                   {/if}
                 </div>
               {/each}
@@ -1699,36 +1698,36 @@
             <Button
               size="xs"
               variant="ghost"
-              disabled={isExtensionActionPending(`instruction:add:${extension.id}`) || extension.category === "external_instruction"}
+              disabled={isExtensionActionPending(`instruction:add:${extension.extensionId}`)}
               onclick={() => addInstructionFile(extension)}
             >
               <PlusIcon size={13} aria-hidden="true" />
               Add instruction file
             </Button>
           {/if}
-          {#if extension.tooling.nativeToolSchema || extension.tooling.svvyxCommandSource || extension.tooling.svvyxCommandSchema || extension.tooling.typescriptApiStatus !== "disabled"}
+          {#if extension.tooling.length}
             <ExtensionListRow
-              id={`${extension.id}:tooling`}
+              id={`${extension.extensionId}:tooling`}
               title="Tooling"
               description="Tool schemas, command source, generated command schema, and TypeScript API output."
               draggable={false}
               dragLabel={`${extension.title} tooling`}
-              expanded={expandedToolingIds.has(extension.id)}
+              expanded={expandedToolingIds.has(extension.extensionId)}
               expandedInset={false}
               showDragHandle={false}
               showLeading={false}
-              onToggle={() => toggleToolingExpanded(extension.id)}
+              onToggle={() => toggleToolingExpanded(extension.extensionId)}
             >
               {#snippet meta()}
-                {#if extension.tooling.nativeToolSchema}
+                {#if extension.tooling.some((item) => item.kind === "native-tool-schema")}
                   <Badge tone="neutral">Native</Badge>
                 {/if}
-                {#if extension.tooling.svvyxCommandSource || extension.tooling.svvyxCommandSchema}
+                {#if extension.tooling.some((item) => item.kind === "svvyx-source" || item.kind === "command-schema")}
                   <Badge tone="info">svvyx</Badge>
                 {/if}
-                {#if extension.tooling.typescriptApiDeclaration}
+                {#if extension.buildObservation?.currentBuild?.generatedFiles.some((file) => file.role === "typescript-declaration")}
                   <Badge tone="info">TS API</Badge>
-                {:else if extension.tooling.typescriptApiStatus === "not_emitted"}
+                {:else if extension.capabilities.typescriptApiEnabled}
                   <Badge tone="warning">TS API pending</Badge>
                 {/if}
               {/snippet}
@@ -1738,8 +1737,8 @@
                     <button
                       type="button"
                       class="extension-status-action"
-                      disabled={isExtensionActionPending(`build:${extension.id}`)}
-                      onclick={() => void buildExtension(extension.id)}
+                      disabled={isExtensionActionPending(`build:${extension.extensionId}`)}
+                      onclick={() => void buildExtension(extension.extensionId)}
                     >
                       <HammerIcon size={12} aria-hidden="true" />
                       Build
@@ -1748,31 +1747,43 @@
                 {/if}
               {/snippet}
               {#snippet expandedContent()}
+                {@const nativeToolSchema = extension.tooling.find((item) => item.kind === "native-tool-schema")}
+                {@const svvyxSource = extension.tooling.find((item) => item.kind === "svvyx-source")}
+                {@const commandSchema = extension.tooling.find((item) => item.kind === "command-schema")}
+                {@const typescriptDeclaration = extension.tooling.find((item) => item.kind === "typescript-api-declaration")}
                 <div class="extension-tooling-files" aria-label={`${extension.title} tooling files`}>
-                  {#if extension.tooling.nativeToolSchema}
-                    <ExtensionGeneratedFileViewer
-                      runtime={runtime}
-                      extensionId={extension.id}
-                      block={extension.tooling.nativeToolSchema}
-                      editor={appPreferences?.preferredExternalEditor}
-                    />
-                  {/if}
-                  {#if extension.tooling.svvyxCommandSource}
+                  {#if nativeToolSchema?.source}
                     <ExtensionInstructionFileEditor
                       runtime={runtime}
-                      extensionId={extension.id}
-                      file={extension.tooling.svvyxCommandSource}
+                      name={nativeToolSchema.name}
+                      source={nativeToolSchema.source}
+                      bypassed={false}
+                      editable={false}
+                      openable={nativeToolSchema.openable}
+                      showTokenCount={true}
+                      editor={appPreferences?.preferredExternalEditor}
+                      onSaved={() => undefined}
+                    />
+                  {/if}
+                  {#if svvyxSource?.source}
+                    <ExtensionInstructionFileEditor
+                      runtime={runtime}
+                      name={svvyxSource.name}
+                      source={svvyxSource.source}
+                      bypassed={false}
+                      editable={true}
+                      openable={svvyxSource.openable}
                       showTokenCount={false}
                       editor={appPreferences?.preferredExternalEditor}
-                      onSaved={() => void loadExtensionsInventory()}
+                      onSaved={() => undefined}
                     >
                       {#snippet footerControls()}
                         <Tooltip label="Build command schema from source/index.ts">
                           <button
                             type="button"
                             class="extension-footer-text-action"
-                            disabled={isExtensionActionPending(`build:${extension.id}`)}
-                            onclick={() => void buildExtension(extension.id)}
+                            disabled={isExtensionActionPending(`build:${extension.extensionId}`)}
+                            onclick={() => void buildExtension(extension.extensionId)}
                           >
                             <HammerIcon size={12} aria-hidden="true" />
                             Build
@@ -1781,22 +1792,32 @@
                       {/snippet}
                     </ExtensionInstructionFileEditor>
                   {/if}
-                  {#if extension.tooling.svvyxCommandSchema}
-                    <ExtensionGeneratedFileViewer
+                  {#if commandSchema?.source}
+                    <ExtensionInstructionFileEditor
                       runtime={runtime}
-                      extensionId={extension.id}
-                      block={extension.tooling.svvyxCommandSchema}
+                      name={commandSchema.name}
+                      source={commandSchema.source}
+                      bypassed={false}
+                      editable={false}
+                      openable={commandSchema.openable}
+                      showTokenCount={true}
                       editor={appPreferences?.preferredExternalEditor}
+                      onSaved={() => undefined}
                     />
                   {/if}
-                  {#if extension.tooling.typescriptApiDeclaration}
-                    <ExtensionGeneratedFileViewer
+                  {#if typescriptDeclaration?.source}
+                    <ExtensionInstructionFileEditor
                       runtime={runtime}
-                      extensionId={extension.id}
-                      block={extension.tooling.typescriptApiDeclaration}
+                      name={typescriptDeclaration.name}
+                      source={typescriptDeclaration.source}
+                      bypassed={false}
+                      editable={false}
+                      openable={typescriptDeclaration.openable}
+                      showTokenCount={true}
                       editor={appPreferences?.preferredExternalEditor}
+                      onSaved={() => undefined}
                     />
-                  {:else if extension.tooling.typescriptApiStatus === "not_emitted"}
+                  {:else if extension.capabilities.typescriptApiEnabled}
                     <div class="extension-tooling-note">
                       TypeScript API is enabled, but this extension has not emitted declarations yet.
                     </div>
@@ -1807,7 +1828,7 @@
           {/if}
           {#if envRequirements.length}
             <div class="extension-env-requirements" aria-label={`${extension.title} env readiness`}>
-              {#each envRequirements as requirement (requirement.name)}
+              {#each envRequirements as requirement (requirement.envName)}
                 <div class="extension-env-requirement">
                   <div class="extension-env-requirement-meta">
                     <Badge tone={envRequirementTone(requirement)}>
@@ -1818,10 +1839,10 @@
                   <ExtensionEnvValueForm
                     secret={requirement.secret}
                     configured={requirement.status === "configured"}
-                    onSave={(value) => saveExtensionEnvValue(extension.id, requirement, value)}
+                    onSave={(value) => saveExtensionEnvValue(extension.extensionId, requirement, value)}
                     onRemove={
                       requirement.status === "configured"
-                        ? () => removeExtensionEnvValue(extension.id, requirement)
+                        ? () => removeExtensionEnvValue(extension.extensionId, requirement)
                         : undefined
                     }
                   />
@@ -1829,54 +1850,57 @@
               {/each}
             </div>
           {/if}
-          {#if extension.externalInstruction}
-          {@const control = externalInstructionControl(extension)}
-          {@const isSavingExternalInstruction = pendingExternalInstructionPath === extension.externalInstruction.path}
+          {/snippet}
+        </ExtensionListRow>
+      </div>
+    {/each}
+    {#each externalInstructions?.sources ?? [] as source (source.id)}
+      {#if extensionFilter === "all" || extensionFilter === "instructions"}
+      {@const control = externalInstructionControl(source)}
+      {@const isSavingExternalInstruction = pendingExternalInstructionPath === source.canonicalPath}
+      <ExtensionListRow
+        id={source.id}
+        title={source.title}
+        description={source.fileName}
+        expanded={expandedExtensionIds.has(source.id)}
+        expandedInset={false}
+        target={source.id === targetExtensionId}
+        onToggle={() => toggleExtensionExpanded(source.id)}
+      >
+        {#snippet meta()}<Badge tone="info">External Instructions</Badge>{/snippet}
+        {#snippet expandedContent()}
+          <div class="external-instruction-readonly" aria-label={`${source.title} external instruction source`}>
+            <div class="external-instruction-meta">
+              <Badge tone={source.readStatus.status === "readable" ? "success" : "danger"}>{source.readStatus.status}</Badge>
+              <span>{sourceGroupLabel(source.sourceGroup)}</span>
+              <span>order {source.order}</span>
+              <span>sha {shortHash(source.contentHash)}</span>
+            </div>
+            <code>{source.canonicalPath}</code>
+            {#if source.readStatus.status === "unreadable"}
+              <span class="extension-cli-error">{source.readStatus.error}</span>
+            {:else}<pre>{source.content ?? ""}</pre>{/if}
+          </div>
           <div class="extension-settings">
-            <div class="external-instruction-controls" aria-label={`${extension.title} usage controls`}>
+            <div class="external-instruction-controls" aria-label={`${source.title} usage controls`}>
               <label class="external-instruction-enable">
-                <Checkbox
-                  size="sm"
-                  checked={control.enabled}
-                  disabled={!appPreferences || isSavingExternalInstruction}
-                  onchange={(event) =>
-                    setExternalInstructionEnabled(
-                      extension,
-                      (event.currentTarget as HTMLInputElement).checked,
-                    )}
-                />
+                <Checkbox size="sm" checked={control.enabled} disabled={!appPreferences || isSavingExternalInstruction} onchange={(event) => setExternalInstructionEnabled(source, (event.currentTarget as HTMLInputElement).checked)} />
                 <span>Enabled</span>
               </label>
-              <div class="external-instruction-actors" aria-label={`${extension.title} actors`}>
+              <div class="external-instruction-actors" aria-label={`${source.title} actors`}>
                 {#each ACTORS as actor (actor.id)}
                   <label class="external-instruction-actor">
-                    <Checkbox
-                      size="sm"
-                      checked={control.actors.includes(actor.id)}
-                      disabled={!appPreferences || isSavingExternalInstruction}
-                      onchange={(event) =>
-                        setExternalInstructionActor(
-                          extension,
-                          actor.id,
-                          (event.currentTarget as HTMLInputElement).checked,
-                        )}
-                    />
+                    <Checkbox size="sm" checked={control.actors.includes(actor.id)} disabled={!appPreferences || isSavingExternalInstruction} onchange={(event) => setExternalInstructionActor(source, actor.id, (event.currentTarget as HTMLInputElement).checked)} />
                     <span>{actorLabel(actor.id)}</span>
                   </label>
                 {/each}
               </div>
-              <OpenExternalButton
-                disabled={isSavingExternalInstruction}
-                editor={appPreferences?.preferredExternalEditor}
-                targetLabel={extension.externalInstruction.path}
-                onclick={() => openExternalInstruction(extension.externalInstruction!.path)}
-              />
+              <OpenExternalButton disabled={isSavingExternalInstruction} editor={appPreferences?.preferredExternalEditor} targetLabel={source.canonicalPath} onclick={() => openExternalInstruction(source.id)} />
             </div>
           </div>
-          {/if}
-          {/snippet}
-        </ExtensionListRow>
-      </div>
+        {/snippet}
+      </ExtensionListRow>
+      {/if}
     {/each}
   </div>
   </div>

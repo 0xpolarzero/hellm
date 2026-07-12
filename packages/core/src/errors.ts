@@ -288,6 +288,22 @@ export class SecretStorePortError extends Schema.TaggedErrorClass<SecretStorePor
   },
 ) {}
 
+export class ExtensionSnapshotPayloadStoreError extends Schema.TaggedErrorClass<ExtensionSnapshotPayloadStoreError>()(
+  "ExtensionSnapshotPayloadStoreError",
+  {
+    operation: Schema.String,
+    reason: Schema.Literals([
+      "invalid-input",
+      "not-found",
+      "corrupt-payload",
+      "persistence-failed",
+      "unsafe-path",
+    ]),
+    message: Schema.String,
+    cause: Schema.optionalKey(Schema.Defect({ excludeCause: true })),
+  },
+) {}
+
 export class PiSessionReferencePortError extends Schema.TaggedErrorClass<PiSessionReferencePortError>()(
   "PiSessionReferencePortError",
   {
@@ -338,6 +354,9 @@ export class ExtensionError extends Schema.TaggedErrorClass<ExtensionError>()("E
     "unsupported-operation",
     "read-only-source",
     "execution-failed",
+    "process-failed",
+    "timed-out",
+    "output-invalid",
     "redaction-failed",
   ]),
   message: Schema.String,
@@ -501,6 +520,20 @@ export const encodeSecretStorePortErrorExit =
   makeStrictBoundaryTaggedErrorEncodeExit(SecretStorePortError);
 export const encodeSecretStorePortErrorEffect =
   makeStrictBoundaryTaggedErrorEncodeEffect(SecretStorePortError);
+
+export const decodeUnknownExtensionSnapshotPayloadStoreErrorExit = Schema.decodeUnknownExit(
+  ExtensionSnapshotPayloadStoreError,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownExtensionSnapshotPayloadStoreErrorEffect = Schema.decodeUnknownEffect(
+  ExtensionSnapshotPayloadStoreError,
+  strictBoundaryParseOptions,
+);
+export const encodeExtensionSnapshotPayloadStoreErrorExit = makeStrictBoundaryTaggedErrorEncodeExit(
+  ExtensionSnapshotPayloadStoreError,
+);
+export const encodeExtensionSnapshotPayloadStoreErrorEffect =
+  makeStrictBoundaryTaggedErrorEncodeEffect(ExtensionSnapshotPayloadStoreError);
 
 export const decodeUnknownPiSessionReferencePortErrorExit = Schema.decodeUnknownExit(
   PiSessionReferencePortError,

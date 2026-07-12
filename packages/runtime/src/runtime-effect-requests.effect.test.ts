@@ -247,8 +247,23 @@ function extensionsServiceWithReadiness(
   } = { envReadiness: "not_required", dependencyReadiness: "ready" },
 ): Extensions["Service"] {
   return Extensions.of({
+    snapshots: {
+      captureSourcePayload: () => Effect.die("Unexpected snapshot source capture."),
+      prepareSourceRestore: () => Effect.die("Unexpected snapshot source restore preparation."),
+      applySourceRestore: () => Effect.die("Unexpected snapshot source restore application."),
+      finalizeSourceRestore: () => Effect.die("Unexpected snapshot source restore finalization."),
+    },
+    builds: {
+      build: () => Effect.die("Unexpected extension build."),
+      observeCurrent: () => Effect.die("Unexpected extension build observation."),
+    },
+    dependencies: {
+      refreshReadiness: () => Effect.die("Unexpected extension dependency readiness refresh."),
+    },
     registry: {
       list: () => Effect.succeed([]),
+      observe: () =>
+        Effect.succeed({ aggregateFingerprint: "test", observations: [], diagnostics: [] }),
       inspect: ({ id }) =>
         Effect.succeed({
           id,
@@ -264,6 +279,11 @@ function extensionsServiceWithReadiness(
           resetBehavior: "builtin_reset",
           deleteBehavior: "not_allowed",
         }),
+    },
+    externalInstructions: {
+      scan: () => Effect.die("Unexpected external instruction scan."),
+      resolveSource: () => Effect.die("Unexpected external instruction resolve."),
+      saveSource: () => Effect.die("Unexpected external instruction save."),
     },
     actorBindings: {
       resolve: () => Effect.succeed({ loadedExtensionIds: [], availableExtensionIds: [] }),
@@ -286,6 +306,19 @@ function extensionsServiceWithReadiness(
       planWorkspaceLink: () => Effect.die("Unexpected generated package workspace link plan."),
     },
     sources: {
+      recoverMutations: () => Effect.die("Unexpected lifecycle recovery."),
+      finalizeLifecycleMutation: () => Effect.die("Unexpected lifecycle finalization."),
+      createExtension: () => Effect.die("Unexpected extension create."),
+      duplicateExtension: () => Effect.die("Unexpected extension duplicate."),
+      deleteExtension: () => Effect.die("Unexpected extension delete."),
+      resetExtensionInstructions: () => Effect.die("Unexpected extension reset."),
+      addInstruction: () => Effect.die("Unexpected instruction add."),
+      removeInstruction: () => Effect.die("Unexpected instruction remove."),
+      configureInstruction: () => Effect.die("Unexpected instruction configure."),
+      renameInstruction: () => Effect.die("Unexpected instruction rename."),
+      reorderInstructions: () => Effect.die("Unexpected instruction reorder."),
+      revertMutation: () => Effect.die("Unexpected lifecycle revert."),
+      configureTypescriptApi: () => Effect.die("Unexpected extension source mutation."),
       openEditSession: () => Effect.die("Unexpected source edit open."),
       saveEditSession: () => Effect.die("Unexpected source edit save."),
       createWorkflowAgent: () => Effect.die("Unexpected workflow-agent create."),
@@ -1305,6 +1338,8 @@ describe("runtime effect request application", () => {
           const calls: string[] = [];
           const bindingStatePort = {
             readRuntimePromptBinding: () => Effect.die("Unexpected runtime prompt binding read."),
+            readGeneratedContextBuildSubject: () => Effect.die("Unexpected context subject read."),
+            bindGeneratedContext: () => Effect.die("Unexpected context binding write."),
             updateActorExtensionBinding: (input) => {
               calls.push(`state:${input.extensionId}`);
               updateCalls.push({ type: "actor_extension_binding.update", input });
@@ -1393,6 +1428,8 @@ describe("runtime effect request application", () => {
           const calls: string[] = [];
           const bindingStatePort = {
             readRuntimePromptBinding: () => Effect.die("Unexpected runtime prompt binding read."),
+            readGeneratedContextBuildSubject: () => Effect.die("Unexpected context subject read."),
+            bindGeneratedContext: () => Effect.die("Unexpected context binding write."),
             updateActorExtensionBinding: (input) => {
               calls.push(`state:${input.extensionId}`);
               return Effect.succeed(
@@ -1461,6 +1498,8 @@ describe("runtime effect request application", () => {
         Effect.gen(function* () {
           const bindingStatePort = {
             readRuntimePromptBinding: () => Effect.die("Unexpected runtime prompt binding read."),
+            readGeneratedContextBuildSubject: () => Effect.die("Unexpected context subject read."),
+            bindGeneratedContext: () => Effect.die("Unexpected context binding write."),
             updateActorExtensionBinding: () => Effect.die("Unexpected actor binding update."),
             setActorExtensionBinding: () => Effect.die("Unexpected actor binding set."),
           } satisfies RuntimeActorExtensionBindingStatePortService;
@@ -1503,6 +1542,8 @@ describe("runtime effect request application", () => {
         Effect.gen(function* () {
           const bindingStatePort = {
             readRuntimePromptBinding: () => Effect.die("Unexpected runtime prompt binding read."),
+            readGeneratedContextBuildSubject: () => Effect.die("Unexpected context subject read."),
+            bindGeneratedContext: () => Effect.die("Unexpected context binding write."),
             updateActorExtensionBinding: () => Effect.die("Unexpected actor binding update."),
             setActorExtensionBinding: () => Effect.die("Unexpected actor binding set."),
           } satisfies RuntimeActorExtensionBindingStatePortService;
@@ -1539,6 +1580,8 @@ describe("runtime effect request application", () => {
       Effect.gen(function* () {
         const bindingStatePort = {
           readRuntimePromptBinding: () => Effect.die("Unexpected runtime prompt binding read."),
+          readGeneratedContextBuildSubject: () => Effect.die("Unexpected context subject read."),
+          bindGeneratedContext: () => Effect.die("Unexpected context binding write."),
           updateActorExtensionBinding: () => Effect.die("Unexpected actor binding update."),
           setActorExtensionBinding: () => Effect.die("Unexpected actor binding set."),
         } satisfies RuntimeActorExtensionBindingStatePortService;
@@ -1735,7 +1778,6 @@ describe("runtime effect request application", () => {
               historyMode: "forked",
               agentProfileJson: null,
               generatedAgentContextBinding: {
-                aggregateCacheKey: "handler-thread-cache",
                 generatedAgentContextFingerprint: "handler-thread-fingerprint",
                 generatedAgentContextRevision: 1,
                 externalSourceHashes: [],

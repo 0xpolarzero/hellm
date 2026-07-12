@@ -68,6 +68,8 @@ describe("narrowRendererStateFacade", () => {
       extensionEnv: {
         setOverride: async () => ({ receipt: {} }) as never,
         removeOverride: async () => ({ receipt: {} }) as never,
+        setSecret: async () => ({ receipt: {} }) as never,
+        removeSecret: async () => ({ receipt: {} }) as never,
       },
       agentProfiles: {
         updateOrchestrator: async () => ({ receipt: {} }) as never,
@@ -102,5 +104,7 @@ describe("narrowRendererStateFacade", () => {
       "snippets",
     ]);
     expect("close" in rendererCommands).toBe(false);
+    expect("setSecret" in rendererCommands.extensionEnv).toBe(false);
+    expect("removeSecret" in rendererCommands.extensionEnv).toBe(false);
   });
 });

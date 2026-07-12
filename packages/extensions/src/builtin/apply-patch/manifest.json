@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"apply-patch","interface":"native_tool","title":"Apply Patch","description":"Targeted file patching through the shared tool pipeline.","typescriptApiEnabled":false,"instructionFiles":[{"file":"010-apply-patch.mdx","bypassed":false}]}

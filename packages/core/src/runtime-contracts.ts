@@ -1795,6 +1795,35 @@ export type RuntimeExtensionSnapshotContextImpactTransportInput =
 
 export const SvvyxRuntimeEffectTransportRequestSchema = Schema.Union([
   Schema.Struct({
+    type: Schema.Literal("extension_build.request"),
+    input: Schema.Struct({
+      extensionId: ExtensionId,
+      mutationId: Schema.String.check(Schema.isNonEmpty()),
+      reason: Schema.Literal("reset"),
+    }),
+    target: Schema.Literal("extension_lifecycle"),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("extension_source.reconcile"),
+    input: Schema.Struct({
+      action: Schema.Literals([
+        "created",
+        "duplicated",
+        "deleted",
+        "reset",
+        "instruction-added",
+        "instruction-removed",
+        "instruction-configured",
+        "instruction-renamed",
+        "instructions-reordered",
+        "mutation-reverted",
+      ]),
+      extensionIds: Schema.Array(ExtensionId).check(Schema.isNonEmpty()),
+      mutationId: Schema.String.check(Schema.isNonEmpty()),
+    }),
+    target: Schema.Literal("extension_lifecycle"),
+  }),
+  Schema.Struct({
     type: Schema.Literal("extension_usage.context_impact"),
     input: RuntimeExtensionUsageContextImpactTransportInputSchema,
     target: Schema.Literals(["extension_usage", "extension_usage_revert"]),

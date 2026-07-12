@@ -32,7 +32,7 @@ import {
 } from "@svvy/core";
 import { Extensions } from "@svvy/extensions";
 import { RuntimeLayerConfigService } from "./runtime-layer-config";
-import { RuntimeGeneratedContextRefreshService } from "./runtime-generated-context-refresh-service";
+import { RuntimeGeneratedContextBindingService } from "./runtime-generated-context-binding-service";
 import { RuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
 import { RuntimePromptDefaultsService } from "./runtime-prompt-defaults-service";
 import {
@@ -174,7 +174,7 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
     const promptDefaults = yield* RuntimePromptDefaultsService;
     const promptExecution = yield* RuntimePromptExecutionService;
     const actorBindingState = yield* RuntimeActorExtensionBindingStatePort;
-    const generatedContextRefresh = yield* RuntimeGeneratedContextRefreshService;
+    const generatedContextBinding = yield* RuntimeGeneratedContextBindingService;
     const extensions = yield* Extensions;
     const queueState = yield* RuntimeQueueStatePort;
     const requestState = yield* RuntimeRequestStatePort;
@@ -222,8 +222,8 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
             refreshBeforeDispatch({
               target,
               surface,
-              actorBindingState,
-              generatedContextRefresh,
+              generatedContextBinding,
+              workspaceId,
             }),
           materializeQueuedMessage: ({ queued, surface }) =>
             reconcileCommittedEditIntent({ queued, surface }).pipe(
@@ -341,32 +341,16 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
 );
 
 function refreshBeforeDispatch(input: {
+  readonly workspaceId: WorkspaceId;
   readonly target: RuntimeSurfaceTarget;
   readonly surface: RuntimeSurfaceRuntimeServiceService;
-  readonly actorBindingState: RuntimeActorExtensionBindingStatePortService;
-  readonly generatedContextRefresh: RuntimeGeneratedContextRefreshService["Service"];
+  readonly generatedContextBinding: RuntimeGeneratedContextBindingService["Service"];
 }): Effect.Effect<RuntimeSurfaceRuntimeServiceService, RuntimeContractError> {
   return Effect.gen(function* () {
-    const binding = yield* input.actorBindingState
-      .readRuntimePromptBinding({ target: input.target })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new RuntimeContractError({
-              operation: "runtime.queue.dispatch.readPromptBinding",
-              reason: cause.reason === "not-found" ? "target-not-found" : "state-conflict",
-              message: cause.message,
-              cause,
-            }),
-        ),
-      );
-    if (binding.updateExtensionContextBeforeNextTurn) {
-      yield* input.generatedContextRefresh.refresh({
-        scope: "target",
-        target: input.target,
-        reason: "profile-settings-changed",
-      });
-    }
+    yield* input.generatedContextBinding.refresh({
+      workspaceId: input.workspaceId,
+      target: input.target,
+    });
     return input.surface;
   });
 }

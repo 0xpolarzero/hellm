@@ -9,7 +9,41 @@ import type * as ManagedRuntime from "effect/ManagedRuntime";
 import type * as Path from "effect/Path";
 import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { boundarySchemaErrorDetails, RuntimeContractError } from "@svvy/core";
+import {
+  boundarySchemaErrorDetails,
+  RuntimeContractError,
+  decodeUnknownAddExtensionInstructionInputEffect,
+  decodeUnknownAddExtensionInstructionResultEffect,
+  decodeUnknownConfigureExtensionInstructionInputEffect,
+  decodeUnknownConfigureExtensionInstructionResultEffect,
+  decodeUnknownCreateExtensionSourceInputEffect,
+  decodeUnknownCreateExtensionSourceResultEffect,
+  decodeUnknownDeleteExtensionSourceInputEffect,
+  decodeUnknownDeleteExtensionSourceResultEffect,
+  decodeUnknownDuplicateExtensionSourceInputEffect,
+  decodeUnknownDuplicateExtensionSourceResultEffect,
+  decodeUnknownRemoveExtensionInstructionInputEffect,
+  decodeUnknownRemoveExtensionInstructionResultEffect,
+  decodeUnknownResetExtensionInstructionsInputEffect,
+  decodeUnknownRuntimeResetExtensionInstructionsResultEffect,
+  decodeUnknownRenameExtensionInstructionInputEffect,
+  decodeUnknownRenameExtensionInstructionResultEffect,
+  decodeUnknownReorderExtensionInstructionsInputEffect,
+  decodeUnknownReorderExtensionInstructionsResultEffect,
+  decodeUnknownRevertExtensionSourceMutationInputEffect,
+  decodeUnknownRuntimeRevertExtensionSourceMutationResultEffect,
+  ExtensionSnapshotSummaryCodecs,
+  ExtensionSnapshotsReadModelCodecs,
+  RuntimeDeleteExtensionSnapshotInputCodecs,
+  RuntimeDeleteExtensionSnapshotResultCodecs,
+  RuntimeListExtensionSnapshotsInputCodecs,
+  RuntimeLoadExtensionSnapshotInputCodecs,
+  RuntimeLoadExtensionSnapshotResultCodecs,
+  RuntimeRenameExtensionSnapshotInputCodecs,
+  RuntimeSaveExtensionSnapshotInputCodecs,
+  decodeUnknownGeneratedContextPreviewResultEffect,
+  decodeUnknownPreviewGeneratedContextInputEffect,
+} from "@svvy/core";
 import type {
   AbortPromptInput,
   AcquireDefaultWorkspaceInput,
@@ -23,6 +57,21 @@ import type {
   AppLogEntryId,
   CancelCommandInput,
   CancelCommandResult,
+  BuildRuntimeExtensionInput,
+  BuildRuntimeExtensionResult,
+  SetExtensionUsageInput,
+  RevertExtensionUsageInput,
+  RuntimeExtensionUsageMutationResult,
+  AddExtensionInstructionInput,
+  AddExtensionInstructionResult,
+  ConfigureExtensionInstructionInput,
+  ConfigureExtensionInstructionResult,
+  CreateExtensionSourceInput,
+  CreateExtensionSourceResult,
+  DeleteExtensionSourceInput,
+  DeleteExtensionSourceResult,
+  DuplicateExtensionSourceInput,
+  DuplicateExtensionSourceResult,
   CloseSurfaceInput,
   CloseSurfaceResult,
   CreateOrchestratorSurfaceInput,
@@ -31,13 +80,44 @@ import type {
   DeleteOrchestratorSurfaceResult,
   ForkOrchestratorSurfaceInput,
   GeneratedPackagesRefreshResult,
+  GeneratedContextPreviewResult,
   OpenSurfaceInput,
   OpenSurfaceResult,
   PromptTarget,
+  PreviewGeneratedContextInput,
   RenameOrchestratorSurfaceInput,
   RenameOrchestratorSurfaceResult,
   RefreshGeneratedContextRequest,
   RefreshGeneratedPackagesRequest,
+  RemoveExtensionInstructionInput,
+  RemoveExtensionInstructionResult,
+  ResetExtensionInstructionsInput,
+  RuntimeResetExtensionInstructionsResult,
+  SvvyxRuntimeEffectTransportRequest,
+  RenameExtensionInstructionInput,
+  RenameExtensionInstructionResult,
+  ReorderExtensionInstructionsInput,
+  ReorderExtensionInstructionsResult,
+  RevertExtensionSourceMutationInput,
+  RuntimeRevertExtensionSourceMutationResult,
+  RuntimeDeleteExtensionSnapshotInput,
+  RuntimeDeleteExtensionSnapshotResult,
+  RuntimeEnsureInitialExtensionSnapshotResult,
+  RuntimeListExtensionSnapshotsInput,
+  RuntimeLoadExtensionSnapshotInput,
+  RuntimeLoadExtensionSnapshotResult,
+  RuntimeRenameExtensionSnapshotInput,
+  RuntimeSaveExtensionSnapshotInput,
+  ExtensionSnapshotSummary,
+  ExtensionSnapshotsReadModel,
+  ExtensionSnapshotPayloadStorePort,
+  ExtensionSnapshotSecretStorePort,
+  ExtensionSnapshotSecretValuesPort,
+  ExtensionSnapshotSettingsStatePort,
+  ExtensionSnapshotStatePort,
+  ExtensionUsageStatePort,
+  RuntimeExtensionContextImpactStatePort,
+  GeneratedContextPreviewSubjectStatePort,
   ReleaseWorkspaceInput,
   ReleaseWorkspaceResult,
   RuntimeApprovalsApiEffect,
@@ -53,6 +133,8 @@ import type {
   RuntimeEventsInput,
   RuntimeFacadeErrorContract,
   RuntimeEpisodeStatePort,
+  RuntimeExtensionStatePort,
+  RuntimeExternalInstructionStatePort,
   RuntimeGeneratedPackageStatePort,
   RuntimeMessagesApiEffect,
   RuntimePromptDefaultsStatePort,
@@ -68,6 +150,8 @@ import type {
   RuntimeDeleteWorkflowAgentSourceInput,
   RuntimeDuplicateWorkflowAgentSourceInput,
   RuntimeSaveExtensionSourceEditInput,
+  ConfigureExtensionTypescriptApiInput,
+  ConfigureExtensionTypescriptApiResult,
   RuntimeRecoveryStatePort,
   RuntimeSessionWaitStatePort,
   RuntimeSourceInvalidationApiEffect,
@@ -135,6 +219,8 @@ import {
   decodeUnknownAbortPromptInputEffect,
   decodeUnknownCancelCommandInputEffect,
   decodeUnknownCancelCommandResultEffect,
+  decodeUnknownBuildRuntimeExtensionInputEffect,
+  decodeUnknownBuildRuntimeExtensionResultEffect,
   decodeUnknownCloseSurfaceInputEffect,
   decodeUnknownCloseSurfaceResultEffect,
   decodeUnknownCreateOrchestratorSurfaceInputEffect,
@@ -146,6 +232,8 @@ import {
   decodeUnknownRuntimeDeleteWorkflowAgentSourceInputEffect,
   decodeUnknownRuntimeDuplicateWorkflowAgentSourceInputEffect,
   decodeUnknownRuntimeSaveExtensionSourceEditInputEffect,
+  decodeUnknownConfigureExtensionTypescriptApiInputEffect,
+  decodeUnknownConfigureExtensionTypescriptApiResultEffect,
   decodeUnknownGeneratedPackagesRefreshResultEffect,
   decodeUnknownOpenExtensionSourceEditInputEffect,
   decodeUnknownOpenSurfaceInputEffect,
@@ -200,6 +288,7 @@ import type {
   RuntimeLayerCommandStdinPort,
   RuntimeLayerModelResolverPort,
   RuntimeLayerProviderAuthPort,
+  RuntimeExternalInstructionScanInputPort,
   RuntimeSourceInvalidationScanPort,
 } from "./bootstrap";
 import {
@@ -240,6 +329,11 @@ import {
   RuntimeWorkflowTaskAgentBridgeBearerVerifier,
 } from "./workflow-task-agent-bridge-service";
 import { layerRuntimeShutdownAdmission } from "./runtime-shutdown-admission";
+import { layerRuntimeExtensionBuildService } from "./runtime-extension-build-service";
+import { layerRuntimeExtensionLifecycleService } from "./runtime-extension-lifecycle-service";
+import { layerRuntimeExtensionSnapshotService } from "./runtime-extension-snapshot-service";
+import { layerRuntimeGeneratedContextPreviewService } from "./runtime-generated-context-preview-service";
+import { layerRuntimeGeneratedContextBindingService } from "./runtime-generated-context-binding-service";
 
 interface RuntimeMessagesService extends RuntimeMessagesApiEffect {}
 
@@ -247,9 +341,92 @@ interface RuntimeQueuesService extends RuntimeQueuesApiEffect {}
 
 interface RuntimeRequestInputService extends RuntimeRequestInputApiEffect {}
 
+interface RuntimeGeneratedContextService {
+  preview(
+    input: PreviewGeneratedContextInput,
+  ): Effect.Effect<GeneratedContextPreviewResult, RuntimeContractError>;
+}
+
 interface RuntimeCommandsService extends RuntimeCommandsApiEffect {}
 
+interface RuntimeExtensionsService {
+  setUsage(
+    input: Omit<SetExtensionUsageInput, "target"> & { readonly agentProfile: string },
+  ): Effect.Effect<RuntimeExtensionUsageMutationResult, RuntimeContractError>;
+  revertUsage(
+    input: RevertExtensionUsageInput,
+  ): Effect.Effect<RuntimeExtensionUsageMutationResult, RuntimeContractError>;
+  reconcileMutation(
+    input: Extract<
+      SvvyxRuntimeEffectTransportRequest,
+      { readonly type: "extension_source.reconcile" }
+    >["input"],
+  ): Effect.Effect<void, RuntimeContractError>;
+  create(
+    input: CreateExtensionSourceInput,
+  ): Effect.Effect<CreateExtensionSourceResult, RuntimeContractError>;
+  duplicate(
+    input: DuplicateExtensionSourceInput,
+  ): Effect.Effect<DuplicateExtensionSourceResult, RuntimeContractError>;
+  delete(
+    input: DeleteExtensionSourceInput,
+  ): Effect.Effect<DeleteExtensionSourceResult, RuntimeContractError>;
+  reset(
+    input: ResetExtensionInstructionsInput,
+  ): Effect.Effect<RuntimeResetExtensionInstructionsResult, RuntimeContractError>;
+  addInstruction(
+    input: AddExtensionInstructionInput,
+  ): Effect.Effect<AddExtensionInstructionResult, RuntimeContractError>;
+  removeInstruction(
+    input: RemoveExtensionInstructionInput,
+  ): Effect.Effect<RemoveExtensionInstructionResult, RuntimeContractError>;
+  configureInstruction(
+    input: ConfigureExtensionInstructionInput,
+  ): Effect.Effect<ConfigureExtensionInstructionResult, RuntimeContractError>;
+  renameInstruction(
+    input: RenameExtensionInstructionInput,
+  ): Effect.Effect<RenameExtensionInstructionResult, RuntimeContractError>;
+  reorderInstructions(
+    input: ReorderExtensionInstructionsInput,
+  ): Effect.Effect<ReorderExtensionInstructionsResult, RuntimeContractError>;
+  revertMutation(
+    input: RevertExtensionSourceMutationInput,
+  ): Effect.Effect<RuntimeRevertExtensionSourceMutationResult, RuntimeContractError>;
+  build(
+    input: BuildRuntimeExtensionInput,
+  ): Effect.Effect<BuildRuntimeExtensionResult, RuntimeContractError>;
+  readonly snapshots: {
+    list(
+      input: RuntimeListExtensionSnapshotsInput,
+    ): Effect.Effect<ExtensionSnapshotsReadModel, RuntimeContractError>;
+    save(
+      input: RuntimeSaveExtensionSnapshotInput,
+    ): Effect.Effect<ExtensionSnapshotSummary, RuntimeContractError>;
+    rename(
+      input: RuntimeRenameExtensionSnapshotInput,
+    ): Effect.Effect<ExtensionSnapshotSummary, RuntimeContractError>;
+    delete(input: RuntimeDeleteExtensionSnapshotInput): Effect.Effect<
+      {
+        readonly snapshotId: RuntimeDeleteExtensionSnapshotInput["snapshotId"];
+        readonly deleted: true;
+      },
+      RuntimeContractError
+    >;
+    load(
+      input: RuntimeLoadExtensionSnapshotInput,
+    ): Effect.Effect<RuntimeLoadExtensionSnapshotResult, RuntimeContractError>;
+    ensureInitial(): Effect.Effect<
+      RuntimeEnsureInitialExtensionSnapshotResult,
+      RuntimeContractError
+    >;
+    recover(): Effect.Effect<void, RuntimeContractError>;
+  };
+}
+
 interface RuntimeSourceEditsService {
+  configureTypescriptApi(
+    input: ConfigureExtensionTypescriptApiInput,
+  ): Effect.Effect<ConfigureExtensionTypescriptApiResult, RuntimeContractError>;
   open(input: OpenExtensionSourceEditInput): Effect.Effect<SourceEditSession, RuntimeContractError>;
   save(
     input: RuntimeSaveExtensionSourceEditInput,
@@ -285,8 +462,10 @@ interface RuntimeService {
   readonly messages: RuntimeMessagesService;
   readonly queues: RuntimeQueuesService;
   readonly requestInput: RuntimeRequestInputService;
+  readonly generatedContext: RuntimeGeneratedContextService;
   readonly commands: RuntimeCommandsService;
   readonly approvals: RuntimeApprovalsApiEffect;
+  readonly extensions: RuntimeExtensionsService;
   readonly sourceEdits: RuntimeSourceEditsService;
   readonly sourceInvalidation: RuntimeSourceInvalidationService;
   readonly workspaceRecovery: RuntimeWorkspaceRecoveryService;
@@ -316,6 +495,21 @@ const runtimeSourceInvalidationLayer = layerRuntimeSourceInvalidationService.pip
   Layer.provideMerge(layerRuntimeGeneratedContextRefreshService),
   Layer.provideMerge(runtimeGeneratedPackageRefreshLayer),
 );
+const runtimeExtensionBuildLayer = layerRuntimeExtensionBuildService.pipe(
+  Layer.provideMerge(layerRuntimeEventBus),
+);
+const runtimeExtensionLifecycleLayer = layerRuntimeExtensionLifecycleService.pipe(
+  Layer.provideMerge(runtimeSourceInvalidationLayer),
+  Layer.provideMerge(runtimeExtensionBuildLayer),
+  Layer.provideMerge(layerRuntimeEventBus),
+);
+const runtimeExtensionSnapshotLayer = layerRuntimeExtensionSnapshotService.pipe(
+  Layer.provideMerge(runtimeSourceInvalidationLayer),
+  Layer.provideMerge(runtimeExtensionBuildLayer),
+  Layer.provideMerge(layerRuntimeEventBus),
+);
+const runtimeGeneratedContextPreviewLayer = layerRuntimeGeneratedContextPreviewService;
+const runtimeGeneratedContextBindingLayer = layerRuntimeGeneratedContextBindingService;
 const runtimeSourceReconcileRecoveryWorkerLayer = layerRuntimeSourceReconcileRecoveryWorker.pipe(
   Layer.provideMerge(runtimeSourceInvalidationLayer),
   Layer.provideMerge(layerRuntimeEventBus),
@@ -346,6 +540,7 @@ const runtimeSurfaceQueueDispatcherLayer = layerRuntimeSurfaceQueueDispatcherSer
   Layer.provideMerge(runtimePromptExecutionLayer),
   Layer.provideMerge(runtimeSourceInvalidationLayer),
   Layer.provideMerge(layerRuntimeGeneratedContextRefreshService),
+  Layer.provideMerge(runtimeGeneratedContextBindingLayer),
   Layer.provideMerge(layerRuntimePromptDefaultsService),
   Layer.provideMerge(runtimeAcceptedNativeToolExecutionLayer),
   Layer.provideMerge(runtimeShutdownAdmissionLayer),
@@ -364,6 +559,11 @@ const runtimeQueueWakeLayer = layerRuntimeQueueWakeService.pipe(
 const runtimeInternalServicesLayer = Layer.mergeAll(
   runtimeShutdownAdmissionLayer,
   runtimeSourceInvalidationLayer,
+  runtimeExtensionBuildLayer,
+  runtimeExtensionLifecycleLayer,
+  runtimeExtensionSnapshotLayer,
+  runtimeGeneratedContextPreviewLayer,
+  runtimeGeneratedContextBindingLayer,
   runtimeSourceReconcileRecoveryWorkerLayer,
   runtimeWorkflowAgentSourceIndexLayer,
   runtimeRequestInputWaitLayer,
@@ -411,6 +611,7 @@ export namespace Runtime {
     | AppLogWritePort
     | RuntimeGeneratedContextRefreshHostPort
     | RuntimeGeneratedPackageRefreshHostPort
+    | RuntimeExternalInstructionScanInputPort
     | RuntimeSourceInvalidationScanPort
     | RuntimeLayerCommandStdinPort
     | RuntimeLayerCommandControlPort
@@ -420,6 +621,16 @@ export namespace Runtime {
     | RuntimeWorkspaceStatePort
     | RuntimeSurfaceLifecycleStatePort
     | RuntimeSourceStatePort
+    | RuntimeExtensionStatePort
+    | ExtensionSnapshotPayloadStorePort
+    | ExtensionSnapshotSecretStorePort
+    | ExtensionSnapshotSecretValuesPort
+    | ExtensionSnapshotSettingsStatePort
+    | ExtensionSnapshotStatePort
+    | ExtensionUsageStatePort
+    | RuntimeExtensionContextImpactStatePort
+    | RuntimeExternalInstructionStatePort
+    | GeneratedContextPreviewSubjectStatePort
     | RuntimeRecoveryStatePort
     | RuntimeGeneratedPackageStatePort
     | Extensions
@@ -549,6 +760,13 @@ interface RuntimeRequestInputFacade {
   ): Promise<SetRequestInputTimerPausedResult>;
 }
 
+interface RuntimeGeneratedContextFacade {
+  preview(
+    input: PreviewGeneratedContextInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<GeneratedContextPreviewResult>;
+}
+
 interface RuntimeCommandsFacade {
   writeStdin(
     input: WriteCommandStdinInput,
@@ -567,7 +785,95 @@ interface RuntimeApprovalsFacade {
   ): Promise<AnswerRuntimeApprovalResult>;
 }
 
+interface RuntimeExtensionsFacade {
+  setUsage(
+    input: Omit<SetExtensionUsageInput, "target"> & { readonly agentProfile: string },
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<RuntimeExtensionUsageMutationResult>;
+  revertUsage(
+    input: RevertExtensionUsageInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<RuntimeExtensionUsageMutationResult>;
+  reconcileMutation(
+    input: Extract<
+      SvvyxRuntimeEffectTransportRequest,
+      { readonly type: "extension_source.reconcile" }
+    >["input"],
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<void>;
+  create(
+    input: CreateExtensionSourceInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<CreateExtensionSourceResult>;
+  duplicate(
+    input: DuplicateExtensionSourceInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<DuplicateExtensionSourceResult>;
+  delete(
+    input: DeleteExtensionSourceInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<DeleteExtensionSourceResult>;
+  reset(
+    input: ResetExtensionInstructionsInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<RuntimeResetExtensionInstructionsResult>;
+  addInstruction(
+    input: AddExtensionInstructionInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<AddExtensionInstructionResult>;
+  removeInstruction(
+    input: RemoveExtensionInstructionInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<RemoveExtensionInstructionResult>;
+  configureInstruction(
+    input: ConfigureExtensionInstructionInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<ConfigureExtensionInstructionResult>;
+  renameInstruction(
+    input: RenameExtensionInstructionInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<RenameExtensionInstructionResult>;
+  reorderInstructions(
+    input: ReorderExtensionInstructionsInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<ReorderExtensionInstructionsResult>;
+  revertMutation(
+    input: RevertExtensionSourceMutationInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<RuntimeRevertExtensionSourceMutationResult>;
+  build(
+    input: BuildRuntimeExtensionInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<BuildRuntimeExtensionResult>;
+  readonly snapshots: {
+    list(
+      input: RuntimeListExtensionSnapshotsInput,
+      options?: RuntimeFacadeCallOptions,
+    ): Promise<ExtensionSnapshotsReadModel>;
+    save(
+      input: RuntimeSaveExtensionSnapshotInput,
+      options?: RuntimeFacadeCallOptions,
+    ): Promise<ExtensionSnapshotSummary>;
+    rename(
+      input: RuntimeRenameExtensionSnapshotInput,
+      options?: RuntimeFacadeCallOptions,
+    ): Promise<ExtensionSnapshotSummary>;
+    delete(
+      input: RuntimeDeleteExtensionSnapshotInput,
+      options?: RuntimeFacadeCallOptions,
+    ): Promise<RuntimeDeleteExtensionSnapshotResult>;
+    load(
+      input: RuntimeLoadExtensionSnapshotInput,
+      options?: RuntimeFacadeCallOptions,
+    ): Promise<RuntimeLoadExtensionSnapshotResult>;
+  };
+}
+
 interface RuntimeSourceEditsFacade {
+  configureTypescriptApi(
+    input: ConfigureExtensionTypescriptApiInput,
+    options?: RuntimeFacadeCallOptions,
+  ): Promise<ConfigureExtensionTypescriptApiResult>;
   open(
     input: OpenExtensionSourceEditInput,
     options?: RuntimeFacadeCallOptions,
@@ -653,8 +959,10 @@ interface RuntimeFacade {
   readonly messages: RuntimeMessagesFacade;
   readonly queues: RuntimeQueuesFacade;
   readonly requestInput: RuntimeRequestInputFacade;
+  readonly generatedContext: RuntimeGeneratedContextFacade;
   readonly commands: RuntimeCommandsFacade;
   readonly approvals: RuntimeApprovalsFacade;
+  readonly extensions: RuntimeExtensionsFacade;
   readonly sourceEdits: RuntimeSourceEditsFacade;
   readonly sourceInvalidation: RuntimeSourceInvalidationFacade;
   events(
@@ -1416,6 +1724,27 @@ export function createRuntimeFacade(
           options,
         ),
     },
+    generatedContext: {
+      preview: (input, options) =>
+        run(
+          "runtime.generatedContext.preview",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.generatedContext.preview",
+              decodeUnknownPreviewGeneratedContextInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.generatedContext.preview(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.generatedContext.preview",
+              decodeUnknownGeneratedContextPreviewResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
+    },
     commands: {
       writeStdin: (input, options) =>
         run(
@@ -1478,7 +1807,437 @@ export function createRuntimeFacade(
           options,
         ),
     },
+    extensions: {
+      setUsage: (input, options) =>
+        run(
+          "runtime.extensions.setUsage",
+          Effect.gen(function* () {
+            const runtime = yield* Runtime;
+            return yield* runtime.extensions.setUsage(input);
+          }),
+          options,
+        ),
+      revertUsage: (input, options) =>
+        run(
+          "runtime.extensions.revertUsage",
+          Effect.gen(function* () {
+            const runtime = yield* Runtime;
+            return yield* runtime.extensions.revertUsage(input);
+          }),
+          options,
+        ),
+      reconcileMutation: (input, options) =>
+        run(
+          "runtime.extensions.reconcileMutation",
+          Effect.gen(function* () {
+            const runtime = yield* Runtime;
+            return yield* runtime.extensions.reconcileMutation(input);
+          }),
+          options,
+        ),
+      create: (input, options) =>
+        run(
+          "runtime.extensions.create",
+          Effect.gen(function* () {
+            const decoded = yield* decodeBoundary(
+              "runtime.extensions.create",
+              decodeUnknownCreateExtensionSourceInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            return yield* runtime.extensions
+              .create(decoded)
+              .pipe(
+                Effect.flatMap((result) =>
+                  decodeBoundary(
+                    "runtime.extensions.create",
+                    decodeUnknownCreateExtensionSourceResultEffect,
+                    result,
+                  ),
+                ),
+              );
+          }),
+          options,
+        ),
+      duplicate: (input, options) =>
+        run(
+          "runtime.extensions.duplicate",
+          Effect.gen(function* () {
+            const decoded = yield* decodeBoundary(
+              "runtime.extensions.duplicate",
+              decodeUnknownDuplicateExtensionSourceInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            return yield* runtime.extensions
+              .duplicate(decoded)
+              .pipe(
+                Effect.flatMap((result) =>
+                  decodeBoundary(
+                    "runtime.extensions.duplicate",
+                    decodeUnknownDuplicateExtensionSourceResultEffect,
+                    result,
+                  ),
+                ),
+              );
+          }),
+          options,
+        ),
+      delete: (input, options) =>
+        run(
+          "runtime.extensions.delete",
+          Effect.gen(function* () {
+            const decoded = yield* decodeBoundary(
+              "runtime.extensions.delete",
+              decodeUnknownDeleteExtensionSourceInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            return yield* runtime.extensions
+              .delete(decoded)
+              .pipe(
+                Effect.flatMap((result) =>
+                  decodeBoundary(
+                    "runtime.extensions.delete",
+                    decodeUnknownDeleteExtensionSourceResultEffect,
+                    result,
+                  ),
+                ),
+              );
+          }),
+          options,
+        ),
+      reset: (input, options) =>
+        run(
+          "runtime.extensions.reset",
+          Effect.gen(function* () {
+            const decoded = yield* decodeBoundary(
+              "runtime.extensions.reset",
+              decodeUnknownResetExtensionInstructionsInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            return yield* runtime.extensions
+              .reset(decoded)
+              .pipe(
+                Effect.flatMap((result) =>
+                  decodeBoundary(
+                    "runtime.extensions.reset",
+                    decodeUnknownRuntimeResetExtensionInstructionsResultEffect,
+                    result,
+                  ),
+                ),
+              );
+          }),
+          options,
+        ),
+      addInstruction: (input, options) =>
+        run(
+          "runtime.extensions.addInstruction",
+          Effect.gen(function* () {
+            const decoded = yield* decodeBoundary(
+              "runtime.extensions.addInstruction",
+              decodeUnknownAddExtensionInstructionInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            return yield* runtime.extensions
+              .addInstruction(decoded)
+              .pipe(
+                Effect.flatMap((result) =>
+                  decodeBoundary(
+                    "runtime.extensions.addInstruction",
+                    decodeUnknownAddExtensionInstructionResultEffect,
+                    result,
+                  ),
+                ),
+              );
+          }),
+          options,
+        ),
+      removeInstruction: (input, options) =>
+        run(
+          "runtime.extensions.removeInstruction",
+          Effect.gen(function* () {
+            const decoded = yield* decodeBoundary(
+              "runtime.extensions.removeInstruction",
+              decodeUnknownRemoveExtensionInstructionInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            return yield* runtime.extensions
+              .removeInstruction(decoded)
+              .pipe(
+                Effect.flatMap((result) =>
+                  decodeBoundary(
+                    "runtime.extensions.removeInstruction",
+                    decodeUnknownRemoveExtensionInstructionResultEffect,
+                    result,
+                  ),
+                ),
+              );
+          }),
+          options,
+        ),
+      configureInstruction: (input, options) =>
+        run(
+          "runtime.extensions.configureInstruction",
+          Effect.gen(function* () {
+            const decoded = yield* decodeBoundary(
+              "runtime.extensions.configureInstruction",
+              decodeUnknownConfigureExtensionInstructionInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            return yield* runtime.extensions
+              .configureInstruction(decoded)
+              .pipe(
+                Effect.flatMap((result) =>
+                  decodeBoundary(
+                    "runtime.extensions.configureInstruction",
+                    decodeUnknownConfigureExtensionInstructionResultEffect,
+                    result,
+                  ),
+                ),
+              );
+          }),
+          options,
+        ),
+      renameInstruction: (input, options) =>
+        run(
+          "runtime.extensions.renameInstruction",
+          Effect.gen(function* () {
+            const decoded = yield* decodeBoundary(
+              "runtime.extensions.renameInstruction",
+              decodeUnknownRenameExtensionInstructionInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            return yield* runtime.extensions
+              .renameInstruction(decoded)
+              .pipe(
+                Effect.flatMap((result) =>
+                  decodeBoundary(
+                    "runtime.extensions.renameInstruction",
+                    decodeUnknownRenameExtensionInstructionResultEffect,
+                    result,
+                  ),
+                ),
+              );
+          }),
+          options,
+        ),
+      reorderInstructions: (input, options) =>
+        run(
+          "runtime.extensions.reorderInstructions",
+          Effect.gen(function* () {
+            const decoded = yield* decodeBoundary(
+              "runtime.extensions.reorderInstructions",
+              decodeUnknownReorderExtensionInstructionsInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            return yield* runtime.extensions
+              .reorderInstructions(decoded)
+              .pipe(
+                Effect.flatMap((result) =>
+                  decodeBoundary(
+                    "runtime.extensions.reorderInstructions",
+                    decodeUnknownReorderExtensionInstructionsResultEffect,
+                    result,
+                  ),
+                ),
+              );
+          }),
+          options,
+        ),
+      revertMutation: (input, options) =>
+        run(
+          "runtime.extensions.revertMutation",
+          Effect.gen(function* () {
+            const decoded = yield* decodeBoundary(
+              "runtime.extensions.revertMutation",
+              decodeUnknownRevertExtensionSourceMutationInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            return yield* runtime.extensions
+              .revertMutation(decoded)
+              .pipe(
+                Effect.flatMap((result) =>
+                  decodeBoundary(
+                    "runtime.extensions.revertMutation",
+                    decodeUnknownRuntimeRevertExtensionSourceMutationResultEffect,
+                    result,
+                  ),
+                ),
+              );
+          }),
+          options,
+        ),
+      build: (input, options) =>
+        run(
+          "runtime.extensions.build",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.extensions.build",
+              decodeUnknownBuildRuntimeExtensionInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.extensions.build(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.extensions.build",
+              decodeUnknownBuildRuntimeExtensionResultEffect,
+              result,
+            );
+          }),
+          options,
+          { allowRuntimeCancel: true },
+        ),
+      snapshots: {
+        list: (input, options) =>
+          run(
+            "runtime.extensions.snapshots.list",
+            Effect.gen(function* () {
+              const decoded = yield* decodeBoundary(
+                "runtime.extensions.snapshots.list",
+                RuntimeListExtensionSnapshotsInputCodecs.decodeEffect,
+                input,
+              );
+              const runtime = yield* Runtime;
+              return yield* runtime.extensions.snapshots
+                .list(decoded)
+                .pipe(
+                  Effect.flatMap((result) =>
+                    decodeBoundary(
+                      "runtime.extensions.snapshots.list",
+                      ExtensionSnapshotsReadModelCodecs.decodeEffect,
+                      result,
+                    ),
+                  ),
+                );
+            }),
+            options,
+          ),
+        save: (input, options) =>
+          run(
+            "runtime.extensions.snapshots.save",
+            Effect.gen(function* () {
+              const decoded = yield* decodeBoundary(
+                "runtime.extensions.snapshots.save",
+                RuntimeSaveExtensionSnapshotInputCodecs.decodeEffect,
+                input,
+              );
+              const runtime = yield* Runtime;
+              return yield* runtime.extensions.snapshots
+                .save(decoded)
+                .pipe(
+                  Effect.flatMap((result) =>
+                    decodeBoundary(
+                      "runtime.extensions.snapshots.save",
+                      ExtensionSnapshotSummaryCodecs.decodeEffect,
+                      result,
+                    ),
+                  ),
+                );
+            }),
+            options,
+          ),
+        rename: (input, options) =>
+          run(
+            "runtime.extensions.snapshots.rename",
+            Effect.gen(function* () {
+              const decoded = yield* decodeBoundary(
+                "runtime.extensions.snapshots.rename",
+                RuntimeRenameExtensionSnapshotInputCodecs.decodeEffect,
+                input,
+              );
+              const runtime = yield* Runtime;
+              return yield* runtime.extensions.snapshots
+                .rename(decoded)
+                .pipe(
+                  Effect.flatMap((result) =>
+                    decodeBoundary(
+                      "runtime.extensions.snapshots.rename",
+                      ExtensionSnapshotSummaryCodecs.decodeEffect,
+                      result,
+                    ),
+                  ),
+                );
+            }),
+            options,
+          ),
+        delete: (input, options) =>
+          run(
+            "runtime.extensions.snapshots.delete",
+            Effect.gen(function* () {
+              const decoded = yield* decodeBoundary(
+                "runtime.extensions.snapshots.delete",
+                RuntimeDeleteExtensionSnapshotInputCodecs.decodeEffect,
+                input,
+              );
+              const runtime = yield* Runtime;
+              return yield* runtime.extensions.snapshots
+                .delete(decoded)
+                .pipe(
+                  Effect.flatMap((result) =>
+                    decodeBoundary(
+                      "runtime.extensions.snapshots.delete",
+                      RuntimeDeleteExtensionSnapshotResultCodecs.decodeEffect,
+                      result,
+                    ),
+                  ),
+                );
+            }),
+            options,
+          ),
+        load: (input, options) =>
+          run(
+            "runtime.extensions.snapshots.load",
+            Effect.gen(function* () {
+              const decoded = yield* decodeBoundary(
+                "runtime.extensions.snapshots.load",
+                RuntimeLoadExtensionSnapshotInputCodecs.decodeEffect,
+                input,
+              );
+              const runtime = yield* Runtime;
+              return yield* runtime.extensions.snapshots
+                .load(decoded)
+                .pipe(
+                  Effect.flatMap((result) =>
+                    decodeBoundary(
+                      "runtime.extensions.snapshots.load",
+                      RuntimeLoadExtensionSnapshotResultCodecs.decodeEffect,
+                      result,
+                    ),
+                  ),
+                );
+            }),
+            options,
+          ),
+      },
+    },
     sourceEdits: {
+      configureTypescriptApi: (input, options) =>
+        run(
+          "runtime.sourceEdits.configureTypescriptApi",
+          Effect.gen(function* () {
+            const decodedInput = yield* decodeBoundary(
+              "runtime.sourceEdits.configureTypescriptApi",
+              decodeUnknownConfigureExtensionTypescriptApiInputEffect,
+              input,
+            );
+            const runtime = yield* Runtime;
+            const result = yield* runtime.sourceEdits.configureTypescriptApi(decodedInput);
+            return yield* decodeBoundary(
+              "runtime.sourceEdits.configureTypescriptApi",
+              decodeUnknownConfigureExtensionTypescriptApiResultEffect,
+              result,
+            );
+          }),
+          options,
+        ),
       open: (input, options) =>
         run(
           "runtime.sourceEdits.open",

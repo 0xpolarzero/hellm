@@ -91,6 +91,7 @@ describe("extension state port", () => {
       readiness: {
         extensionId: extensionIdValue,
         requirementId: "dep:tinyfish",
+        requirementFingerprint: "sha256:tinyfish-v1",
         status: "ready",
         detectedVersion: "1.2.3",
         expectedVersion: "1.2.3",

@@ -474,7 +474,6 @@ describe("structured session state write API", () => {
       ownerKind: "session",
       ownerId: "session-generated-binding",
       actorKind: "orchestrator",
-      aggregateCacheKey: "aggregate-initial",
       systemPrompt: "Use the initial generated context.",
       svvyxGuidance: "Initial svvyx guidance.",
       commandsDts: "declare const initial: true;",
@@ -490,7 +489,6 @@ describe("structured session state write API", () => {
       ownerKind: "session",
       ownerId: "session-generated-binding",
       actorKind: "orchestrator",
-      aggregateCacheKey: "aggregate-changed",
       systemPrompt: "Use the changed generated context.",
       svvyxGuidance: "Changed svvyx guidance.",
       commandsDts: "declare const changed: true;",
@@ -514,7 +512,6 @@ describe("structured session state write API", () => {
         generatedAgentContextFingerprint: first.generatedAgentContextFingerprint,
       }),
     ).toMatchObject({
-      aggregateCacheKey: "aggregate-initial",
       svvyxGuidance: "Initial svvyx guidance.",
       commandsDts: "declare const initial: true;",
       nativeToolSchemasJson: '{"initial":true}',
@@ -3321,7 +3318,6 @@ describe("structured session state write API", () => {
       agentResume: "/tmp/task-agent-session.json",
       generatedAgentContextFingerprint: "workflow-task-fingerprint-001",
       generatedAgentContextBinding: {
-        aggregateCacheKey: "workflow-task-aggregate-001",
         systemPrompt: "Use the initial workflow task generated context.",
         svvyxGuidance: "Workflow svvyx guidance.",
         commandsDts: "declare const workflowTask: true;",
@@ -3434,7 +3430,6 @@ describe("structured session state write API", () => {
       responseText: '{"status":"completed"}',
       agentResume: "/tmp/task-agent-session.json",
       generatedAgentContextBinding: {
-        aggregateCacheKey: "workflow-task-aggregate-001",
         systemPrompt: "Use the initial workflow task generated context.",
         svvyxGuidance: "Workflow svvyx guidance.",
         commandsDts: "declare const workflowTask: true;",
