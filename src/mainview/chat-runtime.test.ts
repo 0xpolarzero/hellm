@@ -2011,16 +2011,8 @@ function createFakeRpc(input: {
           reversibleChanges: [],
           snapshots: [],
         }),
-        setExtensionEnvOverride: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
-        }),
-        removeExtensionEnvOverride: async () => ({
-          extensions: [],
-          reversibleChanges: [],
-          snapshots: [],
-        }),
+        stateExtensionEnvSetOverride: async () => stateCommandResult(),
+        stateExtensionEnvRemoveOverride: async () => stateCommandResult(),
         getOpenWorkspaces: async () => [structuredClone(TEST_WORKSPACE_INFO)],
         stateAppPreferencesUpdate: async (request) => {
           const externalEditor = request.patch.externalEditor;

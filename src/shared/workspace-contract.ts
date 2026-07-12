@@ -1914,13 +1914,13 @@ export interface ChatRPCSchema {
         params: RemoveExtensionEnvSecretRequest;
         response: ExtensionsInventoryReadModel;
       };
-      setExtensionEnvOverride: {
+      stateExtensionEnvSetOverride: {
         params: SetExtensionEnvOverrideRequest;
-        response: ExtensionsInventoryReadModel;
+        response: StateCommandResult;
       };
-      removeExtensionEnvOverride: {
+      stateExtensionEnvRemoveOverride: {
         params: RemoveExtensionEnvOverrideRequest;
-        response: ExtensionsInventoryReadModel;
+        response: StateCommandResult;
       };
       setRequestInputVariant: {
         params: SetRequestInputVariantInput;

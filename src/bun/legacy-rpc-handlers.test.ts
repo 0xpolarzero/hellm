@@ -60,6 +60,8 @@ const FACADE_BACKED_REQUESTS = [
   "removeProviderAuth",
   "openSurface",
   "closeSurface",
+  "stateExtensionEnvSetOverride",
+  "stateExtensionEnvRemoveOverride",
 ] as const satisfies readonly ChatRpcRequestName[];
 
 const LEGACY_HANDLER_RETIREMENT_INCREMENT = 10 as const;
@@ -87,8 +89,6 @@ const LEGACY_REQUESTS_RETIRING_IN_INCREMENT_10 = [
   "openExtensionInstructionFileInEditor",
   "setExtensionEnvSecret",
   "removeExtensionEnvSecret",
-  "setExtensionEnvOverride",
-  "removeExtensionEnvOverride",
   "openWorkspace",
   "getOpenWorkspaces",
   "getDefaultWorkspace",

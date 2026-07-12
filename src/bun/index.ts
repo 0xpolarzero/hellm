@@ -90,7 +90,6 @@ import {
 import { runDesktopBootstrap } from "./desktop-bootstrap";
 import { showStartupFailureSurface } from "./startup-failure-surface";
 import {
-  assertExtensionEnvOverrideTarget,
   assertExtensionEnvSecretTarget,
   assertExtensionEnvWriteValue,
   readBuiltinExtensionsInventory,
@@ -1305,45 +1304,10 @@ function buildDesktopRpcHandlers(
         });
         return readWorkspaceExtensionsInventory(runtime);
       },
-      setExtensionEnvOverride: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { extensionId, envName, value } = input;
-        assertExtensionEnvOverrideTarget({ extensionId, envName });
-        assertExtensionEnvWriteValue(value);
-        const current = runtime.agentSettingsStore.getState().extensionEnv.nonSecretOverrides;
-        runtime.agentSettingsStore.setExtensionEnv({
-          nonSecretOverrides: {
-            ...current,
-            [extensionId]: {
-              ...current[extensionId],
-              [envName]: value,
-            },
-          },
-        });
-        runtime.appLog.info("settings", "Extension env override updated.", {
-          extensionId,
-          envName,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
-      removeExtensionEnvOverride: async (input) => {
-        const runtime = getWorkspaceRuntime(input);
-        const { extensionId, envName } = input;
-        assertExtensionEnvOverrideTarget({ extensionId, envName });
-        const current = runtime.agentSettingsStore.getState().extensionEnv.nonSecretOverrides;
-        const extensionOverrides = { ...current[extensionId] };
-        delete extensionOverrides[envName];
-        const next = { ...current, [extensionId]: extensionOverrides };
-        if (Object.keys(extensionOverrides).length === 0) {
-          delete next[extensionId];
-        }
-        runtime.agentSettingsStore.setExtensionEnv({ nonSecretOverrides: next });
-        runtime.appLog.info("settings", "Extension env override removed.", {
-          extensionId,
-          envName,
-        });
-        return readWorkspaceExtensionsInventory(runtime);
-      },
+      stateExtensionEnvSetOverride: (input) =>
+        facades.commands.state.extensionEnv.setOverride(stripWorkspaceId(input) as never),
+      stateExtensionEnvRemoveOverride: (input) =>
+        facades.commands.state.extensionEnv.removeOverride(stripWorkspaceId(input) as never),
       fetchStateReadModel: fetchDesktopStateReadModel,
       refetchStateReadModels: async (request) =>
         Promise.all(

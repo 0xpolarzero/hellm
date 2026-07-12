@@ -791,8 +791,8 @@ export interface ChatRuntimeRpcClient {
     openExtensionInstructionFileInEditor: typeof rpc.request.openExtensionInstructionFileInEditor;
     setExtensionEnvSecret: typeof rpc.request.setExtensionEnvSecret;
     removeExtensionEnvSecret: typeof rpc.request.removeExtensionEnvSecret;
-    setExtensionEnvOverride: typeof rpc.request.setExtensionEnvOverride;
-    removeExtensionEnvOverride: typeof rpc.request.removeExtensionEnvOverride;
+    stateExtensionEnvSetOverride: typeof rpc.request.stateExtensionEnvSetOverride;
+    stateExtensionEnvRemoveOverride: typeof rpc.request.stateExtensionEnvRemoveOverride;
     getGeneratedAgentContextExternalSources: typeof rpc.request.getGeneratedAgentContextExternalSources;
     stateSnippetsCreateManaged: typeof rpc.request.stateSnippetsCreateManaged;
     stateSnippetsUpdateManaged: typeof rpc.request.stateSnippetsUpdateManaged;
@@ -4932,16 +4932,14 @@ export async function createChatRuntime(
         "extensionsInventory",
         await rpcClient.request.removeExtensionEnvSecret(scoped(input)),
       )!,
-    setExtensionEnvOverride: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.setExtensionEnvOverride(scoped(input)),
-      )!,
-    removeExtensionEnvOverride: async (input) =>
-      setWorkspaceCache(
-        "extensionsInventory",
-        await rpcClient.request.removeExtensionEnvOverride(scoped(input)),
-      )!,
+    setExtensionEnvOverride: async (input) => {
+      await rpcClient.request.stateExtensionEnvSetOverride(scoped(input));
+      return refreshExtensionsInventory();
+    },
+    removeExtensionEnvOverride: async (input) => {
+      await rpcClient.request.stateExtensionEnvRemoveOverride(scoped(input));
+      return refreshExtensionsInventory();
+    },
     getSettings: refreshSettings,
     setRequestInputVariant: async (input) => {
       await rpcClient.request.setRequestInputVariant(input);

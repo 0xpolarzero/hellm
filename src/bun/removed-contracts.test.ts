@@ -293,6 +293,8 @@ describe("retired desktop integration RPC paths", () => {
       "saveSourceEdit",
       "setRequestInputVariant",
       "setRequestInputBlockingTimeout",
+      "stateExtensionEnvSetOverride",
+      "stateExtensionEnvRemoveOverride",
     ]) {
       expect(sharedContractSource).toContain(`${channel}: {`);
       expect(backendSource).toContain(`${channel}:`);
@@ -305,6 +307,8 @@ describe("retired desktop integration RPC paths", () => {
     expect(backendSource).toContain("facades.runtime.sourceEdits.save(input)");
     expect(backendSource).toContain("facades.runtime.requestInput.setVariant(input)");
     expect(backendSource).toContain("facades.runtime.requestInput.setBlockingTimeout(input)");
+    expect(backendSource).toContain("facades.commands.state.extensionEnv.setOverride");
+    expect(backendSource).toContain("facades.commands.state.extensionEnv.removeOverride");
   });
 
   it("pins increment-6 legacy renderer RPC channels until pane migration retires them", async () => {
@@ -319,8 +323,6 @@ describe("retired desktop integration RPC paths", () => {
     const legacyChannels = [
       { channel: "setExtensionEnvSecret", retirementIncrement: "Increment 10" },
       { channel: "removeExtensionEnvSecret", retirementIncrement: "Increment 10" },
-      { channel: "setExtensionEnvOverride", retirementIncrement: "Increment 10" },
-      { channel: "removeExtensionEnvOverride", retirementIncrement: "Increment 10" },
       { channel: "getExtensionsInventory", retirementIncrement: "Increment 8" },
     ] as const;
 
