@@ -1907,7 +1907,8 @@ This section is governed by `docs/specs/extensions-and-tools.spec.md`, `docs/spe
       external instructions, and generated-context preview subjects in state-backed authorities;
       let `@svvy/extensions` own source/build/context behavior and `@svvy/runtime` own lifecycle,
       snapshot, binding, preview, and response-bearing parent-CLI application, while renderer rows
-      consume summaries and lazily open typed versioned source sessions. Commit(s): `661275caa`
+      consume summaries and lazily open typed versioned source sessions. Commit(s): `661275caa`,
+      `779402a93`
 - [x] Show tokenx-backed generated prompt token estimates in expanded Agents rows, with active extension rows showing aligned generated instruction estimates, available rows showing available-prompt estimates plus would-be loaded-prompt estimates in parentheses, Off rows omitting counts, expanded workflow-agent inline instruction rows showing live draft estimates beside their source file link, and the total actor prompt estimate visible beside reset controls while including the current workflow-agent inline instruction draft. Commit(s): `661275caa`
 - [ ] Expose Extension Managing create, instruction lifecycle, revert, delete, snapshot, build,
       dependency-readiness, and env/secret behavior through `@svvy/extensions` Effect services,
