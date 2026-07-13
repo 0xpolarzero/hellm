@@ -27,6 +27,9 @@
 - Keep one main orchestrator responsible for strategy, integration, and final decisions.
 - Prefer inline code over thin pass-through helpers; if a wrapper only forwards one call without adding policy, reuse, or a meaningful seam, inline it instead of abstracting it.
 - Use subagents heavily for bounded, independent work; default to delegating concrete side tasks when they can run in parallel or reduce main-thread load.
+- When spawning subagents for implementation or other heavy work, prefer `gpt-5.6-luna` with reasoning effort from `medium` through `xhigh`, chosen to match the task's complexity.
+- Reserve `gpt-5.6-sol` with `xhigh` reasoning for the main orchestrator and direct working sessions rather than ordinary delegated work.
+- For subagents that drive e2e verification, prefer `gpt-5.3-codex-spark` to keep the verification loop fast.
 - Use subagents as short-lived general workers, not persistent role-based agents.
 - Give each subagent one bounded action sequence with clear inputs and a clear completion boundary.
 - Have subagents return durable outcomes, not just chat summaries: conclusions, artifacts, verification, and unresolved issues.
