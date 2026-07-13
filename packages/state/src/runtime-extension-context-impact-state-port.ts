@@ -4,7 +4,6 @@ import {
   RuntimeExtensionContextImpactStatePort,
   type ListRuntimeExtensionUsageContextAffectedSurfacesInput,
   type RuntimeExtensionContextChangedSurface,
-  type RuntimeExtensionContextImpactStateFacade,
   type RuntimeExtensionContextImpactStatePortService,
   type SurfacePiSessionId,
 } from "@svvy/core";
@@ -22,16 +21,6 @@ import {
   sessionNavigationInvalidation,
   surfaceInvalidation,
 } from "./state-mutation-result";
-
-export function runtimeExtensionContextImpactStateFacadeFromStore(
-  store: StructuredSessionStateStore,
-): RuntimeExtensionContextImpactStateFacade {
-  return {
-    listUsageContextAffectedSurfaces: (input) =>
-      listUsageContextAffectedSurfacesFromSnapshots(store.listSessionStates(), input),
-    applySnapshotContextImpact: (input) => store.applySnapshotContextImpact(input),
-  };
-}
 
 export function runtimeExtensionContextImpactStatePortFromStructuredSessionState(
   state: StructuredSessionState["Service"],

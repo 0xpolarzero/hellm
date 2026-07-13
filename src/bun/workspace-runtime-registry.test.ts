@@ -30,7 +30,11 @@ import type {
   SubmitMessageInput,
   WorkspaceId,
 } from "@svvy/core";
-import { WorkspaceRuntimeRegistry, type WorkspaceRuntime } from "./workspace-runtime-registry";
+import {
+  applyExtensionManagementRuntimeRequest,
+  WorkspaceRuntimeRegistry,
+  type WorkspaceRuntime,
+} from "./workspace-runtime-registry";
 import {
   getWorkspaceRuntimeForRequest,
   getWorkspaceRuntimeOperationsForRequest,
@@ -73,6 +77,644 @@ afterAll(() => {
 });
 
 describe("WorkspaceRuntimeRegistry", () => {
+  it("dispatches Extension Managing source mutations through Runtime and preserves receipts", async () => {
+    const workspaceId = "workspace:extension-management" as WorkspaceId;
+    const calls: Array<{ method: string; input: unknown }> = [];
+    const respond =
+      <Result>(method: string, result: Result) =>
+      async (input: unknown) => {
+        calls.push({ method, input });
+        return result;
+      };
+    const mutationId = "extension-source-mutation:notes:a";
+    const revertedMutationId = "extension-source-mutation:notes:b";
+    const receipts = {
+      create: { action: "created", changed: true, extensionId: "notes", mutationId },
+      duplicate: {
+        action: "duplicated",
+        changed: true,
+        extensionId: "notes-copy",
+        sourceExtensionId: "notes",
+        mutationId,
+      },
+      delete: { action: "deleted", changed: true, extensionId: "notes", mutationId },
+      reset: {
+        source: {
+          action: "reset",
+          changed: true,
+          extensionId: "notes",
+          mutationId,
+          scope: "instructions",
+        },
+        automaticBuild: { status: "succeeded", attemptId: "extension-build-attempt:reset" },
+      },
+      add: {
+        action: "instruction-added",
+        changed: true,
+        extensionId: "notes",
+        mutationId,
+        name: "010-notes.mdx",
+      },
+      remove: {
+        action: "instruction-removed",
+        changed: true,
+        extensionId: "notes",
+        mutationId,
+        name: "010-notes.mdx",
+      },
+      configure: {
+        action: "instruction-configured",
+        bypassed: true,
+        changed: false,
+        extensionId: "notes",
+        mutationId: null,
+        name: "010-notes.mdx",
+      },
+      rename: {
+        action: "instruction-renamed",
+        changed: true,
+        extensionId: "notes",
+        from: "010-notes.mdx",
+        mutationId,
+        to: "020-notes.mdx",
+      },
+      reorder: {
+        action: "instructions-reordered",
+        changed: true,
+        extensionId: "notes",
+        mutationId,
+        order: ["020-notes.mdx"],
+      },
+      revert: {
+        source: {
+          action: "mutation-reverted",
+          changed: true,
+          extensionId: "notes",
+          mutationId,
+          revertedMutationId,
+        },
+        automaticBuild: { status: "succeeded", attemptId: "extension-build-attempt:revert" },
+      },
+      typescriptApi: {
+        extensionId: "notes",
+        enabled: true,
+        changed: true,
+        reconcileRequired: true,
+      },
+    };
+    const runtime = {
+      facade: {
+        extensions: {
+          create: respond("extensions.create", receipts.create),
+          duplicate: respond("extensions.duplicate", receipts.duplicate),
+          delete: respond("extensions.delete", receipts.delete),
+          reset: respond("extensions.reset", receipts.reset),
+          addInstruction: respond("extensions.addInstruction", receipts.add),
+          removeInstruction: respond("extensions.removeInstruction", receipts.remove),
+          configureInstruction: respond("extensions.configureInstruction", receipts.configure),
+          renameInstruction: respond("extensions.renameInstruction", receipts.rename),
+          reorderInstructions: respond("extensions.reorderInstructions", receipts.reorder),
+          revertMutation: respond("extensions.revertMutation", receipts.revert),
+        },
+        sourceEdits: {
+          configureTypescriptApi: respond(
+            "sourceEdits.configureTypescriptApi",
+            receipts.typescriptApi,
+          ),
+        },
+      },
+    } as never;
+    const cases = [
+      {
+        request: {
+          operation: "create",
+          input: {
+            id: "notes",
+            title: "Notes",
+            description: "Notes extension.",
+            interfaceKind: "instructions",
+            typescriptApiEnabled: false,
+          },
+        },
+        receipt: receipts.create,
+        facts: {
+          extensionCreated: true,
+          extensionId: "notes",
+          extensionMutationId: mutationId,
+        },
+      },
+      {
+        request: {
+          operation: "duplicate",
+          input: { sourceExtensionId: "notes", targetExtensionId: "notes-copy", title: "Copy" },
+        },
+        receipt: receipts.duplicate,
+        facts: {
+          extensionDuplicated: true,
+          extensionId: "notes-copy",
+          duplicatedFrom: "notes",
+          extensionMutationId: mutationId,
+        },
+      },
+      {
+        request: { operation: "delete", input: { extensionId: "notes" } },
+        receipt: receipts.delete,
+        facts: {
+          extensionDeleted: true,
+          extensionId: "notes",
+          extensionMutationId: mutationId,
+        },
+      },
+      {
+        request: {
+          operation: "instructions.add",
+          input: { extensionId: "notes", name: "010-notes.mdx" },
+        },
+        receipt: receipts.add,
+        facts: {
+          instructionChanged: true,
+          instructionAction: "instruction-added",
+          instructionFile: "010-notes.mdx",
+          extensionId: "notes",
+          extensionMutationId: mutationId,
+        },
+      },
+      {
+        request: {
+          operation: "instructions.remove",
+          input: { extensionId: "notes", name: "010-notes.mdx" },
+        },
+        receipt: receipts.remove,
+        facts: {
+          instructionChanged: true,
+          instructionAction: "instruction-removed",
+          instructionFile: "010-notes.mdx",
+          extensionId: "notes",
+          extensionMutationId: mutationId,
+        },
+      },
+      {
+        request: {
+          operation: "instructions.configure",
+          input: { extensionId: "notes", name: "010-notes.mdx", bypassed: true },
+        },
+        receipt: receipts.configure,
+        facts: {
+          instructionChanged: false,
+          instructionAction: "instruction-configured",
+          instructionFile: "010-notes.mdx",
+          extensionId: "notes",
+          extensionMutationId: null,
+        },
+      },
+      {
+        request: {
+          operation: "instructions.rename",
+          input: { extensionId: "notes", from: "010-notes.mdx", to: "020-notes.mdx" },
+        },
+        receipt: receipts.rename,
+        facts: {
+          instructionChanged: true,
+          instructionAction: "instruction-renamed",
+          instructionFile: "020-notes.mdx",
+          extensionId: "notes",
+          extensionMutationId: mutationId,
+        },
+      },
+      {
+        request: {
+          operation: "instructions.reorder",
+          input: { extensionId: "notes", order: ["020-notes.mdx"] },
+        },
+        receipt: receipts.reorder,
+        facts: {
+          instructionChanged: true,
+          instructionAction: "instructions-reordered",
+          extensionId: "notes",
+          extensionMutationId: mutationId,
+        },
+      },
+      {
+        request: {
+          operation: "typescript-api.configure",
+          input: { workspaceId, extensionId: "notes", enabled: true },
+        },
+        receipt: receipts.typescriptApi,
+        facts: {
+          extensionConfigured: true,
+          extensionId: "notes",
+          typescriptApiEnabled: true,
+          extensionChanged: true,
+        },
+      },
+    ] as const;
+
+    for (const item of cases) {
+      await expect(
+        applyExtensionManagementRuntimeRequest(runtime, item.request as never, workspaceId),
+      ).resolves.toEqual({ output: { ok: true, receipt: item.receipt }, commandFacts: item.facts });
+    }
+
+    await expect(
+      applyExtensionManagementRuntimeRequest(
+        runtime,
+        { operation: "reset", input: { extensionId: "notes", scope: "instructions" } } as never,
+        workspaceId,
+      ),
+    ).resolves.toEqual({
+      output: {
+        ok: true,
+        receipt: receipts.reset.source,
+        automaticBuild: receipts.reset.automaticBuild,
+      },
+      commandFacts: {
+        extensionReset: true,
+        extensionId: "notes",
+        extensionMutationId: mutationId,
+        automaticBuildStatus: "succeeded",
+      },
+    });
+    await expect(
+      applyExtensionManagementRuntimeRequest(
+        runtime,
+        { operation: "source.revert", input: { mutationId: revertedMutationId } } as never,
+        workspaceId,
+      ),
+    ).resolves.toEqual({
+      output: {
+        ok: true,
+        receipt: receipts.revert.source,
+        automaticBuild: receipts.revert.automaticBuild,
+      },
+      commandFacts: {
+        extensionReverted: true,
+        extensionId: "notes",
+        extensionMutationId: mutationId,
+        revertedExtensionMutationId: revertedMutationId,
+        automaticBuildStatus: "succeeded",
+      },
+    });
+    expect(calls.map((call) => call.method)).toEqual([
+      "extensions.create",
+      "extensions.duplicate",
+      "extensions.delete",
+      "extensions.addInstruction",
+      "extensions.removeInstruction",
+      "extensions.configureInstruction",
+      "extensions.renameInstruction",
+      "extensions.reorderInstructions",
+      "sourceEdits.configureTypescriptApi",
+      "extensions.reset",
+      "extensions.revertMutation",
+    ]);
+
+    await expect(
+      applyExtensionManagementRuntimeRequest(
+        runtime,
+        {
+          operation: "typescript-api.configure",
+          input: {
+            workspaceId: "workspace:retargeted",
+            extensionId: "notes",
+            enabled: false,
+          },
+        } as never,
+        workspaceId,
+      ),
+    ).rejects.toThrow("owning scoped workspace runtime");
+    expect(calls).toHaveLength(11);
+  });
+
+  it("dispatches Extension Managing inspect and build through parent Runtime authority", async () => {
+    const buildInputs: unknown[] = [];
+    const runtime = {
+      state: {
+        readModels: {
+          fetch: async () => ({
+            kind: "extensions",
+            value: {
+              aggregateFingerprint: "registry-fingerprint",
+              observedAt: "2026-07-13T10:00:00.000Z",
+              records: [
+                {
+                  extensionId: "notes",
+                  category: "user",
+                  interfaceKind: "svvyx",
+                  title: "Notes",
+                  description: "Project notes.",
+                  capabilities: {
+                    resettable: true,
+                    deletable: true,
+                    typescriptApiEnabled: true,
+                  },
+                  customized: false,
+                  contributors: [],
+                  tooling: [],
+                  loadedByProfileIds: [],
+                  availableByProfileIds: ["default-orchestrator"],
+                  usagePolicy: { defaultState: "available", reason: "user-extension" },
+                  cliDeclarations: [],
+                  cliReadiness: [],
+                  env: [],
+                  dependencyRequirements: [],
+                  buildAuthorityStatus: "current",
+                  buildRequired: false,
+                  contextReady: true,
+                  runtimeReady: true,
+                  readiness: "ready",
+                  generatedPackageStatus: "ready",
+                  sourceFingerprint: `sha256:${"a".repeat(64)}`,
+                },
+              ],
+            },
+          }),
+        },
+      },
+      facade: {
+        extensions: {
+          build: async (input: unknown) => {
+            buildInputs.push(input);
+            return {
+              attemptId: `extension-build-attempt:notes:${"b".repeat(64)}`,
+              manifest: { contextReady: true },
+            };
+          },
+        },
+      },
+    } as never;
+
+    await expect(
+      applyExtensionManagementRuntimeRequest(runtime, {
+        operation: "inspect",
+        input: { extensionId: "notes" },
+      } as never),
+    ).resolves.toMatchObject({
+      output: {
+        ok: true,
+        extension: {
+          id: "notes",
+          state: { runtimeReady: true, readiness: "ready", issues: [] },
+        },
+      },
+      commandFacts: { extensionId: "notes", extensionReady: true },
+    });
+
+    const buildInput = {
+      extensionId: "notes",
+      clientRequestId: "runtime-client:build-notes",
+    };
+    await expect(
+      applyExtensionManagementRuntimeRequest(runtime, {
+        operation: "build",
+        input: buildInput,
+      } as never),
+    ).resolves.toEqual({
+      output: {
+        ok: true,
+        extensionId: "notes",
+        attemptId: `extension-build-attempt:notes:${"b".repeat(64)}`,
+        build: { status: "success", contextReady: true },
+      },
+      commandFacts: {
+        extensionBuildOk: true,
+        extensionId: "notes",
+        extensionBuildAttemptId: `extension-build-attempt:notes:${"b".repeat(64)}`,
+      },
+    });
+    expect(buildInputs).toEqual([buildInput]);
+  });
+
+  it("returns Runtime-derived affected surfaces for usage and snapshot changes", async () => {
+    const snapshotSaveInputs: unknown[] = [];
+    const snapshotRenameInputs: unknown[] = [];
+    const snapshotDeleteInputs: unknown[] = [];
+    const snapshotLoadInputs: unknown[] = [];
+    const usageSurface = {
+      surfacePiSessionId: "surface:usage" as never,
+      kind: "extension_context_changed" as const,
+      label: "Extensions changed" as const,
+      reason: "extension_usage_changed" as const,
+    };
+    const snapshotSurface = {
+      surfacePiSessionId: "surface:snapshot" as never,
+      kind: "extension_context_changed" as const,
+      label: "Extensions changed" as const,
+      reason: "snapshot_loaded" as const,
+    };
+    const runtime = {
+      facade: {
+        extensions: {
+          setUsage: async () => ({
+            change: {
+              changeId: "extension-usage-change:one",
+              extensionId: "smithers",
+              before: "available",
+              after: "loaded",
+            },
+            affectedSurfaces: [usageSurface],
+          }),
+          revertUsage: async () => ({
+            change: {
+              changeId: "extension-usage-change:revert",
+              extensionId: "smithers",
+              before: "loaded",
+              after: "available",
+            },
+            affectedSurfaces: [usageSurface],
+          }),
+          snapshots: {
+            list: async () => ({
+              snapshots: [{ snapshotId: "extension-snapshot:one", revision: 1 }],
+            }),
+            save: async (input: unknown) => {
+              snapshotSaveInputs.push(input);
+              return { snapshotId: "extension-snapshot:saved", revision: 1 };
+            },
+            rename: async (input: unknown) => {
+              snapshotRenameInputs.push(input);
+              return { snapshotId: "extension-snapshot:one", revision: 2 };
+            },
+            delete: async (input: unknown) => {
+              snapshotDeleteInputs.push(input);
+              return { snapshotId: "extension-snapshot:one", deleted: true as const };
+            },
+            load: async (input: unknown) => {
+              snapshotLoadInputs.push(input);
+              return {
+                snapshotId: "extension-snapshot:one",
+                attemptId: "extension-snapshot-restore:one",
+                status: "completed" as const,
+                builds: [],
+                affectedSurfaces: [snapshotSurface],
+              };
+            },
+          },
+        },
+      },
+    } as never;
+
+    await expect(
+      applyExtensionManagementRuntimeRequest(runtime, {
+        operation: "usage.set",
+        input: {
+          clientRequestId: "runtime-client:usage",
+          extensionId: "smithers",
+          agentProfile: "default-orchestrator",
+          usage: "loaded",
+        },
+      } as never),
+    ).resolves.toMatchObject({
+      output: { agentContextImpact: { affectedSurfaces: [usageSurface] } },
+      commandFacts: { affectedAgentContextSurfaces: 1 },
+    });
+
+    await expect(
+      applyExtensionManagementRuntimeRequest(runtime, {
+        operation: "usage.revert",
+        input: {
+          clientRequestId: "runtime-client:usage-revert",
+          changeId: "extension-usage-change:one",
+        },
+      } as never),
+    ).resolves.toMatchObject({
+      output: {
+        reverted: "extension-usage-change:one",
+        changeId: "extension-usage-change:revert",
+        agentContextImpact: { affectedSurfaces: [usageSurface] },
+      },
+      commandFacts: {
+        extensionUsageReverted: true,
+        affectedAgentContextSurfaces: 1,
+      },
+    });
+
+    await expect(
+      applyExtensionManagementRuntimeRequest(runtime, {
+        operation: "snapshots.list",
+        input: {},
+      } as never),
+    ).resolves.toEqual({
+      output: {
+        ok: true,
+        snapshots: [{ snapshotId: "extension-snapshot:one", revision: 1 }],
+      },
+      commandFacts: { extensionSnapshotsListed: true, extensionSnapshotCount: 1 },
+    });
+
+    await expect(
+      applyExtensionManagementRuntimeRequest(runtime, {
+        operation: "snapshots.save",
+        input: { clientRequestId: "runtime-client:snapshot-save", name: "Before refactor" },
+      } as never),
+    ).resolves.toEqual({
+      output: {
+        ok: true,
+        snapshot: { snapshotId: "extension-snapshot:saved", revision: 1 },
+      },
+      commandFacts: {
+        extensionSnapshotSaved: true,
+        snapshotId: "extension-snapshot:saved",
+      },
+    });
+
+    await expect(
+      applyExtensionManagementRuntimeRequest(runtime, {
+        operation: "snapshots.rename",
+        input: {
+          clientRequestId: "runtime-client:snapshot-rename",
+          snapshotId: "extension-snapshot:one",
+          name: "After refactor",
+        },
+      } as never),
+    ).resolves.toEqual({
+      output: {
+        ok: true,
+        snapshot: { snapshotId: "extension-snapshot:one", revision: 2 },
+      },
+      commandFacts: {
+        extensionSnapshotRenamed: true,
+        snapshotId: "extension-snapshot:one",
+      },
+    });
+
+    await expect(
+      applyExtensionManagementRuntimeRequest(runtime, {
+        operation: "snapshots.delete",
+        input: {
+          clientRequestId: "runtime-client:snapshot-delete",
+          snapshotId: "extension-snapshot:one",
+        },
+      } as never),
+    ).resolves.toEqual({
+      output: { ok: true, snapshotId: "extension-snapshot:one", deleted: true },
+      commandFacts: {
+        extensionSnapshotDeleted: true,
+        snapshotId: "extension-snapshot:one",
+      },
+    });
+
+    await expect(
+      applyExtensionManagementRuntimeRequest(runtime, {
+        operation: "snapshots.load",
+        input: {
+          clientRequestId: "runtime-client:snapshot",
+          snapshotId: "extension-snapshot:one",
+        },
+      } as never),
+    ).resolves.toEqual({
+      output: {
+        ok: true,
+        snapshotId: "extension-snapshot:one",
+        attemptId: "extension-snapshot-restore:one",
+        status: "completed",
+        builds: [],
+        agentContextImpact: { affectedSurfaces: [snapshotSurface] },
+      },
+      commandFacts: {
+        extensionSnapshotLoaded: true,
+        snapshotId: "extension-snapshot:one",
+        extensionSnapshotLoadStatus: "completed",
+        affectedAgentContextSurfaces: 1,
+      },
+    });
+
+    expect(snapshotSaveInputs).toEqual([
+      expect.objectContaining({
+        clientRequestId: "runtime-client:snapshot-save",
+        name: "Before refactor",
+        snapshotId: expect.stringMatching(/^extension-snapshot:/),
+        capturedAt: expect.any(String),
+      }),
+    ]);
+    expect(snapshotRenameInputs).toEqual([
+      expect.objectContaining({
+        clientRequestId: "runtime-client:snapshot-rename",
+        snapshotId: "extension-snapshot:one",
+        name: "After refactor",
+        expectedRevision: 1,
+        renamedAt: expect.any(String),
+      }),
+    ]);
+    expect(snapshotDeleteInputs).toEqual([
+      expect.objectContaining({
+        clientRequestId: "runtime-client:snapshot-delete",
+        snapshotId: "extension-snapshot:one",
+        expectedRevision: 1,
+        deletedAt: expect.any(String),
+        cleanupId: expect.stringMatching(/^extension-snapshot-cleanup:/),
+      }),
+    ]);
+    expect(snapshotLoadInputs).toEqual([
+      expect.objectContaining({
+        clientRequestId: "runtime-client:snapshot",
+        snapshotId: "extension-snapshot:one",
+        expectedRevision: 1,
+        attemptId: expect.stringMatching(/^extension-snapshot-restore:/),
+        startedAt: expect.any(String),
+      }),
+    ]);
+  });
+
   it("acquires one readiness-gated desktop facade bundle without exposing bootstrap authority", async () => {
     const registry = createRegistry(tempWorkspace("desktop-facade-acquisition"));
 

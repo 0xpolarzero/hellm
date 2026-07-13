@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -19,7 +19,6 @@ import type { AppLoggerEvent } from "./app-logger";
 import {
   runtimeArtifactStatePortFromStore,
   runtimeCommandStatePortFromStore,
-  runtimeExtensionContextImpactStateFacadeFromStore,
   runtimeTurnStatePortFromStore,
 } from "@svvy/state/structured-session-adapters";
 import { buildStructuredSessionView } from "@svvy/state/structured-session-projections";
@@ -27,7 +26,7 @@ import {
   createStructuredSessionStateStore,
   type StructuredSessionStateStore,
 } from "@svvy/state/structured-session-state";
-import { createSvvyDirectTools } from "./svvy-direct-tools";
+import { createSvvyDirectTools, readSvvyxSubprocessResult } from "./svvy-direct-tools";
 import { createToolExecutionCommandTracker } from "./tool-execution-command-tracker";
 import type { RuntimeStateWriteLane } from "./ordered-runtime-state-write-lane";
 import type {
@@ -127,9 +126,6 @@ function createSvvyDirectToolsForTest(
           artifactState: runtimeArtifactStatePortFromStore(store),
           commandState: runtimeCommandStatePortFromStore(store),
           databasePath: store.databasePath,
-          extensionContextImpactState:
-            directOptions.extensionContextImpactState ??
-            runtimeExtensionContextImpactStateFacadeFromStore(store),
           readArtifactRootForSession: (sessionId: string) =>
             directOptions.readArtifactRootForSession?.(sessionId) ??
             store.getSessionState(sessionId).workspace.artifactDir,
@@ -745,6 +741,31 @@ describe("svvy direct tools", () => {
         () => {},
       ),
     ).rejects.toThrow("app-owned and cannot be overridden");
+  });
+
+  it("keeps multiline svvyx shell commands outside the signed replay transport", async () => {
+    const cwd = createTempDir();
+    const applied: unknown[] = [];
+    const execTool = findTool(
+      createSvvyDirectToolsForTest({
+        cwd,
+        applyExtensionManagementRuntimeRequest: async (request) => {
+          applied.push(request);
+          return { output: { ok: true }, commandFacts: {} };
+        },
+      }).codingTools,
+      "exec_command",
+    );
+
+    const result = await execTool.execute(
+      "tool-multiline-svvyx",
+      { cmd: "svvyx extensions snapshots list --json\nprintf untrusted-multiline" },
+      new AbortController().signal,
+      () => {},
+    );
+
+    expect(readText(result)).toContain("untrusted-multiline");
+    expect(applied).toEqual([]);
   });
 
   it("does not expose external instruction bodies through svvyx subprocess context", async () => {
@@ -3450,7 +3471,7 @@ if (readFileSync(target, "utf8") !== "before\n") {
     ]);
   });
 
-  it("replays svvyx extensions runtime-effect transport intents in parent state", async () => {
+  it("replays svvyx extensions Runtime responses in parent state", async () => {
     const cwd = createTempDir();
     const extensionsRoot = join(cwd, "extensions");
     const store = createStructuredSessionStateStore({
@@ -3604,6 +3625,66 @@ if (readFileSync(target, "utf8") !== "before\n") {
         }),
       }),
     ]);
+  });
+
+  it("fails closed on signed malformed Extension Managing Runtime requests", () => {
+    const cwd = createTempDir();
+    const resultKey = "signed-extension-management-result-key";
+    for (const request of [
+      { operation: "unknown.lifecycle", input: {} },
+      {
+        operation: "create",
+        input: {
+          id: "notes",
+          title: "Notes",
+          description: "Project notes",
+          interfaceKind: "instructions",
+          typescriptApiEnabled: false,
+          unexpectedAuthority: "child",
+        },
+      },
+    ]) {
+      const path = join(cwd, `result-${randomUUID()}.json`);
+      const signatureMaterial = {
+        envelopeVersion: 1,
+        invocationId: "invocation-extension-management-invalid",
+        commandId: "extensions",
+        extensionId: "extension-managing",
+        createdAt: "2026-07-13T00:00:00.000Z",
+        payload: {
+          ok: true,
+          output: { ok: true, placeholder: true },
+          intents: [
+            {
+              id: "extension-management-invalid",
+              kind: "extension_management.runtime_request",
+              request,
+            },
+          ],
+        },
+      };
+      writeFileSync(
+        path,
+        JSON.stringify({
+          ...signatureMaterial,
+          signature: {
+            algorithm: "hmac-sha256",
+            keyId: "svvyx-subprocess-result",
+            digest: createHmac("sha256", resultKey)
+              .update(JSON.stringify(signatureMaterial))
+              .digest("base64url"),
+          },
+        }),
+      );
+
+      expect(readSvvyxSubprocessResult(path, resultKey)).toEqual({
+        agentProfileMutations: [],
+        appLogEvents: [],
+        intents: [],
+        ok: false,
+        progressEvents: [],
+      });
+    }
   });
 
   it("blocks apply_patch at the approval boundary before changing files", async () => {

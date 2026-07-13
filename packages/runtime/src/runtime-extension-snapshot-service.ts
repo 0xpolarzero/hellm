@@ -18,6 +18,7 @@ import {
   type ExtensionSnapshotRestoreFailureReason,
   type ExtensionSnapshotSummary,
   type ExtensionSnapshotSourceRestorePlanId,
+  type RuntimeExtensionContextChangedSurface,
   type ExtensionSnapshotsReadModel,
   type RuntimeDeleteExtensionSnapshotInput,
   type RuntimeEnsureInitialExtensionSnapshotResult,
@@ -32,6 +33,7 @@ import { Extensions } from "@svvy/extensions";
 
 import { RuntimeEventBus } from "./runtime-event-bus";
 import { RuntimeExtensionBuildService } from "./runtime-extension-build-service";
+import { RuntimeExtensionSourceCoordinator } from "./runtime-extension-source-coordinator";
 import { RuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
 
 export interface RuntimeExtensionSnapshotServiceService {
@@ -75,6 +77,7 @@ export const layerRuntimeExtensionSnapshotService = Layer.effect(
     const contextImpact = yield* RuntimeExtensionContextImpactStatePort;
     const extensions = yield* Extensions;
     const sourceInvalidation = yield* RuntimeSourceInvalidationService;
+    const sourceCoordinator = yield* RuntimeExtensionSourceCoordinator;
     const builds = yield* RuntimeExtensionBuildService;
     const events = yield* RuntimeEventBus;
     const crypto = yield* Crypto.Crypto;
@@ -89,66 +92,69 @@ export const layerRuntimeExtensionSnapshotService = Layer.effect(
 
     const save = (input: RuntimeSaveExtensionSnapshotInput) =>
       lane.withPermit(
-        Effect.gen(function* () {
-          const captureFacts = yield* settings
-            .readCaptureFacts()
-            .pipe(Effect.mapError((cause) => runtimeFailure("save.read-settings", cause)));
-          const payload = yield* extensions.snapshots
-            .captureSourcePayload({ capturedAt: input.capturedAt, ...captureFacts })
-            .pipe(Effect.mapError((cause) => runtimeFailure("save.capture-source", cause)));
-          const bytes = new TextEncoder().encode(JSON.stringify(payload));
-          const digestBytes = yield* crypto
-            .digest("SHA-256", bytes)
-            .pipe(Effect.mapError((cause) => runtimeFailure("save.hash", cause)));
-          const payloadRef = {
-            schemaVersion: 1 as const,
-            algorithm: "sha256" as const,
-            digest:
-              `sha256:${Array.from(digestBytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}` as const,
-            byteSize: bytes.byteLength,
-            codec: "svvy-extension-snapshot-json-v1" as const,
-          };
-          yield* payloadStore
-            .put({ ref: payloadRef, bytes })
-            .pipe(Effect.mapError((cause) => runtimeFailure("save.store-payload", cause)));
-          const capturedSecrets = yield* secretValues.capture(payload.secretTargets).pipe(
-            Effect.mapError((cause) => runtimeFailure("save.capture-secrets", cause)),
-            Effect.catch((cause) =>
-              payloadStore.cleanup({ ref: payloadRef }).pipe(
-                Effect.catch(() => Effect.void),
-                Effect.andThen(Effect.fail(cause)),
-              ),
-            ),
-          );
-          const secretPayloadRef = capturedSecrets.bytes
-            ? (yield* secretStore
-                .put({ snapshotId: input.snapshotId, bytes: capturedSecrets.bytes })
-                .pipe(Effect.mapError((cause) => runtimeFailure("save.store-secrets", cause)))).ref
-            : null;
-          const mutation = yield* state
-            .save({
-              ...input,
-              payloadRef,
-              secretPayloadRef,
-              extensionCount: payload.sources.length,
-            })
-            .pipe(
-              Effect.mapError((cause) => runtimeFailure("save.commit", cause)),
+        sourceCoordinator.serialized(
+          Effect.gen(function* () {
+            const captureFacts = yield* settings
+              .readCaptureFacts()
+              .pipe(Effect.mapError((cause) => runtimeFailure("save.read-settings", cause)));
+            const payload = yield* extensions.snapshots
+              .captureSourcePayload({ capturedAt: input.capturedAt, ...captureFacts })
+              .pipe(Effect.mapError((cause) => runtimeFailure("save.capture-source", cause)));
+            const bytes = new TextEncoder().encode(JSON.stringify(payload));
+            const digestBytes = yield* crypto
+              .digest("SHA-256", bytes)
+              .pipe(Effect.mapError((cause) => runtimeFailure("save.hash", cause)));
+            const payloadRef = {
+              schemaVersion: 1 as const,
+              algorithm: "sha256" as const,
+              digest:
+                `sha256:${Array.from(digestBytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}` as const,
+              byteSize: bytes.byteLength,
+              codec: "svvy-extension-snapshot-json-v1" as const,
+            };
+            yield* payloadStore
+              .put({ ref: payloadRef, bytes })
+              .pipe(Effect.mapError((cause) => runtimeFailure("save.store-payload", cause)));
+            const capturedSecrets = yield* secretValues.capture(payload.secretTargets).pipe(
+              Effect.mapError((cause) => runtimeFailure("save.capture-secrets", cause)),
               Effect.catch((cause) =>
                 payloadStore.cleanup({ ref: payloadRef }).pipe(
-                  Effect.andThen(
-                    secretPayloadRef
-                      ? secretStore.cleanup({ ref: secretPayloadRef }).pipe(Effect.asVoid)
-                      : Effect.void,
-                  ),
                   Effect.catch(() => Effect.void),
                   Effect.andThen(Effect.fail(cause)),
                 ),
               ),
             );
-          yield* publish(mutation.afterCommit);
-          return mutation.value.snapshot;
-        }),
+            const secretPayloadRef = capturedSecrets.bytes
+              ? (yield* secretStore
+                  .put({ snapshotId: input.snapshotId, bytes: capturedSecrets.bytes })
+                  .pipe(Effect.mapError((cause) => runtimeFailure("save.store-secrets", cause))))
+                  .ref
+              : null;
+            const mutation = yield* state
+              .save({
+                ...input,
+                payloadRef,
+                secretPayloadRef,
+                extensionCount: payload.sources.length,
+              })
+              .pipe(
+                Effect.mapError((cause) => runtimeFailure("save.commit", cause)),
+                Effect.catch((cause) =>
+                  payloadStore.cleanup({ ref: payloadRef }).pipe(
+                    Effect.andThen(
+                      secretPayloadRef
+                        ? secretStore.cleanup({ ref: secretPayloadRef }).pipe(Effect.asVoid)
+                        : Effect.void,
+                    ),
+                    Effect.catch(() => Effect.void),
+                    Effect.andThen(Effect.fail(cause)),
+                  ),
+                ),
+              );
+            yield* publish(mutation.afterCommit);
+            return mutation.value.snapshot;
+          }),
+        ),
       );
 
     const rename = (input: RuntimeRenameExtensionSnapshotInput) =>
@@ -221,6 +227,8 @@ export const layerRuntimeExtensionSnapshotService = Layer.effect(
         const planId = planIdFor(attempt);
         let status = attempt.status;
         let removedUserExtensionIds: readonly ExtensionId[] = [];
+        let affectedSurfaces: readonly RuntimeExtensionContextChangedSurface[] =
+          attempt.affectedSurfaces;
         if (status === "prepared" || status === "payload-applied") {
           const plan = yield* extensions.snapshots
             .prepareSourceRestore({
@@ -234,7 +242,13 @@ export const layerRuntimeExtensionSnapshotService = Layer.effect(
             .pipe(Effect.mapError((cause) => runtimeFailure("load.apply-source", cause)));
           removedUserExtensionIds = sourceReceipt.removedUserExtensionIds;
           if (status === "prepared") {
-            const advanced = yield* advance(attempt, "prepared", "payload-applied", null);
+            const advanced = yield* advance(
+              attempt,
+              "prepared",
+              "payload-applied",
+              null,
+              affectedSurfaces,
+            );
             status = advanced.status;
           }
         }
@@ -274,12 +288,25 @@ export const layerRuntimeExtensionSnapshotService = Layer.effect(
               removedUserExtensionIds,
             })
             .pipe(Effect.mapError((cause) => runtimeFailure("load.context-impact", cause)));
+          affectedSurfaces = impact.value;
           yield* publish(impact.afterCommit);
-          const advanced = yield* advance(attempt, "payload-applied", "state-committed", null);
+          const advanced = yield* advance(
+            attempt,
+            "payload-applied",
+            "state-committed",
+            null,
+            affectedSurfaces,
+          );
           status = advanced.status;
         }
         if (status === "state-committed") {
-          const advanced = yield* advance(attempt, "state-committed", "building", null);
+          const advanced = yield* advance(
+            attempt,
+            "state-committed",
+            "building",
+            null,
+            affectedSurfaces,
+          );
           status = advanced.status;
         }
         const buildResults: Array<{
@@ -287,6 +314,33 @@ export const layerRuntimeExtensionSnapshotService = Layer.effect(
           status: "succeeded" | "failed" | "blocked";
         }> = [];
         if (status === "building") {
+          const currentSourcePayload = yield* extensions.snapshots
+            .captureSourcePayload({
+              capturedAt: payload.capturedAt,
+              actorSettings: payload.actorSettings,
+              profileSettings: payload.profileSettings,
+              nonSecretEnvOverrideScopes: payload.nonSecretEnvOverrideScopes,
+              nonSecretEnvOverrides: payload.nonSecretEnvOverrides,
+              secretTargets: payload.secretTargets,
+            })
+            .pipe(Effect.mapError((cause) => runtimeFailure("load.verify-source", cause)));
+          if (
+            JSON.stringify(currentSourcePayload.sources) !== JSON.stringify(payload.sources) ||
+            JSON.stringify(currentSourcePayload.packageFiles) !==
+              JSON.stringify(payload.packageFiles)
+          ) {
+            yield* advance(attempt, "building", "failed", "state-conflict", affectedSurfaces);
+            yield* extensions.snapshots
+              .finalizeSourceRestore({ planId })
+              .pipe(Effect.mapError((cause) => runtimeFailure("load.finalize-source", cause)));
+            return {
+              snapshotId: attempt.snapshotId,
+              attemptId: attempt.attemptId,
+              status: "failed" as const,
+              builds: buildResults,
+              affectedSurfaces,
+            };
+          }
           const registry = yield* extensions.registry
             .observe()
             .pipe(Effect.mapError((cause) => runtimeFailure("load.observe-builds", cause)));
@@ -314,6 +368,7 @@ export const layerRuntimeExtensionSnapshotService = Layer.effect(
               attemptId: attempt.attemptId,
               status: "blocked" as const,
               builds: buildResults,
+              affectedSurfaces,
             };
           }
           const failed = buildResults.some((entry) => entry.status === "failed");
@@ -322,6 +377,7 @@ export const layerRuntimeExtensionSnapshotService = Layer.effect(
             "building",
             failed ? "failed" : "completed",
             failed ? "build-failed" : null,
+            affectedSurfaces,
           );
           yield* extensions.snapshots
             .finalizeSourceRestore({ planId })
@@ -331,6 +387,7 @@ export const layerRuntimeExtensionSnapshotService = Layer.effect(
             attemptId: attempt.attemptId,
             status: failed ? ("failed" as const) : ("completed" as const),
             builds: buildResults,
+            affectedSurfaces,
           };
         }
         return {
@@ -338,6 +395,7 @@ export const layerRuntimeExtensionSnapshotService = Layer.effect(
           attemptId: attempt.attemptId,
           status: "completed" as const,
           builds: buildResults,
+          affectedSurfaces,
         };
       }).pipe(
         Effect.catch((cause: RuntimeContractError) =>
@@ -357,6 +415,7 @@ export const layerRuntimeExtensionSnapshotService = Layer.effect(
       expectedStatus: ExtensionSnapshotRestoreAttempt["status"],
       status: ExtensionSnapshotRestoreAttempt["status"],
       reason: ExtensionSnapshotRestoreFailureReason | null,
+      affectedSurfaces: readonly RuntimeExtensionContextChangedSurface[],
     ) =>
       Effect.gen(function* () {
         const updatedAt = yield* now();
@@ -369,6 +428,7 @@ export const layerRuntimeExtensionSnapshotService = Layer.effect(
             status,
             updatedAt,
             failureReason: reason,
+            affectedSurfaces,
           })
           .pipe(Effect.mapError((cause) => runtimeFailure("load.advance", cause)));
         yield* publish(mutation.afterCommit);
@@ -383,30 +443,38 @@ export const layerRuntimeExtensionSnapshotService = Layer.effect(
         Effect.flatMap((current) =>
           !current || current.status === "completed" || current.status === "failed"
             ? Effect.void
-            : advance(attempt, current.status, "failed", reason).pipe(Effect.asVoid),
+            : advance(attempt, current.status, "failed", reason, current.affectedSurfaces).pipe(
+                Effect.asVoid,
+              ),
         ),
         Effect.catch(() => Effect.void),
       );
 
     const load = (input: RuntimeLoadExtensionSnapshotInput) =>
       lane.withPermit(
-        Effect.gen(function* () {
-          const mutation = yield* state
-            .load(input)
-            .pipe(Effect.mapError((cause) => runtimeFailure("load.start", cause)));
-          yield* publish(mutation.afterCommit);
-          return yield* runAttempt(mutation.value.attempt);
-        }),
+        sourceCoordinator.serialized(
+          Effect.gen(function* () {
+            const mutation = yield* state
+              .load(input)
+              .pipe(Effect.mapError((cause) => runtimeFailure("load.start", cause)));
+            yield* publish(mutation.afterCommit);
+            return yield* runAttempt(mutation.value.attempt);
+          }),
+        ),
       );
 
     const recover = () =>
       state.listPendingRestoreAttempts().pipe(
         Effect.mapError((cause) => runtimeFailure("recover.list", cause)),
         Effect.flatMap((attempts) =>
-          Effect.forEach(attempts, (attempt) => lane.withPermit(runAttempt(attempt)), {
-            concurrency: 1,
-            discard: true,
-          }),
+          Effect.forEach(
+            attempts,
+            (attempt) => lane.withPermit(sourceCoordinator.serialized(runAttempt(attempt))),
+            {
+              concurrency: 1,
+              discard: true,
+            },
+          ),
         ),
         Effect.andThen(processCleanup()),
       );

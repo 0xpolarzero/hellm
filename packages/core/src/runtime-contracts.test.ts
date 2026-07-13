@@ -60,7 +60,6 @@ import {
   unsafeDecodeSubmitMessageInputSyncForTestsAndBootstrap as decodeSubmitMessageInputRaw,
   decodeUnknownSubmitMessageInputExit,
   unsafeDecodeSubmitMessageResultSyncForTestsAndBootstrap as decodeSubmitMessageResultRaw,
-  decodeUnknownSvvyxRuntimeEffectTransportIntentExit,
   unsafeDecodeWriteCommandStdinInputSyncForTestsAndBootstrap as decodeWriteCommandStdinInputRaw,
   unsafeDecodeWriteCommandStdinResultSyncForTestsAndBootstrap as decodeWriteCommandStdinResultRaw,
   unsafeDecodeRunTaskAgentInputSyncForTestsAndBootstrap as decodeRunTaskAgentInputRaw,
@@ -2165,73 +2164,6 @@ describe("@svvy/core runtime contracts", () => {
       );
     });
   }
-
-  it("decodes trusted svvyx runtime-effect transport context-impact intents", () => {
-    const usage = decodeUnknownSvvyxRuntimeEffectTransportIntentExit({
-      id: "runtime-effect-1",
-      kind: "runtime_effect.request",
-      request: {
-        type: "extension_usage.context_impact",
-        target: "extension_usage",
-        input: {
-          agentProfile: "default-orchestrator",
-          profileId: "profile_default_orchestrator",
-        },
-      },
-    });
-    expect(Exit.isSuccess(usage)).toBe(true);
-
-    const snapshot = decodeUnknownSvvyxRuntimeEffectTransportIntentExit({
-      id: "runtime-effect-2",
-      kind: "runtime_effect.request",
-      request: {
-        type: "extension_snapshot.context_impact",
-        target: "snapshot_load",
-        input: {
-          affectedExtensionIds: ["smithers"],
-          affectedUsageProfiles: ["orchestrator:default-orchestrator", "handler:threadHandler"],
-          removedUserExtensionIds: ["legacy-extension"],
-        },
-      },
-    });
-    expect(Exit.isSuccess(snapshot)).toBe(true);
-  });
-
-  it("rejects malformed svvyx runtime-effect transport context-impact intents", () => {
-    expect(
-      Exit.isFailure(
-        decodeUnknownSvvyxRuntimeEffectTransportIntentExit({
-          id: "runtime-effect-1",
-          kind: "runtime_effect.request",
-          request: {
-            type: "extension_usage.context_impact",
-            target: "snapshot_load",
-            input: {
-              agentProfile: "default-orchestrator",
-              profileId: "profile_default_orchestrator",
-            },
-          },
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      Exit.isFailure(
-        decodeUnknownSvvyxRuntimeEffectTransportIntentExit({
-          id: "runtime-effect-2",
-          kind: "runtime_effect.request",
-          request: {
-            type: "extension_snapshot.context_impact",
-            target: "snapshot_load",
-            input: {
-              affectedExtensionIds: ["smithers"],
-              affectedUsageProfiles: ["handler:wrong"],
-              removedUserExtensionIds: [],
-            },
-          },
-        }),
-      ),
-    ).toBe(true);
-  });
 
   it("rejects split surface creation effects from extension runtime requests", () => {
     expect(() =>

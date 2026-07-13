@@ -8,9 +8,11 @@ import {
   RuntimeContractError,
   type AddExtensionInstructionInput,
   type AddExtensionInstructionResult,
+  type BuildRuntimeExtensionInput,
   type ConfigureExtensionInstructionInput,
   type ConfigureExtensionInstructionResult,
-  type BuildRuntimeExtensionInput,
+  type ConfigureExtensionTypescriptApiInput,
+  type ConfigureExtensionTypescriptApiResult,
   type CreateExtensionSourceInput,
   type CreateExtensionSourceResult,
   type DeleteExtensionSourceInput,
@@ -27,7 +29,6 @@ import {
   type ReorderExtensionInstructionsResult,
   type RevertExtensionSourceMutationInput,
   type RuntimeRevertExtensionSourceMutationResult,
-  type SvvyxRuntimeEffectTransportRequest,
   type ResetExtensionInstructionsInput,
   type RuntimeResetExtensionInstructionsResult,
 } from "@svvy/core";
@@ -35,15 +36,10 @@ import { Extensions } from "@svvy/extensions";
 
 import { RuntimeEventBus } from "./runtime-event-bus";
 import { RuntimeExtensionBuildService } from "./runtime-extension-build-service";
+import { RuntimeExtensionSourceCoordinator } from "./runtime-extension-source-coordinator";
 import { RuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
 
 export interface RuntimeExtensionLifecycleServiceService {
-  reconcileMutation(
-    input: Extract<
-      SvvyxRuntimeEffectTransportRequest,
-      { readonly type: "extension_source.reconcile" }
-    >["input"],
-  ): Effect.Effect<void, RuntimeContractError>;
   create(
     input: CreateExtensionSourceInput,
   ): Effect.Effect<CreateExtensionSourceResult, RuntimeContractError>;
@@ -65,6 +61,9 @@ export interface RuntimeExtensionLifecycleServiceService {
   configureInstruction(
     input: ConfigureExtensionInstructionInput,
   ): Effect.Effect<ConfigureExtensionInstructionResult, RuntimeContractError>;
+  configureTypescriptApi(
+    input: ConfigureExtensionTypescriptApiInput,
+  ): Effect.Effect<ConfigureExtensionTypescriptApiResult, RuntimeContractError>;
   renameInstruction(
     input: RenameExtensionInstructionInput,
   ): Effect.Effect<RenameExtensionInstructionResult, RuntimeContractError>;
@@ -89,6 +88,7 @@ export const layerRuntimeExtensionLifecycleService = Layer.effect(
     const extensionBuild = yield* RuntimeExtensionBuildService;
     const appLog = yield* AppLogWritePort;
     const events = yield* RuntimeEventBus;
+    const sourceCoordinator = yield* RuntimeExtensionSourceCoordinator;
     const registryLock = yield* Semaphore.make(1);
     const lanes = new Map<string, Semaphore.Semaphore>();
 
@@ -104,13 +104,15 @@ export const layerRuntimeExtensionLifecycleService = Layer.effect(
       );
 
     const inLanes = <A, E>(extensionIds: readonly string[], effect: Effect.Effect<A, E>) =>
-      Effect.gen(function* () {
-        const uniqueIds = [...new Set(extensionIds)].toSorted();
-        const selected = yield* Effect.forEach(uniqueIds, laneFor);
-        const acquire = (index: number): Effect.Effect<A, E> =>
-          index >= selected.length ? effect : selected[index]!.withPermit(acquire(index + 1));
-        return yield* acquire(0);
-      });
+      sourceCoordinator.serialized(
+        Effect.gen(function* () {
+          const uniqueIds = [...new Set(extensionIds)].toSorted();
+          const selected = yield* Effect.forEach(uniqueIds, laneFor);
+          const acquire = (index: number): Effect.Effect<A, E> =>
+            index >= selected.length ? effect : selected[index]!.withPermit(acquire(index + 1));
+          return yield* acquire(0);
+        }),
+      );
 
     const extensionFailure = (operation: string, cause: ExtensionError) =>
       new RuntimeContractError({
@@ -186,80 +188,6 @@ export const layerRuntimeExtensionLifecycleService = Layer.effect(
               ),
             );
           return result;
-        }),
-      );
-
-    const reconcileMutation = (
-      input: Extract<
-        SvvyxRuntimeEffectTransportRequest,
-        { readonly type: "extension_source.reconcile" }
-      >["input"],
-    ) =>
-      inLanes(
-        input.extensionIds,
-        Effect.gen(function* () {
-          yield* sourceInvalidation
-            .reconcile({
-              scope: { kind: "app-global" },
-              domains: ["extensions"],
-              reason: "manual",
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new RuntimeContractError({
-                    operation: "runtime.extensions.reconcileMutation",
-                    reason: "state-conflict",
-                    message: cause.message,
-                    cause,
-                  }),
-              ),
-            );
-          const finalized = yield* extensions.sources
-            .finalizeLifecycleMutation(input.mutationId as never)
-            .pipe(
-              Effect.mapError((cause) =>
-                extensionFailure("runtime.extensions.reconcileMutation.finalize", cause),
-              ),
-            );
-          if (!finalized.finalized) return;
-          const occurredAt = DateTime.formatIso(yield* DateTime.now) as unknown as Parameters<
-            typeof appLog.append
-          >[0]["occurredAt"];
-          const logged = yield* appLog
-            .append({
-              level: "info",
-              source: "settings",
-              message: "Extension source lifecycle mutation reconciled.",
-              occurredAt,
-              details: {
-                action: input.action,
-                extensionIds: [...input.extensionIds],
-                mutationId: input.mutationId,
-              },
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new RuntimeContractError({
-                    operation: "runtime.extensions.reconcileMutation.log",
-                    reason: "state-conflict",
-                    message: cause.message,
-                    cause,
-                  }),
-              ),
-            );
-          yield* events.publishStateInvalidations({ afterCommit: logged.afterCommit }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new RuntimeContractError({
-                  operation: "runtime.extensions.reconcileMutation.publish-log",
-                  reason: "stream-failed",
-                  message: cause.message,
-                  cause,
-                }),
-            ),
-          );
         }),
       );
 
@@ -466,6 +394,46 @@ export const layerRuntimeExtensionLifecycleService = Layer.effect(
         }),
       );
 
+    const configureTypescriptApi = (input: ConfigureExtensionTypescriptApiInput) =>
+      inLanes(
+        [input.extensionId],
+        Effect.gen(function* () {
+          const result = yield* extensions.sources
+            .configureTypescriptApi(input)
+            .pipe(
+              Effect.mapError((cause) =>
+                extensionFailure("runtime.sourceEdits.configureTypescriptApi", cause),
+              ),
+            );
+          if (result.reconcileRequired) {
+            yield* sourceInvalidation.reconcile({
+              scope: { kind: "app-global" },
+              domains: ["extensions"],
+              reason: "manual",
+            });
+          }
+          yield* Effect.gen(function* () {
+            const occurredAt = DateTime.formatIso(yield* DateTime.now) as unknown as Parameters<
+              typeof appLog.append
+            >[0]["occurredAt"];
+            const logged = yield* appLog.append({
+              level: "info",
+              source: "settings",
+              message: "Extension TypeScript API setting updated.",
+              occurredAt,
+              details: {
+                workspaceId: input.workspaceId,
+                extensionId: input.extensionId,
+                enabled: input.enabled,
+                changed: result.changed,
+              },
+            });
+            yield* events.publishStateInvalidations({ afterCommit: logged.afterCommit });
+          }).pipe(Effect.ignore);
+          return result;
+        }),
+      );
+
     const renameInstruction = (input: RenameExtensionInstructionInput) =>
       inLanes(
         [input.extensionId],
@@ -578,7 +546,6 @@ export const layerRuntimeExtensionLifecycleService = Layer.effect(
     };
 
     return RuntimeExtensionLifecycleService.of({
-      reconcileMutation,
       create,
       duplicate,
       delete: remove,
@@ -586,6 +553,7 @@ export const layerRuntimeExtensionLifecycleService = Layer.effect(
       addInstruction,
       removeInstruction,
       configureInstruction,
+      configureTypescriptApi,
       renameInstruction,
       reorderInstructions,
       revertMutation,

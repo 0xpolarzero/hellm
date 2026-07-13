@@ -22,6 +22,7 @@ import {
   type StateMutationResult,
 } from "@svvy/core";
 import { RuntimeEventBus } from "./runtime-event-bus";
+import { RuntimeExtensionSourceCoordinator } from "./runtime-extension-source-coordinator";
 import { RuntimeLayerConfigService, type RuntimeLayerConfig } from "./runtime-layer-config";
 import { RuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
 
@@ -45,6 +46,7 @@ export const makeRuntimeSourceReconcileRecoveryWorker = Effect.fn(
   const recoveryState = yield* RuntimeRecoveryStatePort;
   const sourceState = yield* RuntimeSourceStatePort;
   const sourceInvalidation = yield* RuntimeSourceInvalidationService;
+  const extensionSourceCoordinator = yield* RuntimeExtensionSourceCoordinator;
   const eventBus = yield* RuntimeEventBus;
   let claimedBy = options.claimedBy;
   if (!claimedBy) {
@@ -171,24 +173,30 @@ export const makeRuntimeSourceReconcileRecoveryWorker = Effect.fn(
         }
         return;
       }
-      const sourceMutation =
-        payload.retry.operation === "record-save"
-          ? yield* sourceState.recordSourceSave(payload.retry.record)
-          : yield* sourceState.recordSourceDelete(payload.retry.record);
-      yield* publishMutation(sourceMutation);
-      yield* sourceInvalidation.reconcile(payload.request).pipe(
-        Effect.timeoutOrElse({
-          duration: Duration.millis(sourceReconcileTimeoutMs(config)),
-          orElse: () =>
-            Effect.fail(
-              new RuntimeContractError({
-                operation: "runtime.sourceReconcileRecovery.reconcile",
-                reason: "dependency-not-ready",
-                message: "Source reconcile recovery exceeded its configured processing timeout.",
-              }),
-            ),
-        }),
-      );
+      const replay = Effect.gen(function* () {
+        const sourceMutation =
+          payload.retry.operation === "record-save"
+            ? yield* sourceState.recordSourceSave(payload.retry.record)
+            : yield* sourceState.recordSourceDelete(payload.retry.record);
+        yield* publishMutation(sourceMutation);
+        yield* sourceInvalidation.reconcile(payload.request).pipe(
+          Effect.timeoutOrElse({
+            duration: Duration.millis(sourceReconcileTimeoutMs(config)),
+            orElse: () =>
+              Effect.fail(
+                new RuntimeContractError({
+                  operation: "runtime.sourceReconcileRecovery.reconcile",
+                  reason: "dependency-not-ready",
+                  message: "Source reconcile recovery exceeded its configured processing timeout.",
+                }),
+              ),
+          }),
+        );
+      });
+      yield* payload.request.scope.kind === "app-global" &&
+      (!payload.request.domains || payload.request.domains.includes("extensions"))
+        ? extensionSourceCoordinator.serialized(replay)
+        : replay;
     });
 
   const processClaim = (claim: StateMutationResult<RuntimeRecoveryWorkRecord>) => {

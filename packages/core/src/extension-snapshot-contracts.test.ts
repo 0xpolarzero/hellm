@@ -107,6 +107,7 @@ describe("extension snapshot boundary contracts", () => {
       updatedAt: "2026-07-12T10:01:00.000Z",
       finishedAt: "2026-07-12T10:01:00.000Z",
       failureReason: "API key sk-secret leaked here",
+      affectedSurfaces: [],
     });
     expect(Exit.isFailure(result)).toBe(true);
   });

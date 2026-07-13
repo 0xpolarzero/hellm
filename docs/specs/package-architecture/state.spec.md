@@ -1022,10 +1022,13 @@ a delete action that cannot satisfy the workflow-agent lifecycle contract. Gener
 rows are never a fallback for this collection. Workflow-task generated-context previews resolve the
 selected source parameters and workflow-task actor defaults from this same freshly fetched `agents`
 read-model snapshot. `agent-settings.json` contains no visible profile, workflow-agent, or actor
-default fields. Extension Managing receives an immutable state-backed authority snapshot and emits
-typed mutations; profile/default mutations enter `StateCommands.agentProfiles`, while workflow-agent
-source saves enter runtime source edits with the committed source version as their compare-and-swap
-base. Reading local app/title settings never rewrites workflow-agent source files or state rows.
+default fields. The Extension Managing child process emits only a strict response-bearing
+extension-management request intent. The parent runtime applies that request, returns the committed
+receipt/facts, and derives the resulting state and generated-context impact: profile/default
+mutations enter `StateCommands.agentProfiles`, while workflow-agent source saves enter runtime source
+edits with the committed source version as their compare-and-swap base. The child does not receive
+an authority snapshot, emit state mutations, or derive affected surfaces. Reading local app/title
+settings never rewrites workflow-agent source files or state rows.
 `bindings` contains only live surface/thread/workflow-attempt facts and must not be treated as
 editable profile configuration. There is no combined or compatibility `profiles` collection.
 
@@ -3646,7 +3649,7 @@ ExtensionStatePort:
 
 ExtensionSnapshotStatePort:
 
-- Caller: future app/runtime snapshot orchestration; this foundation has no production caller.
+- Caller: package-private runtime `RuntimeExtensionSnapshotService` production orchestration.
 - Authority: app-global SQLite rows for snapshot metadata, client-submission receipts, resumable
   restore attempts, and pending payload/keychain cleanup. Snapshot payload bytes and secret-store
   operations are outside state and are not implemented by this port.
@@ -3659,12 +3662,14 @@ ExtensionSnapshotStatePort:
   pending cleanup row in the same transaction as metadata removal; load only prepares a durable
   restore attempt and does not apply payloads.
 - Persistence invariants: secret state agrees with nullable private secret reference; restore
-  terminal timestamps and failure reasons agree with status; public DTO schemas fail on excess
-  private fields. Reopen, idempotency, transition, cleanup, and no-public-leak tests are required.
+  terminal timestamps and failure reasons agree with status; every restore phase durably retains
+  the exact affected-surface receipts produced when snapshot settings commit so recovery after that
+  phase returns the same agent-context impact; public DTO schemas fail on excess private fields.
+  Reopen, idempotency, transition, cleanup, and no-public-leak tests are required.
 
 ExtensionSnapshotSettingsStatePort:
 
-- Caller: future app/runtime snapshot orchestration; this foundation has no production caller.
+- Caller: package-private runtime `RuntimeExtensionSnapshotService` production orchestration.
 - Capture reads app-global actor extension defaults, every existing profile's extension order/usage,
   non-secret env override scopes/rows, and declaration-based secret target presence. It returns no
   paths, profile model/prompt fields, secret refs, revision fingerprints, or secret values.

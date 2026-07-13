@@ -19,10 +19,7 @@ import {
 import {
   formatSvvyxExtensionsError,
   parseSvvyxExtensionManagementRuntimeRequest,
-  runSvvyxExtensionsCommand,
 } from "./svvyx-extensions-command";
-import { createPackageBackedExtensionLifecycleAdapter } from "./extension-lifecycle-authority";
-import { resolvePackagedExtensionTemplatesRoot } from "./packaged-extension-templates";
 import {
   formatSvvyxRuntimeError,
   runSvvyxRuntimeCommand,
@@ -36,8 +33,6 @@ import {
 } from "./svvyx-workflows-command";
 import type {
   PromptExecutionExternalInstructionSource,
-  RuntimeExtensionContextImpactStateFacade,
-  SvvyxRuntimeEffectTransportIntent,
   SvvyxExtensionManagementRuntimeIntent,
   SvvyxWorkflowsRuntimeIntent,
   RuntimeClientRequestId,
@@ -50,10 +45,8 @@ type SvvyxSubprocessContext = {
   cwd: string;
   extensionEnvValues?: SvvyxRuntimeEnvValues | null;
   extensionRuntimePlans?: readonly SvvyxRuntimeExtensionPlan[];
-  extensionsBuildRoot?: string;
   extensionsGeneratedPackagePath?: string;
   extensionsRoot?: string;
-  packagedExtensionTemplatesRoot?: string;
   externalInstructionSources?: readonly PromptExecutionExternalInstructionSource[];
   resultPath?: string;
   runtime?: SvvyxArtifactsRuntimeContext | null;
@@ -82,7 +75,6 @@ type SvvyxSubprocessIntent =
       kind: "artifact.operation";
       operation: SvvyxArtifactsOperationInput;
     }
-  | SvvyxRuntimeEffectTransportIntent
   | SvvyxExtensionManagementRuntimeIntent
   | SvvyxWorkflowsRuntimeIntent;
 
@@ -107,7 +99,6 @@ async function main(): Promise<number> {
       })
     : null;
   const envSecretStore = createMacOsKeychainExtensionEnvSecretStore();
-  const extensionContextImpactState = createTransportRuntimeEffectRequestState(intents);
 
   const recordProgress = (
     phase: "failed" | "started" | "succeeded",
@@ -174,49 +165,22 @@ async function main(): Promise<number> {
         });
       }
     } else if (namespace === "extensions") {
-      if (!context.extensionsRoot) {
-        throw new Error("Extension commands require the configured extensions source root.");
-      }
       const runtimeRequest = parseSvvyxExtensionManagementRuntimeRequest({
         command,
         clientRequestId:
           `runtime-client:svvyx:${context.sourceCommandId ?? "detached"}` as RuntimeClientRequestId,
+        workspaceId: context.workspaceId as WorkspaceId | undefined,
       });
-      if (runtimeRequest) {
-        intents.push({
-          id: "extension-management-runtime-request",
-          kind: "extension_management.runtime_request",
-          request: runtimeRequest,
-        });
-        output = { ok: true };
-        commandFacts = { extensionManagementRuntimeRequest: runtimeRequest.operation };
-      } else {
-        const result = await runSvvyxExtensionsCommand({
-          agentProfileStore: agentProfileStore ?? undefined,
-          agentSettingsStore,
-          buildRoot: context.extensionsBuildRoot,
-          command,
-          cwd: context.cwd,
-          extensionContextImpactState,
-          extensionsRoot: context.extensionsRoot,
-          workspaceId: context.workspaceId as WorkspaceId | undefined,
-          lifecycle: createPackageBackedExtensionLifecycleAdapter({
-            extensionsRoot: context.extensionsRoot,
-            onRuntimeEffectRequest: (request) =>
-              intents.push({
-                id: `runtime-effect-${intents.length + 1}`,
-                kind: "runtime_effect.request",
-                request,
-              }),
-            packagedExtensionTemplatesRoot: resolvePackagedExtensionTemplatesRoot({
-              explicitRoot: context.packagedExtensionTemplatesRoot,
-              cwd: context.cwd,
-            }),
-          }),
-        });
-        output = result.output;
-        commandFacts = result.commandFacts;
+      if (!runtimeRequest) {
+        throw new Error("Unsupported Extension Managing command.");
       }
+      intents.push({
+        id: "extension-management-runtime-request",
+        kind: "extension_management.runtime_request",
+        request: runtimeRequest,
+      });
+      output = { ok: true };
+      commandFacts = { extensionManagementRuntimeRequest: runtimeRequest.operation };
     } else {
       const result = await runSvvyxRuntimeCommand({
         command,
@@ -349,37 +313,6 @@ function formatError(
     return formatSvvyxExtensionsError(error);
   }
   return formatSvvyxRuntimeError(error);
-}
-
-function createTransportRuntimeEffectRequestState(
-  intents: SvvyxSubprocessIntent[],
-): RuntimeExtensionContextImpactStateFacade {
-  return {
-    listUsageContextAffectedSurfaces: (input) => {
-      intents.push({
-        id: `runtime-effect-${intents.length + 1}`,
-        kind: "runtime_effect.request",
-        request: {
-          type: "extension_usage.context_impact",
-          input,
-          target: "extension_usage",
-        },
-      });
-      return [];
-    },
-    applySnapshotContextImpact: (input) => {
-      intents.push({
-        id: `runtime-effect-${intents.length + 1}`,
-        kind: "runtime_effect.request",
-        request: {
-          type: "extension_snapshot.context_impact",
-          input,
-          target: "snapshot_load",
-        },
-      });
-      return [];
-    },
-  };
 }
 
 function commandErrorFacts(

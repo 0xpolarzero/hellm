@@ -51,7 +51,6 @@ import {
   type RequestInputSettings,
   type RuntimePromptTelemetryMessage,
   type RuntimeRecoveryStatePortService,
-  type RuntimeExtensionContextImpactStateFacade,
   type ExtensionStatePortService,
   type RuntimeGeneratedPackageStatePortService,
   type GeneratedPackagesRefreshResult,
@@ -70,7 +69,6 @@ import {
   type TurnId,
   type WorkspaceId,
   type WorkspaceSessionId,
-  type SvvyxRuntimeEffectTransportRequest,
   type SvvyxExtensionManagementRuntimeRequest,
   type SvvyxExtensionManagementRuntimeResponse,
   type SvvyxWorkflowsRuntimeRequest,
@@ -129,7 +127,6 @@ import {
   runtimeCommandStatePortFromStore,
   runtimeEpisodeStatePortFromStore,
   extensionStatePortFromStore,
-  runtimeExtensionContextImpactStateFacadeFromStore,
   runtimeGeneratedPackageStatePortFromStore,
   runtimeReadModelStatePortFromStore,
   runtimeRecoveryStatePortFromStore,
@@ -322,7 +319,6 @@ interface CreateManagedSessionOptions {
   extensionsRoot?: string;
   extensionsRuntimePlans?: () => readonly SvvyxRuntimeExtensionPlan[];
   resolveVisibleExtensionRecords?: (ids: readonly string[]) => Promise<readonly ExtensionRecord[]>;
-  applyExtensionLifecycleRuntimeEffect?: WorkspaceRecoveryOptions["applyExtensionLifecycleRuntimeEffect"];
   applyExtensionManagementRuntimeRequest?: WorkspaceRecoveryOptions["applyExtensionManagementRuntimeRequest"];
   applyWorkflowsRuntimeRequest?: WorkspaceRecoveryOptions["applyWorkflowsRuntimeRequest"];
   managedSandbox?: boolean | (() => boolean);
@@ -369,12 +365,6 @@ type WorkspaceRecoveryOptions = {
   workflowsExtensionsGeneratedPackagePath?: string;
   workflowsGeneratedPackagePath?: string;
   workflowsSourceRoot?: string;
-  applyExtensionLifecycleRuntimeEffect?: (
-    request: Extract<
-      SvvyxRuntimeEffectTransportRequest,
-      { readonly type: "extension_build.request" | "extension_source.reconcile" }
-    >,
-  ) => Promise<void>;
   applyExtensionManagementRuntimeRequest?: (
     request: SvvyxExtensionManagementRuntimeRequest,
   ) => Promise<SvvyxExtensionManagementRuntimeResponse>;
@@ -506,7 +496,6 @@ export class WorkspaceSessionCatalog {
   private readonly runtimeThreadStatePort: RuntimeThreadStatePortService;
   private readonly runtimeTurnStatePort: RuntimeTurnStatePortService;
   private readonly runtimeWorkspaceStatePort: RuntimeWorkspaceStatePortService;
-  private readonly runtimeExtensionContextImpactState: RuntimeExtensionContextImpactStateFacade;
   private readonly recoveryCoordinator: WorkspaceRecoveryCoordinator;
   private readonly activeTurnRecovery: Promise<void>;
   private recoveryPreparation: Promise<void> | null = null;
@@ -572,9 +561,6 @@ export class WorkspaceSessionCatalog {
       this.structuredSessionStore,
     );
     this.runtimeActorExtensionBindingStatePort = runtimeActorExtensionBindingStatePortFromStore(
-      this.structuredSessionStore,
-    );
-    this.runtimeExtensionContextImpactState = runtimeExtensionContextImpactStateFacadeFromStore(
       this.structuredSessionStore,
     );
     this.runtimeApprovalStatePort = runtimeApprovalStatePortFromStore(this.structuredSessionStore);
@@ -736,10 +722,6 @@ export class WorkspaceSessionCatalog {
 
   setRequestInputSettingsAuthority(authority: CatalogRequestInputSettingsAuthority): void {
     this.requestInputSettingsAuthority = authority;
-  }
-
-  getRuntimeExtensionContextImpactState(): RuntimeExtensionContextImpactStateFacade {
-    return this.runtimeExtensionContextImpactState;
   }
 
   getRequestInputSettings(): RequestInputSettings {
@@ -1299,7 +1281,6 @@ export class WorkspaceSessionCatalog {
       agentSettingsStore: this.agentSettingsStore,
       agentProfileSnapshot: this.requireAgentProfileAuthoritySnapshot(),
       applyAgentProfileMutations: this.applyAgentProfileMutations.bind(this),
-      extensionContextImpactState: this.getRuntimeExtensionContextImpactState(),
       readArtifactRootForSession: (sessionId) =>
         this.structuredSessionStore.getSessionState(sessionId).workspace.artifactDir,
       actorExtensionBindingState: this.runtimeActorExtensionBindingStatePort,
@@ -1327,8 +1308,6 @@ export class WorkspaceSessionCatalog {
       acquireExecuteTypescriptLaunch: this.recoveryOptions.acquireExecuteTypescriptLaunch,
       acquireDirectToolLaunch: this.recoveryOptions.acquireDirectToolLaunch,
       runAcceptedLoadExtension: this.recoveryOptions.runAcceptedLoadExtension,
-      applyExtensionLifecycleRuntimeEffect:
-        this.recoveryOptions.applyExtensionLifecycleRuntimeEffect,
       applyExtensionManagementRuntimeRequest:
         this.recoveryOptions.applyExtensionManagementRuntimeRequest,
       applyWorkflowsRuntimeRequest: this.recoveryOptions.applyWorkflowsRuntimeRequest,
@@ -1369,7 +1348,6 @@ export class WorkspaceSessionCatalog {
       agentSettingsStore: this.agentSettingsStore,
       agentProfileSnapshot: this.requireAgentProfileAuthoritySnapshot(),
       applyAgentProfileMutations: this.applyAgentProfileMutations.bind(this),
-      extensionContextImpactState: this.getRuntimeExtensionContextImpactState(),
       readArtifactRootForSession: (sessionId) =>
         this.structuredSessionStore.getSessionState(sessionId).workspace.artifactDir,
       actorExtensionBindingState: this.runtimeActorExtensionBindingStatePort,
@@ -1387,8 +1365,6 @@ export class WorkspaceSessionCatalog {
       acquireExecuteTypescriptLaunch: this.recoveryOptions.acquireExecuteTypescriptLaunch,
       acquireDirectToolLaunch: this.recoveryOptions.acquireDirectToolLaunch,
       runAcceptedLoadExtension: this.recoveryOptions.runAcceptedLoadExtension,
-      applyExtensionLifecycleRuntimeEffect:
-        this.recoveryOptions.applyExtensionLifecycleRuntimeEffect,
       applyExtensionManagementRuntimeRequest:
         this.recoveryOptions.applyExtensionManagementRuntimeRequest,
       applyWorkflowsRuntimeRequest: this.recoveryOptions.applyWorkflowsRuntimeRequest,
@@ -2474,7 +2450,6 @@ async function createManagedSession(
     agentSettingsStore: ReturnType<typeof createAgentSettingsStore>;
     agentProfileSnapshot: AgentProfileAuthoritySnapshot;
     applyAgentProfileMutations: (mutations: readonly AgentProfileMutation[]) => Promise<void>;
-    extensionContextImpactState: RuntimeExtensionContextImpactStateFacade;
     readArtifactRootForSession: (sessionId: string) => string | null;
     actorExtensionBindingState: RuntimeActorExtensionBindingStatePortService;
     artifactState: RuntimeArtifactStatePortService;
@@ -2569,8 +2544,6 @@ async function createManagedSession(
     runtime: promptExecutionRuntime,
     artifactState: options.artifactState,
     commandState: options.commandState,
-    extensionContextImpactState: options.extensionContextImpactState,
-    applyExtensionLifecycleRuntimeEffect: options.applyExtensionLifecycleRuntimeEffect,
     applyExtensionManagementRuntimeRequest: options.applyExtensionManagementRuntimeRequest,
     applyWorkflowsRuntimeRequest: options.applyWorkflowsRuntimeRequest,
     readArtifactRootForSession: options.readArtifactRootForSession,

@@ -93,7 +93,6 @@ import type {
   RemoveExtensionInstructionResult,
   ResetExtensionInstructionsInput,
   RuntimeResetExtensionInstructionsResult,
-  SvvyxRuntimeEffectTransportRequest,
   RenameExtensionInstructionInput,
   RenameExtensionInstructionResult,
   ReorderExtensionInstructionsInput,
@@ -332,6 +331,7 @@ import { layerRuntimeShutdownAdmission } from "./runtime-shutdown-admission";
 import { layerRuntimeExtensionBuildService } from "./runtime-extension-build-service";
 import { layerRuntimeExtensionLifecycleService } from "./runtime-extension-lifecycle-service";
 import { layerRuntimeExtensionSnapshotService } from "./runtime-extension-snapshot-service";
+import { layerRuntimeExtensionSourceCoordinator } from "./runtime-extension-source-coordinator";
 import { layerRuntimeGeneratedContextPreviewService } from "./runtime-generated-context-preview-service";
 import { layerRuntimeGeneratedContextBindingService } from "./runtime-generated-context-binding-service";
 
@@ -356,12 +356,6 @@ interface RuntimeExtensionsService {
   revertUsage(
     input: RevertExtensionUsageInput,
   ): Effect.Effect<RuntimeExtensionUsageMutationResult, RuntimeContractError>;
-  reconcileMutation(
-    input: Extract<
-      SvvyxRuntimeEffectTransportRequest,
-      { readonly type: "extension_source.reconcile" }
-    >["input"],
-  ): Effect.Effect<void, RuntimeContractError>;
   create(
     input: CreateExtensionSourceInput,
   ): Effect.Effect<CreateExtensionSourceResult, RuntimeContractError>;
@@ -498,12 +492,15 @@ const runtimeSourceInvalidationLayer = layerRuntimeSourceInvalidationService.pip
 const runtimeExtensionBuildLayer = layerRuntimeExtensionBuildService.pipe(
   Layer.provideMerge(layerRuntimeEventBus),
 );
+const runtimeExtensionSourceCoordinatorLayer = layerRuntimeExtensionSourceCoordinator;
 const runtimeExtensionLifecycleLayer = layerRuntimeExtensionLifecycleService.pipe(
+  Layer.provideMerge(runtimeExtensionSourceCoordinatorLayer),
   Layer.provideMerge(runtimeSourceInvalidationLayer),
   Layer.provideMerge(runtimeExtensionBuildLayer),
   Layer.provideMerge(layerRuntimeEventBus),
 );
 const runtimeExtensionSnapshotLayer = layerRuntimeExtensionSnapshotService.pipe(
+  Layer.provideMerge(runtimeExtensionSourceCoordinatorLayer),
   Layer.provideMerge(runtimeSourceInvalidationLayer),
   Layer.provideMerge(runtimeExtensionBuildLayer),
   Layer.provideMerge(layerRuntimeEventBus),
@@ -511,6 +508,7 @@ const runtimeExtensionSnapshotLayer = layerRuntimeExtensionSnapshotService.pipe(
 const runtimeGeneratedContextPreviewLayer = layerRuntimeGeneratedContextPreviewService;
 const runtimeGeneratedContextBindingLayer = layerRuntimeGeneratedContextBindingService;
 const runtimeSourceReconcileRecoveryWorkerLayer = layerRuntimeSourceReconcileRecoveryWorker.pipe(
+  Layer.provideMerge(runtimeExtensionSourceCoordinatorLayer),
   Layer.provideMerge(runtimeSourceInvalidationLayer),
   Layer.provideMerge(layerRuntimeEventBus),
 );
@@ -560,6 +558,7 @@ const runtimeInternalServicesLayer = Layer.mergeAll(
   runtimeShutdownAdmissionLayer,
   runtimeSourceInvalidationLayer,
   runtimeExtensionBuildLayer,
+  runtimeExtensionSourceCoordinatorLayer,
   runtimeExtensionLifecycleLayer,
   runtimeExtensionSnapshotLayer,
   runtimeGeneratedContextPreviewLayer,
@@ -794,13 +793,6 @@ interface RuntimeExtensionsFacade {
     input: RevertExtensionUsageInput,
     options?: RuntimeFacadeCallOptions,
   ): Promise<RuntimeExtensionUsageMutationResult>;
-  reconcileMutation(
-    input: Extract<
-      SvvyxRuntimeEffectTransportRequest,
-      { readonly type: "extension_source.reconcile" }
-    >["input"],
-    options?: RuntimeFacadeCallOptions,
-  ): Promise<void>;
   create(
     input: CreateExtensionSourceInput,
     options?: RuntimeFacadeCallOptions,
@@ -1823,15 +1815,6 @@ export function createRuntimeFacade(
           Effect.gen(function* () {
             const runtime = yield* Runtime;
             return yield* runtime.extensions.revertUsage(input);
-          }),
-          options,
-        ),
-      reconcileMutation: (input, options) =>
-        run(
-          "runtime.extensions.reconcileMutation",
-          Effect.gen(function* () {
-            const runtime = yield* Runtime;
-            return yield* runtime.extensions.reconcileMutation(input);
           }),
           options,
         ),

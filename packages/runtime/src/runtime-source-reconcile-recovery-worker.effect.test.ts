@@ -23,6 +23,11 @@ import {
   type StateMutationResult,
 } from "@svvy/core";
 import { RuntimeEventBus, type RuntimeEventBusService } from "./runtime-event-bus";
+import {
+  layerRuntimeExtensionSourceCoordinator,
+  RuntimeExtensionSourceCoordinator,
+  type RuntimeExtensionSourceCoordinatorService,
+} from "./runtime-extension-source-coordinator";
 import { createRuntimeLayerConfigLayer, defaultRuntimeLayerConfig } from "./runtime-layer-config";
 import {
   RuntimeSourceInvalidationService,
@@ -121,15 +126,31 @@ describe("runtime source reconcile recovery worker", () => {
           yield* Deferred.await(completed);
           yield* Deferred.await(drained);
         }).pipe(
-          Effect.provide(workerLayer({ recoveryState, sourceState, sourceService, eventBus })),
+          Effect.provide(
+            workerLayer({
+              recoveryState,
+              sourceState,
+              sourceService,
+              eventBus,
+              extensionSourceCoordinator: {
+                serialized: (effect) =>
+                  Effect.sync(() => actions.push("source-lane-enter")).pipe(
+                    Effect.andThen(effect),
+                    Effect.ensuring(Effect.sync(() => actions.push("source-lane-release"))),
+                  ),
+              },
+            }),
+          ),
         ),
       );
 
       assert.deepStrictEqual(actions, [
         "status:claimed",
+        "source-lane-enter",
         "record-save",
         "publish-source-invalidations",
         "reconcile",
+        "source-lane-release",
         "complete",
         "status:completed",
       ]);
@@ -527,6 +548,7 @@ function workerLayer(input: {
   readonly sourceService: RuntimeSourceInvalidationServiceService;
   readonly eventBus: RuntimeEventBusService;
   readonly config?: Partial<typeof defaultRuntimeLayerConfig>;
+  readonly extensionSourceCoordinator?: RuntimeExtensionSourceCoordinatorService;
 }) {
   return Layer.effect(
     RuntimeSourceReconcileRecoveryWorker,
@@ -545,6 +567,9 @@ function workerLayer(input: {
         Layer.succeed(RuntimeRecoveryStatePort, input.recoveryState),
         Layer.succeed(RuntimeSourceStatePort, input.sourceState),
         Layer.succeed(RuntimeSourceInvalidationService, input.sourceService),
+        input.extensionSourceCoordinator
+          ? Layer.succeed(RuntimeExtensionSourceCoordinator, input.extensionSourceCoordinator)
+          : layerRuntimeExtensionSourceCoordinator,
         Layer.succeed(RuntimeEventBus, input.eventBus),
       ),
     ),

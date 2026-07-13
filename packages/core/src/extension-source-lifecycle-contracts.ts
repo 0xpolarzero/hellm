@@ -33,6 +33,15 @@ export const ExtensionInstructionBasenameSchema = Schema.String.check(
   Schema.isPattern(/^[A-Za-z0-9](?!.*\.\.)[A-Za-z0-9._-]*\.mdx$/),
 ).pipe(Schema.brand("ExtensionInstructionBasename"));
 
+const GeneratedExtensionInstructionBasenameSchema = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z0-9](?!.*\.\.)[A-Za-z0-9._-]*\.generated\.md$/),
+).pipe(Schema.brand("GeneratedExtensionInstructionBasename"));
+
+const ConfigurableExtensionInstructionBasenameSchema = Schema.Union([
+  ExtensionInstructionBasenameSchema,
+  GeneratedExtensionInstructionBasenameSchema,
+]);
+
 export const CreateExtensionSourceInputSchema = Schema.Union([
   Schema.Struct({
     id: CreatableExtensionIdSchema,
@@ -175,7 +184,7 @@ export const RemoveExtensionInstructionResultSchema = Schema.Struct({
 
 export const ConfigureExtensionInstructionInputSchema = Schema.Struct({
   extensionId: ExtensionLifecycleIdSchema,
-  name: ExtensionInstructionBasenameSchema,
+  name: ConfigurableExtensionInstructionBasenameSchema,
   bypassed: Schema.Boolean,
 });
 
@@ -184,7 +193,7 @@ export const ConfigureExtensionInstructionResultSchema = Schema.Union([
     action: Schema.Literal("instruction-configured"),
     mutationId: ExtensionSourceMutationIdSchema,
     extensionId: ExtensionLifecycleIdSchema,
-    name: ExtensionInstructionBasenameSchema,
+    name: ConfigurableExtensionInstructionBasenameSchema,
     bypassed: Schema.Boolean,
     changed: Schema.Literal(true),
   }),
@@ -192,7 +201,7 @@ export const ConfigureExtensionInstructionResultSchema = Schema.Union([
     action: Schema.Literal("instruction-configured"),
     mutationId: Schema.Null,
     extensionId: ExtensionLifecycleIdSchema,
-    name: ExtensionInstructionBasenameSchema,
+    name: ConfigurableExtensionInstructionBasenameSchema,
     bypassed: Schema.Boolean,
     changed: Schema.Literal(false),
   }),

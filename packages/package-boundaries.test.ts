@@ -982,7 +982,6 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "runtimeComposerDraftStatePortFromStructuredSessionState",
       "runtimeEpisodeStatePortFromStore",
       "runtimeEpisodeStatePortFromStructuredSessionState",
-      "runtimeExtensionContextImpactStateFacadeFromStore",
       "runtimeExtensionContextImpactStatePortFromStore",
       "runtimeExtensionContextImpactStatePortFromStructuredSessionState",
       "runtimeExtensionStatePortFromStore",
@@ -3767,17 +3766,6 @@ describe("package boundaries", () => {
           )
           .filter((specifier) => {
             if (
-              display(file) === "src/bun/extension-lifecycle-authority.ts" &&
-              [
-                "@effect/platform-bun/BunCrypto",
-                "@effect/platform-bun/BunFileSystem",
-                "@effect/platform-bun/BunPath",
-                "effect/Layer",
-              ].includes(specifier)
-            ) {
-              return false;
-            }
-            if (
               specifier === "effect/ManagedRuntime" ||
               specifier === "effect/Layer" ||
               specifier === "effect/Scope"
@@ -4069,6 +4057,8 @@ describe("package boundaries", () => {
           "packages/runtime/src/runtime-source-invalidation-service.ts -> RuntimeExternalInstructionScanInputPort",
           "packages/runtime/src/runtime-extension-build-service.ts -> RuntimeExtensionBuildService",
           "packages/runtime/src/runtime-extension-build-service.ts -> layerRuntimeExtensionBuildService",
+          "packages/runtime/src/runtime-extension-source-coordinator.ts -> RuntimeExtensionSourceCoordinator",
+          "packages/runtime/src/runtime-extension-source-coordinator.ts -> layerRuntimeExtensionSourceCoordinator",
           "packages/runtime/src/runtime-extension-lifecycle-service.ts -> RuntimeExtensionLifecycleService",
           "packages/runtime/src/runtime-extension-lifecycle-service.ts -> layerRuntimeExtensionLifecycleService",
           "packages/runtime/src/runtime-extension-snapshot-service.ts -> RuntimeExtensionSnapshotService",
@@ -4094,6 +4084,7 @@ describe("package boundaries", () => {
         resources: [
           "Runtime event bus",
           "Extension build service",
+          "Extension source coordinator",
           "Extension lifecycle service",
           "Extension snapshot service",
           "Generated-context binding service",
@@ -4842,7 +4833,6 @@ describe("package boundaries", () => {
           "adopted-source-gated",
           [
             "packages/runtime/src/source-invalidation-coordinator-adapter.ts",
-            "src/bun/extension-lifecycle-authority.ts",
             "src/bun/runtime-service-adapter.ts",
           ],
         ],
@@ -7027,7 +7017,7 @@ describe("package boundaries", () => {
       },
       {
         pattern: /\bartifact\.operation\b/,
-        reason: "Signed svvyx transports support runtime_effect.request only",
+        reason: "Artifact work has no signed svvyx transport intent",
       },
       {
         pattern:
@@ -8128,7 +8118,6 @@ describe("package boundaries", () => {
       "runtimeArtifactStatePortFromStore",
       "runtimeCommandStatePortFromStore",
       "runtimeEpisodeStatePortFromStore",
-      "runtimeExtensionContextImpactStateFacadeFromStore",
       "runtimeGeneratedPackageStatePortFromStore",
       "runtimeQueueStatePortFromStore",
       "runtimeReadModelStatePortFromStore",
@@ -8218,16 +8207,23 @@ describe("package boundaries", () => {
     ]);
   });
 
-  it("extension context impact store adapter stays inside the catalog bootstrap edge", () => {
-    const actualFacadeFactoryUses = listTypeScriptFiles(join(projectRoot, "src", "bun"))
-      .filter((file) => !isTestFile(file))
-      .filter((file) =>
-        /\bruntimeExtensionContextImpactStateFacadeFromStore\b/.test(readSource(file)),
-      )
-      .map(display)
-      .toSorted();
+  it("extension context impact access stays on the Effect state port", () => {
+    const forbiddenFacadePatterns = [
+      /\bRuntimeExtensionContextImpactStateFacade\b/,
+      /\bruntimeExtensionContextImpactStateFacadeFromStore\b/,
+    ];
+    const violations = [...implementationPackageRoots, appSourceRoot].flatMap((root) =>
+      listTypeScriptFiles(root)
+        .filter((file) => !isTestFile(file))
+        .flatMap((file) => {
+          const source = readSource(file);
+          return forbiddenFacadePatterns
+            .filter((pattern) => pattern.test(source))
+            .map((pattern) => `${display(file)} -> ${pattern.source}`);
+        }),
+    );
 
-    expect(actualFacadeFactoryUses).toEqual(["src/bun/session-catalog.ts"]);
+    expect(violations).toEqual([]);
   });
 
   it("package-owned native tool modules stay pi-free", () => {
@@ -8334,28 +8330,46 @@ describe("package boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("app-local runtime effect request algebras stay limited to the named svvyx transport exception set", () => {
-    const localRuntimeEffectPatterns = [
-      {
-        pattern: /\btype\s+SvvyxSubprocessRuntimeEffectRequest\b/g,
-        name: "type SvvyxSubprocessRuntimeEffectRequest",
-      },
-      {
-        pattern: /\bfunction\s+applySvvyxSubprocessRuntimeEffectRequest\b/g,
-        name: "function applySvvyxSubprocessRuntimeEffectRequest",
-      },
+  it("Extension Managing child parsing cannot regain runtime authority or effect replay", () => {
+    expect(existsSync(join(projectRoot, "src", "bun", "extension-lifecycle-authority.ts"))).toBe(
+      false,
+    );
+
+    const appRuntimeEffectReplayPatterns = [
+      /\bSvvyxRuntimeEffectTransport(?:Request|Intent)\b/g,
+      /["']runtime_effect\.request["']/g,
+      /\bSvvyxSubprocessRuntimeEffectRequest\b/g,
+      /\bapplySvvyxSubprocessRuntimeEffectRequest\b/g,
     ];
-    const violations = listTypeScriptFiles(join(projectRoot, "src", "bun"))
+    const replayViolations = [...implementationPackageRoots, join(projectRoot, "src", "bun")]
+      .flatMap((root) => listTypeScriptFiles(root))
       .filter((file) => !isTestFile(file))
       .flatMap((file) => {
         const source = readSource(file);
-        return localRuntimeEffectPatterns.flatMap(({ pattern, name }) =>
-          [...source.matchAll(pattern)].map(() => `${display(file)} -> ${name}`),
+        return appRuntimeEffectReplayPatterns.flatMap((pattern) =>
+          [...source.matchAll(pattern)].map(() => `${display(file)} -> ${pattern.source}`),
         );
       })
       .toSorted();
 
-    expect(violations).toEqual([]);
+    expect(replayViolations).toEqual([]);
+
+    const extensionParserSource = readSource(
+      join(projectRoot, "src", "bun", "svvyx-extensions-command.ts"),
+    );
+    const forbiddenParserAuthorityPatterns = [
+      /\bEffect\.run[A-Z][A-Za-z]*\s*\(/,
+      /\bManagedRuntime\b/,
+      /\bRuntimeEffectRequest\b/,
+      /\bcreateAgentProfileMutationStore\b/,
+      /\bcreatePackageBackedExtensionLifecycleAdapter\b/,
+      /\brunSvvyxExtensionsCommand\b/,
+    ];
+    const parserAuthorityViolations = forbiddenParserAuthorityPatterns
+      .filter((pattern) => pattern.test(extensionParserSource))
+      .map((pattern) => pattern.source);
+
+    expect(parserAuthorityViolations).toEqual([]);
   });
 
   it("generated @svvyx/extensions output remains authoring references only", () => {
@@ -9297,8 +9311,6 @@ describe("package boundaries", () => {
 
   it("app and desktop consumers do not import runtime root facade and service type aliases", () => {
     const forbiddenRootTypeAliases = new Set([
-      "AppliedSvvyxRuntimeEffectTransportRequest",
-      "ApplySvvyxRuntimeEffectTransportRequestInput",
       "RuntimeCommandsFacade",
       "RuntimeCommandsService",
       "RuntimeEventSubscription",
@@ -9425,33 +9437,6 @@ describe("package boundaries", () => {
     );
 
     expect(forbiddenBootstrapSymbols).toEqual([]);
-  });
-
-  it("runtime-effect transport appliers stay private to command-session implementation code", () => {
-    const forbiddenRuntimeEffectTransportSymbols = new Set([
-      "applySvvyxRuntimeEffectTransportRequest",
-      "AppliedSvvyxRuntimeEffectTransportRequest",
-      "ApplySvvyxRuntimeEffectTransportRequestInput",
-    ]);
-    const runtimeBootstrapSymbols = [
-      ...new Set(readPublicExportedNames(join(packageRoot, "runtime", "src", "bootstrap.ts"))),
-    ];
-    const forbiddenBootstrapSymbols = runtimeBootstrapSymbols.filter((symbol) =>
-      forbiddenRuntimeEffectTransportSymbols.has(symbol),
-    );
-    const consumerViolations = [
-      ...listTypeScriptFiles(join(projectRoot, "src", "bun")),
-      ...listTypeScriptFiles(join(packageRoot, "desktop", "src")),
-    ]
-      .flatMap((file) =>
-        readNamedImportNames(file, "@svvy/runtime/bootstrap")
-          .filter((name) => forbiddenRuntimeEffectTransportSymbols.has(name))
-          .map((name) => `${display(file)} -> ${name}`),
-      )
-      .toSorted();
-
-    expect(forbiddenBootstrapSymbols).toEqual([]);
-    expect(consumerViolations).toEqual([]);
   });
 
   it("prompt execution context does not carry submitted prompt text", () => {
@@ -10482,25 +10467,11 @@ describe("package boundaries", () => {
       .flatMap((file) => {
         const source = readSource(file);
         const directViolations = forbiddenPatterns.flatMap(({ pattern, name }) =>
-          [...source.matchAll(pattern)]
-            .filter(
-              () =>
-                !(
-                  display(file) === "src/bun/extension-lifecycle-authority.ts" && name === "Layer.*"
-                ),
-            )
-            .map(() => `${display(file)} -> ${name}`),
+          [...source.matchAll(pattern)].map(() => `${display(file)} -> ${name}`),
         );
         const importViolations = readImports(file)
           .filter(
             (specifier) => specifier === "effect/Layer" || specifier === "effect/ManagedRuntime",
-          )
-          .filter(
-            (specifier) =>
-              !(
-                display(file) === "src/bun/extension-lifecycle-authority.ts" &&
-                specifier === "effect/Layer"
-              ),
           )
           .map((specifier) => `${display(file)} -> ${specifier}`);
         return [...directViolations, ...importViolations];
@@ -10530,7 +10501,6 @@ describe("package boundaries", () => {
       ["src/bun/index.ts", ["Effect.runSync"]],
     ]);
     const sessionCatalogRunnerExceptionReads = new Map<string, string[]>([
-      ["src/bun/extension-lifecycle-authority.ts", ["Effect.runPromise"]],
       ["src/bun/runtime-service-adapter.ts", ["Effect.runPromise"]],
       ["src/bun/session-catalog.ts", ["Effect.runSync"]],
     ]);
@@ -10565,7 +10535,6 @@ describe("package boundaries", () => {
       sessionCatalogManualRunners: ["Effect.runSync"],
       sessionCatalogRunPromiseReads: [],
       sessionCatalogRunnerExceptionReads: [
-        ["src/bun/extension-lifecycle-authority.ts", ["Effect.runPromise"]],
         ["src/bun/runtime-service-adapter.ts", ["Effect.runPromise"]],
         ["src/bun/session-catalog.ts", ["Effect.runSync"]],
       ],
@@ -10633,7 +10602,6 @@ describe("package boundaries", () => {
       "src/bun/svvy-direct-tools.test.ts -> Effect.runSync",
       "src/bun/svvy-direct-tools.test.ts -> Effect.runSync",
       "src/bun/svvy-direct-tools.test.ts -> Effect.runSync",
-      "src/bun/svvyx-extensions-command.test.ts -> Effect.runPromise",
       "src/bun/thread-orchestration-tools.test.ts -> Effect.runSync",
       "src/bun/thread-report-tool.test.ts -> Effect.runSync",
       "src/bun/thread-start-tool.test.ts -> Effect.runSync",
@@ -11421,10 +11389,7 @@ describe("package boundaries", () => {
         symbol === "RuntimeEffectRequestApplicationContext" ||
         symbol === "ExtensionExecutionPlanExecutor" ||
         symbol === "executeExtensionExecutionPlan" ||
-        symbol === "applyExtensionExecutionPlan" ||
-        symbol === "applySvvyxRuntimeEffectTransportRequest" ||
-        symbol === "AppliedSvvyxRuntimeEffectTransportRequest" ||
-        symbol === "ApplySvvyxRuntimeEffectTransportRequestInput",
+        symbol === "applyExtensionExecutionPlan",
     );
 
     expect(forbidden).toEqual([]);

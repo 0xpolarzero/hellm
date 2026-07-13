@@ -761,7 +761,10 @@ the app-owned `svvyx` subprocess adapter may serialize a narrow subset of closed
 subprocess result payload. That payload is not an `@svvy/extensions` runtime service, not a state
 port, and not a public runtime subpath. It is a process-bound transport that lets the parent
 `@svvy/runtime` command session apply closed requests through the correct state/runtime ports after
-validating the signature. Structured stdout/stderr and progress/app-log/command fact payloads emitted
+validating the signature. The adapter first proves that the complete Shell input is one simple
+standalone `svvyx` invocation. Unquoted LF/CR and shell control syntax stay on the ordinary Shell
+path and never receive the result signing key, context, or replay path. Structured stdout/stderr and
+progress/app-log/command fact payloads emitted
 by the child are runtime-decoded evidence only; authoritative command facts, progress rows, app logs,
 and state mutations are created by the parent runtime command session after schema/signature
 validation. It must not open SQLite, create state
@@ -771,25 +774,23 @@ ownership. The packaged `svvyx` process entrypoint may use the app-owned CLI pro
 described in `effect-v4.spec.md`, but the subprocess adapter module is only a signed serialization
 boundary; it does not own a product runtime graph.
 
-Transport intents are deliberately narrow. The current supported signed transport intents are:
+Extension Managing transport is deliberately narrow:
 
 - `extension_management.runtime_request`: parent decodes the strict
-  `SvvyxExtensionManagementRuntimeRequest` union. `inspect` is response-bearing: the child only
-  parses the extension id and flags, while the parent answers from the state-owned `extensions`
-  read model (or the workspace-scoped external-instructions projection). CLI/env/dependency/build
-  and usage facts never come from child PATH probes, ambient env reads, package filesystem probes,
-  or a child-owned approval ledger. Build, snapshot, `usage.set`, and `usage.revert` variants execute
-  through Runtime; usage history and CAS-safe reversal are state-owned rather than filesystem
-  journals in the extension source tree.
+  `SvvyxExtensionManagementRuntimeRequest` union. The child parses only the command and flags for
+  `inspect`, `build`, `create`, `duplicate`, `delete`, `reset`, instruction add/remove/configure/
+  rename/reorder, source-mutation revert, TypeScript-API configuration, usage set/revert, and
+  snapshot list/save/rename/delete/load. The parent answers `inspect` from state-owned read models
+  and applies every mutation through `runtime.extensions.*` or
+  `runtime.sourceEdits.configureTypescriptApi(...)`, then replaces the child placeholder result with
+  the committed response and authoritative command facts. CLI/env/dependency/build and usage facts
+  never come from child PATH probes, ambient env reads, package filesystem probes, source mutation,
+  or a child-owned approval ledger. Usage history and CAS-safe reversal are state-owned rather than
+  filesystem journals in the extension source tree.
 
-- `runtime_effect.request`: parent decodes one
-  `SvvyxRuntimeEffectTransportRequest` from `@svvy/core` and applies it through the owning
-  command-session pipeline. The transport request shape is not the general `RuntimeEffectRequest`
-  algebra: the only admitted variants are `extension_usage.context_impact` with target
-  `"extension_usage" | "extension_usage_revert"` and `extension_snapshot.context_impact` with target
-  `"snapshot_load"`, exactly as named by `SvvyxRuntimeEffectTransportRequestSchema`. Adding another
-  signed transport intent or context-impact variant requires the exact core schema, extension command
-  use case, runtime application path, redaction policy, and tests in the same change.
+There is no `runtime_effect.request` subprocess intent and no
+`SvvyxRuntimeEffectTransportRequest` contract. Extension-handler `RuntimeEffectRequest` values stay
+inside the accepted in-process handler lane and never cross the signed child-result boundary.
 
 Artifact work does not have a signed svvyx transport intent. Artifact command metadata, schemas,
 validation, and model-facing command descriptions live in `@svvy/extensions`. Artifact byte

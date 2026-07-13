@@ -121,8 +121,24 @@ describe("extension snapshot SQLite authority", () => {
       status: "payload-applied",
       updatedAt: at("2026-07-12T10:02:00.000Z"),
       failureReason: null,
+      affectedSurfaces: [
+        {
+          surfacePiSessionId: "surface-snapshot" as never,
+          kind: "extension_context_changed",
+          label: "Extensions changed",
+          reason: "snapshot_loaded",
+        },
+      ],
     });
     expect(advanced.attempt.status).toBe("payload-applied");
+    expect(advanced.attempt.affectedSurfaces).toEqual([
+      {
+        surfacePiSessionId: "surface-snapshot" as never,
+        kind: "extension_context_changed",
+        label: "Extensions changed",
+        reason: "snapshot_loaded",
+      },
+    ]);
     expect(store.listPendingExtensionSnapshotRestoreAttempts()).toEqual([advanced.attempt]);
 
     const remove: DeleteExtensionSnapshotCommand = {

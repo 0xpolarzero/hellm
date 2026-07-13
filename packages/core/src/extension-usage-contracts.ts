@@ -6,7 +6,10 @@ import { ExtensionUsageStateSchema } from "./extension-contracts";
 import { ExtensionId, RuntimeClientRequestId } from "./ids";
 import { StateRevisionSchema } from "./runtime-contracts";
 import type { StateContractError } from "./errors";
-import type { StateMutationResult } from "./runtime-state-ports";
+import {
+  RuntimeExtensionContextChangedSurfaceSchema,
+  type StateMutationResult,
+} from "./runtime-state-ports";
 import { strictBoundaryParseOptions } from "./boundary-parse-options";
 
 export const ExtensionUsageChangeIdSchema = Schema.TemplateLiteral([
@@ -53,7 +56,7 @@ export type ExtensionUsageChangeRecord = typeof ExtensionUsageChangeRecordSchema
 
 export const RuntimeExtensionUsageMutationResultSchema = Schema.Struct({
   change: ExtensionUsageChangeRecordSchema,
-  affectedSurfaceCount: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  affectedSurfaces: Schema.Array(RuntimeExtensionContextChangedSurfaceSchema),
 });
 export type RuntimeExtensionUsageMutationResult =
   typeof RuntimeExtensionUsageMutationResultSchema.Type;

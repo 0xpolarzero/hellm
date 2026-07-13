@@ -101,7 +101,6 @@ import {
   type SetExtensionUsageInput,
   type RevertExtensionUsageInput,
   type RuntimeExtensionUsageMutationResult,
-  type SvvyxRuntimeEffectTransportRequest,
   type RenameExtensionInstructionInput,
   type RenameExtensionInstructionResult,
   type ReorderExtensionInstructionsInput,
@@ -221,6 +220,7 @@ import {
 import { RuntimeExtensionBuildService } from "./runtime-extension-build-service";
 import { RuntimeExtensionLifecycleService } from "./runtime-extension-lifecycle-service";
 import { RuntimeExtensionSnapshotService } from "./runtime-extension-snapshot-service";
+import { RuntimeExtensionSourceCoordinator } from "./runtime-extension-source-coordinator";
 import { RuntimeGeneratedContextPreviewService } from "./runtime-generated-context-preview-service";
 import {
   RuntimeWorkspaceScopeService,
@@ -339,6 +339,7 @@ export function makeRuntimeService() {
     const extensionBuild = yield* RuntimeExtensionBuildService;
     const extensionLifecycle = yield* RuntimeExtensionLifecycleService;
     const extensionSnapshots = yield* RuntimeExtensionSnapshotService;
+    const extensionSourceCoordinator = yield* RuntimeExtensionSourceCoordinator;
     const extensionUsageState = yield* ExtensionUsageStatePort;
     const extensionContextImpact = yield* RuntimeExtensionContextImpactStatePort;
     const generatedContextPreview = yield* RuntimeGeneratedContextPreviewService;
@@ -817,7 +818,7 @@ export function makeRuntimeService() {
                       }),
                   ),
                 );
-              return { change: committed, affectedSurfaceCount: affected.length };
+              return { change: committed, affectedSurfaces: affected };
             }),
           ),
         revertUsage: (
@@ -906,18 +907,8 @@ export function makeRuntimeService() {
                       }),
                   ),
                 );
-              return { change: committed, affectedSurfaceCount: affected.length };
+              return { change: committed, affectedSurfaces: affected };
             }),
-          ),
-        reconcileMutation: (
-          input: Extract<
-            SvvyxRuntimeEffectTransportRequest,
-            { readonly type: "extension_source.reconcile" }
-          >["input"],
-        ): Effect.Effect<void, RuntimeContractError> =>
-          admit(
-            "runtime.extensions.reconcileMutation",
-            extensionLifecycle.reconcileMutation(input),
           ),
         create: (
           input: CreateExtensionSourceInput,
@@ -974,7 +965,10 @@ export function makeRuntimeService() {
         build: (
           input: BuildRuntimeExtensionInput,
         ): Effect.Effect<BuildRuntimeExtensionResult, RuntimeContractError> =>
-          admit("runtime.extensions.build", extensionBuild.build(input)),
+          admit(
+            "runtime.extensions.build",
+            extensionSourceCoordinator.serialized(extensionBuild.build(input)),
+          ),
         snapshots: {
           list: (input: RuntimeListExtensionSnapshotsInput) =>
             admit("runtime.extensions.snapshots.list", extensionSnapshots.list(input)),
@@ -996,39 +990,7 @@ export function makeRuntimeService() {
         configureTypescriptApi: (input: ConfigureExtensionTypescriptApiInput) =>
           admit(
             "runtime.sourceEdits.configureTypescriptApi",
-            Effect.gen(function* () {
-              const result = yield* extensions.sources
-                .configureTypescriptApi(input)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    runtimeExtensionSourceEditError(
-                      "runtime.sourceEdits.configureTypescriptApi",
-                      cause,
-                    ),
-                  ),
-                );
-              if (result.reconcileRequired) {
-                yield* sourceInvalidation.reconcile({
-                  scope: { kind: "app-global" },
-                  domains: ["extensions"],
-                  reason: "manual",
-                });
-              }
-              yield* appendRuntimeAppLog({
-                appLog,
-                eventBus,
-                level: "info",
-                source: "settings",
-                message: "Extension TypeScript API setting updated.",
-                details: {
-                  workspaceId: input.workspaceId,
-                  extensionId: input.extensionId,
-                  enabled: input.enabled,
-                  changed: result.changed,
-                },
-              });
-              return result;
-            }),
+            extensionLifecycle.configureTypescriptApi(input),
           ),
         open: (input: OpenExtensionSourceEditInput) =>
           admit(
@@ -1043,26 +1005,31 @@ export function makeRuntimeService() {
               extensionSourceRoots,
             }),
           ),
-        save: (input: RuntimeSaveExtensionSourceEditInput) =>
-          admit(
+        save: (input: RuntimeSaveExtensionSourceEditInput) => {
+          const effect = saveRuntimeSourceEdit({
+            input,
+            extensions,
+            sourceState,
+            eventBus,
+            fileSystem,
+            path,
+            crypto,
+            extensionSourceRoots,
+            recoveryState,
+            sourceRecoveryWorker,
+            recoveryMaxAttempts: runtimeConfig.recoveryRetryMaxAttempts,
+            sourceInvalidation,
+            modelResolver,
+            providerAuth,
+          });
+          return admit(
             "runtime.sourceEdits.save",
-            saveRuntimeSourceEdit({
-              input,
-              extensions,
-              sourceState,
-              eventBus,
-              fileSystem,
-              path,
-              crypto,
-              extensionSourceRoots,
-              recoveryState,
-              sourceRecoveryWorker,
-              recoveryMaxAttempts: runtimeConfig.recoveryRetryMaxAttempts,
-              sourceInvalidation,
-              modelResolver,
-              providerAuth,
-            }),
-          ),
+            input.source.sourceKind === "builtin-extension" ||
+              input.source.sourceKind === "user-extension"
+              ? extensionSourceCoordinator.serialized(effect)
+              : effect,
+          );
+        },
         createWorkflowAgent: (input: RuntimeCreateWorkflowAgentSourceInput) =>
           admit(
             "runtime.sourceEdits.createWorkflowAgent",
@@ -1124,9 +1091,19 @@ export function makeRuntimeService() {
       },
       sourceInvalidation: {
         hint: (input: SourceInvalidationHint) => sourceInvalidation.hint(input),
-        reconcile: (input: SourceReconcileRequest) => sourceInvalidation.reconcile(input),
+        reconcile: (input: SourceReconcileRequest) => {
+          const effect = sourceInvalidation.reconcile(input);
+          return input.scope.kind === "app-global" &&
+            (!input.domains || input.domains.includes("extensions"))
+            ? extensionSourceCoordinator.serialized(effect)
+            : effect;
+        },
         applyCommittedScanEvent: (input: ApplyCommittedSourceInvalidationEventInput) =>
-          sourceInvalidation.applyCommittedScanEvent(input),
+          input.scope.kind === "app-global" && input.event.domains.includes("extensions")
+            ? extensionSourceCoordinator.serialized(
+                sourceInvalidation.applyCommittedScanEvent(input),
+              )
+            : sourceInvalidation.applyCommittedScanEvent(input),
         refreshGeneratedContext: (input: RefreshGeneratedContextRequest) =>
           sourceInvalidation.refreshGeneratedContext(input),
         refreshGeneratedPackages: (input: InternalRefreshGeneratedPackagesRequest) =>

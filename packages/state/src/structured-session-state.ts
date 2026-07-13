@@ -4195,8 +4195,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
         .query(
           `INSERT INTO extension_snapshot_restore_attempt
          (attempt_id, snapshot_id, client_request_id, snapshot_revision, payload_ref_json,
-          secret_payload_ref, status, started_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?, ?)`,
+          secret_payload_ref, status, started_at, updated_at, affected_surfaces_json)
+         VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?, ?, '[]')`,
         )
         .run(
           input.attemptId,
@@ -4241,6 +4241,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       updatedAt: row.updated_at,
       finishedAt: row.finished_at,
       failureReason: row.failure_reason,
+      affectedSurfaces: JSON.parse(String(row.affected_surfaces_json)),
     });
   }
 
@@ -4301,7 +4302,8 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       this.db
         .query(
           `UPDATE extension_snapshot_restore_attempt
-         SET status = ?, updated_at = ?, finished_at = ?, failure_reason = ?
+         SET status = ?, updated_at = ?, finished_at = ?, failure_reason = ?,
+             affected_surfaces_json = ?
          WHERE attempt_id = ?`,
         )
         .run(
@@ -4309,6 +4311,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
           input.updatedAt,
           terminal ? input.updatedAt : null,
           input.failureReason,
+          JSON.stringify(input.affectedSurfaces),
           input.attemptId,
         );
       const stateRevision = this.bumpStateRevision();
@@ -17682,6 +17685,7 @@ function initializeSchema(db: Database): void {
       updated_at TEXT NOT NULL,
       finished_at TEXT,
       failure_reason TEXT,
+      affected_surfaces_json TEXT NOT NULL DEFAULT '[]',
       CHECK ((status IN ('completed', 'failed') AND finished_at IS NOT NULL) OR
              (status NOT IN ('completed', 'failed') AND finished_at IS NULL)),
       CHECK ((status = 'failed' AND failure_reason IS NOT NULL) OR

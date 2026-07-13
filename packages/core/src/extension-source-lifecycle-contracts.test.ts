@@ -3,10 +3,12 @@ import * as Exit from "effect/Exit";
 
 import {
   decodeUnknownAddExtensionInstructionInputExit,
+  decodeUnknownConfigureExtensionInstructionInputExit,
   decodeUnknownConfigureExtensionInstructionResultExit,
   decodeUnknownCreateExtensionSourceInputExit,
   decodeUnknownCreateExtensionSourceResultExit,
   decodeUnknownDuplicateExtensionSourceInputExit,
+  decodeUnknownRemoveExtensionInstructionInputExit,
   decodeUnknownResetExtensionInstructionsInputExit,
   decodeUnknownRuntimeResetExtensionInstructionsResultExit,
   decodeUnknownRenameExtensionInstructionInputExit,
@@ -128,6 +130,76 @@ describe("extension source lifecycle contracts", () => {
         ),
       ).toBe(true);
     }
+  });
+
+  test("allows generated contributor basenames only for instruction configuration", () => {
+    for (const name of ["guide.mdx", "010-guide.generated.md"]) {
+      expect(
+        Exit.isSuccess(
+          decodeUnknownConfigureExtensionInstructionInputExit({
+            extensionId: "fixture",
+            name,
+            bypassed: true,
+          }),
+        ),
+      ).toBe(true);
+    }
+    expect(
+      Exit.isSuccess(
+        decodeUnknownConfigureExtensionInstructionResultExit({
+          action: "instruction-configured",
+          mutationId,
+          extensionId: "fixture",
+          name: "010-guide.generated.md",
+          bypassed: true,
+          changed: true,
+        }),
+      ),
+    ).toBe(true);
+
+    for (const name of [
+      "guide.md",
+      "instructions/010-guide.generated.md",
+      "../010-guide.generated.md",
+      "bad..generated.md",
+      ".hidden.generated.md",
+    ]) {
+      expect(
+        Exit.isFailure(
+          decodeUnknownConfigureExtensionInstructionInputExit({
+            extensionId: "fixture",
+            name,
+            bypassed: true,
+          }),
+        ),
+      ).toBe(true);
+    }
+
+    expect(
+      Exit.isFailure(
+        decodeUnknownRemoveExtensionInstructionInputExit({
+          extensionId: "fixture",
+          name: "010-guide.generated.md",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeUnknownRenameExtensionInstructionInputExit({
+          extensionId: "fixture",
+          from: "010-guide.generated.md",
+          to: "020-guide.mdx",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(
+        decodeUnknownReorderExtensionInstructionsInputExit({
+          extensionId: "fixture",
+          order: ["010-guide.generated.md"],
+        }),
+      ),
+    ).toBe(true);
   });
 
   test("requires the exact reset scope", () => {

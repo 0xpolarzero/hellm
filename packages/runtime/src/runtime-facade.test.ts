@@ -212,7 +212,6 @@ function runtimeService(overrides: RuntimeServiceTestOverrides): RuntimeService 
     extensions: {
       setUsage: () => Effect.die("unused"),
       revertUsage: () => Effect.die("unused"),
-      reconcileMutation: () => Effect.die("unused"),
       create: () => Effect.die("unused"),
       duplicate: () => Effect.die("unused"),
       delete: () => Effect.die("unused"),
@@ -1155,7 +1154,6 @@ describe("@svvy/runtime facade", () => {
         extensions: {
           setUsage: () => Effect.die("unused"),
           revertUsage: () => Effect.die("unused"),
-          reconcileMutation: () => Effect.die("unused"),
           create: () => Effect.die("unused"),
           duplicate: () => Effect.die("unused"),
           delete: () => Effect.die("unused"),

@@ -2070,6 +2070,7 @@ function createFakeRpc(input: {
           attemptId: request.attemptId,
           status: "completed" as const,
           builds: [],
+          affectedSurfaces: [],
         }),
         createExtension: async (request) => ({
           action: "created",
@@ -8369,6 +8370,7 @@ describe("createChatRuntime", () => {
         attemptId: request.attemptId,
         status: "completed",
         builds: [],
+        affectedSurfaces: [],
       };
     };
 

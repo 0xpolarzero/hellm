@@ -3717,24 +3717,29 @@ returns an `ExtensionHandlerResult` with ordered `ExtensionRuntimeOperation` ite
 
 Shell-dispatched `svvyx` CLI subprocesses are ordinary command-family process edges, not
 runtime-effect transport producers. A `svvyx` subprocess may perform CLI parsing, command-family
-validation, sandboxed helper work, and return parsed command output, stdout/stderr, diagnostics, or
-parse/build evidence for the parent command session to record. It must not emit signed
-runtime-effect transport intents, including `runtime_effect.request`, and must not create
+validation, namespace-specific sandboxed helper work, and return parsed command output,
+stdout/stderr, diagnostics, or parse/build evidence for the parent command session to record. It
+must not emit `runtime_effect.request`, carry raw `RuntimeEffectRequest` values, create
 `ManagedRuntime`, call `Effect.run*`, open SQLite product databases, construct product state ports,
-publish runtime/read-model events, mutate artifact/profile/session/thread state directly, or choose
-the owning session, thread, source command, or surface.
+publish runtime/read-model events, or choose the owning session, thread, source command, or surface.
 
-Runtime-owned work from `svvyx` commands flows through the normal extension-handler result path.
-The accepted command is routed back through `@svvy/runtime`, which invokes the owning trusted
-extension handler in-process and applies its ordered `ExtensionRuntimeOperation` items through
-runtime-owned lanes and core-owned state ports. Runtime may patch parent command facts and
-model-facing output from validated handler results and command-session context, but the Bun CLI
-transport does not define or carry a duplicate runtime-effect request type, signed transport-intent
-validator, public applier, or replay API.
+An app-owned builtin namespace may expose an exact response-bearing child-to-parent request only
+when `@svvy/core` owns its strict request and intent schemas and the parent applies it through
+public `@svvy/runtime` methods. Extension Managing uses this seam: the child parses and validates
+`svvyx extensions ...` into one `extension_management.runtime_request` carrying a
+`SvvyxExtensionManagementRuntimeRequest`. It does not mutate extension source, usage, snapshots,
+generated-context impact, build state, or notifications. The parent verifies and decodes the intent,
+calls the matching `runtime.extensions.*` or
+`runtime.sourceEdits.configureTypescriptApi(...)` method, and replaces placeholder child output and
+command facts with the committed runtime response.
 
-Process transport intent is not a supported `svvyx` CLI subprocess payload. Adding one requires a
-product reason, PRD and feature-inventory update, a typed `@svvy/core` contract, an owning runtime
-replay rule, and fail-closed tests.
+This response-bearing seam is separate from normal in-process extension handlers. Those handlers
+may return ordered `ExtensionRuntimeOperation` items for `@svvy/runtime` to apply, but neither those
+operations nor their closed `RuntimeEffectRequest` values cross the signed child-result boundary.
+The Bun CLI transport has no duplicate runtime-effect request type, public applier, or replay API.
+Adding another response-bearing subprocess request requires a product reason, PRD and feature
+inventory update, an exact typed `@svvy/core` contract, a parent runtime-owned application path, and
+fail-closed tests.
 
 Allowed extension-owned helper subprocesses are bounded source/build/readiness probes such as
 exact-version CLI requirement checks, generated instruction/source builds, schema/declaration
@@ -5529,10 +5534,8 @@ The required enforcement inventory is:
   facades, and ordinary service tests. Production `Effect.runPromise(...)` is allowed only in the
   exact source-gated files named by `packages/effect-adoption-manifest.ts`:
   `src/bun/runtime-service-adapter.ts` as app/bootstrap glue over the already-acquired app-owned
-  `ManagedRuntime`, `packages/runtime/src/source-invalidation-coordinator-adapter.ts` as the
-  narrow runtime-owned source-invalidation coordinator Promise handle edge, and
-  `src/bun/extension-lifecycle-authority.ts` as the app-owned Extension Managing command adapter
-  that supplies Bun file/path/crypto host services to package-owned source lifecycle effects. The app/bootstrap
+  `ManagedRuntime` and `packages/runtime/src/source-invalidation-coordinator-adapter.ts` as the
+  narrow runtime-owned source-invalidation coordinator Promise handle edge. The app/bootstrap
   adapter may adapt a spec-approved app/runtime edge effect to that adapter's Promise-returning app
   facade, or invoke a runtime-owned bootstrap/app-edge operation named by the owning package spec
   and intentionally absent from the public Promise facade, such as workspace-link repair recovery.

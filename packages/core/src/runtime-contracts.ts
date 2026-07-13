@@ -1771,79 +1771,6 @@ export const RuntimeEffectRequestSchema = Schema.Union([
 
 export type RuntimeEffectRequest = typeof RuntimeEffectRequestSchema.Type;
 
-export const RuntimeExtensionUsageContextImpactTransportInputSchema = Schema.Struct({
-  agentProfile: Schema.String,
-  profileId: AgentProfileId,
-});
-export type RuntimeExtensionUsageContextImpactTransportInput =
-  typeof RuntimeExtensionUsageContextImpactTransportInputSchema.Type;
-
-export const RuntimeExtensionUsageProfileKeyTransportSchema = Schema.Union([
-  Schema.TemplateLiteral(["orchestrator:", Schema.String.check(Schema.isNonEmpty())]),
-  Schema.Literal("handler:threadHandler"),
-]);
-export type RuntimeExtensionUsageProfileKeyTransport =
-  typeof RuntimeExtensionUsageProfileKeyTransportSchema.Type;
-
-export const RuntimeExtensionSnapshotContextImpactTransportInputSchema = Schema.Struct({
-  affectedExtensionIds: Schema.Array(ExtensionId),
-  affectedUsageProfiles: Schema.Array(RuntimeExtensionUsageProfileKeyTransportSchema),
-  removedUserExtensionIds: Schema.Array(ExtensionId),
-});
-export type RuntimeExtensionSnapshotContextImpactTransportInput =
-  typeof RuntimeExtensionSnapshotContextImpactTransportInputSchema.Type;
-
-export const SvvyxRuntimeEffectTransportRequestSchema = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("extension_build.request"),
-    input: Schema.Struct({
-      extensionId: ExtensionId,
-      mutationId: Schema.String.check(Schema.isNonEmpty()),
-      reason: Schema.Literal("reset"),
-    }),
-    target: Schema.Literal("extension_lifecycle"),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("extension_source.reconcile"),
-    input: Schema.Struct({
-      action: Schema.Literals([
-        "created",
-        "duplicated",
-        "deleted",
-        "reset",
-        "instruction-added",
-        "instruction-removed",
-        "instruction-configured",
-        "instruction-renamed",
-        "instructions-reordered",
-        "mutation-reverted",
-      ]),
-      extensionIds: Schema.Array(ExtensionId).check(Schema.isNonEmpty()),
-      mutationId: Schema.String.check(Schema.isNonEmpty()),
-    }),
-    target: Schema.Literal("extension_lifecycle"),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("extension_usage.context_impact"),
-    input: RuntimeExtensionUsageContextImpactTransportInputSchema,
-    target: Schema.Literals(["extension_usage", "extension_usage_revert"]),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("extension_snapshot.context_impact"),
-    input: RuntimeExtensionSnapshotContextImpactTransportInputSchema,
-    target: Schema.Literal("snapshot_load"),
-  }),
-]);
-export type SvvyxRuntimeEffectTransportRequest =
-  typeof SvvyxRuntimeEffectTransportRequestSchema.Type;
-
-export const SvvyxRuntimeEffectTransportIntentSchema = Schema.Struct({
-  id: Schema.String.check(Schema.isNonEmpty()),
-  kind: Schema.Literal("runtime_effect.request"),
-  request: SvvyxRuntimeEffectTransportRequestSchema,
-});
-export type SvvyxRuntimeEffectTransportIntent = typeof SvvyxRuntimeEffectTransportIntentSchema.Type;
-
 const StringRecordSchema = Schema.Record(Schema.String, Schema.String);
 
 export const ExtensionExecutionCommandDescriptionSchema = Schema.Struct({
@@ -2471,24 +2398,6 @@ export const encodeRuntimeEffectRequestExit = Schema.encodeExit(
 );
 export const encodeRuntimeEffectRequestEffect = Schema.encodeEffect(
   RuntimeEffectRequestSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const unsafeDecodeSvvyxRuntimeEffectTransportIntentSyncForTestsAndBootstrap =
-  Schema.decodeUnknownSync(SvvyxRuntimeEffectTransportIntentSchema, RuntimeBoundaryParseOptions);
-export const decodeUnknownSvvyxRuntimeEffectTransportIntentExit = Schema.decodeUnknownExit(
-  SvvyxRuntimeEffectTransportIntentSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const decodeUnknownSvvyxRuntimeEffectTransportIntentEffect = Schema.decodeUnknownEffect(
-  SvvyxRuntimeEffectTransportIntentSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const encodeSvvyxRuntimeEffectTransportIntentExit = Schema.encodeExit(
-  SvvyxRuntimeEffectTransportIntentSchema,
-  RuntimeBoundaryParseOptions,
-);
-export const encodeSvvyxRuntimeEffectTransportIntentEffect = Schema.encodeEffect(
-  SvvyxRuntimeEffectTransportIntentSchema,
   RuntimeBoundaryParseOptions,
 );
 export const unsafeDecodeExtensionExecutionPlanSyncForTestsAndBootstrap = Schema.decodeUnknownSync(

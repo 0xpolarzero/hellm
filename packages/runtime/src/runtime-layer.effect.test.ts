@@ -52,9 +52,13 @@ import {
   type AcquireWorkspaceInput,
   type AcquireWorkspaceResult,
   type AppLogEntryId,
+  type BuildRuntimeExtensionInput,
+  type BuildRuntimeExtensionResult,
   type CloseSurfaceInput,
   type CloseSurfaceResult,
   type CommandId,
+  type ConfigureExtensionTypescriptApiInput,
+  type ConfigureExtensionTypescriptApiResult,
   type CreateOrchestratorSurfaceInput,
   type CreateSurfaceResult,
   type FinishRuntimeCommandInput,
@@ -142,9 +146,20 @@ import { RuntimeRequestInputWaitService } from "./runtime-request-input-wait-ser
 import { RuntimePromptDefaultsService } from "./runtime-prompt-defaults-service";
 import { RuntimeQueueWakeService } from "./runtime-queue-wake-service";
 import { RuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
-import { RuntimeExtensionBuildService } from "./runtime-extension-build-service";
-import { RuntimeExtensionLifecycleService } from "./runtime-extension-lifecycle-service";
+import {
+  RuntimeExtensionBuildService,
+  type RuntimeExtensionBuildServiceService,
+} from "./runtime-extension-build-service";
+import {
+  RuntimeExtensionLifecycleService,
+  type RuntimeExtensionLifecycleServiceService,
+} from "./runtime-extension-lifecycle-service";
 import { RuntimeExtensionSnapshotService } from "./runtime-extension-snapshot-service";
+import {
+  layerRuntimeExtensionSourceCoordinator,
+  RuntimeExtensionSourceCoordinator,
+  type RuntimeExtensionSourceCoordinatorService,
+} from "./runtime-extension-source-coordinator";
 import { RuntimeGeneratedContextPreviewService } from "./runtime-generated-context-preview-service";
 import { RuntimeSourceReconcileRecoveryWorker } from "./runtime-source-reconcile-recovery-worker";
 import { RuntimeSurfaceEventPublisher } from "./runtime-surface-event-publisher";
@@ -809,6 +824,109 @@ describe("@svvy/runtime Runtime.layer", () => {
     );
   });
 
+  it.effect("routes TypeScript API configuration through the lifecycle authority", () => {
+    const calls: ConfigureExtensionTypescriptApiInput[] = [];
+    const input = {
+      workspaceId,
+      extensionId: "notes" as never,
+      enabled: true,
+    } satisfies ConfigureExtensionTypescriptApiInput;
+    const expected = {
+      extensionId: input.extensionId,
+      enabled: true,
+      changed: true,
+      reconcileRequired: true,
+    } satisfies ConfigureExtensionTypescriptApiResult;
+    const extensions = Extensions.of({
+      sources: {
+        configureTypescriptApi: () =>
+          Effect.die("runtime source edits must delegate TypeScript API configuration"),
+      },
+    } as unknown as ExtensionsService);
+
+    return Effect.gen(function* () {
+      const runtime = yield* Runtime;
+      const result = yield* runtime.sourceEdits.configureTypescriptApi(input);
+
+      assert.deepStrictEqual(result, expected);
+      assert.deepStrictEqual(calls, [input]);
+    }).pipe(
+      Effect.provide(
+        testRuntimeLayer({
+          published: [],
+          extensions,
+          configureTypescriptApi: (configureInput) =>
+            Effect.sync(() => {
+              calls.push(configureInput);
+              return expected;
+            }),
+        }),
+      ),
+    );
+  });
+
+  it.effect("serializes explicit extension builds with source transactions", () => {
+    const serialization: string[] = [];
+    const builds: BuildRuntimeExtensionInput[] = [];
+    const input = {
+      extensionId: "notes" as BuildRuntimeExtensionInput["extensionId"],
+      clientRequestId:
+        "runtime-client:build-notes" as BuildRuntimeExtensionInput["clientRequestId"],
+    };
+    const expected = {
+      attemptId:
+        `extension-build-attempt:notes:${"a".repeat(64)}` as BuildRuntimeExtensionResult["attemptId"],
+      registryAggregateFingerprint: "registry-fingerprint",
+      manifest: {
+        schemaVersion: 1,
+        buildId:
+          `extension-build:notes:${"b".repeat(64)}` as BuildRuntimeExtensionResult["manifest"]["buildId"],
+        extensionId: input.extensionId,
+        interfaceKind: "svvyx",
+        sourceFingerprint:
+          `sha256:${"c".repeat(64)}` as BuildRuntimeExtensionResult["manifest"]["sourceFingerprint"],
+        contextFingerprint:
+          `sha256:${"d".repeat(64)}` as BuildRuntimeExtensionResult["manifest"]["contextFingerprint"],
+        outputFingerprint:
+          `sha256:${"e".repeat(64)}` as BuildRuntimeExtensionResult["manifest"]["outputFingerprint"],
+        contextReady: true,
+        generatedFiles: [],
+        builtAt: "2026-07-12T10:00:00.000Z" as BuildRuntimeExtensionResult["manifest"]["builtAt"],
+      },
+    } satisfies BuildRuntimeExtensionResult;
+
+    return Effect.gen(function* () {
+      const runtime = yield* Runtime;
+      const result = yield* runtime.extensions.build(input);
+
+      assert.deepStrictEqual(result, expected);
+      assert.deepStrictEqual(builds, [input]);
+      assert.deepStrictEqual(serialization, ["entered", "build", "released"]);
+    }).pipe(
+      Effect.provide(
+        testRuntimeLayer({
+          published: [],
+          extensionBuild: {
+            build: (buildInput) =>
+              Effect.sync(() => {
+                serialization.push("build");
+                builds.push(buildInput);
+                return expected;
+              }),
+            buildOutcome: () => Effect.die("unused extension build outcome"),
+          },
+          extensionSourceCoordinator: {
+            serialized: (effect) =>
+              Effect.sync(() => serialization.push("entered")).pipe(
+                Effect.andThen(effect),
+                Effect.ensuring(Effect.sync(() => serialization.push("released"))),
+              ),
+          },
+        }),
+      ),
+    );
+  });
+
   it.effect(
     "orchestrates workflow-agent create, duplicate, and delete through model admission, durable source facts, and invalidation hints",
     () => {
@@ -1139,6 +1257,7 @@ describe("@svvy/runtime Runtime.layer", () => {
     const published: StateInvalidationDescriptor[][] = [];
     const livePublished: RuntimeEvent[] = [];
     const recoveryWakes: string[] = [];
+    const extensionSourceSerialization: string[] = [];
     const session = workflowAgentSession("recoveryAgent", "Recovery agent", "version_recovery");
     const extensions = Extensions.of({
       sources: {
@@ -1287,6 +1406,7 @@ describe("@svvy/runtime Runtime.layer", () => {
         ],
       );
       assert.deepStrictEqual(recoveryWakes, ["wake", "wake"]);
+      assert.deepStrictEqual(extensionSourceSerialization, ["entered", "released"]);
     }).pipe(
       Effect.provide(
         testRuntimeLayer({
@@ -1297,6 +1417,13 @@ describe("@svvy/runtime Runtime.layer", () => {
           extensions,
           sourceState,
           recoveryState,
+          extensionSourceCoordinator: {
+            serialized: (effect) =>
+              Effect.sync(() => extensionSourceSerialization.push("entered")).pipe(
+                Effect.andThen(effect),
+                Effect.ensuring(Effect.sync(() => extensionSourceSerialization.push("released"))),
+              ),
+          },
         }),
       ),
     );
@@ -1609,10 +1736,18 @@ describe("@svvy/runtime Runtime.layer", () => {
           agentProfile,
           usage: "loaded",
         });
-        yield* runtime.extensions.revertUsage({
+        assert.deepStrictEqual(
+          set.affectedSurfaces.map((surface) => String(surface.surfacePiSessionId)),
+          [`surface:${targets[agentProfile].profileId}`],
+        );
+        const reverted = yield* runtime.extensions.revertUsage({
           clientRequestId: `runtime-client:revert:${agentProfile}` as never,
           changeId: set.change.changeId,
         });
+        assert.deepStrictEqual(
+          reverted.affectedSurfaces.map((surface) => String(surface.surfacePiSessionId)),
+          [`surface:${targets[agentProfile].profileId}`],
+        );
       }
       registryObservations = [];
       const unknown = yield* runtime.extensions
@@ -1737,7 +1872,14 @@ describe("@svvy/runtime Runtime.layer", () => {
             listUsageContextAffectedSurfaces: (input) =>
               Effect.sync(() => {
                 affected.push({ agentProfile: input.agentProfile, profileId: input.profileId });
-                return [];
+                return [
+                  {
+                    surfacePiSessionId: `surface:${input.profileId}` as never,
+                    kind: "extension_context_changed" as const,
+                    label: "Extensions changed" as const,
+                    reason: "extension_usage_changed" as const,
+                  },
+                ];
               }),
             applySnapshotContextImpact: () => Effect.die("unused"),
           },
@@ -2020,6 +2162,9 @@ interface TestLayerOverrides {
   readonly config?: Partial<typeof defaultRuntimeLayerConfig>;
   readonly failRecoveryStatusPublication?: boolean;
   readonly sourceInvalidation?: RuntimeSourceInvalidationService["Service"];
+  readonly configureTypescriptApi?: RuntimeExtensionLifecycleServiceService["configureTypescriptApi"];
+  readonly extensionBuild?: RuntimeExtensionBuildServiceService;
+  readonly extensionSourceCoordinator?: RuntimeExtensionSourceCoordinatorService;
   readonly onRestoreOpenBlockingRequests?: () => void;
   readonly extensionUsageState?: ExtensionUsageStatePortService;
   readonly extensionContextImpact?: RuntimeExtensionContextImpactStatePortService;
@@ -2073,12 +2218,14 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
           ...defaultRuntimeLayerConfig,
           ...overrides.config,
         }),
-        Layer.succeed(RuntimeExtensionBuildService, {
-          build: () => Effect.die("unused extension build"),
-          buildOutcome: () => Effect.die("unused extension build outcome"),
-        }),
+        Layer.succeed(
+          RuntimeExtensionBuildService,
+          overrides.extensionBuild ?? {
+            build: () => Effect.die("unused extension build"),
+            buildOutcome: () => Effect.die("unused extension build outcome"),
+          },
+        ),
         Layer.succeed(RuntimeExtensionLifecycleService, {
-          reconcileMutation: () => Effect.die("unused extension reconcile"),
           create: () => Effect.die("unused extension create"),
           duplicate: () => Effect.die("unused extension duplicate"),
           delete: () => Effect.die("unused extension delete"),
@@ -2086,6 +2233,9 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
           addInstruction: () => Effect.die("unused instruction add"),
           removeInstruction: () => Effect.die("unused instruction remove"),
           configureInstruction: () => Effect.die("unused instruction configure"),
+          configureTypescriptApi:
+            overrides.configureTypescriptApi ??
+            (() => Effect.die("unused TypeScript API configure")),
           renameInstruction: () => Effect.die("unused instruction rename"),
           reorderInstructions: () => Effect.die("unused instruction reorder"),
           revertMutation: () => Effect.die("unused lifecycle revert"),
@@ -2100,6 +2250,9 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
           recover: () => Effect.die("unused snapshot recovery"),
           processCleanup: () => Effect.die("unused snapshot cleanup"),
         }),
+        overrides.extensionSourceCoordinator
+          ? Layer.succeed(RuntimeExtensionSourceCoordinator, overrides.extensionSourceCoordinator)
+          : layerRuntimeExtensionSourceCoordinator,
         Layer.succeed(RuntimeGeneratedContextPreviewService, {
           preview: () => Effect.die("unused generated-context preview"),
         }),

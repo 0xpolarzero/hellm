@@ -53,7 +53,8 @@ maintenance commands/receipts, restore attempts, pending cleanup records, and th
 `ExtensionSnapshotStatePort`. Public snapshot summaries contain neither payload/secret references
 nor filesystem paths; payload secret targets record presence only and never secret values. The
 private state record and cleanup/restore contracts may carry opaque payload and secret references
-for trusted state/runtime work, but never absolute paths or secret material.
+for trusted state/runtime work, plus the exact affected-surface receipts required to resume a
+state-committed restore, but never absolute paths or secret material.
 
 The same module owns strict state-to-Extensions capture input and path-free source-restore
 prepare/plan/apply/receipt DTOs. The capture input carries exact actor/profile usage, non-secret
@@ -2292,179 +2293,90 @@ union arm are package-private implementation details unless a spec section gives
 Runtime and extension packages must import the named input schemas/types instead of duplicating
 variant-specific inline objects.
 
-Signed `svvyx` runtime-effect transport intents are a separate trusted subprocess result contract,
-not normal extension-returned `RuntimeEffectRequest` values and not a public runtime subpath.
-`@svvy/core` owns that transport contract by these exact names:
+Shell-dispatched `svvyx` processes do not produce runtime-effect transport intents. App-owned
+builtin namespaces instead use narrow response-bearing request contracts that let the parent command
+session invoke the same public runtime methods used by desktop, browser-tool, and headless callers.
+For Extension Managing, `@svvy/core` owns these exact contract names:
 
 ```ts
-type SvvyxRuntimeEffectTransportRequest =
+type SvvyxExtensionManagementRuntimeRequest =
+  | { operation: "inspect"; input: { extensionId: string } }
+  | { operation: "build"; input: BuildRuntimeExtensionInput }
+  | { operation: "create"; input: CreateExtensionSourceInput }
+  | { operation: "duplicate"; input: DuplicateExtensionSourceInput }
+  | { operation: "delete"; input: DeleteExtensionSourceInput }
+  | { operation: "reset"; input: ResetExtensionInstructionsInput }
+  | { operation: "instructions.add"; input: AddExtensionInstructionInput }
+  | { operation: "instructions.remove"; input: RemoveExtensionInstructionInput }
+  | { operation: "instructions.configure"; input: ConfigureExtensionInstructionInput }
+  | { operation: "instructions.rename"; input: RenameExtensionInstructionInput }
+  | { operation: "instructions.reorder"; input: ReorderExtensionInstructionsInput }
+  | { operation: "source.revert"; input: RevertExtensionSourceMutationInput }
+  | { operation: "typescript-api.configure"; input: ConfigureExtensionTypescriptApiInput }
   | {
-      type: "extension_usage.context_impact";
-      target: "extension_usage" | "extension_usage_revert";
+      operation: "usage.set";
       input: {
+        clientRequestId: RuntimeClientRequestId;
+        extensionId: ExtensionId;
         agentProfile: string;
-        profileId: AgentProfileId;
+        usage: ExtensionUsageState;
       };
     }
   | {
-      type: "extension_snapshot.context_impact";
-      target: "snapshot_load";
+      operation: "usage.revert";
+      input: { clientRequestId: RuntimeClientRequestId; changeId: ExtensionUsageChangeId };
+    }
+  | { operation: "snapshots.list"; input: {} }
+  | {
+      operation: "snapshots.save";
+      input: { clientRequestId: RuntimeClientRequestId; name: string };
+    }
+  | {
+      operation: "snapshots.rename";
       input: {
-        affectedExtensionIds: ExtensionId[];
-        affectedUsageProfiles: Array<`orchestrator:${string}` | "handler:threadHandler">;
-        removedUserExtensionIds: ExtensionId[];
+        clientRequestId: RuntimeClientRequestId;
+        snapshotId: ExtensionSnapshotId;
+        name: string;
       };
+    }
+  | {
+      operation: "snapshots.delete" | "snapshots.load";
+      input: { clientRequestId: RuntimeClientRequestId; snapshotId: ExtensionSnapshotId };
     };
 
-type SvvyxRuntimeEffectTransportIntent = {
+type SvvyxExtensionManagementRuntimeIntent = {
   id: string;
-  kind: "runtime_effect.request";
-  request: SvvyxRuntimeEffectTransportRequest;
+  kind: "extension_management.runtime_request";
+  request: SvvyxExtensionManagementRuntimeRequest;
 };
 
-export const RuntimeExtensionUsageContextImpactTransportInputSchema = Schema.Struct({
-  agentProfile: Schema.String.check(Schema.isNonEmpty()),
-  profileId: AgentProfileId,
-});
-export type RuntimeExtensionUsageContextImpactTransportInput =
-  typeof RuntimeExtensionUsageContextImpactTransportInputSchema.Type;
-
-export const RuntimeExtensionUsageProfileKeyTransportSchema = Schema.Union([
-  Schema.TemplateLiteral(["orchestrator:", Schema.String.check(Schema.isNonEmpty())]),
-  Schema.Literal("handler:threadHandler"),
-]);
-export type RuntimeExtensionUsageProfileKeyTransport =
-  typeof RuntimeExtensionUsageProfileKeyTransportSchema.Type;
-
-export const RuntimeExtensionSnapshotContextImpactTransportInputSchema = Schema.Struct({
-  affectedExtensionIds: Schema.Array(ExtensionId),
-  affectedUsageProfiles: Schema.Array(RuntimeExtensionUsageProfileKeyTransportSchema),
-  removedUserExtensionIds: Schema.Array(ExtensionId),
-});
-export type RuntimeExtensionSnapshotContextImpactTransportInput =
-  typeof RuntimeExtensionSnapshotContextImpactTransportInputSchema.Type;
-
-export const SvvyxRuntimeEffectTransportRequestSchema = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("extension_usage.context_impact"),
-    target: Schema.Literals(["extension_usage", "extension_usage_revert"]),
-    input: RuntimeExtensionUsageContextImpactTransportInputSchema,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("extension_snapshot.context_impact"),
-    target: Schema.Literal("snapshot_load"),
-    input: RuntimeExtensionSnapshotContextImpactTransportInputSchema,
-  }),
-]);
-export type SvvyxRuntimeEffectTransportRequest =
-  typeof SvvyxRuntimeEffectTransportRequestSchema.Type;
-
-export const SvvyxRuntimeEffectTransportIntentSchema = Schema.Struct({
-  id: Schema.String.check(Schema.isNonEmpty()),
-  kind: Schema.Literal("runtime_effect.request"),
-  request: SvvyxRuntimeEffectTransportRequestSchema,
-});
-export type SvvyxRuntimeEffectTransportIntent = typeof SvvyxRuntimeEffectTransportIntentSchema.Type;
-
-export const decodeUnknownSvvyxRuntimeEffectTransportIntentExit = Schema.decodeUnknownExit(
-  SvvyxRuntimeEffectTransportIntentSchema,
-  strictBoundaryParseOptions,
-);
-export const decodeUnknownSvvyxRuntimeEffectTransportIntentEffect = Schema.decodeUnknownEffect(
-  SvvyxRuntimeEffectTransportIntentSchema,
-  strictBoundaryParseOptions,
-);
-export const encodeSvvyxRuntimeEffectTransportIntentExit = Schema.encodeExit(
-  SvvyxRuntimeEffectTransportIntentSchema,
-  strictBoundaryParseOptions,
-);
-export const encodeSvvyxRuntimeEffectTransportIntentEffect = Schema.encodeEffect(
-  SvvyxRuntimeEffectTransportIntentSchema,
-  strictBoundaryParseOptions,
-);
-```
-
-Trusted `svvyx` subprocesses return one signed JSON envelope. The signed result payload is
-structured data only; it never carries raw stdout/stderr streams. Runtime-owned command sessions
-record stdout/stderr as command output facts from the child-process pipes.
-
-```ts
-export const HmacSha256Digest = Schema.String.check(
-  Schema.isPattern(/^hmac-sha256:base64url:[A-Za-z0-9_-]{43}$/),
-);
-export type HmacSha256Digest = typeof HmacSha256Digest.Type;
-
-type SignedSvvyxSubprocessResult = {
-  envelopeVersion: 1;
-  invocationId: ExtensionInvocationId;
-  commandId: CommandId;
-  extensionId: ExtensionId;
-  createdAt: IsoDateTimeString;
-  payload: {
-    status: "succeeded" | "failed";
-    output?: JsonValue;
-    commandFacts?: CommandFactsPayload;
-    intents?: readonly SvvyxRuntimeEffectTransportIntent[];
-    progressEvents?: readonly {
-      family: "artifacts" | "extensions" | "workflows" | "runtime";
-      phase: "started" | "succeeded" | "failed";
-      facts?: JsonObject;
-    }[];
-    diagnostics?: readonly string[];
-  };
-  signature: {
-    algorithm: "hmac-sha256";
-    keyId: string;
-    digest: HmacSha256Digest;
-  };
+type SvvyxExtensionManagementRuntimeResponse = {
+  output: JsonValue;
+  commandFacts: Readonly<Record<string, JsonValue>>;
 };
-
-export const SignedSvvyxSubprocessResultSchema = Schema.Struct({
-  envelopeVersion: Schema.Literal(1),
-  invocationId: ExtensionInvocationId,
-  commandId: CommandId,
-  extensionId: ExtensionId,
-  createdAt: IsoDateTimeString,
-  payload: Schema.Struct({
-    status: Schema.Literals(["succeeded", "failed"]),
-    output: Schema.optionalKey(JsonValueSchema),
-    commandFacts: Schema.optionalKey(CommandFactsPayloadSchema),
-    intents: Schema.optionalKey(Schema.Array(SvvyxRuntimeEffectTransportIntentSchema)),
-    progressEvents: Schema.optionalKey(
-      Schema.Array(
-        Schema.Struct({
-          family: Schema.Literals(["artifacts", "extensions", "workflows", "runtime"]),
-          phase: Schema.Literals(["started", "succeeded", "failed"]),
-          facts: Schema.optionalKey(JsonObjectSchema),
-        }),
-      ),
-    ),
-    diagnostics: Schema.optionalKey(Schema.Array(Schema.String)),
-  }),
-  signature: Schema.Struct({
-    algorithm: Schema.Literal("hmac-sha256"),
-    keyId: Schema.String.check(Schema.isNonEmpty()),
-    digest: HmacSha256Digest,
-  }),
-});
-export type SignedSvvyxSubprocessResult = typeof SignedSvvyxSubprocessResultSchema.Type;
 ```
 
-The signature material is the UTF-8 bytes of the RFC 8785 JSON Canonicalization Scheme
-representation of exactly `{ envelopeVersion, invocationId, commandId, extensionId, createdAt,
-payload }` after that object encodes through
-`SignedSvvyxSubprocessResultSignatureMaterialSchema`. Object keys are recursively sorted by the
-canonicalization algorithm, no whitespace is emitted, and `signature` is excluded. The digest is the
-unpadded base64url encoding of the 32-byte HMAC-SHA256 output prefixed as
-`hmac-sha256:base64url:`. Parent validation rejects envelopes whose digest does not match that
-material, whose `signature.algorithm` is not `"hmac-sha256"`, or whose `signature.keyId` does not
-match the parent-issued invocation key id.
+`SvvyxExtensionManagementRuntimeRequestSchema` is a strict union whose lifecycle arms reuse the
+named core source-lifecycle and source-edit input schemas above instead of copying their fields.
+`SvvyxExtensionManagementRuntimeIntentSchema` wraps that request, and
+`decodeUnknownSvvyxExtensionManagementRuntimeIntentExit` is the parent process decoder. Unknown
+operations and excess fields fail before any runtime method, source mutation, state write, build,
+or notification. There is no `SvvyxRuntimeEffectTransportRequest`,
+`SvvyxRuntimeEffectTransportIntent`, or `runtime_effect.request` child-result contract.
 
-The transport schema covers exactly context-impact replay for trusted `svvyx extensions` commands
-whose child process cannot open product state. It does not encode the full profile or snapshot state
-mutation. Adding another transport request requires the same package-boundary evidence: a core
-schema/codec, parent runtime-owned replay, signed-result validation tests, and no duplicate
-best-effort Bun decoder.
+Trusted `svvyx` subprocesses return one app-private signed JSON envelope. The envelope and HMAC
+verification live at the Bun process edge rather than in `@svvy/core`; core owns only the exact
+request-intent schemas that cross package boundaries inside its payload. The payload is structured
+data and never carries raw stdout/stderr streams. Runtime-owned command sessions record
+stdout/stderr as command output facts from the child-process pipes.
+
+The parent verifies the app-issued HMAC, envelope version, command identity, and fixed signature
+metadata before decoding each intent with its core-owned strict decoder. For Extension Managing,
+the only accepted intent kind is `extension_management.runtime_request`. No child result may carry
+`runtime_effect.request`, raw `RuntimeEffectRequest`, affected-surface output, a runtime/state
+facade, or direct context-impact facts. Adding another response-bearing request requires the same
+package-boundary evidence: a core schema/codec, parent runtime-owned application path, signed-result
+validation tests, and no duplicate best-effort decoder.
 
 ## ExtensionExecutionPlan Algebra
 

@@ -288,13 +288,24 @@ linkage from this dispatcher context rather than accepting agent-supplied owner 
 
 When a shell-dispatched `svvyx ...` invocation needs runtime-owned work, the accepted command is
 handled by the parent `@svvy/runtime` command lane. The subprocess may parse CLI input, perform
-bounded package-local work allowed by its sandbox, produce structured stdout/stderr, and return the
-model-facing command result, but it is not a runtime-effect transport. Runtime-owned product changes
-come only from `ExtensionHandlerResult.operations`: ordered `ExtensionRuntimeOperation` values
+bounded package-local read or validation work allowed by its sandbox, produce structured
+stdout/stderr, and return model-facing parse evidence, but it is not a runtime-effect transport and
+does not apply product mutations. App-owned builtin namespaces use narrow response-bearing request
+contracts for this process boundary. The signed adapter is enabled only when the complete Shell
+input is one simple standalone `svvyx` invocation; unquoted line breaks or shell control syntax keep
+the command on the ordinary Shell path, which receives no subprocess result key or signed-result
+replay capability. For example, `svvyx extensions ...` emits one strict
+`SvvyxExtensionManagementRuntimeRequest`; the parent decodes it, invokes the matching
+`runtime.extensions.*` or `runtime.sourceEdits.configureTypescriptApi(...)` operation, and replaces
+the child placeholder output and command facts with the committed runtime result.
+
+Normal in-process extension handler work still returns ordered `ExtensionRuntimeOperation` values
 wrapping closed `RuntimeEffectRequest` values or immutable `ExtensionExecutionPlan` values.
 `@svvy/runtime` applies those operations through runtime-owned services and core-owned state ports
 implemented by `@svvy/state`, then derives command facts, app logs, notifications, affected
-surfaces, and read-model invalidation from committed results.
+surfaces, and read-model invalidation from committed results. Response-bearing `svvyx` requests are
+separate process DTOs; they are not handler-returned runtime operations and cannot carry raw
+`RuntimeEffectRequest` values.
 
 The child context may include non-secret runtime facts such as cwd, extension roots, env override
 snapshots, workflow model choices, current session/surface/thread ids, and source command id.
@@ -305,13 +316,14 @@ Generated package roots are included only in trusted generated-package invocatio
 not include a database path, raw SQLite handle, state service, workspace state object, state-owned
 mutation capability, runtime facade, generic app-action channel, queue handle, or event publisher.
 
-There is no signed child-to-parent runtime-effect replay channel. `svvyx` subprocess output may
-contain command-family stdout/stderr, diagnostics, and parse/build evidence, but it must not contain
-affected-surface arrays, state facade calls, artifact operations, generated-package refreshes, queue
-inserts, handler/thread/runtime-control requests, Smithers workflow-control requests,
-`RuntimeEffectRequest` payloads, or direct snapshot context-impact updates. Runtime derives affected
-surfaces, stale generated-context facts, generated-package/link facts, artifact facts, and command
-facts only from runtime-applied operations and committed state.
+There is no signed child-to-parent runtime-effect replay channel. A trusted signed result may carry
+only the exact response-bearing app-owned request intents named by core contracts, plus
+command-family stdout/stderr, diagnostics, and parse/build evidence. It must not contain
+affected-surface arrays, state facade calls, queue inserts, handler/thread/runtime-control requests,
+Smithers workflow-control requests, raw `RuntimeEffectRequest` payloads, or direct generated-context
+impact updates. Runtime derives affected surfaces, stale generated-context facts,
+generated-package/link facts, artifact facts, and authoritative command facts only from its accepted
+request application and committed state.
 
 Artifact work has no signed transport intent. Artifact metadata, validation, model-facing command
 descriptions, file effects, and state updates use the normal extension-handler result path:

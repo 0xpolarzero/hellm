@@ -27,12 +27,8 @@ import type {
   RuntimeArtifactStatePortService,
   RuntimeCommandRecord,
   RuntimeCommandStatePortService,
-  RuntimeExtensionContextChangedSurface,
-  RuntimeExtensionContextImpactStateFacade,
   StateContractError,
   SurfacePiSessionId,
-  SvvyxRuntimeEffectTransportIntent,
-  SvvyxRuntimeEffectTransportRequest,
   SvvyxExtensionManagementRuntimeIntent,
   SvvyxExtensionManagementRuntimeRequest,
   SvvyxExtensionManagementRuntimeResponse,
@@ -49,7 +45,6 @@ import type {
 } from "@svvy/core";
 import {
   decodeUnknownSvvyxExtensionManagementRuntimeIntentExit,
-  decodeUnknownSvvyxRuntimeEffectTransportIntentExit,
   decodeUnknownSvvyxWorkflowsRuntimeIntentExit,
 } from "@svvy/core";
 import type { AppLoggerEvent } from "./app-logger";
@@ -168,13 +163,6 @@ type DirectToolOptions = {
   workflowsModelCatalog?: SvvyxWorkflowsModelCatalogReader;
   workflowsSourceRoot?: string;
   extensionsBuildRoot?: string;
-  extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
-  applyExtensionLifecycleRuntimeEffect?: (
-    request: Extract<
-      SvvyxRuntimeEffectTransportRequest,
-      { readonly type: "extension_build.request" | "extension_source.reconcile" }
-    >,
-  ) => Promise<void>;
   applyExtensionManagementRuntimeRequest?: (
     request: SvvyxExtensionManagementRuntimeRequest,
   ) => Promise<SvvyxExtensionManagementRuntimeResponse>;
@@ -698,7 +686,6 @@ type SvvyxSubprocessIntent =
       kind: "artifact.operation";
       operation: SvvyxArtifactsOperationInput;
     }
-  | SvvyxRuntimeEffectTransportIntent
   | SvvyxExtensionManagementRuntimeIntent
   | SvvyxWorkflowsRuntimeIntent;
 
@@ -899,6 +886,9 @@ function splitSimpleShellWords(command: string): string[] | null {
       quote = char;
       continue;
     }
+    if (char === "\n" || char === "\r") {
+      return null;
+    }
     if (/\s/.test(char)) {
       if (current.length > 0) {
         words.push(current);
@@ -1097,26 +1087,6 @@ async function applySvvyxSubprocessIntents(
       };
       continue;
     }
-    if (intent.kind === "runtime_effect.request") {
-      if (
-        intent.request.type === "extension_build.request" ||
-        intent.request.type === "extension_source.reconcile"
-      ) {
-        if (!options.applyExtensionLifecycleRuntimeEffect) {
-          throw new Error("Extension lifecycle runtime-effect application is unavailable.");
-        }
-        await options.applyExtensionLifecycleRuntimeEffect(intent.request);
-        continue;
-      }
-      const result = patchAppPrivateSvvyxRuntimeEffectTransportOutput({
-        commandFacts,
-        contextImpactState: options.extensionContextImpactState,
-        output,
-        request: intent.request,
-      });
-      output = result.output;
-      commandFacts = result.commandFacts;
-    }
   }
   return {
     ...(commandFacts ? { commandFacts } : {}),
@@ -1139,14 +1109,21 @@ export async function applyExtensionManagementRuntimeRequestForTransport(
     return await apply(request);
   } catch {
     const build = request.operation === "build";
+    const snapshot = request.operation.startsWith("snapshots.");
     return {
       output: {
         ok: false,
         error: {
-          code: build ? "EXTENSION_BUILD_FAILED" : "EXTENSION_SNAPSHOT_FAILED",
+          code: build
+            ? "EXTENSION_BUILD_FAILED"
+            : snapshot
+              ? "EXTENSION_SNAPSHOT_FAILED"
+              : "EXTENSION_MANAGEMENT_FAILED",
           message: build
             ? "The extension build did not complete. Inspect Extensions readiness for details."
-            : "The extension snapshot operation did not complete. Refresh snapshots and retry.",
+            : snapshot
+              ? "The extension snapshot operation did not complete. Refresh snapshots and retry."
+              : "The Extension Managing operation did not complete. Refresh extension state and retry.",
         },
       },
       commandFacts: {
@@ -1167,92 +1144,6 @@ export async function applyWorkflowsRuntimeRequestForTransport(
     throw new Error("Workflows Runtime request application is unavailable.");
   }
   return apply(request);
-}
-
-type SvvyxRuntimeEffectTransportApplicationInput = {
-  readonly commandFacts: Record<string, unknown> | undefined;
-  readonly contextImpactState?: RuntimeExtensionContextImpactStateFacade;
-  readonly output: unknown;
-  readonly request: SvvyxRuntimeEffectTransportRequest;
-};
-
-type SvvyxRuntimeEffectTransportApplicationResult = {
-  readonly commandFacts?: Record<string, unknown>;
-  readonly output?: unknown;
-};
-
-function patchAppPrivateSvvyxRuntimeEffectTransportOutput(
-  input: SvvyxRuntimeEffectTransportApplicationInput,
-): SvvyxRuntimeEffectTransportApplicationResult {
-  if (input.request.type === "extension_usage.context_impact") {
-    const affectedSurfaces =
-      input.contextImpactState?.listUsageContextAffectedSurfaces(input.request.input) ?? [];
-    return {
-      commandFacts: {
-        ...input.commandFacts,
-        affectedAgentContextSurfaces: affectedSurfaces.length,
-      },
-      output: patchExtensionUsageAffectedSurfaces(input.output, affectedSurfaces),
-    };
-  }
-  if (input.request.type === "extension_snapshot.context_impact") {
-    const affectedSurfaces =
-      input.contextImpactState?.applySnapshotContextImpact(input.request.input) ?? [];
-    return {
-      commandFacts: {
-        ...input.commandFacts,
-        affectedAgentContextSurfaces: affectedSurfaces.length,
-      },
-      output: patchSnapshotLoadAffectedSurfaces(input.output, affectedSurfaces),
-    };
-  }
-  return {
-    ...(input.commandFacts ? { commandFacts: input.commandFacts } : {}),
-    ...(input.output !== undefined ? { output: input.output } : {}),
-  };
-}
-
-function patchExtensionUsageAffectedSurfaces(
-  value: unknown,
-  affectedSurfaces: readonly RuntimeExtensionContextChangedSurface[],
-): unknown {
-  if (!isMutableRecord(value)) {
-    return value;
-  }
-  const rootImpact = getMutableRecord(value.agentContextImpact);
-  if (rootImpact) {
-    rootImpact.affectedSurfaces = [...affectedSurfaces];
-  }
-  const result = getMutableRecord(value.result);
-  const resultImpact = getMutableRecord(result?.agentContextImpact);
-  if (resultImpact) {
-    resultImpact.affectedSurfaces = [...affectedSurfaces];
-  }
-  return value;
-}
-
-function patchSnapshotLoadAffectedSurfaces(
-  value: unknown,
-  affectedSurfaces: readonly RuntimeExtensionContextChangedSurface[],
-): unknown {
-  if (!isMutableRecord(value)) {
-    return value;
-  }
-  const impact = getMutableRecord(value.agentContextImpact);
-  if (impact) {
-    impact.affectedSurfaces = [...affectedSurfaces];
-  } else {
-    value.agentContextImpact = { affectedSurfaces: [...affectedSurfaces] };
-  }
-  return value;
-}
-
-function getMutableRecord(value: unknown): Record<string, unknown> | null {
-  return isMutableRecord(value) ? value : null;
-}
-
-function isMutableRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function replaySvvyxSubprocessProgressEvents(
@@ -1308,7 +1199,10 @@ function createSvvyxSubprocessShim(): { dir: string } {
   return { dir };
 }
 
-function readSvvyxSubprocessResult(path: string, resultKey: string): SvvyxSubprocessTransport {
+export function readSvvyxSubprocessResult(
+  path: string,
+  resultKey: string,
+): SvvyxSubprocessTransport {
   try {
     const signed = JSON.parse(readFileSync(path, "utf8")) as SignedSvvyxSubprocessTransport;
     if (!isValidSvvyxSubprocessSignature(signed, resultKey)) {
@@ -1406,16 +1300,11 @@ function readSvvyxSubprocessIntent(value: unknown): SvvyxSubprocessIntent[] {
       },
     ];
   }
-  if (intent.kind === "runtime_effect.request") {
-    const decoded = decodeUnknownSvvyxRuntimeEffectTransportIntentExit(intent);
-    if (!Exit.isSuccess(decoded)) {
-      return [];
-    }
-    return [decoded.value];
-  }
   if (intent.kind === "extension_management.runtime_request") {
     const decoded = decodeUnknownSvvyxExtensionManagementRuntimeIntentExit(intent);
-    if (!Exit.isSuccess(decoded)) return [];
+    if (!Exit.isSuccess(decoded)) {
+      throw new Error("Invalid Extension Managing Runtime request intent.");
+    }
     return [decoded.value];
   }
   if (intent.kind === "workflows.runtime_request") {

@@ -51,7 +51,6 @@ export {
   runtimeEpisodeStatePortFromStructuredSessionState,
 } from "./runtime-episode-state-port";
 export {
-  runtimeExtensionContextImpactStateFacadeFromStore,
   runtimeExtensionContextImpactStatePortFromStore,
   runtimeExtensionContextImpactStatePortFromStructuredSessionState,
 } from "./runtime-extension-context-impact-state-port";

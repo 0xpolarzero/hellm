@@ -2,37 +2,14 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import type { AgentSettingsStore } from "./agent-settings-store";
-import type { AgentProfileMutationStore } from "./agent-profile-mutation-store";
 import type {
   AddExtensionInstructionInput,
-  AddExtensionInstructionResult,
   ConfigureExtensionInstructionInput,
-  ConfigureExtensionInstructionResult,
-  ConfigureExtensionTypescriptApiInput,
-  ConfigureExtensionTypescriptApiResult,
-  CreateExtensionSourceInput,
-  CreateExtensionSourceResult,
-  DeleteExtensionSourceInput,
-  DeleteExtensionSourceResult,
-  DuplicateExtensionSourceInput,
-  DuplicateExtensionSourceResult,
   ExtensionId,
-  RequestInputVariant,
-  RuntimeExtensionContextImpactStateFacade,
-  WorkspaceId,
+  ExtensionUsageChangeId,
   RuntimeClientRequestId,
   SvvyxExtensionManagementRuntimeRequest,
-  RemoveExtensionInstructionInput,
-  RemoveExtensionInstructionResult,
-  ResetExtensionInstructionsInput,
-  RuntimeResetExtensionInstructionsResult,
-  RenameExtensionInstructionInput,
-  RenameExtensionInstructionResult,
-  ReorderExtensionInstructionsInput,
-  ReorderExtensionInstructionsResult,
-  RevertExtensionSourceMutationInput,
-  RuntimeRevertExtensionSourceMutationResult,
+  WorkspaceId,
 } from "@svvy/core";
 import {
   getExtensionRecord,
@@ -89,50 +66,31 @@ type InstructionFileView = {
   path: string;
 };
 
-export type SvvyxExtensionsCommandResult = {
-  output: unknown;
-  commandFacts: Record<string, unknown>;
-};
-
-export interface SvvyxExtensionsLifecycleAdapter {
-  create(input: CreateExtensionSourceInput): Promise<CreateExtensionSourceResult>;
-  duplicate(input: DuplicateExtensionSourceInput): Promise<DuplicateExtensionSourceResult>;
-  delete(input: DeleteExtensionSourceInput): Promise<DeleteExtensionSourceResult>;
-  reset(input: ResetExtensionInstructionsInput): Promise<RuntimeResetExtensionInstructionsResult>;
-  addInstruction(input: AddExtensionInstructionInput): Promise<AddExtensionInstructionResult>;
-  removeInstruction(
-    input: RemoveExtensionInstructionInput,
-  ): Promise<RemoveExtensionInstructionResult>;
-  configureInstruction(
-    input: ConfigureExtensionInstructionInput,
-  ): Promise<ConfigureExtensionInstructionResult>;
-  renameInstruction(
-    input: RenameExtensionInstructionInput,
-  ): Promise<RenameExtensionInstructionResult>;
-  reorderInstructions(
-    input: ReorderExtensionInstructionsInput,
-  ): Promise<ReorderExtensionInstructionsResult>;
-  revertMutation(
-    input: RevertExtensionSourceMutationInput,
-  ): Promise<RuntimeRevertExtensionSourceMutationResult>;
-  configureTypescriptApi(
-    input: ConfigureExtensionTypescriptApiInput,
-  ): Promise<ConfigureExtensionTypescriptApiResult>;
-}
-
 export function parseSvvyxExtensionManagementRuntimeRequest(input: {
   command: string;
   clientRequestId: RuntimeClientRequestId;
+  workspaceId?: WorkspaceId;
 }): SvvyxExtensionManagementRuntimeRequest | null {
   const words = splitCommandLine(input.command);
   if (words[0] !== "svvyx" || words[1] !== "extensions") return null;
-  if (words[2] === "inspect") {
+  if (hasShellControlSyntax(input.command)) {
+    throw extensionsCommandError(
+      "invalid_argument",
+      "svvyx extensions commands must be invoked as a standalone command.",
+    );
+  }
+
+  const commandId = words[2];
+  if (!commandId) {
+    throw extensionsCommandError("invalid_argument", "Missing Extension Managing command.");
+  }
+  if (commandId === "inspect") {
     const { id, flags } = parseExtensionCommandArgs(words.slice(3));
     requireJson(flags);
     rejectUnknownFlags(flags, ["json"]);
     return { operation: "inspect", input: { extensionId: id } };
   }
-  if (words[2] === "build") {
+  if (commandId === "build") {
     const { id, flags } = parseExtensionCommandArgs(words.slice(3));
     requireJson(flags);
     rejectUnknownFlags(flags, ["json"]);
@@ -144,7 +102,179 @@ export function parseSvvyxExtensionManagementRuntimeRequest(input: {
       input: { extensionId: id as ExtensionId, clientRequestId: input.clientRequestId },
     };
   }
-  if (words[2] === "set-usage") {
+  if (commandId === "create") {
+    const flags = parseFlags(words.slice(3));
+    requireJson(flags);
+    rejectUnknownFlags(flags, [
+      "description",
+      "id",
+      "interface",
+      "json",
+      "title",
+      "typescript-api",
+    ]);
+    const id = validateLifecycleExtensionId(requireSingleFlagValue(flags, "id"), true);
+    const title = requireSingleFlagValue(flags, "title");
+    const description = requireSingleFlagValue(flags, "description");
+    const interfaceKind = requireSingleFlagValue(flags, "interface");
+    const typescriptApiEnabled = optionalBooleanFlag(flags, "typescript-api") ?? false;
+    if (interfaceKind !== "instructions" && interfaceKind !== "svvyx") {
+      throw extensionsCommandError(
+        "invalid_argument",
+        "Extension create --interface must be instructions or svvyx.",
+      );
+    }
+    if (interfaceKind === "instructions" && typescriptApiEnabled) {
+      throw extensionsCommandError(
+        "invalid_argument",
+        "typescriptApiEnabled is valid only with interface svvyx.",
+      );
+    }
+    return {
+      operation: "create",
+      input:
+        interfaceKind === "instructions"
+          ? { id, title, description, interfaceKind, typescriptApiEnabled: false }
+          : { id, title, description, interfaceKind, typescriptApiEnabled },
+    };
+  }
+  if (commandId === "duplicate") {
+    const flags = parseFlags(words.slice(3));
+    requireJson(flags);
+    rejectUnknownFlags(flags, ["from", "id", "json", "title"]);
+    return {
+      operation: "duplicate",
+      input: {
+        sourceExtensionId: validateLifecycleExtensionId(
+          requireSingleFlagValue(flags, "from"),
+          false,
+        ),
+        targetExtensionId: validateLifecycleExtensionId(requireSingleFlagValue(flags, "id"), true),
+        title: requireSingleFlagValue(flags, "title"),
+      },
+    };
+  }
+  if (commandId === "delete") {
+    const { id, flags } = parseExtensionCommandArgs(words.slice(3));
+    requireJson(flags);
+    rejectUnknownFlags(flags, ["json"]);
+    return {
+      operation: "delete",
+      input: { extensionId: validateLifecycleExtensionId(id, false) },
+    };
+  }
+  if (commandId === "reset") {
+    const { id, flags } = parseExtensionCommandArgs(words.slice(3));
+    requireJson(flags);
+    rejectUnknownFlags(flags, ["json", "scope"]);
+    const scope = requireSingleFlagValue(flags, "scope");
+    if (scope !== "instructions") {
+      throw extensionsCommandError(
+        "UNSUPPORTED_RESET_SCOPE",
+        "Only --scope instructions is currently resettable.",
+      );
+    }
+    return {
+      operation: "reset",
+      input: { extensionId: validateLifecycleExtensionId(id, false), scope },
+    };
+  }
+  if (commandId === "configure") {
+    const flags = parseFlags(words.slice(3));
+    requireJson(flags);
+    rejectUnknownFlags(flags, ["extension", "json", "typescript-api"]);
+    const enabled = optionalBooleanFlag(flags, "typescript-api");
+    if (enabled === null) {
+      throw extensionsCommandError("invalid_argument", "Missing --typescript-api.");
+    }
+    if (!input.workspaceId) {
+      throw extensionsCommandError(
+        "WORKSPACE_AUTHORITY_UNAVAILABLE",
+        "Extension TypeScript configuration requires the scoped workspace runtime authority.",
+      );
+    }
+    return {
+      operation: "typescript-api.configure",
+      input: {
+        workspaceId: input.workspaceId,
+        extensionId: validateLifecycleExtensionId(
+          requireSingleFlagValue(flags, "extension"),
+          false,
+        ),
+        enabled,
+      },
+    };
+  }
+  if (commandId === "instructions") {
+    const action = words[3];
+    const rawExtensionId = words[4];
+    if (!action) {
+      throw extensionsCommandError("invalid_argument", "Missing instructions command.");
+    }
+    if (!rawExtensionId || rawExtensionId.startsWith("--")) {
+      throw extensionsCommandError("invalid_argument", "Missing extension id.");
+    }
+    if (rawExtensionId.startsWith("external_instruction:")) {
+      throw extensionsCommandError(
+        "EXTERNAL_INSTRUCTION_READONLY",
+        "External instruction records are read-only and cannot be changed through instruction lifecycle commands.",
+      );
+    }
+    const extensionId = validateLifecycleExtensionId(rawExtensionId, false);
+    const flags = parseFlags(words.slice(5));
+    requireJson(flags);
+    if (action === "add" || action === "remove") {
+      rejectUnknownFlags(flags, ["json", "name"]);
+      return {
+        operation: `instructions.${action}`,
+        input: {
+          extensionId,
+          name: validateLifecycleInstructionBasename(requireSingleFlagValue(flags, "name")),
+        },
+      };
+    }
+    if (action === "configure") {
+      rejectUnknownFlags(flags, ["bypassed", "file", "json"]);
+      return {
+        operation: "instructions.configure",
+        input: {
+          extensionId,
+          name: validateConfigurableInstructionBasename(requireSingleFlagValue(flags, "file")),
+          bypassed: parseInstructionBypassedFlag(flags),
+        },
+      };
+    }
+    if (action === "rename") {
+      rejectUnknownFlags(flags, ["from", "json", "to"]);
+      return {
+        operation: "instructions.rename",
+        input: {
+          extensionId,
+          from: validateLifecycleInstructionBasename(requireSingleFlagValue(flags, "from")),
+          to: validateLifecycleInstructionBasename(requireSingleFlagValue(flags, "to")),
+        },
+      };
+    }
+    if (action === "reorder") {
+      rejectUnknownFlags(flags, ["file", "json"]);
+      const files = flags.get("file") ?? [];
+      if (files.length === 0) {
+        throw extensionsCommandError("invalid_argument", "Missing required option: --file");
+      }
+      return {
+        operation: "instructions.reorder",
+        input: {
+          extensionId,
+          order: files.map(validateLifecycleInstructionBasename),
+        },
+      };
+    }
+    throw extensionsCommandError(
+      "unsupported_command",
+      `Unsupported instructions command: ${action}`,
+    );
+  }
+  if (commandId === "set-usage") {
     const flags = parseFlags(words.slice(3));
     requireJson(flags);
     rejectUnknownFlags(flags, ["agent-profile", "extension", "json", "state"]);
@@ -162,19 +292,32 @@ export function parseSvvyxExtensionManagementRuntimeRequest(input: {
       },
     };
   }
-  if (words[2] === "revert" && words[3]?.startsWith("extension-usage-change:")) {
+  if (commandId === "revert") {
+    const changeId = words[3];
+    if (!changeId || changeId.startsWith("--")) {
+      throw extensionsCommandError("invalid_argument", "Missing extension change id.");
+    }
     const flags = parseFlags(words.slice(4));
     requireJson(flags);
     rejectUnknownFlags(flags, ["json"]);
-    return {
-      operation: "usage.revert",
-      input: {
-        clientRequestId: input.clientRequestId,
-        changeId: words[3] as import("@svvy/core").ExtensionUsageChangeId,
-      },
-    };
+    if (isExtensionUsageChangeId(changeId)) {
+      return {
+        operation: "usage.revert",
+        input: {
+          clientRequestId: input.clientRequestId,
+          changeId,
+        },
+      };
+    }
+    if (isExtensionSourceMutationId(changeId)) {
+      return {
+        operation: "source.revert",
+        input: { mutationId: changeId as never },
+      };
+    }
+    throw extensionsCommandError("CHANGE_NOT_FOUND", "Extension change id is invalid.");
   }
-  if (words[2] !== "snapshots") return null;
+  if (commandId !== "snapshots") return null;
   const action = words[3];
   if (action === "list") {
     const flags = parseFlags(words.slice(4));
@@ -227,95 +370,6 @@ export function parseSvvyxExtensionManagementRuntimeRequest(input: {
         } as SvvyxExtensionManagementRuntimeRequest);
   }
   throw extensionsCommandError("unsupported_command", `Unsupported snapshots command: ${action}`);
-}
-
-export async function runSvvyxExtensionsCommand(input: {
-  agentProfileStore?: AgentProfileMutationStore;
-  agentSettingsStore?: AgentSettingsStore;
-  buildRoot?: string;
-  command: string;
-  cwd?: string;
-  env?: NodeJS.ProcessEnv;
-  extensionsRoot?: string;
-  extensionContextImpactState?: RuntimeExtensionContextImpactStateFacade;
-  lifecycle: SvvyxExtensionsLifecycleAdapter;
-  requestInputVariant?: RequestInputVariant;
-  workspaceId?: WorkspaceId;
-}): Promise<SvvyxExtensionsCommandResult> {
-  const words = splitCommandLine(input.command);
-  if (words[0] !== "svvyx" || words[1] !== "extensions") {
-    throw extensionsCommandError("invalid_argument", "Expected svvyx extensions command.");
-  }
-  if (hasShellControlSyntax(input.command)) {
-    throw extensionsCommandError(
-      "invalid_argument",
-      "svvyx extensions commands must be invoked as a standalone command.",
-    );
-  }
-
-  const commandId = words[2];
-  if (!commandId) {
-    throw extensionsCommandError("invalid_argument", "Missing Extension Managing command.");
-  }
-  if (commandId === "inspect") {
-    throw extensionsCommandError(
-      "WORKSPACE_AUTHORITY_UNAVAILABLE",
-      "Extension inspection must be answered by the scoped Runtime/state authority.",
-    );
-  }
-  if (commandId === "create") {
-    return await runLifecycleCreateCommand(words.slice(3), input.lifecycle);
-  }
-  if (commandId === "duplicate") {
-    return await runLifecycleDuplicateCommand(words.slice(3), input.lifecycle);
-  }
-  if (commandId === "configure") {
-    return await runConfigureCommand(words.slice(3), input);
-  }
-  if (commandId === "instructions") {
-    return await runInstructionsCommand(words.slice(3), input);
-  }
-  if (commandId === "set-usage") {
-    throw extensionsCommandError(
-      "PROFILE_AUTHORITY_UNAVAILABLE",
-      "Extension usage changes must be applied by Runtime.",
-    );
-  }
-  if (commandId === "delete") {
-    return await runLifecycleDeleteCommand(words.slice(3), input.lifecycle);
-  }
-  if (commandId === "reset") {
-    return await runLifecycleResetCommand(words.slice(3), input.lifecycle);
-  }
-  if (commandId === "revert") {
-    const mutationId = words[3];
-    if (mutationId?.startsWith("extension-source-mutation:")) {
-      const flags = parseFlags(words.slice(4));
-      requireJson(flags);
-      rejectUnknownFlags(flags, ["json"]);
-      const result = await input.lifecycle.revertMutation({
-        mutationId: mutationId as RevertExtensionSourceMutationInput["mutationId"],
-      });
-      return {
-        output: { ok: true, receipt: result.source, automaticBuild: result.automaticBuild },
-        commandFacts: {
-          extensionReverted: true,
-          extensionId: result.source.extensionId,
-          extensionMutationId: result.source.mutationId,
-          revertedExtensionMutationId: result.source.revertedMutationId,
-          automaticBuildStatus: result.automaticBuild.status,
-        },
-      };
-    }
-    throw extensionsCommandError(
-      "CHANGE_NOT_FOUND",
-      "Usage-change reverts must be applied by Runtime; source lifecycle reverts require an extension-source-mutation id.",
-    );
-  }
-  throw extensionsCommandError(
-    "unsupported_command",
-    `Unsupported Extension Managing command: ${commandId}`,
-  );
 }
 
 function isAppOwnedBuiltinSvvyxCommandNamespace(
@@ -381,251 +435,6 @@ export function assertExtensionEnvWriteValue(value: string): void {
       "Extension env value is required.",
     );
   }
-}
-
-async function runLifecycleCreateCommand(
-  words: string[],
-  lifecycle: SvvyxExtensionsLifecycleAdapter,
-): Promise<SvvyxExtensionsCommandResult> {
-  const flags = parseFlags(words);
-  requireJson(flags);
-  rejectUnknownFlags(flags, ["description", "id", "interface", "json", "title", "typescript-api"]);
-  const id = requireSingleFlagValue(flags, "id") as ExtensionId;
-  const title = requireSingleFlagValue(flags, "title");
-  const description = requireSingleFlagValue(flags, "description");
-  const interfaceKind = requireSingleFlagValue(flags, "interface");
-  const typescriptApiEnabled = optionalBooleanFlag(flags, "typescript-api") ?? false;
-  if (interfaceKind !== "instructions" && interfaceKind !== "svvyx") {
-    throw extensionsCommandError(
-      "invalid_argument",
-      "Extension create --interface must be instructions or svvyx.",
-    );
-  }
-  if (interfaceKind === "instructions" && typescriptApiEnabled) {
-    throw extensionsCommandError(
-      "invalid_argument",
-      "typescriptApiEnabled is valid only with interface svvyx.",
-    );
-  }
-  const receipt = await lifecycle.create(
-    interfaceKind === "instructions"
-      ? { id, title, description, interfaceKind, typescriptApiEnabled: false }
-      : { id, title, description, interfaceKind, typescriptApiEnabled },
-  );
-  return {
-    output: { ok: true, receipt },
-    commandFacts: {
-      extensionCreated: true,
-      extensionId: receipt.extensionId,
-      extensionMutationId: receipt.mutationId,
-    },
-  };
-}
-
-async function runLifecycleDuplicateCommand(
-  words: string[],
-  lifecycle: SvvyxExtensionsLifecycleAdapter,
-): Promise<SvvyxExtensionsCommandResult> {
-  const flags = parseFlags(words);
-  requireJson(flags);
-  rejectUnknownFlags(flags, ["from", "id", "json", "title"]);
-  const receipt = await lifecycle.duplicate({
-    sourceExtensionId: requireSingleFlagValue(flags, "from") as ExtensionId,
-    targetExtensionId: requireSingleFlagValue(flags, "id") as ExtensionId,
-    title: requireSingleFlagValue(flags, "title"),
-  });
-  return {
-    output: { ok: true, receipt },
-    commandFacts: {
-      extensionDuplicated: true,
-      extensionId: receipt.extensionId,
-      duplicatedFrom: receipt.sourceExtensionId,
-      extensionMutationId: receipt.mutationId,
-    },
-  };
-}
-
-async function runLifecycleDeleteCommand(
-  words: string[],
-  lifecycle: SvvyxExtensionsLifecycleAdapter,
-): Promise<SvvyxExtensionsCommandResult> {
-  const { id, flags } = parseExtensionCommandArgs(words);
-  requireJson(flags);
-  rejectUnknownFlags(flags, ["json"]);
-  const receipt = await lifecycle.delete({ extensionId: id as ExtensionId });
-  return {
-    output: { ok: true, receipt },
-    commandFacts: {
-      extensionDeleted: true,
-      extensionId: receipt.extensionId,
-      extensionMutationId: receipt.mutationId,
-    },
-  };
-}
-
-async function runLifecycleResetCommand(
-  words: string[],
-  lifecycle: SvvyxExtensionsLifecycleAdapter,
-): Promise<SvvyxExtensionsCommandResult> {
-  const { id, flags } = parseExtensionCommandArgs(words);
-  requireJson(flags);
-  rejectUnknownFlags(flags, ["json", "scope"]);
-  const scope = requireSingleFlagValue(flags, "scope");
-  if (scope !== "instructions") {
-    throw extensionsCommandError(
-      "UNSUPPORTED_RESET_SCOPE",
-      "Only --scope instructions is currently resettable.",
-    );
-  }
-  const result = await lifecycle.reset({
-    extensionId: id as ExtensionId,
-    scope: "instructions",
-  });
-  return {
-    output: { ok: true, receipt: result.source, automaticBuild: result.automaticBuild },
-    commandFacts: {
-      extensionReset: result.source.changed,
-      extensionId: result.source.extensionId,
-      extensionMutationId: result.source.mutationId,
-      automaticBuildStatus: result.automaticBuild.status,
-    },
-  };
-}
-
-async function runConfigureCommand(
-  words: string[],
-  options: {
-    cwd?: string;
-    extensionsRoot?: string;
-    lifecycle: SvvyxExtensionsLifecycleAdapter;
-    workspaceId?: WorkspaceId;
-  },
-): Promise<SvvyxExtensionsCommandResult> {
-  const flags = parseFlags(words);
-  requireJson(flags);
-  rejectUnknownFlags(flags, ["extension", "json", "typescript-api"]);
-  const extensionId = requireSingleFlagValue(flags, "extension");
-  const typescriptApiEnabled = optionalBooleanFlag(flags, "typescript-api");
-  if (typescriptApiEnabled === undefined) {
-    throw extensionsCommandError("invalid_argument", "Missing --typescript-api.");
-  }
-  if (!options.workspaceId) {
-    throw extensionsCommandError(
-      "WORKSPACE_AUTHORITY_UNAVAILABLE",
-      "Extension TypeScript configuration requires the scoped workspace runtime authority.",
-    );
-  }
-  const result = await options.lifecycle.configureTypescriptApi({
-    workspaceId: options.workspaceId,
-    extensionId: extensionId as ExtensionId,
-    enabled: typescriptApiEnabled ?? false,
-  });
-  return {
-    output: { ok: true, receipt: result },
-    commandFacts: {
-      extensionConfigured: true,
-      extensionId: result.extensionId,
-      typescriptApiEnabled: result.enabled,
-      extensionChanged: result.changed,
-    },
-  };
-}
-
-async function runInstructionsCommand(
-  words: string[],
-  options: {
-    cwd?: string;
-    extensionsRoot?: string;
-    lifecycle: SvvyxExtensionsLifecycleAdapter;
-  },
-): Promise<SvvyxExtensionsCommandResult> {
-  const action = words[0];
-  const id = words[1];
-  if (!action) {
-    throw extensionsCommandError("invalid_argument", "Missing instructions command.");
-  }
-  if (!id || id.startsWith("--")) {
-    throw extensionsCommandError("invalid_argument", "Missing extension id.");
-  }
-  if (id.startsWith("external_instruction:")) {
-    throw extensionsCommandError(
-      "EXTERNAL_INSTRUCTION_READONLY",
-      "External instruction records are read-only and cannot be changed through instruction lifecycle commands.",
-    );
-  }
-  const flags = parseFlags(words.slice(2));
-  requireJson(flags);
-  if (action === "add") {
-    rejectUnknownFlags(flags, ["json", "name"]);
-    const receipt = await options.lifecycle.addInstruction({
-      extensionId: id as ExtensionId,
-      name: validateLifecycleInstructionBasename(requireSingleFlagValue(flags, "name")),
-    });
-    return lifecycleInstructionResult(receipt);
-  }
-  if (action === "remove") {
-    rejectUnknownFlags(flags, ["json", "name"]);
-    const receipt = await options.lifecycle.removeInstruction({
-      extensionId: id as ExtensionId,
-      name: validateLifecycleInstructionBasename(requireSingleFlagValue(flags, "name")),
-    });
-    return lifecycleInstructionResult(receipt);
-  }
-  if (action === "configure") {
-    rejectUnknownFlags(flags, ["bypassed", "file", "json"]);
-    const receipt = await options.lifecycle.configureInstruction({
-      extensionId: id as ExtensionId,
-      name: validateLifecycleInstructionBasename(requireSingleFlagValue(flags, "file")),
-      bypassed: parseInstructionBypassedFlag(flags),
-    });
-    return lifecycleInstructionResult(receipt);
-  }
-  if (action === "rename") {
-    rejectUnknownFlags(flags, ["from", "json", "to"]);
-    const receipt = await options.lifecycle.renameInstruction({
-      extensionId: id as ExtensionId,
-      from: validateLifecycleInstructionBasename(requireSingleFlagValue(flags, "from")),
-      to: validateLifecycleInstructionBasename(requireSingleFlagValue(flags, "to")),
-    });
-    return lifecycleInstructionResult(receipt);
-  }
-  if (action === "reorder") {
-    rejectUnknownFlags(flags, ["file", "json"]);
-    const receipt = await options.lifecycle.reorderInstructions({
-      extensionId: id as ExtensionId,
-      order: (flags.get("file") ?? []).map(validateLifecycleInstructionBasename),
-    });
-    return lifecycleInstructionResult(receipt);
-  }
-
-  throw extensionsCommandError(
-    "unsupported_command",
-    `Unsupported instructions command: ${action}`,
-  );
-}
-
-function lifecycleInstructionResult(
-  receipt:
-    | AddExtensionInstructionResult
-    | RemoveExtensionInstructionResult
-    | ConfigureExtensionInstructionResult
-    | RenameExtensionInstructionResult
-    | ReorderExtensionInstructionsResult,
-): SvvyxExtensionsCommandResult {
-  return {
-    output: { ok: true, receipt },
-    commandFacts: {
-      instructionChanged: receipt.changed,
-      instructionAction: receipt.action,
-      ...(receipt.action === "instruction-renamed"
-        ? { instructionFile: receipt.to }
-        : "name" in receipt
-          ? { instructionFile: receipt.name }
-          : {}),
-      extensionId: receipt.extensionId,
-      extensionMutationId: receipt.mutationId,
-    },
-  };
 }
 
 function validateUsageState(value: string): ExtensionUsageState {
@@ -1379,6 +1188,26 @@ function validateInstructionBasename(name: string): string {
   return name;
 }
 
+function validateLifecycleExtensionId(value: string, creatable: boolean): ExtensionId {
+  if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(value)) {
+    throw extensionsCommandError("invalid_argument", "Extension id is invalid.");
+  }
+  if (creatable && value === "extensions") {
+    throw extensionsCommandError("invalid_argument", "extensions is a reserved extension id.");
+  }
+  return value as ExtensionId;
+}
+
+function isExtensionSourceMutationId(value: string): boolean {
+  return /^extension-source-mutation:[a-z][a-z0-9]*(?:-[a-z0-9]+)*:[0-9a-f]{64}$/.test(value);
+}
+
+function isExtensionUsageChangeId(value: string): value is ExtensionUsageChangeId {
+  return (
+    value.startsWith("extension-usage-change:") && value.length > "extension-usage-change:".length
+  );
+}
+
 function validateLifecycleInstructionBasename(name: string): AddExtensionInstructionInput["name"] {
   validateInstructionBasename(name);
   if (name.endsWith(".generated.md")) {
@@ -1394,6 +1223,16 @@ function validateLifecycleInstructionBasename(name: string): AddExtensionInstruc
     );
   }
   return name as AddExtensionInstructionInput["name"];
+}
+
+function validateConfigurableInstructionBasename(
+  name: string,
+): ConfigureExtensionInstructionInput["name"] {
+  validateInstructionBasename(name);
+  if (name.endsWith(".generated.md")) {
+    return name as ConfigureExtensionInstructionInput["name"];
+  }
+  return validateLifecycleInstructionBasename(name);
 }
 
 function parseInstructionBypassedFlag(flags: Map<string, string[]>): boolean {
@@ -1654,7 +1493,7 @@ function hasShellControlSyntax(command: string): boolean {
       quote = quote ? null : char;
       continue;
     }
-    if (!quote && ["|", ";", "&", ">", "<"].includes(char)) {
+    if (!quote && ["|", ";", "&", ">", "<", "\n", "\r"].includes(char)) {
       return true;
     }
   }

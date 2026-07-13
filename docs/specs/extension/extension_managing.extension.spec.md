@@ -2622,12 +2622,13 @@ for any agent profile, not only the profile currently bound to that actor sessio
 management command: Extension Managing validates intent and produces a closed state-change request.
 `@svvy/runtime` applies that request through the appropriate core-owned profile/actor-usage state
 contract implemented by `@svvy/state`. When called through Shell `exec_command`,
-`svvyx extensions` is ordinary app-owned CLI input. The child process only parses `set-usage` or a
-usage-change `revert` into the strict response-bearing
-`SvvyxExtensionManagementRuntimeRequest`; the parent applies it through `@svvy/runtime` and replaces
-the placeholder child output and facts with the committed result. The CLI subprocess never opens
-the state database, constructs state ports, writes a `.svvy/changes` journal, mutates an
-`AgentProfileMutationStore`, or decides which live sessions are affected.
+`svvyx extensions` is ordinary app-owned CLI input. The child process parses inspect, build, source
+lifecycle, instruction lifecycle, TypeScript-API configuration, usage, and snapshot commands into
+the strict response-bearing `SvvyxExtensionManagementRuntimeRequest`; the parent applies each one
+through `@svvy/runtime` and replaces the placeholder child output and facts with the committed
+result. The CLI subprocess never mutates extension source, opens the state database, constructs
+state ports, writes a `.svvy/changes` journal, mutates an `AgentProfileMutationStore`, or decides
+which live sessions are affected.
 
 The applied request changes the target agent profile's persistent extension usage state and reports
 existing sessions or task attempts that are bound to the affected profile and whose generated agent

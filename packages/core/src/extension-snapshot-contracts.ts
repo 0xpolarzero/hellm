@@ -21,7 +21,10 @@ import {
   StateCommandReceiptSchema,
   StateRevisionSchema,
 } from "./runtime-contracts";
-import type { StateMutationResult } from "./runtime-state-ports";
+import {
+  RuntimeExtensionContextChangedSurfaceSchema,
+  type StateMutationResult,
+} from "./runtime-state-ports";
 
 const NonBlankStringSchema = Schema.String.check(Schema.isPattern(/\S/));
 const Sha256DigestSchema = Schema.String.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/));
@@ -254,6 +257,7 @@ const ExtensionSnapshotRestoreAttemptFields = Schema.Struct({
   updatedAt: IsoDateTimeStringSchema,
   finishedAt: Schema.NullOr(IsoDateTimeStringSchema),
   failureReason: Schema.NullOr(ExtensionSnapshotRestoreFailureReasonSchema),
+  affectedSurfaces: Schema.Array(RuntimeExtensionContextChangedSurfaceSchema),
 });
 export const ExtensionSnapshotRestoreAttemptSchema = ExtensionSnapshotRestoreAttemptFields.pipe(
   Schema.check(
@@ -280,6 +284,7 @@ export const AdvanceExtensionSnapshotRestoreAttemptCommandSchema = Schema.Struct
   status: ExtensionSnapshotRestoreStatusSchema,
   updatedAt: IsoDateTimeStringSchema,
   failureReason: Schema.NullOr(ExtensionSnapshotRestoreFailureReasonSchema),
+  affectedSurfaces: Schema.Array(RuntimeExtensionContextChangedSurfaceSchema),
 });
 export type AdvanceExtensionSnapshotRestoreAttemptCommand =
   typeof AdvanceExtensionSnapshotRestoreAttemptCommandSchema.Type;
@@ -434,6 +439,7 @@ export const RuntimeLoadExtensionSnapshotResultSchema = Schema.Struct({
   attemptId: ExtensionSnapshotRestoreAttemptIdSchema,
   status: Schema.Literals(["completed", "failed", "blocked"]),
   builds: Schema.Array(RuntimeExtensionSnapshotBuildResultSchema),
+  affectedSurfaces: Schema.Array(RuntimeExtensionContextChangedSurfaceSchema),
 });
 export type RuntimeLoadExtensionSnapshotResult =
   typeof RuntimeLoadExtensionSnapshotResultSchema.Type;

@@ -34,9 +34,6 @@ import {
   WorkflowTaskRuntimeSurfaceTargetSchema,
   RequestUserInputResolvedAnswerSchema,
   RunTaskAgentPromptSourceSchema,
-  RuntimeExtensionSnapshotContextImpactTransportInputSchema,
-  RuntimeExtensionUsageContextImpactTransportInputSchema,
-  RuntimeExtensionUsageProfileKeyTransportSchema,
   AnswerRequestInputResultSchema,
   RuntimeClientSubmissionInputSchema,
   StateCommandReceiptSchema,
@@ -2657,16 +2654,24 @@ export const RuntimeExtensionContextChangedSurfaceSchema = Schema.Struct({
 export type RuntimeExtensionContextChangedSurface =
   typeof RuntimeExtensionContextChangedSurfaceSchema.Type;
 
-export const ListRuntimeExtensionUsageContextAffectedSurfacesInputSchema =
-  RuntimeExtensionUsageContextImpactTransportInputSchema;
+export const ListRuntimeExtensionUsageContextAffectedSurfacesInputSchema = Schema.Struct({
+  agentProfile: Schema.String,
+  profileId: AgentProfileId,
+});
 export type ListRuntimeExtensionUsageContextAffectedSurfacesInput =
   typeof ListRuntimeExtensionUsageContextAffectedSurfacesInputSchema.Type;
 
-export const RuntimeExtensionUsageProfileKeySchema = RuntimeExtensionUsageProfileKeyTransportSchema;
+export const RuntimeExtensionUsageProfileKeySchema = Schema.Union([
+  Schema.TemplateLiteral(["orchestrator:", Schema.String.check(Schema.isNonEmpty())]),
+  Schema.Literal("handler:threadHandler"),
+]);
 export type RuntimeExtensionUsageProfileKey = typeof RuntimeExtensionUsageProfileKeySchema.Type;
 
-export const ApplyRuntimeExtensionSnapshotContextImpactInputSchema =
-  RuntimeExtensionSnapshotContextImpactTransportInputSchema;
+export const ApplyRuntimeExtensionSnapshotContextImpactInputSchema = Schema.Struct({
+  affectedExtensionIds: Schema.Array(ExtensionId),
+  affectedUsageProfiles: Schema.Array(RuntimeExtensionUsageProfileKeySchema),
+  removedUserExtensionIds: Schema.Array(ExtensionId),
+});
 export type ApplyRuntimeExtensionSnapshotContextImpactInput =
   typeof ApplyRuntimeExtensionSnapshotContextImpactInputSchema.Type;
 
@@ -2690,15 +2695,6 @@ export const RuntimeExtensionContextImpactStatePort = Context.Service<
   RuntimeExtensionContextImpactStatePort,
   RuntimeExtensionContextImpactStatePortService
 >("@svvy/core/RuntimeExtensionContextImpactStatePort");
-
-export interface RuntimeExtensionContextImpactStateFacade {
-  listUsageContextAffectedSurfaces(
-    input: ListRuntimeExtensionUsageContextAffectedSurfacesInput,
-  ): ReadonlyArray<RuntimeExtensionContextChangedSurface>;
-  applySnapshotContextImpact(
-    input: ApplyRuntimeExtensionSnapshotContextImpactInput,
-  ): ReadonlyArray<RuntimeExtensionContextChangedSurface>;
-}
 
 export type RuntimeRecoveryWorkKind =
   | "queue_delivery"

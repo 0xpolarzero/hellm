@@ -904,11 +904,10 @@ export const auditedEffectInstalledExportMemberPolicies = [
     adoptionState: "adopted-source-gated",
     allowedSourceGlobs: [
       "packages/runtime/src/source-invalidation-coordinator-adapter.ts",
-      "src/bun/extension-lifecycle-authority.ts",
       "src/bun/runtime-service-adapter.ts",
     ],
     productReason:
-      "Runtime app-bootstrap and source-invalidation coordinator adapters are named Promise edges for already composed runtime effects. The app-owned Extension Managing lifecycle adapter is the exact Promise edge that supplies Bun file/path/crypto host services to package-owned source lifecycle effects invoked by the svvyx command boundary. These seams do not expose generic runners.",
+      "Runtime app-bootstrap and source-invalidation coordinator adapters are named Promise edges for already composed runtime effects. These seams do not expose generic runners.",
   },
   {
     module: "effect/Effect",

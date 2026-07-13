@@ -36,7 +36,6 @@ import {
   SandboxPolicyError,
   StateContractError,
   type AbsolutePath,
-  type BuildRuntimeExtensionInput,
   type ExtensionSnapshotCleanupId,
   type ExtensionSnapshotId,
   type ExtensionSnapshotRestoreAttemptId,
@@ -131,7 +130,7 @@ type WorkspaceGeneratedPackageBoundaryHost = RuntimeGeneratedPackageRefreshBound
   generatedPackageLinkPath(input: GeneratedPackageWorkspaceLinkRepairInput): Promise<AbsolutePath>;
 };
 
-async function applyExtensionManagementRuntimeRequest(
+export async function applyExtensionManagementRuntimeRequest(
   runtime: AppRuntimeBootstrap,
   request: SvvyxExtensionManagementRuntimeRequest,
   workspaceId?: WorkspaceId,
@@ -331,6 +330,146 @@ async function applyExtensionManagementRuntimeRequest(
       },
     };
   }
+  if (request.operation === "create") {
+    const receipt = await runtime.facade.extensions.create(request.input);
+    return {
+      output: { ok: true, receipt },
+      commandFacts: {
+        extensionCreated: true,
+        extensionId: receipt.extensionId,
+        extensionMutationId: receipt.mutationId,
+      },
+    };
+  }
+  if (request.operation === "duplicate") {
+    const receipt = await runtime.facade.extensions.duplicate(request.input);
+    return {
+      output: { ok: true, receipt },
+      commandFacts: {
+        extensionDuplicated: true,
+        extensionId: receipt.extensionId,
+        duplicatedFrom: receipt.sourceExtensionId,
+        extensionMutationId: receipt.mutationId,
+      },
+    };
+  }
+  if (request.operation === "delete") {
+    const receipt = await runtime.facade.extensions.delete(request.input);
+    return {
+      output: { ok: true, receipt },
+      commandFacts: {
+        extensionDeleted: true,
+        extensionId: receipt.extensionId,
+        extensionMutationId: receipt.mutationId,
+      },
+    };
+  }
+  if (request.operation === "reset") {
+    const result = await runtime.facade.extensions.reset(request.input);
+    return {
+      output: { ok: true, receipt: result.source, automaticBuild: result.automaticBuild },
+      commandFacts: {
+        extensionReset: result.source.changed,
+        extensionId: result.source.extensionId,
+        extensionMutationId: result.source.mutationId,
+        automaticBuildStatus: result.automaticBuild.status,
+      },
+    };
+  }
+  if (request.operation === "instructions.add") {
+    const receipt = await runtime.facade.extensions.addInstruction(request.input);
+    return {
+      output: { ok: true, receipt },
+      commandFacts: {
+        instructionChanged: receipt.changed,
+        instructionAction: receipt.action,
+        instructionFile: receipt.name,
+        extensionId: receipt.extensionId,
+        extensionMutationId: receipt.mutationId,
+      },
+    };
+  }
+  if (request.operation === "instructions.remove") {
+    const receipt = await runtime.facade.extensions.removeInstruction(request.input);
+    return {
+      output: { ok: true, receipt },
+      commandFacts: {
+        instructionChanged: receipt.changed,
+        instructionAction: receipt.action,
+        instructionFile: receipt.name,
+        extensionId: receipt.extensionId,
+        extensionMutationId: receipt.mutationId,
+      },
+    };
+  }
+  if (request.operation === "instructions.configure") {
+    const receipt = await runtime.facade.extensions.configureInstruction(request.input);
+    return {
+      output: { ok: true, receipt },
+      commandFacts: {
+        instructionChanged: receipt.changed,
+        instructionAction: receipt.action,
+        instructionFile: receipt.name,
+        extensionId: receipt.extensionId,
+        extensionMutationId: receipt.mutationId,
+      },
+    };
+  }
+  if (request.operation === "instructions.rename") {
+    const receipt = await runtime.facade.extensions.renameInstruction(request.input);
+    return {
+      output: { ok: true, receipt },
+      commandFacts: {
+        instructionChanged: receipt.changed,
+        instructionAction: receipt.action,
+        instructionFile: receipt.to,
+        extensionId: receipt.extensionId,
+        extensionMutationId: receipt.mutationId,
+      },
+    };
+  }
+  if (request.operation === "instructions.reorder") {
+    const receipt = await runtime.facade.extensions.reorderInstructions(request.input);
+    return {
+      output: { ok: true, receipt },
+      commandFacts: {
+        instructionChanged: receipt.changed,
+        instructionAction: receipt.action,
+        extensionId: receipt.extensionId,
+        extensionMutationId: receipt.mutationId,
+      },
+    };
+  }
+  if (request.operation === "source.revert") {
+    const result = await runtime.facade.extensions.revertMutation(request.input);
+    return {
+      output: { ok: true, receipt: result.source, automaticBuild: result.automaticBuild },
+      commandFacts: {
+        extensionReverted: true,
+        extensionId: result.source.extensionId,
+        extensionMutationId: result.source.mutationId,
+        revertedExtensionMutationId: result.source.revertedMutationId,
+        automaticBuildStatus: result.automaticBuild.status,
+      },
+    };
+  }
+  if (request.operation === "typescript-api.configure") {
+    if (!workspaceId || request.input.workspaceId !== workspaceId) {
+      throw new Error(
+        "Extension TypeScript API configuration must target its owning scoped workspace runtime.",
+      );
+    }
+    const receipt = await runtime.facade.sourceEdits.configureTypescriptApi(request.input);
+    return {
+      output: { ok: true, receipt },
+      commandFacts: {
+        extensionConfigured: true,
+        extensionId: receipt.extensionId,
+        typescriptApiEnabled: receipt.enabled,
+        extensionChanged: receipt.changed,
+      },
+    };
+  }
   if (request.operation === "usage.set") {
     const result = await runtime.facade.extensions.setUsage({
       clientRequestId: request.input.clientRequestId,
@@ -349,7 +488,7 @@ async function applyExtensionManagementRuntimeRequest(
         agentContextImpact: {
           affectsNewTurns: true,
           activeRunsChangeAtNextSafeBoundary: true,
-          affectedSurfaces: result.affectedSurfaceCount,
+          affectedSurfaces: result.affectedSurfaces,
         },
       },
       commandFacts: {
@@ -358,7 +497,7 @@ async function applyExtensionManagementRuntimeRequest(
         agentProfile: request.input.agentProfile,
         beforeUsageState: result.change.before,
         afterUsageState: result.change.after,
-        affectedAgentContextSurfaces: result.affectedSurfaceCount,
+        affectedAgentContextSurfaces: result.affectedSurfaces.length,
       },
     };
   }
@@ -374,7 +513,7 @@ async function applyExtensionManagementRuntimeRequest(
         agentContextImpact: {
           affectsNewTurns: true,
           activeRunsChangeAtNextSafeBoundary: true,
-          affectedSurfaces: result.affectedSurfaceCount,
+          affectedSurfaces: result.affectedSurfaces,
         },
       },
       commandFacts: {
@@ -382,7 +521,7 @@ async function applyExtensionManagementRuntimeRequest(
         extensionId: result.change.extensionId,
         revertedExtensionChangeId: request.input.changeId,
         extensionChangeId: result.change.changeId,
-        affectedAgentContextSurfaces: result.affectedSurfaceCount,
+        affectedAgentContextSurfaces: result.affectedSurfaces.length,
       },
     };
   }
@@ -445,12 +584,18 @@ async function applyExtensionManagementRuntimeRequest(
     attemptId: `extension-snapshot-restore:${randomUUID()}` as ExtensionSnapshotRestoreAttemptId,
     startedAt: now as never,
   });
+  const { affectedSurfaces, ...snapshotResult } = result;
   return {
-    output: { ok: result.status === "completed", ...result },
+    output: {
+      ok: result.status === "completed",
+      ...snapshotResult,
+      agentContextImpact: { affectedSurfaces },
+    },
     commandFacts: {
       extensionSnapshotLoaded: result.status === "completed",
       snapshotId: result.snapshotId,
       extensionSnapshotLoadStatus: result.status,
+      affectedAgentContextSurfaces: affectedSurfaces.length,
     },
   };
 }
@@ -1613,18 +1758,6 @@ export class WorkspaceRuntimeRegistry {
           const runtime = await this.getAppRuntimeBootstrap();
           return runtime.internal.acceptedNativeTools.runLoadExtension(request);
         },
-        applyExtensionLifecycleRuntimeEffect: async (request) => {
-          const runtime = await this.getAppRuntimeBootstrap();
-          if (request.type === "extension_source.reconcile") {
-            await runtime.facade.extensions.reconcileMutation(request.input);
-          } else {
-            await runtime.facade.extensions.build({
-              extensionId: request.input.extensionId,
-              clientRequestId:
-                `extension-build:${request.input.mutationId}` as BuildRuntimeExtensionInput["clientRequestId"],
-            });
-          }
-        },
         applyExtensionManagementRuntimeRequest: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();
           return applyExtensionManagementRuntimeRequest(
@@ -2555,18 +2688,6 @@ export class WorkspaceRuntimeRegistry {
         runAcceptedLoadExtension: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();
           return runtime.internal.acceptedNativeTools.runLoadExtension(request);
-        },
-        applyExtensionLifecycleRuntimeEffect: async (request) => {
-          const runtime = await this.getAppRuntimeBootstrap();
-          if (request.type === "extension_source.reconcile") {
-            await runtime.facade.extensions.reconcileMutation(request.input);
-          } else {
-            await runtime.facade.extensions.build({
-              extensionId: request.input.extensionId,
-              clientRequestId:
-                `extension-build:${request.input.mutationId}` as BuildRuntimeExtensionInput["clientRequestId"],
-            });
-          }
         },
         applyExtensionManagementRuntimeRequest: async (request) => {
           const runtime = await this.getAppRuntimeBootstrap();

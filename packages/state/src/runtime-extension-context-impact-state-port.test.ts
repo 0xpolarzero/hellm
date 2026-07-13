@@ -8,15 +8,8 @@ import {
   type SurfacePiSessionId,
   type WorkspaceId,
 } from "@svvy/core";
-import {
-  layerRuntimeExtensionContextImpactStatePort,
-  runtimeExtensionContextImpactStateFacadeFromStore,
-} from "./runtime-extension-context-impact-state-port";
-import {
-  createStructuredSessionStateStore,
-  layerStructuredSessionState,
-  StructuredSessionState,
-} from "./structured-session-state";
+import { layerRuntimeExtensionContextImpactStatePort } from "./runtime-extension-context-impact-state-port";
+import { layerStructuredSessionState, StructuredSessionState } from "./structured-session-state";
 import { runTestEffect } from "./effect.test-support";
 
 const workspace = {
@@ -27,84 +20,11 @@ const workspace = {
 const workspaceId = workspace.id as WorkspaceId;
 
 const sessionA = "session-a" as SurfacePiSessionId;
-const sessionB = "session-b" as SurfacePiSessionId;
 const threadA = "thread-a" as SurfacePiSessionId;
 const profileA = "profile-a" as AgentProfileId;
 const profileB = "profile-b" as AgentProfileId;
 
 describe("RuntimeExtensionContextImpactStatePort", () => {
-  it("lists affected surfaces and applies snapshot cleanup through the synchronous facade", () => {
-    const store = createStructuredSessionStateStore({ workspace });
-    try {
-      seedExtensionContextImpactState(store);
-      const facade = runtimeExtensionContextImpactStateFacadeFromStore(store);
-
-      expect(
-        facade.listUsageContextAffectedSurfaces({
-          agentProfile: "default-orchestrator",
-          profileId: profileA,
-        }),
-      ).toEqual([
-        {
-          surfacePiSessionId: sessionA,
-          kind: "extension_context_changed",
-          label: "Extensions changed",
-          reason: "extension_usage_changed",
-        },
-      ]);
-      expect(
-        facade.listUsageContextAffectedSurfaces({
-          agentProfile: "threadHandler",
-          profileId: "threadHandler" as AgentProfileId,
-        }),
-      ).toEqual([
-        {
-          surfacePiSessionId: threadA,
-          kind: "extension_context_changed",
-          label: "Extensions changed",
-          reason: "extension_usage_changed",
-        },
-      ]);
-
-      const affected = facade.applySnapshotContextImpact({
-        affectedExtensionIds: ["notes" as ExtensionId],
-        affectedUsageProfiles: ["orchestrator:profile-b"],
-        removedUserExtensionIds: ["scratch" as ExtensionId],
-      });
-
-      expect(affected).toEqual([
-        {
-          surfacePiSessionId: sessionA,
-          kind: "extension_context_changed",
-          label: "Extensions changed",
-          reason: "snapshot_loaded",
-        },
-        {
-          surfacePiSessionId: threadA,
-          kind: "extension_context_changed",
-          label: "Extensions changed",
-          reason: "snapshot_loaded",
-        },
-        {
-          surfacePiSessionId: sessionB,
-          kind: "extension_context_changed",
-          label: "Extensions changed",
-          reason: "snapshot_loaded",
-        },
-      ]);
-      const snapshotA = store.getSessionState("session-a");
-      expect(snapshotA.pi.loadedExtensionIds).toEqual(["notes"]);
-      expect(snapshotA.pi.availableExtensionIds).toEqual(["linear"]);
-      expect(snapshotA.threads[0]?.loadedExtensionIds).toEqual([]);
-      expect(snapshotA.threads[0]?.availableExtensionIds).toEqual(["notes"]);
-      const snapshotB = store.getSessionState("session-b");
-      expect(snapshotB.pi.loadedExtensionIds).toEqual(["base-common"]);
-      expect(snapshotB.pi.availableExtensionIds).toEqual([]);
-    } finally {
-      store.close();
-    }
-  });
-
   it("provides the Effect service through the package layer", async () => {
     await runTestEffect(
       Effect.scoped(
@@ -163,57 +83,6 @@ describe("RuntimeExtensionContextImpactStatePort", () => {
     );
   });
 });
-
-function seedExtensionContextImpactState(
-  store: ReturnType<typeof createStructuredSessionStateStore>,
-) {
-  store.upsertPiSession({
-    sessionId: "session-a",
-    title: "Session A",
-    provider: "openai",
-    model: "gpt-5.4",
-    reasoningEffort: "high",
-    orchestratorAgentProfileId: profileA,
-    loadedExtensionIds: ["notes", "scratch"],
-    availableExtensionIds: ["linear", "scratch"],
-    messageCount: 0,
-    status: "idle",
-    createdAt: "2026-04-18T08:55:00.000Z",
-    updatedAt: "2026-04-18T08:56:00.000Z",
-  });
-  store.upsertPiSession({
-    sessionId: "session-b",
-    title: "Session B",
-    provider: "openai",
-    model: "gpt-5.4",
-    reasoningEffort: "high",
-    orchestratorAgentProfileId: profileB,
-    loadedExtensionIds: ["base-common"],
-    availableExtensionIds: [],
-    messageCount: 0,
-    status: "idle",
-    createdAt: "2026-04-18T08:55:00.000Z",
-    updatedAt: "2026-04-18T08:56:00.000Z",
-  });
-  const turn = store.startTurn({
-    sessionId: "session-a",
-    surfacePiSessionId: sessionA,
-    requestSummary: "Start handler.",
-  });
-  const thread = store.createThread({
-    turnId: turn.id,
-    surfacePiSessionId: threadA,
-    title: "Thread A",
-    objective: "Handle extension context impact.",
-    loadedExtensionIds: ["scratch"],
-    availableExtensionIds: ["notes", "scratch"],
-  });
-  store.updateThread({
-    threadId: thread.id,
-    loadedExtensionIds: ["scratch"],
-    availableExtensionIds: ["notes", "scratch"],
-  });
-}
 
 function seedExtensionContextImpactStateEffect(state: StructuredSessionState["Service"]) {
   return Effect.gen(function* () {
