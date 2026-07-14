@@ -1519,7 +1519,8 @@
                 `Layout ${slot.id}: ${slot.initialized ? "switch to this saved pane arrangement" : "start a new pane arrangement"}`
               }
               aria-selected={slot.id === activeLayoutId}
-              class={`workspace-layout-tab ${slot.id === activeLayoutId ? "active" : ""} ${slot.initialized ? "initialized" : "empty"}`.trim()}
+              class={`workspace-layout-tab ${slot.id === activeLayoutId ? "active" : ""} ${slot.initialized ? "initialized" : "empty"} ${mutatingSession ? "disabled" : ""}`.trim()}
+              disabled={mutatingSession}
               onclick={() => void handleSwitchLayout(slot.id)}
             >
               {slot.id}

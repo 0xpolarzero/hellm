@@ -155,7 +155,7 @@ async function openActionsPalette(page: SvvyApp["page"]): Promise<void> {
     .getByRole("button", { name: "Open command palette" })
     .filter({ visible: true })
     .first()
-    .click({ force: true });
+    .click();
   await page.getByTestId("command-palette").waitFor({ state: "visible" });
 }
 
@@ -164,51 +164,23 @@ async function openQuickOpen(page: SvvyApp["page"]): Promise<void> {
     .getByRole("button", { name: "Open quick open" })
     .filter({ visible: true })
     .first()
-    .click({ force: true });
+    .click();
   await page.getByTestId("quick-open").waitFor({ state: "visible" });
 }
 
-async function waitForSessionRows(
-  page: SvvyApp["page"],
-  expectedCount: number,
-  timeoutMs = 15_000,
-): Promise<void> {
+async function waitForSessionRows(page: SvvyApp["page"], expectedCount: number): Promise<void> {
   const rows = page.locator(".session-item");
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    if ((await rows.count()) === expectedCount) {
-      return;
-    }
-    await Bun.sleep(100);
+  if (expectedCount > 0) {
+    await rows.nth(expectedCount - 1).waitFor({ state: "visible" });
   }
-
-  throw new Error(`Timed out waiting for ${expectedCount} session rows.`);
+  await rows.nth(expectedCount).waitFor({ state: "hidden" });
+  expect(await rows.count()).toBe(expectedCount);
 }
 
 async function waitForMainTitle(page: SvvyApp["page"], expected: string): Promise<void> {
   const title = page.locator('.session-main[aria-current="true"] strong');
-  const deadline = Date.now() + 15_000;
-  let lastText = "";
-
-  while (Date.now() < deadline) {
-    lastText = (await title.textContent())?.trim() ?? "";
-    if (lastText === expected) {
-      return;
-    }
-    await Bun.sleep(100);
-  }
-
-  throw new Error(`Timed out waiting for main title "${expected}". Last text was "${lastText}".`);
-}
-
-async function waitForChatRequest(stub: PaletteChatStub): Promise<void> {
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    if (stub.requests.length > 0) return;
-    await Bun.sleep(100);
-  }
-  throw new Error("Timed out waiting for the palette fallback prompt request.");
+  await title.filter({ hasText: expected }).waitFor({ state: "visible" });
+  expect((await title.textContent())?.trim()).toBe(expected);
 }
 
 async function openSession(page: SvvyApp["page"], title: string): Promise<void> {
@@ -218,25 +190,16 @@ async function openSession(page: SvvyApp["page"], title: string): Promise<void> 
       has: page.locator("strong").filter({ hasText: title }),
     })
     .first()
-    .click({ force: true });
+    .click();
 }
 
-async function waitForPaneCount(
-  page: SvvyApp["page"],
-  expectedCount: number,
-  timeoutMs = 15_000,
-): Promise<void> {
+async function waitForPaneCount(page: SvvyApp["page"], expectedCount: number): Promise<void> {
   const panes = page.locator('[data-testid="workspace-pane"]');
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    if ((await panes.count()) === expectedCount) {
-      return;
-    }
-    await Bun.sleep(100);
+  if (expectedCount > 0) {
+    await panes.nth(expectedCount - 1).waitFor({ state: "visible" });
   }
-
-  throw new Error(`Timed out waiting for ${expectedCount} workspace panes.`);
+  await panes.nth(expectedCount).waitFor({ state: "hidden" });
+  expect(await panes.count()).toBe(expectedCount);
 }
 
 async function launchWithPaletteSessions(fn: (app: SvvyApp) => Promise<void>): Promise<void> {
@@ -266,7 +229,7 @@ test("Cmd+Shift+P opens with command prefix and routes session commands through 
     expect((await openAlpha.locator(".command-palette-kind-badge").textContent())?.trim()).toBe(
       "Orchestrator",
     );
-    await openAlpha.click({ force: true });
+    await openAlpha.click();
 
     await waitForMainTitle(page, "Alpha Palette");
     await waitForPaneCount(page, 1);
@@ -308,7 +271,9 @@ test("unmatched command-mode text creates a normal prompted session", async () =
 
         await waitForSessionRows(page, 3);
         await waitForMainTitle(page, "zzzzzzzzzz palette fallback prompt");
-        await waitForChatRequest(stub);
+        await page
+          .getByText(/^Palette handled: zzzzzzzzzz palette fallback prompt$/)
+          .waitFor({ state: "visible" });
         expect(stub.requests.length).toBeGreaterThan(0);
       },
     );

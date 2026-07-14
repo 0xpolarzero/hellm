@@ -73,6 +73,7 @@
 		isStreaming: boolean;
 		turnTimings: ConversationTurnTiming[];
 		workspaceMentionPaths?: ReadonlySet<string>;
+		commandRollups?: WorkspaceCommandRollup[];
 		semanticBlocks?: TranscriptSemanticBlock[];
 		onOpenArtifact: (target: TranscriptArtifactOpenTarget) => void;
 		onOpenWorkspacePath: (path: string) => void;
@@ -99,6 +100,7 @@
 		isStreaming,
 		turnTimings,
 		workspaceMentionPaths = new Set(),
+		commandRollups = [],
 		semanticBlocks = [],
 		onOpenArtifact,
 		onOpenWorkspacePath,
@@ -129,11 +131,10 @@
 	const streamingAssistant = $derived(streamMessage ?? null);
 	const commandRollupByToolCallId = $derived.by(() => {
 		const byToolCallId = new Map<string, WorkspaceCommandRollup>();
-		for (const block of semanticBlocks) {
-			if (block.kind !== "command-rollup") continue;
-			const toolCallId = block.command.facts?.toolCallId;
+		for (const command of commandRollups) {
+			const toolCallId = command.facts?.toolCallId;
 			if (typeof toolCallId === "string" && toolCallId) {
-				byToolCallId.set(toolCallId, block.command);
+				byToolCallId.set(toolCallId, command);
 			}
 		}
 		return byToolCallId;
@@ -215,6 +216,7 @@
 		anchorTo: "end",
 		scrollEndThreshold: TRANSCRIPT_STICK_TO_BOTTOM_THRESHOLD_PX,
 		followOnAppend: "auto",
+		useAnimationFrameWithResizeObserver: true,
 		enabled: true,
 	});
 	const virtualRows = $derived($transcriptVirtualizer.getVirtualItems());
@@ -636,8 +638,16 @@
 
 	function measureTranscriptRow(node: HTMLElement) {
 		$transcriptVirtualizer.measureElement(node);
+		let measureFrame: number | null = null;
 		const observer = new ResizeObserver(() => {
-			$transcriptVirtualizer.measureElement(node);
+			if (measureFrame !== null) return;
+			measureFrame = requestAnimationFrame(() => {
+				measureFrame = null;
+				$transcriptVirtualizer.measureElement(node);
+				if (transcriptPinnedToEnd) {
+					$transcriptVirtualizer.scrollToEnd({ behavior: "auto" });
+				}
+			});
 		});
 		observer.observe(node);
 		return {
@@ -646,6 +656,7 @@
 			},
 			destroy() {
 				observer.disconnect();
+				if (measureFrame !== null) cancelAnimationFrame(measureFrame);
 				$transcriptVirtualizer.measureElement(null);
 			}
 		};
@@ -654,8 +665,13 @@
 	onMount(() => {
 		syncViewportMetrics();
 
+		let viewportFrame: number | null = null;
 		const observer = new ResizeObserver(() => {
-			syncViewportMetrics();
+			if (viewportFrame !== null) return;
+			viewportFrame = requestAnimationFrame(() => {
+				viewportFrame = null;
+				syncViewportMetrics();
+			});
 		});
 		const scrollElement = scroller;
 		const transcriptThreadElement = threadElement;
@@ -665,6 +681,7 @@
 
 		return () => {
 			observer.disconnect();
+			if (viewportFrame !== null) cancelAnimationFrame(viewportFrame);
 		};
 	});
 
@@ -700,6 +717,7 @@
 			anchorTo: "end",
 			scrollEndThreshold: TRANSCRIPT_STICK_TO_BOTTOM_THRESHOLD_PX,
 			followOnAppend: transcriptFollowBehavior(),
+			useAnimationFrameWithResizeObserver: true,
 			enabled: true,
 		});
 	}
@@ -896,9 +914,9 @@
 							</div>
 						{/if}
 						{#if userAttachments(message).length > 0}
-							<div class="user-attachments" aria-label="Attached files">
+							<div class="user-attachments" role="group" aria-label="Attached files">
 								{#if userImageAttachments(message).length > 0}
-									<div class="user-image-gallery" aria-label="Attached images">
+									<div class="user-image-gallery" role="group" aria-label="Attached images">
 										{#each userImageAttachments(message) as imageAttachment (`${message.timestamp}:image-attachment:${imageAttachment.attachment.id}`)}
 											<figure class="user-image-attachment">
 												{#if imageAttachment.imageData}
@@ -917,7 +935,7 @@
 									</div>
 								{/if}
 								{#if userFileAttachments(message).length > 0}
-									<div class="user-file-list" aria-label="Attached files and folders">
+									<div class="user-file-list" role="group" aria-label="Attached files and folders">
 										{#each userFileAttachments(message) as attachment (`${message.timestamp}:file-attachment:${attachment.id}`)}
 											<div class="user-file-attachment">
 												<div class="user-attachment-icon" aria-hidden="true">

@@ -44,16 +44,9 @@ async function waitForText(
   selector: string,
   expected: string,
 ): Promise<void> {
-  const deadline = Date.now() + 15_000;
-  let lastText = "";
-  while (Date.now() < deadline) {
-    lastText = await currentText(page, selector);
-    if (lastText === expected) return;
-    await Bun.sleep(100);
-  }
-  throw new Error(
-    `Timed out waiting for ${selector} to contain ${expected}. Last text: ${lastText}`,
-  );
+  const target = page.locator(selector).filter({ hasText: expected, visible: true }).first();
+  await target.waitFor({ state: "visible", timeout: 15_000 });
+  expect((await target.textContent())?.trim()).toBe(expected);
 }
 
 test("default provider and model bootstrap from Bun-side defaults", async () => {
@@ -61,9 +54,11 @@ test("default provider and model bootstrap from Bun-side defaults", async () => 
     const app = await launchSvvyApp({ workspaceDir });
     try {
       await waitForWorkspaceChrome(app.page);
-      await app.page
+      const createButton = app.page
         .getByRole("button", { name: "Create a new orchestrator" })
-        .click({ force: true });
+        .filter({ visible: true });
+      await createButton.waitFor({ state: "visible" });
+      await createButton.click();
       await app.page.locator(".composer-shell").waitFor({ state: "visible" });
 
       await waitForText(app.page, ".model-control .compact-combobox-label", "GLM-5-Turbo");

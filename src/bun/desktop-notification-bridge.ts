@@ -36,6 +36,7 @@ export interface CreateDesktopNotificationBridgeOptions {
   readonly runtimeEvents: (input?: RuntimeEventsInput) => Promise<RuntimeEventSubscriptionLike>;
   readonly state: DesktopNotificationBridgeState;
   readonly rendererEmit: (notification: DesktopRendererNotification) => void | Promise<void>;
+  readonly onNotification?: (notification: DesktopRendererNotification) => void | Promise<void>;
   readonly onError?: (error: unknown, context: string) => void;
 }
 
@@ -103,9 +104,12 @@ export function createDesktopNotificationBridge(
     if (stopped) {
       return;
     }
-    void Promise.resolve(options.rendererEmit(notification)).catch((error) =>
-      options.onError?.(error, "desktop-notification-bridge.rendererEmit"),
-    );
+    void Promise.resolve()
+      .then(() => options.rendererEmit(notification))
+      .catch((error) => options.onError?.(error, "desktop-notification-bridge.rendererEmit"));
+    void Promise.resolve()
+      .then(() => options.onNotification?.(notification))
+      .catch((error) => options.onError?.(error, "desktop-notification-bridge.onNotification"));
   };
 
   const clearScopeCursors = (context: SubscriptionContext): void => {

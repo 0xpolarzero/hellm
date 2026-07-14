@@ -13,6 +13,7 @@ import {
   type BuildGeneratedContextSources,
   type GeneratedContextSourceContributor,
 } from "./generated-context";
+import { getRequestUserInputVariantInstructions } from "./request-user-input-variant-instructions";
 
 describe("generated context", () => {
   it.effect(
@@ -86,6 +87,67 @@ describe("generated context", () => {
         }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
       );
       assert.strictEqual(executable._tag, "Failure");
+    }),
+  );
+
+  it.effect("includes the exact loaded request_user_input variant guidance", () =>
+    Effect.gen(function* () {
+      const requestInputObservation = observation("request-user-input", "native_tool");
+      const requestInputSources = {
+        ...sources(),
+        registry: {
+          ...sources().registry,
+          observations: [...sources().registry.observations, requestInputObservation],
+        },
+        contextReadyExtensionIds: [
+          ...sources().contextReadyExtensionIds,
+          "request-user-input",
+        ] as ExtensionId[],
+      };
+      const requestInput = {
+        ...input(),
+        actorBinding: {
+          ...input().actorBinding,
+          loadedExtensionIds: [
+            ...input().actorBinding.loadedExtensionIds,
+            "request-user-input",
+          ] as ExtensionId[],
+          instructionOrder: [
+            ...input().actorBinding.instructionOrder,
+            "request-user-input",
+          ] as ExtensionId[],
+        },
+      };
+
+      const nonblocking = yield* buildGeneratedContextArtifacts(requestInput, {
+        ...requestInputSources,
+        requestInputVariant: "nonblocking",
+      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      const blocking = yield* buildGeneratedContextArtifacts(requestInput, {
+        ...requestInputSources,
+        requestInputVariant: "blocking",
+      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+
+      assert.include(
+        nonblocking.systemPrompt,
+        getRequestUserInputVariantInstructions("nonblocking").trim(),
+      );
+      assert.notInclude(
+        nonblocking.systemPrompt,
+        getRequestUserInputVariantInstructions("blocking").trim(),
+      );
+      assert.include(
+        blocking.systemPrompt,
+        getRequestUserInputVariantInstructions("blocking").trim(),
+      );
+      assert.notInclude(
+        blocking.systemPrompt,
+        getRequestUserInputVariantInstructions("nonblocking").trim(),
+      );
+      assert.notStrictEqual(
+        nonblocking.generatedContext.fingerprint,
+        blocking.generatedContext.fingerprint,
+      );
     }),
   );
 });

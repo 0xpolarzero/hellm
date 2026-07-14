@@ -302,6 +302,7 @@ import { layerRuntimeRequestInputWaitService } from "./runtime-request-input-wai
 import { layerRuntimeQueueWakeService } from "./runtime-queue-wake-service";
 import { layerRuntimeGeneratedContextRefreshService } from "./runtime-generated-context-refresh-service";
 import { layerRuntimeGeneratedPackageRefreshService } from "./runtime-generated-package-refresh-service";
+import { layerRuntimeExtensionStartupReconcileService } from "./runtime-extension-startup-reconcile-service";
 import { layerRuntimeSourceInvalidationService } from "./runtime-source-invalidation-service";
 import { layerRuntimeSourceReconcileRecoveryWorker } from "./runtime-source-reconcile-recovery-worker";
 import { layerRuntimeWorkflowAgentSourceIndex } from "./runtime-workflow-agent-source-index";
@@ -492,6 +493,10 @@ const runtimeSourceInvalidationLayer = layerRuntimeSourceInvalidationService.pip
 const runtimeExtensionBuildLayer = layerRuntimeExtensionBuildService.pipe(
   Layer.provideMerge(layerRuntimeEventBus),
 );
+const runtimeExtensionStartupReconcileLayer = layerRuntimeExtensionStartupReconcileService.pipe(
+  Layer.provideMerge(runtimeExtensionBuildLayer),
+  Layer.provideMerge(layerRuntimeEventBus),
+);
 const runtimeExtensionSourceCoordinatorLayer = layerRuntimeExtensionSourceCoordinator;
 const runtimeExtensionLifecycleLayer = layerRuntimeExtensionLifecycleService.pipe(
   Layer.provideMerge(runtimeExtensionSourceCoordinatorLayer),
@@ -558,6 +563,7 @@ const runtimeInternalServicesLayer = Layer.mergeAll(
   runtimeShutdownAdmissionLayer,
   runtimeSourceInvalidationLayer,
   runtimeExtensionBuildLayer,
+  runtimeExtensionStartupReconcileLayer,
   runtimeExtensionSourceCoordinatorLayer,
   runtimeExtensionLifecycleLayer,
   runtimeExtensionSnapshotLayer,
@@ -586,6 +592,7 @@ export namespace Runtime {
     layerRuntimeCommittedStateInvalidationPublication;
   const runtimeStartupReadinessLayer = layerRuntimeStartupReadiness.pipe(
     Layer.provideMerge(runtimeWorkflowAgentSourceIndexLayer),
+    Layer.provideMerge(runtimeExtensionStartupReconcileLayer),
   );
   const runtimeShutdownPreparationLayer = layerRuntimeShutdownPreparation;
 

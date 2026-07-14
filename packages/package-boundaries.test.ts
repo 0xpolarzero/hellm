@@ -691,6 +691,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
       "RequestUserInputInputSchema",
       "RequestUserInputResult",
       "RequestUserInputResultSchema",
+      "ScaffoldMissingBuiltinSourcesResult",
       "ParsedWorkflowAgentSource",
       "SvvyActorKind",
       "ThreadStartHandlerInvocation",
@@ -4057,6 +4058,8 @@ describe("package boundaries", () => {
           "packages/runtime/src/runtime-source-invalidation-service.ts -> RuntimeExternalInstructionScanInputPort",
           "packages/runtime/src/runtime-extension-build-service.ts -> RuntimeExtensionBuildService",
           "packages/runtime/src/runtime-extension-build-service.ts -> layerRuntimeExtensionBuildService",
+          "packages/runtime/src/runtime-extension-startup-reconcile-service.ts -> RuntimeExtensionStartupReconcileService",
+          "packages/runtime/src/runtime-extension-startup-reconcile-service.ts -> layerRuntimeExtensionStartupReconcileService",
           "packages/runtime/src/runtime-extension-source-coordinator.ts -> RuntimeExtensionSourceCoordinator",
           "packages/runtime/src/runtime-extension-source-coordinator.ts -> layerRuntimeExtensionSourceCoordinator",
           "packages/runtime/src/runtime-extension-lifecycle-service.ts -> RuntimeExtensionLifecycleService",
@@ -4084,6 +4087,7 @@ describe("package boundaries", () => {
         resources: [
           "Runtime event bus",
           "Extension build service",
+          "Extension startup reconcile service",
           "Extension source coordinator",
           "Extension lifecycle service",
           "Extension snapshot service",
@@ -4549,7 +4553,7 @@ describe("package boundaries", () => {
       packageDevDependencyViolations,
     }).toEqual({
       check:
-        "bun run check:core-index && bun run typecheck && bun run test:unit && bun run test:effect && bun run lint:check && bun run format:check && bun run build:check",
+        "bun run check:core-index && bun run check:e2e-coverage:complete && bun run typecheck && bun run test:unit && bun run test:effect && bun run lint:check && bun run format:check && bun run build:check",
       checkCoreIndex: "bun scripts/generate-core-public-symbol-index.ts --check",
       testUnit:
         "bun run generate:api && bun test $(rg --files ./src ./packages -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts' -g '!*.effect.test.ts')",
@@ -10608,6 +10612,7 @@ describe("package boundaries", () => {
       "src/bun/tool-execution-command-tracker.test.ts -> Effect.runSync",
       "src/bun/tool-execution-command-tracker.test.ts -> Effect.runSync",
       "src/bun/workspace-recovery-coordinator.test.ts -> Effect.runSync",
+      "src/bun/workspace-runtime-registry.test.ts -> Effect.runPromise",
       "src/bun/workspace-runtime-registry.test.ts -> Effect.runPromise",
     ]);
   });

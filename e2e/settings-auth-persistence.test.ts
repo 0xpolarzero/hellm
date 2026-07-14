@@ -79,11 +79,9 @@ test("saving an API key writes auth.json", async () => {
     expect(existsSync(authFile)).toBe(false);
 
     const openaiRow = await providerRow(page, "openai");
-    await openaiRow.getByRole("button", { name: "Add openai API key" }).first().click({
-      force: true,
-    });
+    await openaiRow.getByRole("button", { name: "Add openai API key" }).first().click();
     await openaiRow.locator('input[placeholder="Paste API key..."]').fill("persisted-openai-key");
-    await openaiRow.getByRole("button", { name: "Save" }).first().click({ force: true });
+    await openaiRow.getByRole("button", { name: "Save" }).first().click();
 
     await page.getByText("Saved").waitFor({ state: "visible" });
     expect(await providerStatus(page, "openai")).toBe("API key");

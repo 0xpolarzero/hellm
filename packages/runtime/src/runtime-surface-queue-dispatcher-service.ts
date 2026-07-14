@@ -1,10 +1,12 @@
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import {
+  AppLogWritePort,
   CommittedUserMessageEditQueuePayloadSchema,
   RuntimeActorExtensionBindingStatePort,
   RuntimeCommandStatePort,
@@ -15,6 +17,7 @@ import {
   RuntimeThreadStatePort,
   RuntimeTurnStatePort,
   type PromptTarget,
+  type AppLogWritePortService,
   type RuntimeActorExtensionBindingStatePortService,
   type RuntimeEpisodeStatePortService,
   type RuntimePromptBindingRecord,
@@ -107,6 +110,10 @@ export function createRuntimeQueueDrainWakeCoordinator<TInput>(input: {
   readonly key: (request: TInput) => string;
   readonly isClosed: () => boolean;
   readonly drain: (request: TInput) => Effect.Effect<boolean, RuntimeContractError>;
+  readonly onDrainFailure: (input: {
+    readonly request: TInput;
+    readonly error: RuntimeContractError;
+  }) => Effect.Effect<void, unknown>;
 }): {
   readonly acceptWakeHint: (request: TInput) => Effect.Effect<void>;
 } {
@@ -137,7 +144,11 @@ export function createRuntimeQueueDrainWakeCoordinator<TInput>(input: {
             while (keepGoing && !input.isClosed()) {
               keepGoing = yield* input
                 .drain(request)
-                .pipe(Effect.catch(() => Effect.succeed(false)));
+                .pipe(
+                  Effect.catch((error) =>
+                    input.onDrainFailure({ request, error }).pipe(Effect.ignore, Effect.as(false)),
+                  ),
+                );
             }
             const shouldRerun = yield* Effect.sync(() => {
               if (state.rerunRequested && !input.isClosed()) {
@@ -166,6 +177,56 @@ export function createRuntimeQueueDrainWakeCoordinator<TInput>(input: {
   };
 }
 
+export function persistRuntimeQueueDrainFailure(input: {
+  readonly request: {
+    readonly workspaceId: WorkspaceId;
+    readonly target: PromptTarget;
+    readonly reason: string;
+  };
+  readonly error: RuntimeContractError;
+  readonly appLog: AppLogWritePortService;
+  readonly eventBus: RuntimeEventBus["Service"];
+}) {
+  return Effect.gen(function* () {
+    const occurredAt = DateTime.formatIso(yield* DateTime.now) as unknown as Parameters<
+      AppLogWritePortService["append"]
+    >[0]["occurredAt"];
+    const logged = yield* input.appLog.append({
+      workspaceId: input.request.workspaceId,
+      level: "error",
+      source: "prompt",
+      message: input.error.message,
+      occurredAt,
+      details: {
+        workspaceId: input.request.workspaceId,
+        workspaceSessionId: input.request.target.workspaceSessionId,
+        surfacePiSessionId: input.request.target.surfacePiSessionId,
+        surfaceKind: input.request.target.surface,
+        wakeReason: input.request.reason,
+        runtimeOperation: input.error.operation,
+        runtimeReason: input.error.reason,
+      },
+      normalizedError: {
+        errorTag: input.error._tag,
+        operation: input.error.operation,
+        reason: "execution-failed",
+        packageReason: input.error.reason,
+        message: input.error.message,
+        ...(input.error.issues ? { issues: input.error.issues } : {}),
+        ...(input.error.cause !== undefined ? { cause: input.error.cause } : {}),
+      },
+      related: [
+        { kind: "workspace-session", id: input.request.target.workspaceSessionId },
+        { kind: "surface", id: input.request.target.surfacePiSessionId },
+        ...(input.request.target.surface === "handler"
+          ? [{ kind: "thread" as const, id: input.request.target.threadId }]
+          : []),
+      ],
+    });
+    yield* input.eventBus.publishStateInvalidations({ afterCommit: logged.afterCommit });
+  });
+}
+
 export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
   RuntimeSurfaceQueueDispatcherService,
   Effect.gen(function* () {
@@ -182,6 +243,7 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
     const threadState = yield* RuntimeThreadStatePort;
     const turnState = yield* RuntimeTurnStatePort;
     const commandState = yield* RuntimeCommandStatePort;
+    const appLog = yield* AppLogWritePort;
     const eventBus = yield* RuntimeEventBus;
     const sourceInvalidation = yield* RuntimeSourceInvalidationService;
     const acceptedNativeTools = yield* RuntimeAcceptedNativeToolExecution;
@@ -297,6 +359,8 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
       key: (input) => `${input.workspaceId}:${input.target.surfacePiSessionId}`,
       isClosed: shutdownAdmission.isShutdownStarted,
       drain: (input) => drain({ ...input, awaitPrompt: true }),
+      onDrainFailure: ({ request, error }) =>
+        persistRuntimeQueueDrainFailure({ request, error, appLog, eventBus }),
     });
 
     return RuntimeSurfaceQueueDispatcherService.of({
@@ -453,7 +517,7 @@ function startRuntimePrompt(input: {
   readonly sourceInvalidation: RuntimeSourceInvalidationService["Service"];
   readonly acceptedNativeTools: Pick<
     RuntimeAcceptedNativeToolExecutionService,
-    "runRequestUserInput"
+    "runExecuteTypescript" | "runRequestUserInput"
   >;
   readonly completedPromptResults: Map<string, RuntimePromptExecutionResult>;
   readonly requestedPromptResults: Set<string>;
@@ -507,6 +571,7 @@ function startRuntimePrompt(input: {
       reasoningEffort: input.prepared.reasoningEffort,
       tools: input.prepared.tools,
       toolExecutor: buildRuntimeToolExecutor({
+        workspaceId: input.workspaceId,
         acceptedNativeTools: input.acceptedNativeTools,
         extensions: input.extensions,
         target: input.target,

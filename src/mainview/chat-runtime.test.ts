@@ -194,6 +194,9 @@ type FakeRpcHarness = {
   appLogSeenRequests: number[];
   branchListRequests: string[];
   branchSwitchRequests: Array<{ workspaceId: string; branch: string }>;
+  pickWorkspaceAttachmentRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["pickWorkspaceAttachments"]>[0]
+  >;
   emitAppLogUpdate: (payload: AppLogUpdateMessage) => void;
   emitDesktopNotification: (payload: DesktopRendererNotification) => void;
   setRebaselineResult: (baseline: StateReadModelBaseline) => void;
@@ -1211,6 +1214,9 @@ function createFakeRpc(input: {
   const appLogSeenRequests: number[] = [];
   const branchListRequests: string[] = [];
   const branchSwitchRequests: Array<{ workspaceId: string; branch: string }> = [];
+  const pickWorkspaceAttachmentRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["pickWorkspaceAttachments"]>[0]
+  > = [];
   const rendererLayoutFixtures = new Map<string, RendererLayoutFixtureState>();
   let workspaceInfo = structuredClone(TEST_WORKSPACE_INFO);
   let appLogEntries: AppLogEntry[] = [];
@@ -2270,18 +2276,21 @@ function createFakeRpc(input: {
           { kind: "file", workspaceRelativePath: "docs/progress.md" },
           { kind: "folder", workspaceRelativePath: "src/mainview/" },
         ],
-        pickWorkspaceAttachments: async () => ({
-          attachments: [
-            {
-              id: "file:docs/progress.md",
-              kind: "file",
-              name: "progress.md",
-              path: "docs/progress.md",
-              workspaceRelativePath: "docs/progress.md",
-            },
-          ],
-          skippedPaths: [],
-        }),
+        pickWorkspaceAttachments: async (request) => {
+          pickWorkspaceAttachmentRequests.push(structuredClone(request));
+          return {
+            attachments: [
+              {
+                id: "file:docs/progress.md",
+                kind: "file",
+                name: "progress.md",
+                path: "docs/progress.md",
+                workspaceRelativePath: "docs/progress.md",
+              },
+            ],
+            skippedPaths: [],
+          };
+        },
         importComposerAttachments: async () => ({ attachments: [], skippedPaths: [] }),
         openWorkspacePath: async ({ workspaceRelativePath }) => ({
           opened: workspaceRelativePath === "docs/progress.md",
@@ -3367,6 +3376,7 @@ function createFakeRpc(input: {
     workspaceLayoutSaveRequests,
     appLogSeenRequests,
     branchListRequests,
+    pickWorkspaceAttachmentRequests,
     branchSwitchRequests,
     setPromptHandler: (surfacePiSessionId, handler) => {
       promptHandlers.set(surfacePiSessionId, handler);
@@ -5675,6 +5685,29 @@ describe("createChatRuntime", () => {
     await expect(runtime.switchWorkspaceBranch("missing")).rejects.toThrow(
       "Branch is not available in this workspace.",
     );
+
+    runtime.dispose();
+  });
+
+  it("routes file and folder attachment picks through the explicit workspace RPC kind", async () => {
+    const harness = createFakeRpc({
+      sessions: [createSummary("session-1", "First", "first reply")],
+      surfaces: [
+        createSurfaceFixture({
+          target: createOrchestratorTarget("session-1"),
+          messages: [assistantMessage("first reply")],
+        }),
+      ],
+    });
+    const runtime = await createRuntime(harness);
+
+    await runtime.pickWorkspaceAttachments("files");
+    await runtime.pickWorkspaceAttachments("folder");
+
+    expect(harness.pickWorkspaceAttachmentRequests).toEqual([
+      { workspaceId: TEST_WORKSPACE_INFO.workspaceId, kind: "files" },
+      { workspaceId: TEST_WORKSPACE_INFO.workspaceId, kind: "folder" },
+    ]);
 
     runtime.dispose();
   });

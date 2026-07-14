@@ -48,6 +48,7 @@
 	import type { ExtensionUsageState } from "@svvy/core";
 	import type {
 		ComposerAttachment,
+		ComposerAttachmentPickerKind,
 		ComposerDraft,
 		PromptClientSubmissionMetadata,
 	} from "../shared/workspace-contract";
@@ -142,7 +143,7 @@
 		onOpenExtension?: (extensionId: string) => void;
 		listWorkspacePaths: (options?: { refresh?: boolean }) => Promise<WorkspacePathIndexEntry[]>;
 		listSnippets: () => Promise<SnippetsReadModel>;
-		pickWorkspaceAttachments: () => Promise<ComposerAttachment[]>;
+		pickWorkspaceAttachments: (kind: ComposerAttachmentPickerKind) => Promise<ComposerAttachment[]>;
 		importComposerAttachments: (files: File[]) => Promise<ComposerAttachment[]>;
 	};
 
@@ -190,12 +191,15 @@
 	let isStopping = $state(false);
 	let showThinkingMenu = $state(false);
 	let showModelMenu = $state(false);
+	let showAttachmentMenu = $state(false);
 	let modelOptions = $state<CompactComboboxOption[]>([]);
 	let modelOptionModels = $state(new Map<string, Model<any>>());
 	let modelOptionThinkingLevels = $state(new Map<string, ThinkingLevel[]>());
 	let draftElement = $state<HTMLTextAreaElement | null>(null);
 	let historyNavigation = $state<PromptHistoryNavigationState>(createPromptHistoryNavigationState());
 	let mentionRoot = $state<HTMLDivElement | null>(null);
+	let attachmentMenuRoot = $state<HTMLDivElement | null>(null);
+	let attachmentMenuTrigger = $state<HTMLButtonElement | null>(null);
 	let workspacePaths = $state<WorkspacePathIndexEntry[]>([]);
 	let workspacePathsLoaded = $state(false);
 	let snippets = $state<SnippetsReadModel | null>(null);
@@ -491,13 +495,18 @@
 		const handlePointerDown = (event: PointerEvent) => {
 			const target = event.target;
 			if (!(target instanceof Node)) return;
-			if (mentionRoot?.contains(target) || draftElement?.contains(target)) return;
-			closeMentionPicker();
+			if (!mentionRoot?.contains(target) && !draftElement?.contains(target)) {
+				closeMentionPicker();
+			}
+			if (!attachmentMenuRoot?.contains(target)) showAttachmentMenu = false;
 		};
 
 		const handleKeyDown = (event: KeyboardEvent) => {
 			if (event.key === "Escape") {
 				closeMentionPicker();
+				const wasAttachmentMenuOpen = showAttachmentMenu;
+				showAttachmentMenu = false;
+				if (wasAttachmentMenuOpen) attachmentMenuTrigger?.focus();
 			}
 		};
 
@@ -983,9 +992,10 @@
 		void submit();
 	}
 
-	async function attachPickedWorkspaceFiles() {
+	async function attachPickedWorkspaceFiles(kind: ComposerAttachmentPickerKind) {
+		showAttachmentMenu = false;
 		try {
-			const picked = await pickWorkspaceAttachments();
+			const picked = await pickWorkspaceAttachments(kind);
 			if (picked.length === 0) {
 				draftElement?.focus();
 				return;
@@ -997,6 +1007,13 @@
 		} catch {
 			draftElement?.focus();
 		}
+	}
+
+	async function toggleAttachmentMenu() {
+		showAttachmentMenu = !showAttachmentMenu;
+		if (!showAttachmentMenu) return;
+		await tick();
+		attachmentMenuRoot?.querySelector<HTMLButtonElement>('button[role="menuitem"]')?.focus();
 	}
 
 	function addAttachments(nextAttachments: ComposerAttachment[]) {
@@ -1304,16 +1321,43 @@
 						{/if}
 					</div>
 					<div class="composer-action-cluster" aria-label="Composer actions">
-						<Tooltip label="Attach file context">
+						<div bind:this={attachmentMenuRoot} class="attachment-picker-wrap">
+							<Tooltip label="Attach files or folder">
 							<button
-								class="composer-icon-button"
-								type="button"
-								aria-label="Attach file context"
-								onclick={() => void attachPickedWorkspaceFiles()}
-							>
-								<PaperclipIcon size={15} aria-hidden="true" />
-							</button>
-						</Tooltip>
+								bind:this={attachmentMenuTrigger}
+									class="composer-icon-button"
+									type="button"
+									aria-label="Attach files or folder"
+									aria-haspopup="menu"
+									aria-expanded={showAttachmentMenu}
+									onclick={() => void toggleAttachmentMenu()}
+								>
+									<PaperclipIcon size={15} aria-hidden="true" />
+								</button>
+							</Tooltip>
+							{#if showAttachmentMenu}
+								<div class="attachment-picker-menu" role="menu" aria-label="Attach">
+									<button
+										type="button"
+										role="menuitem"
+										aria-label="Attach files"
+										onclick={() => void attachPickedWorkspaceFiles("files")}
+									>
+										<FileIcon size={14} aria-hidden="true" />
+										<span>Files</span>
+									</button>
+									<button
+										type="button"
+										role="menuitem"
+										aria-label="Attach folder"
+										onclick={() => void attachPickedWorkspaceFiles("folder")}
+									>
+										<FolderIcon size={14} aria-hidden="true" />
+										<span>Folder</span>
+									</button>
+								</div>
+							{/if}
+						</div>
 						{#if isStreaming}
 							<Tooltip label={workingElapsedTooltip}>
 								<span class="composer-working-timer" role="status" aria-label={workingElapsedTooltip}>
@@ -1689,6 +1733,49 @@
 			border-color 150ms cubic-bezier(0.19, 1, 0.22, 1),
 			background-color 150ms cubic-bezier(0.19, 1, 0.22, 1),
 			color 150ms cubic-bezier(0.19, 1, 0.22, 1);
+	}
+
+	.attachment-picker-wrap {
+		position: relative;
+		flex: 0 0 auto;
+	}
+
+	.attachment-picker-menu {
+		position: absolute;
+		right: 0;
+		bottom: calc(100% + 0.38rem);
+		z-index: 12;
+		display: grid;
+		gap: 0.12rem;
+		min-width: 9.2rem;
+		padding: 0.24rem;
+		border: 1px solid var(--ui-border-soft);
+		border-radius: var(--ui-radius-md);
+		background: var(--ui-surface-raised);
+		box-shadow: var(--ui-shadow-strong);
+	}
+
+	.attachment-picker-menu button {
+		display: flex;
+		align-items: center;
+		gap: 0.42rem;
+		min-height: 2rem;
+		padding: 0.34rem 0.48rem;
+		border: 1px solid transparent;
+		border-radius: var(--ui-radius-sm);
+		background: transparent;
+		color: var(--ui-text-primary);
+		font: inherit;
+		font-size: var(--text-sm);
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.attachment-picker-menu button:hover,
+	.attachment-picker-menu button:focus-visible {
+		outline: none;
+		border-color: var(--ui-border-accent);
+		background: var(--ui-accent-soft);
 	}
 
 	.composer-icon-button:hover,

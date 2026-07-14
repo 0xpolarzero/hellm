@@ -231,11 +231,17 @@ function externalInstructionSelected(input: {
   );
 }
 
-function failure(stage: string, cause: { readonly message: string }): RuntimeContractError {
+function failure(
+  stage: string,
+  cause: { readonly message: string; readonly reason?: string },
+): RuntimeContractError {
+  const dependencyNotReady = cause.reason === "dependency-not-ready";
   return new RuntimeContractError({
     operation: `runtime.generatedContext.refresh.${stage}`,
-    reason: "target-not-ready",
-    message: "Generated context could not be refreshed for this surface.",
+    reason: dependencyNotReady ? "dependency-not-ready" : "target-not-ready",
+    message: dependencyNotReady
+      ? cause.message
+      : "Generated context could not be refreshed for this surface.",
     cause,
   });
 }

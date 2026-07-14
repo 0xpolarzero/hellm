@@ -16,6 +16,7 @@ import {
 } from "@svvy/core";
 import { RuntimeEventBus } from "./runtime-event-bus";
 import { RuntimeGeneratedContextRefreshService } from "./runtime-generated-context-refresh-service";
+import { RuntimeLayerModelResolverPort } from "./runtime-layer-provider-ports";
 import { RuntimeSurfaceQueueDispatcherService } from "./runtime-surface-queue-dispatcher-service";
 import { RuntimeSurfaceScopeService } from "./surface-runtime-scope-service";
 import {
@@ -49,6 +50,18 @@ const settledInvalidation = {
     ids: [target.workflowTaskAttemptId],
   },
 } satisfies StateInvalidationDescriptor;
+const modelResolverLayer = Layer.succeed(RuntimeLayerModelResolverPort, {
+  resolveModel: ({ provider, model }) =>
+    Effect.succeed({ provider, model, supportedReasoning: ["medium"], contextWindow: 200_000 }),
+});
+const taskUsage = {
+  input: 75_000,
+  output: 100,
+  cacheRead: 20_000,
+  cacheWrite: 5_000,
+  totalTokens: 100_100,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+} as const;
 
 function request(
   overrides: Partial<AuthenticatedRunTaskAgentInput> = {},
@@ -90,6 +103,9 @@ describe("@svvy/runtime workflow task-agent bridge service", () => {
       const refreshes: unknown[] = [];
       const drains: unknown[] = [];
       const published: Array<readonly StateInvalidationDescriptor[]> = [];
+      const settlementInputs: Parameters<
+        RuntimeWorkflowTaskStatePortService["settleWorkflowTaskAgentAttempt"]
+      >[0][] = [];
       let terminal: RuntimeWorkflowTaskAgentTerminalReceipt | null = null;
       const queuedMessage = {
         id: "queue_workflow_task_bridge",
@@ -130,6 +146,7 @@ describe("@svvy/runtime workflow task-agent bridge service", () => {
       });
       const bridgeLayer = Layer.mergeAll(
         layerRuntimeShutdownAdmission,
+        modelResolverLayer,
         Layer.succeed(RuntimeWorkflowTaskAgentBridgeBearerVerifier, {
           verify: () => Effect.succeed(true),
         }),
@@ -145,6 +162,7 @@ describe("@svvy/runtime workflow task-agent bridge service", () => {
             }),
           settleWorkflowTaskAgentAttempt: (input) =>
             Effect.sync(() => {
+              settlementInputs.push(input);
               const settled: RuntimeWorkflowTaskAgentTerminalReceipt =
                 input.status === "completed"
                   ? {
@@ -203,6 +221,7 @@ describe("@svvy/runtime workflow task-agent bridge service", () => {
                 turnId: "turn_workflow_task_bridge" as TurnId,
                 status: "completed" as const,
                 assistantText: "runtime prompt result",
+                usage: taskUsage,
                 commandReceipts: [],
               };
             }),
@@ -229,8 +248,21 @@ describe("@svvy/runtime workflow task-agent bridge service", () => {
         const first = yield* runWithFreshBridgeService;
         const duplicateAfterRestart = yield* runWithFreshBridgeService;
 
-        assert.deepStrictEqual(first, { text: "runtime prompt result" });
-        assert.deepStrictEqual(duplicateAfterRestart, { text: "runtime prompt result" });
+        assert.deepStrictEqual(first, { text: "runtime prompt result", usage: taskUsage });
+        assert.deepStrictEqual(duplicateAfterRestart, {
+          text: "runtime prompt result",
+          usage: taskUsage,
+        });
+        assert.deepStrictEqual(settlementInputs, [
+          {
+            workflowTaskAttemptId: target.workflowTaskAttemptId,
+            idempotencyKey:
+              "workflow-task-agent-start:wsess_workflow_task_bridge:cmd_workflow_task_bridge:smithers-run-bridge:node-review:2:1:reviewerAgent",
+            status: "completed",
+            result: { text: "runtime prompt result", usage: taskUsage },
+            contextBudget: { usedTokens: 100_000, maxTokens: 200_000 },
+          },
+        ]);
         assert.strictEqual(createdSurfaces.length, 1);
         assert.strictEqual(refreshes.length, 1);
         assert.deepStrictEqual(drains, [{ workspaceId, target, queueItemId: queuedMessage.id }]);
@@ -259,6 +291,7 @@ describe("@svvy/runtime workflow task-agent bridge service", () => {
       Effect.provide(
         Layer.mergeAll(
           layerRuntimeShutdownAdmission,
+          modelResolverLayer,
           Layer.succeed(RuntimeWorkflowTaskAgentBridgeBearerVerifier, {
             verify: () => Effect.succeed(false),
           }),
@@ -319,6 +352,7 @@ describe("@svvy/runtime workflow task-agent bridge service", () => {
       Effect.provide(
         Layer.mergeAll(
           layerRuntimeShutdownAdmission,
+          modelResolverLayer,
           Layer.succeed(RuntimeWorkflowTaskAgentBridgeBearerVerifier, {
             verify: () => Effect.succeed(true),
           }),

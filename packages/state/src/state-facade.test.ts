@@ -25,6 +25,7 @@ import type {
   AppLogEntryId,
   CommandId,
   AgentProfileId,
+  CreateRuntimeOrchestratorSurfaceStateInput,
   ExtensionId,
   ExtensionEnvName,
   ExtensionRegistryObservationResult,
@@ -86,6 +87,22 @@ const stateLayerConfig = () =>
 const testDigest = {
   sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
 };
+
+function orchestratorStateInput(
+  workspaceId: WorkspaceId,
+  title: string,
+): CreateRuntimeOrchestratorSurfaceStateInput {
+  return {
+    workspaceId,
+    title,
+    profileId: "default-orchestrator" as AgentProfileId,
+    provider: "zai" as ProviderId,
+    model: "glm-5-turbo" as ModelId,
+    reasoningEffort: "medium",
+    loadedExtensionIds: ["extension-loading" as ExtensionId],
+    availableExtensionIds: [],
+  };
+}
 const extensionRegistryObservation = (
   extensionIds: readonly ExtensionId[],
   envDeclarations: ExtensionRegistryObservationResult["observations"][number]["envDeclarations"] = [],
@@ -1756,10 +1773,12 @@ describe("State read-model kind expansion", () => {
         extensionId: "shell" as ExtensionId,
         usage: "loaded",
       });
-      const created = store.createOrchestratorSurface({
-        workspaceId: "workspace_state_facade_read_models" as WorkspaceId,
-        title: "Expanded read models",
-      });
+      const created = store.createOrchestratorSurface(
+        orchestratorStateInput(
+          "workspace_state_facade_read_models" as WorkspaceId,
+          "Expanded read models",
+        ),
+      );
       store.upsertPiSession({
         ...store.getSessionState(created.workspaceSessionId).pi,
         parentSessionId: "session_state_facade_parent",
@@ -3529,10 +3548,9 @@ describe("State read-model kind expansion", () => {
         artifactDir: "/tmp/svvy-session-navigation-command-artifacts" as typeof AbsolutePath.Type,
       },
     });
-    const created = store.createOrchestratorSurface({
-      workspaceId,
-      title: "Session navigation commands",
-    });
+    const created = store.createOrchestratorSurface(
+      orchestratorStateInput(workspaceId, "Session navigation commands"),
+    );
     const workspaceSessionId = created.workspaceSessionId as WorkspaceSessionId;
     const appLogStore = createAppLogStore({ now: () => "2026-07-11T10:00:00.000Z" });
     const router = createWorkspaceStateRouter({
@@ -3832,10 +3850,9 @@ describe("State read-model kind expansion", () => {
         metadata: { description: null, argumentHint: null },
         enabled: true,
       });
-      const promptHistorySurface = workspaceStore.createOrchestratorSurface({
-        workspaceId,
-        title: "Prompt history rebaseline",
-      });
+      const promptHistorySurface = workspaceStore.createOrchestratorSurface(
+        orchestratorStateInput(workspaceId, "Prompt history rebaseline"),
+      );
       const promptHistorySubmission = workspaceStore.acceptSubmittedSurfaceMessage({
         target: {
           workspaceSessionId: promptHistorySurface.workspaceSessionId,
@@ -4127,7 +4144,9 @@ describe("State read-model kind expansion", () => {
     const appLogStore = createAppLogStore({ now: () => new Date(clock++).toISOString() });
 
     try {
-      const surface = store.createOrchestratorSurface({ workspaceId, title: "Status recovery" });
+      const surface = store.createOrchestratorSurface(
+        orchestratorStateInput(workspaceId, "Status recovery"),
+      );
       const failed = store.startTurn({
         sessionId: surface.workspaceSessionId,
         surfacePiSessionId: surface.surfacePiSessionId,
@@ -4185,10 +4204,9 @@ describe("State read-model kind expansion", () => {
     const appLogStore = createAppLogStore({ now: () => "2026-06-21T12:00:00.000Z" });
 
     try {
-      const surface = workspaceStore.createOrchestratorSurface({
-        workspaceId,
-        title: "Routed surface",
-      });
+      const surface = workspaceStore.createOrchestratorSurface(
+        orchestratorStateInput(workspaceId, "Routed surface"),
+      );
       const router = createWorkspaceStateRouter({
         appGlobalStore,
         workspaceStores: [],
@@ -4245,10 +4263,9 @@ describe("State read-model kind expansion", () => {
     const appLogStore = createAppLogStore({ now: () => "2026-06-21T12:00:00.000Z" });
 
     try {
-      const surface = workspaceStore.createOrchestratorSurface({
-        workspaceId,
-        title: "Routed inspector",
-      });
+      const surface = workspaceStore.createOrchestratorSurface(
+        orchestratorStateInput(workspaceId, "Routed inspector"),
+      );
       const turn = workspaceStore.startTurn({
         sessionId: surface.workspaceSessionId,
         surfacePiSessionId: surface.surfacePiSessionId,

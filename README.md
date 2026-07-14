@@ -34,6 +34,8 @@ Product intent lives in [docs/prd.md](./docs/prd.md). The exhaustive feature inv
 ```bash
 bun install
 bun run dev
+bun run inspect:app -- --workspace /absolute/path/to/repository
+bun run inspect:app -- --workspace /absolute/path/to/repository --stub-provider
 bun run build
 bun run run
 bun run typecheck
@@ -49,4 +51,24 @@ Use the OrbStack machine lane for end-to-end tests:
 ```bash
 bun run setup:e2e
 bun run test:e2e
+bun run test:e2e -- e2e/svvy-smoke.test.ts
+bun run test:e2e:startup-soak
+bun run check:e2e-coverage
+bun run check:e2e-coverage:complete
 ```
+
+`inspect:app` launches an isolated real dev app, prints compact browser-tools connection and
+semantic-driving commands, self-provisions missing pinned Electrobun release assets with bounded
+validated downloads, and owns the complete dev process group for deterministic cleanup. Add
+`--stub-provider` for a credential-free real prompt/stream/usage plus concurrent first-turn title
+generation lifecycle; the launcher prints the exact semantic smoke commands and its `Ctrl+C`
+cleanup contract. `setup:e2e`
+pre-provisions the dedicated native ARM64 OrbStack machine; every `test:e2e` invocation verifies and
+repairs that lane when its declared image, architecture, Bun version, or system packages drift.
+Linux dev and stable builds use the packaged CEF renderer, and the live harness rejects a fallback
+to WebKitGTK or an invalid persistent CEF profile. The app runtime currently uses Bun's official
+canary channel (minimum 1.4.0) because the latest stable runtime lacks a required native-thread FFI
+fix; every run records the actual revision. E2E runs retain host-visible runner logs, exact runtime
+provenance, fail on native cores even when journey assertions passed, and retain failure
+diagnostics under `e2e-results/<runId>/`. The authoritative operator, evidence, and exhaustive coverage contract is
+[docs/specs/testing-and-live-inspection.spec.md](./docs/specs/testing-and-live-inspection.spec.md).

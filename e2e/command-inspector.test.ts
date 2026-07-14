@@ -25,35 +25,6 @@ beforeAll(async () => {
   await ensureBuilt();
 });
 
-function isTransientBridgeError(error: unknown): boolean {
-  return error instanceof Error && error.message.toLowerCase().includes("bridge request timed out");
-}
-
-async function waitForVisible(
-  locator: {
-    isVisible(): Promise<boolean>;
-  },
-  timeoutMs = 15_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    try {
-      if (await locator.isVisible()) {
-        return;
-      }
-    } catch (error) {
-      if (!isTransientBridgeError(error)) {
-        throw error;
-      }
-    }
-
-    await Bun.sleep(100);
-  }
-
-  throw new Error("Timed out waiting for inspector content.");
-}
-
 async function withPersistentHome<T>(fn: (homeDir: string) => Promise<T>): Promise<T> {
   const homeDir = await createHomeDir();
   try {
@@ -240,21 +211,27 @@ async function launchSeededApp<T>(
 }
 
 async function assertCommandInspectorSurface(page: SvvyApp["page"]): Promise<void> {
-  await waitForVisible(page.locator(".reference-command-block"));
-  await waitForVisible(page.getByText("Read 1 file and created 1 artifact."));
+  await page.locator(".reference-command-block").waitFor({ state: "visible" });
+  await page.getByText("Read 1 file and created 1 artifact.").waitFor({ state: "visible" });
 
   const rollupCard = page.locator(".reference-command-block").first();
-  await rollupCard.locator(".transcript-tool-toggle").click({ force: true });
-  await waitForVisible(page.getByText("Created summary.md."));
+  const detailsToggle = rollupCard.getByRole("button", {
+    name: /^Show tool details for /,
+  });
+  await detailsToggle.waitFor({ state: "visible" });
+  await detailsToggle.click();
+  await rollupCard.getByText(/^Created summary\.md\.$/).waitFor({ state: "visible" });
 
   const rollupText = (await rollupCard.textContent()) ?? "";
   expect(rollupText).not.toContain("Loaded docs/prd.md.");
 
-  await rollupCard.getByRole("button", { name: /^Inspect$/ }).click({ force: true });
+  const inspectButton = rollupCard.getByRole("button", { name: /^Inspect$/ });
+  await inspectButton.waitFor({ state: "visible" });
+  await inspectButton.click();
   const inspector = page.locator(".related-inspector-pane").filter({
-    has: page.getByText("Command", { exact: true }),
+    has: page.getByText(/^Command$/),
   });
-  await waitForVisible(inspector);
+  await inspector.waitFor({ state: "visible" });
   expect((await inspector.textContent()) ?? "").toContain("Read docs/prd.md");
   expect((await inspector.textContent()) ?? "").toContain("Create summary.md");
   expect((await inspector.textContent()) ?? "").toContain("execute-typescript.ts");
@@ -281,11 +258,14 @@ test("renders parent command rollups and opens nested child detail after reload"
         sessions,
       },
       async ({ page }) => {
+        const sessionButton = page.getByRole("button", {
+          name: /^Command Inspector Session$/,
+        });
+        await sessionButton.waitFor({ state: "visible" });
+        await sessionButton.click();
         await page
-          .locator(".session-main")
-          .filter({ has: page.getByText("Command Inspector Session", { exact: true }) })
-          .click({ force: true });
-        await waitForVisible(page.getByText("Structured command state is available."));
+          .getByText("Structured command state is available.")
+          .waitFor({ state: "visible" });
         await assertCommandInspectorSurface(page);
       },
     );
@@ -297,7 +277,9 @@ test("renders parent command rollups and opens nested child detail after reload"
         seed: false,
       },
       async ({ page }) => {
-        await waitForVisible(page.getByText("Structured command state is available."));
+        await page
+          .getByText("Structured command state is available.")
+          .waitFor({ state: "visible" });
         await assertCommandInspectorSurface(page);
       },
     );

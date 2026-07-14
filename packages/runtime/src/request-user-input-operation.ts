@@ -291,7 +291,10 @@ export const runAcceptedRequestUserInputToolCall = Effect.fn(
       commandId: input.command.commandId,
       status: "succeeded",
       summary: details.summary ?? defaultedRequestInputSummary(resultQuestionCount),
-      facts: commandFacts,
+      facts: {
+        ...input.commandRecord.facts,
+        ...commandFacts,
+      },
     })
     .pipe(
       Effect.mapError((cause) =>

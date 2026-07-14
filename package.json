@@ -13,6 +13,7 @@
     "start": "bun run generate:api && vite build && electrobun dev",
     "dev": "bun run generate:api && bun scripts/dev.ts",
     "dev:clean": "bun run clean:session-state && bun run dev",
+    "inspect:app": "bun scripts/inspect-app.ts",
     "clean:session-state": "bun scripts/clean-session-state.ts",
     "build": "bun run generate:api && vite build && SVVY_SKIP_DMG=1 electrobun build --env=stable",
     "build:check": "bun run generate:api && vite build && SVVY_SKIP_DMG=1 electrobun build --env=stable",
@@ -20,12 +21,15 @@
     "build:dev": "bun run generate:api && vite build && electrobun build --env=dev",
     "run": "electrobun run",
     "workflow:implement-feature": "bun workflows/scripts/run-implement-feature.ts",
-    "check": "bun run check:core-index && bun run typecheck && bun run test:unit && bun run test:effect && bun run lint:check && bun run format:check && bun run build:check",
+    "check": "bun run check:core-index && bun run check:e2e-coverage:complete && bun run typecheck && bun run test:unit && bun run test:effect && bun run lint:check && bun run format:check && bun run build:check",
+    "check:e2e-coverage": "bun scripts/check-e2e-coverage.ts",
+    "check:e2e-coverage:complete": "bun scripts/check-e2e-coverage.ts --require-complete-shipped",
     "test": "bun run test:unit && bun run test:e2e",
     "test:unit": "bun run generate:api && bun test $(rg --files ./src ./packages -g '*.test.ts' -g '*.spec.ts' -g '*_test.ts' -g '*_spec.ts' -g '!*.effect.test.ts')",
     "test:effect": "vitest run --root . $(rg --files packages -g '*.effect.test.ts')",
     "setup:e2e": "electrobun-e2e setup --config ./electrobun-e2e.config.ts",
-    "test:e2e": "ELECTROBUN_E2E_SHARDS=1 electrobun-e2e run --config ./electrobun-e2e.config.ts",
+    "test:e2e": "bun scripts/run-e2e.ts",
+    "test:e2e:startup-soak": "env SVVY_E2E_STARTUP_SOAK_LAUNCHES=25 bun run test:e2e -- e2e/svvy-smoke.test.ts",
     "typecheck": "bun run generate:api && bun run typecheck:root && bun run typecheck:packages && bun run typecheck:workflows",
     "typecheck:root": "tsgo -p tsconfig.json --noEmit",
     "typecheck:packages": "tsgo -p packages/core/tsconfig.json --noEmit && tsgo -p packages/state/tsconfig.json --noEmit && tsgo -p packages/pi-adapter/tsconfig.json --noEmit && tsgo -p packages/sandbox/tsconfig.json --noEmit && tsgo -p packages/extensions/tsconfig.json --noEmit && tsgo -p packages/runtime/tsconfig.json --noEmit && tsgo -p packages/desktop/tsconfig.json --noEmit",
@@ -56,7 +60,7 @@
     "cmdk-sv": "^0.0.19",
     "dockview-core": "^6.1.1",
     "effect": "4.0.0-beta.84",
-    "electrobun": "1.16.0",
+    "electrobun": "1.18.1",
     "incur": "github:wevm/incur#db1f8c0a62b6de45ab361ffead522b4323d5bc77",
     "katex": "^0.16.45",
     "markdown-it": "^14.1.1",
@@ -92,7 +96,13 @@
     "vitest": "4.1.4"
   },
   "engines": {
-    "bun": ">=1.3.10"
+    "bun": ">=1.3.14"
   },
-  "packageManager": "bun@1.3.10"
+  "packageManager": "bun@1.3.14",
+  "patchedDependencies": {
+    "@mariozechner/pi-coding-agent@0.73.1": "patches/@mariozechner%2Fpi-coding-agent@0.73.1.patch",
+    "electrobun-browser-tools@1.0.1": "patches/electrobun-browser-tools@1.0.1.patch",
+    "electrobun-e2e@1.0.2": "patches/electrobun-e2e@1.0.2.patch",
+    "electrobun@1.18.1": "patches/electrobun@1.18.1.patch"
+  }
 }

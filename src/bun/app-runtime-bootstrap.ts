@@ -215,7 +215,11 @@ export interface AppRuntimeBootstrapInput {
   readonly sandboxHostSupport: PackagedSandboxHostSupportServices;
   readonly runtimeLayerConfig: RuntimeLayerConfig;
   readonly commandRegistry: RuntimeLayerCommandStdinPortService &
-    RuntimeLayerCommandControlPortService;
+    Pick<RuntimeLayerCommandControlPortService, "cancel">;
+  readonly executeTypescriptHost: Pick<
+    RuntimeLayerCommandControlPortService,
+    "runExecuteTypescript"
+  >;
   readonly providerAuth: {
     ensureUsableProviderAuth(provider: string): Promise<string | undefined>;
     getProviderAuthUnavailableMessage(provider: string): string;
@@ -798,6 +802,7 @@ export async function createAppRuntimeBootstrap(
               provider: resolved.provider,
               model: resolved.id,
               supportedReasoning: getSupportedThinkingLevels(resolved) as ReasoningEffort[],
+              contextWindow: resolved.contextWindow,
             };
           },
           catch: (cause) => runtimeBootstrapError("runtime.model.resolve", cause),
@@ -810,7 +815,10 @@ export async function createAppRuntimeBootstrap(
     Layer.succeed(RuntimeGeneratedPackageStatePort, generatedPackageStatePort),
     Layer.succeed(RuntimeSourceInvalidationScanPort, createSourceInvalidationScanPort(input)),
     Layer.succeed(RuntimeLayerCommandStdinPort, input.commandRegistry),
-    Layer.succeed(RuntimeLayerCommandControlPort, input.commandRegistry),
+    Layer.succeed(RuntimeLayerCommandControlPort, {
+      cancel: input.commandRegistry.cancel,
+      runExecuteTypescript: input.executeTypescriptHost.runExecuteTypescript,
+    }),
     Layer.succeed(RuntimeWorkflowTaskAgentBridgeBearerVerifier, {
       verify: (request) =>
         Effect.tryPromise({

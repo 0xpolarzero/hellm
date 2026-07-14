@@ -1,0 +1,399 @@
+diff --git a/dist/bridge-gQKFAW83.d.ts b/dist/bridge-gQKFAW83.d.ts
+index a3517b081108f49127851f305c4b32131f595e2f..bddf05e1dfe6f598ddd239658c5a798d80a9703a 100644
+--- a/dist/bridge-gQKFAW83.d.ts
++++ b/dist/bridge-gQKFAW83.d.ts
+@@ -1,4 +1,4 @@
+-type CatalogGroup = 'capture' | 'discovery' | 'dom' | 'errors' | 'events' | 'layout' | 'locator' | 'logs' | 'network' | 'page' | 'perf' | 'state' | 'view' | 'window';
++type CatalogGroup = 'app' | 'capture' | 'discovery' | 'dom' | 'errors' | 'events' | 'layout' | 'locator' | 'logs' | 'network' | 'page' | 'perf' | 'state' | 'view' | 'window';
+ interface CatalogEntry {
+     command: string;
+     description: string;
+@@ -583,6 +583,7 @@ interface CreateToolBridgeOptions {
+     path?: string;
+     perfBufferSize?: number;
+     port?: number;
++    requestQuit?: () => Awaitable<void>;
+     stateNamespaces?: string[];
+ }
+ interface CreateElectrobunToolBridgeOptions extends Omit<CreateToolBridgeOptions, 'appId' | 'appName' | 'appVersion' | 'captureScreenshot' | 'getBuildInfo' | 'getState' | 'getViews' | 'getWindows' | 'stateNamespaces'> {
+@@ -597,7 +598,9 @@ interface CreateElectrobunToolBridgeOptions extends Omit<CreateToolBridgeOptions
+     getActiveWindowId?: () => Awaitable<number | undefined>;
+     instrumentation?: boolean | Partial<ElectrobunBridgeInstrumentationOptions>;
+     mainWindow: ElectrobunWindowLike;
++    requestQuit?: () => Awaitable<void>;
+     state?: Record<string, ElectrobunStateNamespaceSource> | (() => Awaitable<Record<string, Record<string, unknown>>>);
++    trustedRuntime?: boolean;
+     windows?: readonly ElectrobunWindowLike[] | (() => Awaitable<readonly ElectrobunWindowLike[]>);
+ }
+ interface ToolBridge {
+diff --git a/dist/chunk-CTZJMZEY.js b/dist/chunk-CTZJMZEY.js
+index 61897a6ad..831d62559 100644
+--- a/dist/chunk-CTZJMZEY.js
++++ b/dist/chunk-CTZJMZEY.js
+@@ -1,5 +1,15 @@
+ // src/protocol/commands.ts
+ var protocolCommands = [
++  {
++    capabilities: [],
++    cli: true,
++    classification: "write",
++    description: "Request graceful app shutdown through a trusted bridge.",
++    group: "app",
++    mock: false,
++    name: "app.quit",
++    streaming: false
++  },
+   {
+     capabilities: [],
+     cli: true,
+diff --git a/dist/chunk-JG5G6UCY.js b/dist/chunk-JG5G6UCY.js
+index da7284248..d6ab01734 100644
+--- a/dist/chunk-JG5G6UCY.js
++++ b/dist/chunk-JG5G6UCY.js
+@@ -1770,6 +1770,7 @@ function createCli() {
+     description: "List the supported command surface grouped by capability.",
+     options: z.object({
+       group: z.enum([
++        "app",
+         "capture",
+         "discovery",
+         "dom",
+@@ -1875,6 +1876,20 @@ function createCli() {
+       });
+     }
+   });
++  const appCli = Cli.create("app", { description: "App lifecycle commands." });
++  appCli.command("quit", {
++    description: "Request graceful app shutdown through a trusted bridge.",
++    options: connectionOptions(),
++    async run(c) {
++      try {
++        const bridge = await createBridgeClient(c.options);
++        return c.ok(await bridge.invoke("app.quit"));
++      } catch (error) {
++        return fail(c, error);
++      }
++    }
++  });
++  cli2.command(appCli);
+   const windowCli = Cli.create("window", { description: "Window inspection commands." });
+   windowCli.command("list", {
+     description: "List windows known to the bridge.",
+diff --git a/dist/chunk-VKPXYR7I.js b/dist/chunk-VKPXYR7I.js
+index 2f8cb70847554b5f6307f7c695028a364ff613e9..d97680f336feec1d880580b09839a9c2dd53ac3f 100644
+--- a/dist/chunk-VKPXYR7I.js
++++ b/dist/chunk-VKPXYR7I.js
+@@ -452,12 +452,14 @@ function createDriverRuntimeScript(request) {
+       }
+     }
+ 
+-    const clickElement = (element) => {
++    const clickElement = (element, button = "left") => {
+       focusElement(element)
+       const rect = element.getBoundingClientRect()
++      const buttonCode = button === "right" ? 2 : button === "middle" ? 1 : 0
++      const buttons = button === "right" ? 2 : button === "middle" ? 4 : 1
+       const init = {
+-        button: 0,
+-        buttons: 1,
++        button: buttonCode,
++        buttons,
+         clientX: rect.left + rect.width / 2,
+         clientY: rect.top + rect.height / 2,
+       }
+@@ -471,7 +473,11 @@ function createDriverRuntimeScript(request) {
+       emit(element, 'mousedown', MouseCtor, init)
+       emit(element, 'pointerup', PointerCtor, init)
+       emit(element, 'mouseup', MouseCtor, init)
+-      if (typeof element.click === 'function') {
++      if (button === "right") {
++        emit(element, 'contextmenu', MouseCtor, { ...init, buttons: 0 })
++      } else if (button === "middle") {
++        emit(element, 'auxclick', MouseCtor, { ...init, buttons: 0 })
++      } else if (typeof element.click === 'function') {
+         element.click()
+       } else {
+         emit(element, 'click', MouseCtor, init)
+@@ -661,6 +667,19 @@ function createDriverRuntimeScript(request) {
+ 
+     const selectOptions = (element, values) => {
+       const wanted = new Set(values.map((value) => String(value)))
++      if (!element.multiple) {
++        const selectedOption = Array.from(element.options).find(
++          (option) => wanted.has(option.value) || wanted.has(option.label),
++        )
++        if (!selectedOption || element.value === selectedOption.value) {
++          return
++        }
++        element.value = selectedOption.value
++        emit(element, 'input', Event)
++        emit(element, 'change', Event)
++        return
++      }
++
+       const allowMultiple = element.multiple
+       let changed = false
+       for (const option of Array.from(element.options)) {
+@@ -711,6 +730,11 @@ function createDriverRuntimeScript(request) {
+         }
+       }
+ 
++      const pointerAction = ['check', 'click', 'hover', 'uncheck'].includes(request.action)
++      if (pointerAction) {
++        element.scrollIntoView({ block: 'nearest', inline: 'nearest' })
++      }
++
+       const rect = element.getBoundingClientRect()
+       if (rect.width <= 0 || rect.height <= 0) {
+         return {
+@@ -723,7 +747,6 @@ function createDriverRuntimeScript(request) {
+         }
+       }
+ 
+-      const pointerAction = ['check', 'click', 'hover', 'uncheck'].includes(request.action)
+       if (!request.force && !isVisible(element) && request.action !== 'blur') {
+         return {
+           count: 1,
+@@ -772,7 +795,7 @@ function createDriverRuntimeScript(request) {
+         }
+       }
+ 
+-      if ((request.action === 'fill' || request.action === 'clear' || request.action === 'press') && !isEditable(element)) {
++      if ((request.action === 'fill' || request.action === 'clear') && !isEditable(element)) {
+         return {
+           count: 1,
+           element: describeElement(element),
+@@ -814,7 +837,7 @@ function createDriverRuntimeScript(request) {
+       } else if (request.action === 'hover') {
+         hoverElement(element)
+       } else if (request.action === 'click') {
+-        clickElement(element)
++        clickElement(element, request.button)
+       } else if (request.action === 'fill') {
+         fillElement(element, String(request.value || ''))
+       } else if (request.action === 'clear') {
+@@ -950,7 +973,24 @@ function errorFromAction(result) {
+     return new ToolError("UNSUPPORTED_TARGET", result.message ?? "Resolved target has the wrong element type.");
+   }
+   if (result.reason === "occluded") {
+-    return new ToolError("ACTIONABILITY_FAILED", result.message ?? "Resolved target is occluded.");
++    const target = result.element ? JSON.stringify({
++      name: result.element.name,
++      rect: result.element.rect,
++      role: result.element.role,
++      tag: result.element.tag,
++      testId: result.element.testId
++    }) : "unknown";
++    const blocker = result.blocker ? JSON.stringify({
++      name: result.blocker.name,
++      rect: result.blocker.rect,
++      role: result.blocker.role,
++      tag: result.blocker.tag,
++      testId: result.blocker.testId
++    }) : "unknown";
++    return new ToolError(
++      "ACTIONABILITY_FAILED",
++      `${result.message ?? "Resolved target is occluded."} Target: ${target}. Blocker: ${blocker}.`
++    );
+   }
+   if (result.reason === "not-visible" || result.reason === "zero-size") {
+     return new ToolError("TARGET_NOT_VISIBLE", result.message ?? "Resolved target is not visible.");
+@@ -1002,6 +1042,7 @@ async function executeDriverAction(view, input) {
+       view,
+       createDriverRuntimeScript({
+         action: input.action,
++        button: input.button,
+         force: input.force,
+         key: input.key,
+         kind: "action",
+@@ -1811,14 +1852,14 @@ async function resolveElectrobunRuntime(options) {
+     );
+   }
+ }
+-function electrobunScreenshotAvailability(runtime) {
++function electrobunScreenshotAvailability(runtime, trustedRuntime) {
+   if (process.platform !== "darwin") {
+     return {
+       available: false,
+       reason: "Electrobun screenshots are currently implemented only on macOS."
+     };
+   }
+-  if (runtime.source !== "runtime") {
++  if (runtime.source !== "runtime" && !trustedRuntime) {
+     return {
+       available: false,
+       reason: "Electrobun screenshots require the default electrobun/bun runtime. Bridges mounted with browserView overrides do not support automatic screenshots."
+@@ -1982,8 +2023,8 @@ async function createElectrobunGetWindows(options, browserView) {
+     [...windowsById.values()].map(async (window) => {
+       const described = await options.describeWindow?.(window) ?? {};
+       return {
+         active: described.active ?? window.id === defaultActiveWindowId,
+-        focus: described.focus ?? window.focus?.bind(window),
++        focus: described.focus ?? window.activate?.bind(window),
+         frame: described.frame ?? window.frame,
+         getFrame: described.getFrame ?? window.getFrame?.bind(window),
+         title: described.title ?? window.title,
+@@ -2271,6 +2312,7 @@ function createToolBridge(options) {
+   const listNetworkRequests = async () => await options.getNetworkRequests?.() ?? networkRequests;
+   const listPerfMarks = async () => await options.getPerfMarks?.() ?? perfMarks;
+   const stateStore = async () => await options.getState?.() ?? {};
++  let appQuitReceipt;
+   const fetch = async (request) => {
+     const url = new URL(request.url);
+     if (url.pathname !== path) {
+@@ -2341,6 +2383,36 @@ function createToolBridge(options) {
+       const activeViewId = views.find((view) => view.active)?.viewId ?? rawWindows.find((window) => window.active)?.viewIds?.[0] ?? views[0]?.viewId ?? 0;
+       const recent = await options.getRecent?.() ?? { errors: 0, warnings: 0 };
+       switch (body.command) {
++        case "app.quit": {
++          if (!options.requestQuit) {
++            throw new ToolError(
++              "COMMAND_NOT_IMPLEMENTED",
++              "Tool bridge does not implement app.quit."
++            );
++          }
++          if (!appQuitReceipt) {
++            appQuitReceipt = {
++              requestId: `quit_${randomUUID2()}`,
++              requested: true,
++              requestedAt: (/* @__PURE__ */ new Date()).toISOString()
++            };
++            recordEvent({
++              eventName: "app.quit.requested",
++              payload: appQuitReceipt
++            });
++            setTimeout(() => {
++              Promise.resolve().then(() => options.requestQuit()).catch((error) => {
++                recordError({
++                  kind: "app",
++                  message: error instanceof Error ? error.message : String(error),
++                  source: "app.quit",
++                  stack: error instanceof Error ? error.stack : void 0
++                });
++              });
++            }, 0);
++          }
++          return createJsonResponse(appQuitReceipt);
++        }
+         case "doctor": {
+           const data = {
+             app: {
+@@ -2581,6 +2653,7 @@ function createToolBridge(options) {
+           const action = body.command.slice("locator.".length);
+           const result = await executeDriverAction(target, {
+             action,
++            button: body.input?.button,
+             force: Boolean(body.input?.force),
+             key: body.input?.key,
+             locator,
+@@ -2692,31 +2765,38 @@ function createToolBridge(options) {
+           return createJsonResponse(result);
+         }
+         case "events.wait": {
+-          const filtered = filterEventRecords(
+-            events,
+-            {
+-              eventName: body.input?.eventName,
+-              match: body.input?.match ?? void 0,
+-              since: body.input?.since,
+-              viewRef: body.input?.viewRef,
+-              views,
+-              windowRef: body.input?.windowRef,
+-              windows
+-            },
+-            { activeViewId, activeWindowId }
+-          );
+-          const data = {
+-            criteria: {
+-              eventName: String(body.input?.eventName ?? ""),
+-              match: body.input?.match ?? void 0,
+-              viewRef: body.input?.viewRef,
+-              windowRef: body.input?.windowRef
+-            },
+-            event: filtered[0] ?? null,
+-            matched: filtered.length > 0,
+-            timeoutMs: Number(body.input?.timeoutMs ?? 0)
+-          };
+-          return createJsonResponse(data);
++          const timeoutMs = Number(body.input?.timeoutMs ?? 0);
++          const deadline = Date.now() + timeoutMs;
++          while (true) {
++            const filtered = filterEventRecords(
++              events,
++              {
++                eventName: body.input?.eventName,
++                match: body.input?.match ?? void 0,
++                since: body.input?.since,
++                viewRef: body.input?.viewRef,
++                views,
++                windowRef: body.input?.windowRef,
++                windows
++              },
++              { activeViewId, activeWindowId }
++            );
++            const data = {
++              criteria: {
++                eventName: String(body.input?.eventName ?? ""),
++                match: body.input?.match ?? void 0,
++                viewRef: body.input?.viewRef,
++                windowRef: body.input?.windowRef
++              },
++              event: filtered[0] ?? null,
++              matched: filtered.length > 0,
++              timeoutMs
++            };
++            if (data.matched || Date.now() >= deadline) {
++              return createJsonResponse(data);
++            }
++            await sleep3(Math.min(50, deadline - Date.now()));
++          }
+         }
+         case "events.tail": {
+           const filtered = filterEventRecords(
+@@ -2985,7 +3065,7 @@ async function mountToolBridge(options) {
+ }
+ async function mountElectrobunToolBridge(options) {
+   const runtime = await resolveElectrobunRuntime(options);
+-  const screenshotAvailability = electrobunScreenshotAvailability(runtime);
++  const screenshotAvailability = electrobunScreenshotAvailability(runtime, options.trustedRuntime);
+   const initialState = await resolveElectrobunState(options.state);
+   const instrumentation = normalizeElectrobunInstrumentation(options.instrumentation);
+   const appId = inferElectrobunAppId(options);
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index dc4289032..8ea1b8f68 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -312,6 +312,11 @@ interface DriverPerfFilterOptions {
+     name?: string;
+     since?: string;
+ }
++interface AppQuitReceipt {
++    requestId: string;
++    requested: true;
++    requestedAt: string;
++}
+ declare class Driver {
+     private readonly client;
+     private readonly defaults;
+@@ -319,6 +324,7 @@ declare class Driver {
+     page(ref?: string): Page;
+     window(ref?: string): Window;
+     doctor(): Promise<DoctorData>;
++    requestQuit(): Promise<AppQuitReceipt>;
+     status(): Promise<StatusData>;
+     tree(options?: DriverTreeOptions): Promise<TreeData>;
+     windows(): Promise<WindowInfo[]>;
+diff --git a/dist/index.js b/dist/index.js
+index 7aa5ba4bc..6a98b8099 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -485,6 +485,9 @@ var Driver = class {
+   async doctor() {
+     return await this.client.invoke("doctor");
+   }
++  async requestQuit() {
++    return await this.client.invoke("app.quit");
++  }
+   async status() {
+     return await this.client.invoke("status");
+   }

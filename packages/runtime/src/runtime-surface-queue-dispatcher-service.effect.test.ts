@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import {
+  AppLogWritePort,
   RuntimeActorExtensionBindingStatePort,
   RuntimeCommandStatePort,
   RuntimeContractError,
@@ -262,6 +263,7 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
                     turnId: input.turn.id as TurnId,
                     status: "completed" as const,
                     assistantText: "done",
+                    usage: null,
                     commandReceipts: [],
                   }),
                 ),
@@ -412,6 +414,9 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
             } as never),
             Layer.succeed(RuntimeEpisodeStatePort, {} as never),
             Layer.succeed(RuntimeThreadStatePort, {} as never),
+            Layer.succeed(AppLogWritePort, {
+              append: () => Effect.die("unused"),
+            }),
             Layer.succeed(RuntimeEventBus, {
               publishLive: () => Effect.die("unused"),
               publishStateInvalidations: (input) =>

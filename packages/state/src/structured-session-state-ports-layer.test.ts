@@ -10,6 +10,7 @@ import {
   RuntimeTranscriptStatePort,
   RuntimeWorkspaceStatePort,
   type AbsolutePath,
+  type CreateRuntimeOrchestratorSurfaceStateInput,
   type RuntimeOwnerId,
   type WorkspaceId,
 } from "@svvy/core";
@@ -29,6 +30,22 @@ const owner = {
   kind: "test",
 } as const;
 
+function orchestratorStateInput(
+  workspaceId: WorkspaceId,
+  title: string,
+): CreateRuntimeOrchestratorSurfaceStateInput {
+  return {
+    workspaceId,
+    title,
+    profileId: "default-orchestrator" as never,
+    provider: "zai" as never,
+    model: "glm-5-turbo" as never,
+    reasoningEffort: "medium",
+    loadedExtensionIds: ["extension-loading" as never],
+    availableExtensionIds: [],
+  };
+}
+
 describe("structured session state ports layer", () => {
   it("provides structured-session-backed runtime ports from one acquired state graph", async () => {
     const result = await runTestEffect(
@@ -46,10 +63,9 @@ describe("structured session state ports layer", () => {
           owner,
           openReason: "test",
         });
-        const created = yield* surfaces.createOrchestratorSurface({
-          workspaceId: acquired.value.workspaceId,
-          title: "Runtime state ports layer",
-        });
+        const created = yield* surfaces.createOrchestratorSurface(
+          orchestratorStateInput(acquired.value.workspaceId, "Runtime state ports layer"),
+        );
         const opened = yield* surfaces.openSurface({
           workspaceId: acquired.value.workspaceId,
           target: {

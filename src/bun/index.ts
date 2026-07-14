@@ -1,4 +1,4 @@
-import { Updater, Utils } from "electrobun/bun";
+import { BrowserView, BuildConfig, Updater, Utils } from "electrobun/bun";
 import { getModels, getProviders } from "@mariozechner/pi-ai";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -970,9 +970,10 @@ function buildDesktopRpcHandlers(
         (await facades.appActions.workspaceFiles.listPaths(input)).map((entry) => ({ ...entry })),
       pickWorkspaceAttachments: async (input) => {
         const { cwd } = await facades.appActions.workspaceFiles.getRoot(input);
-        const { selectedPaths } = await facades.hostActions.dialogs.pickFilesAndFolders({
-          startingFolder: cwd,
-        });
+        const { selectedPaths } =
+          input.kind === "folder"
+            ? await facades.hostActions.dialogs.pickFolder({ startingFolder: cwd })
+            : await facades.hostActions.dialogs.pickFiles({ startingFolder: cwd });
         const result = await facades.appActions.workspaceFiles.materializeSelectedAttachments({
           workspaceId: input.workspaceId,
           selectedPaths,
@@ -1437,10 +1438,6 @@ function buildDesktopRpcHandlers(
         apiKey: string;
       }): Promise<{ ok: boolean }> => {
         storeApiKey(providerId, apiKey);
-        recordDevBrowserToolsEvent("provider.auth.updated", {
-          keyType: "apikey",
-          providerId,
-        });
         workspaceRuntimeRegistry
           .getActiveRuntimeOrNull()
           ?.appLog.info("auth.provider", "Provider auth updated.", {
@@ -1451,6 +1448,10 @@ function buildDesktopRpcHandlers(
           refreshOAuth: false,
           source: "user_action",
           stateCommands: facades.commands.state,
+        });
+        recordDevBrowserToolsEvent("provider.auth.updated", {
+          keyType: "apikey",
+          providerId,
         });
         return { ok: true };
       },
@@ -1489,7 +1490,6 @@ function buildDesktopRpcHandlers(
         providerId: string;
       }): Promise<{ ok: boolean }> => {
         removeCredential(providerId);
-        recordDevBrowserToolsEvent("provider.auth.removed", { providerId });
         workspaceRuntimeRegistry
           .getActiveRuntimeOrNull()
           ?.appLog.info("auth.provider", "Provider auth removed.", { providerId });
@@ -1498,6 +1498,7 @@ function buildDesktopRpcHandlers(
           source: "user_action",
           stateCommands: facades.commands.state,
         });
+        recordDevBrowserToolsEvent("provider.auth.removed", { providerId });
         return { ok: true };
       },
     },
@@ -1555,110 +1556,219 @@ function shutdownDesktopApp(
 }
 
 const appChannelPromise = Updater.localInfo.channel();
+const mountDevBrowserToolsForMainWindow = async (
+  mainWindow: NonNullable<ReturnType<ElectrobunDesktopHostAdapter["getMainWindow"]>>,
+): Promise<void> => {
+  if ((await appChannelPromise) !== "dev") {
+    return;
+  }
+  console.info("svvy startup phase: dev-browser-tools.import.begin");
+  const { mountDevBrowserToolsBridge } = await import("./dev-browser-tools-bridge");
+  console.info("svvy startup phase: dev-browser-tools.mount.begin");
+  const mountedDevBrowserToolsBridge = await mountDevBrowserToolsBridge({
+    browserView: BrowserView,
+    buildConfig: BuildConfig,
+    getDefaultAgentSettings,
+    getMainWindow: () => mainWindow,
+    getActiveWorkspace: readActiveWorkspaceFromState,
+    getOpenWorkspaces: () => workspaceRuntimeRegistry.listOpenWorkspaces(),
+    getWorkspaceBranch,
+    readInspectionState: async (activeWorkspaceId) => {
+      const state = await workspaceRuntimeRegistry.getRendererStateFacade();
+      const unavailable = {
+        status: "unavailable" as const,
+        reason: "no-active-workspace" as const,
+        value: null,
+      };
+      const read = async <Kind extends StateReadModelResult["kind"]>(
+        request: StateReadModelRequest,
+        kind: Kind,
+      ) => {
+        try {
+          return {
+            status: "ready" as const,
+            value: requireStateReadModel(await state.readModels.fetch(request), kind).value,
+          };
+        } catch (error) {
+          return {
+            status: "error" as const,
+            error: {
+              kind: "read-model-error" as const,
+              name: error instanceof Error ? error.name : "UnknownError",
+              message: error instanceof Error ? error.message : String(error),
+            },
+            value: null,
+          };
+        }
+      };
+      const workspaceId = activeWorkspaceId as WorkspaceId | null;
+      const [
+        settings,
+        agents,
+        extensions,
+        appLogsForApp,
+        appLogsForWorkspace,
+        promptHistory,
+        requestInput,
+        approvals,
+        snippets,
+        workflowsGenerated,
+        workspaceChrome,
+        workspaceLayout,
+        externalInstructions,
+      ] = await Promise.all([
+        read({ kind: "settings" }, "settings"),
+        read({ kind: "agents" }, "agents"),
+        read({ kind: "extensions" }, "extensions"),
+        read({ kind: "appLogs", query: { limit: 100 } }, "appLogs"),
+        workspaceId
+          ? read({ kind: "appLogs", workspaceId, query: { limit: 100 } }, "appLogs")
+          : Promise.resolve(unavailable),
+        workspaceId
+          ? read({ kind: "promptHistory", workspaceId }, "promptHistory")
+          : Promise.resolve(unavailable),
+        workspaceId
+          ? read({ kind: "requestInput", workspaceId }, "requestInput")
+          : Promise.resolve(unavailable),
+        workspaceId
+          ? read({ kind: "approvals", workspaceId }, "approvals")
+          : Promise.resolve(unavailable),
+        workspaceId
+          ? read({ kind: "snippets", workspaceId }, "snippets")
+          : Promise.resolve(unavailable),
+        read({ kind: "workflowsGenerated" }, "workflowsGenerated"),
+        read({ kind: "workspaceChrome" }, "workspaceChrome"),
+        workspaceId
+          ? read({ kind: "workspaceLayout", workspaceId }, "workspaceLayout")
+          : Promise.resolve(unavailable),
+        workspaceId
+          ? read({ kind: "externalInstructions", workspaceId }, "externalInstructions")
+          : Promise.resolve(unavailable),
+      ]);
+      const appLogs =
+        appLogsForApp.status === "error"
+          ? appLogsForApp
+          : appLogsForWorkspace.status === "error"
+            ? appLogsForWorkspace
+            : {
+                status: "ready" as const,
+                value: {
+                  app: appLogsForApp.value,
+                  workspace:
+                    appLogsForWorkspace.status === "ready" ? appLogsForWorkspace.value : null,
+                },
+              };
+      return {
+        settings,
+        agents,
+        extensions,
+        appLogs,
+        promptHistory,
+        requestInput,
+        approvals,
+        snippets,
+        workflowsGenerated,
+        workspaceChrome,
+        workspaceLayout,
+        externalInstructions,
+      };
+    },
+    listProviderAuthSummaries,
+    listOpenSurfaceReadModels: async (workspaceId) => {
+      if (!workspaceRuntimeRegistry.getRuntimeOrNull(workspaceId)) {
+        return [];
+      }
+      const state = await workspaceRuntimeRegistry.getRendererStateFacade();
+      const navigation = requireStateReadModel(
+        await state.readModels.fetch({
+          kind: "sessionNavigation",
+          workspaceId: workspaceId as WorkspaceId,
+        }),
+        "sessionNavigation",
+      ).value;
+      const sessions = [
+        ...navigation.pinnedSessions,
+        ...navigation.activeSessions,
+        ...navigation.archived.sessions,
+      ];
+      const targets = sessions.flatMap((session) => [
+        {
+          workspaceSessionId: session.id,
+          surface: "orchestrator",
+          surfacePiSessionId: session.id,
+        } as RuntimeSurfaceTarget,
+        ...(session.sidebarThreads ?? []).map(
+          (thread) =>
+            ({
+              workspaceSessionId: session.id,
+              surface: "handler",
+              surfacePiSessionId: thread.surfacePiSessionId,
+              threadId: thread.threadId,
+            }) as RuntimeSurfaceTarget,
+        ),
+      ]);
+
+      return Promise.all(
+        targets.map(async (target) => {
+          const [transcript, summary, composer, queuedMessages] = await Promise.all([
+            state.readModels.fetch({ kind: "surfaceTranscript", target }),
+            state.readModels.fetch({ kind: "surfaceSummary", target }),
+            state.readModels.fetch({ kind: "surfaceComposer", target }),
+            state.readModels.fetch({ kind: "surfaceQueuedMessages", target }),
+          ]);
+          return {
+            transcript: requireStateReadModel(transcript, "surfaceTranscript").value,
+            summary: requireStateReadModel(summary, "surfaceSummary").value,
+            composer: requireStateReadModel(composer, "surfaceComposer").value,
+            queuedMessages: requireStateReadModel(queuedMessages, "surfaceQueuedMessages").value,
+          };
+        }),
+      );
+    },
+    listWorkspaceSessions: async (workspaceId) => {
+      if (!workspaceRuntimeRegistry.getRuntimeOrNull(workspaceId)) {
+        return { sessions: [] };
+      }
+      const state = await workspaceRuntimeRegistry.getRendererStateFacade();
+      const result = requireStateReadModel(
+        await state.readModels.fetch({
+          kind: "sessionNavigation",
+          workspaceId: workspaceId as WorkspaceId,
+        }),
+        "sessionNavigation",
+      );
+      return {
+        sessions: [
+          ...result.value.pinnedSessions,
+          ...result.value.activeSessions,
+          ...result.value.archived.sessions,
+        ],
+      };
+    },
+    mainWindow,
+    requestQuit: () => Utils.quit(),
+  }).catch((error) => {
+    recordAppRuntimeError(
+      "app",
+      "svvy dev browser tools bridge failed to mount.",
+      "dev-browser-tools",
+      {},
+      error,
+    );
+    throw error;
+  });
+  console.info("svvy startup phase: dev-browser-tools.mount.ready");
+  devBrowserToolsRecorder = mountedDevBrowserToolsBridge;
+  devBrowserToolsMetadata = {
+    appId: mountedDevBrowserToolsBridge.appId,
+    ...(mountedDevBrowserToolsBridge.url ? { url: mountedDevBrowserToolsBridge.url } : {}),
+  };
+};
+
 desktopHost = createElectrobunDesktopHostAdapter({
   maxRequestTime: getRpcRequestTimeoutMs(),
   buildRpcHandlers: buildDesktopRpcHandlers,
   resolveMainWindowUrl: async () => getMainViewUrl(await appChannelPromise),
-  prepareMainWindow: async (mainWindow) => {
-    if ((await appChannelPromise) !== "dev") {
-      return;
-    }
-    const { mountDevBrowserToolsBridge } = await import("./dev-browser-tools-bridge");
-    const mountedDevBrowserToolsBridge = await mountDevBrowserToolsBridge({
-      getDefaultAgentSettings,
-      getMainWindow: () => mainWindow,
-      getActiveWorkspace: readActiveWorkspaceFromState,
-      getOpenWorkspaces: () => workspaceRuntimeRegistry.listOpenWorkspaces(),
-      getWorkspaceBranch,
-      listProviderAuthSummaries,
-      listOpenSurfaceReadModels: async (workspaceId) => {
-        if (!workspaceRuntimeRegistry.getRuntimeOrNull(workspaceId)) {
-          return [];
-        }
-        const state = await workspaceRuntimeRegistry.getRendererStateFacade();
-        const navigation = requireStateReadModel(
-          await state.readModels.fetch({
-            kind: "sessionNavigation",
-            workspaceId: workspaceId as WorkspaceId,
-          }),
-          "sessionNavigation",
-        ).value;
-        const sessions = [
-          ...navigation.pinnedSessions,
-          ...navigation.activeSessions,
-          ...navigation.archived.sessions,
-        ];
-        const targets = sessions.flatMap((session) => [
-          {
-            workspaceSessionId: session.id,
-            surface: "orchestrator",
-            surfacePiSessionId: session.id,
-          } as RuntimeSurfaceTarget,
-          ...(session.sidebarThreads ?? []).map(
-            (thread) =>
-              ({
-                workspaceSessionId: session.id,
-                surface: "handler",
-                surfacePiSessionId: thread.surfacePiSessionId,
-                threadId: thread.threadId,
-              }) as RuntimeSurfaceTarget,
-          ),
-        ]);
-
-        return Promise.all(
-          targets.map(async (target) => {
-            const [transcript, summary, composer, queuedMessages] = await Promise.all([
-              state.readModels.fetch({ kind: "surfaceTranscript", target }),
-              state.readModels.fetch({ kind: "surfaceSummary", target }),
-              state.readModels.fetch({ kind: "surfaceComposer", target }),
-              state.readModels.fetch({ kind: "surfaceQueuedMessages", target }),
-            ]);
-            return {
-              transcript: requireStateReadModel(transcript, "surfaceTranscript").value,
-              summary: requireStateReadModel(summary, "surfaceSummary").value,
-              composer: requireStateReadModel(composer, "surfaceComposer").value,
-              queuedMessages: requireStateReadModel(queuedMessages, "surfaceQueuedMessages").value,
-            };
-          }),
-        );
-      },
-      listWorkspaceSessions: async (workspaceId) => {
-        if (!workspaceRuntimeRegistry.getRuntimeOrNull(workspaceId)) {
-          return { sessions: [] };
-        }
-        const state = await workspaceRuntimeRegistry.getRendererStateFacade();
-        const result = requireStateReadModel(
-          await state.readModels.fetch({
-            kind: "sessionNavigation",
-            workspaceId: workspaceId as WorkspaceId,
-          }),
-          "sessionNavigation",
-        );
-        return {
-          sessions: [
-            ...result.value.pinnedSessions,
-            ...result.value.activeSessions,
-            ...result.value.archived.sessions,
-          ],
-        };
-      },
-      mainWindow,
-    }).catch((error) => {
-      recordAppRuntimeError(
-        "app",
-        "svvy dev browser tools bridge failed to mount.",
-        "dev-browser-tools",
-        {},
-        error,
-      );
-      throw error;
-    });
-    devBrowserToolsRecorder = mountedDevBrowserToolsBridge;
-    devBrowserToolsMetadata = {
-      appId: mountedDevBrowserToolsBridge.appId,
-      ...(mountedDevBrowserToolsBridge.url ? { url: mountedDevBrowserToolsBridge.url } : {}),
-    };
-  },
   includeSettingsMenuItem: true,
   onBeforeQuit: shutdownDesktopApp,
   onError: (error, context) => {
@@ -1702,6 +1812,25 @@ await runDesktopBootstrap({
         },
       },
       rendererEmit: (notification) => host.bridge.sendToRenderer(notification),
+      onNotification: (notification) => {
+        if (notification.kind !== "read-model-changed") {
+          return;
+        }
+        recordDevBrowserToolsEvent(
+          notification.invalidation.scope === "app"
+            ? "app_read_model.changed"
+            : "workspace_read_model.changed",
+          {
+            eventGenerationId: notification.eventGenerationId,
+            invalidation: notification.invalidation.invalidation,
+            scope: notification.scope,
+            sequence: notification.sequence,
+            ...(notification.invalidation.scope === "workspace"
+              ? { workspaceId: notification.invalidation.workspaceId }
+              : {}),
+          },
+        );
+      },
       onError: (error, context) => {
         recordDevBrowserToolsError(
           "rpc",
@@ -1731,6 +1860,8 @@ await runDesktopBootstrap({
     if (!mainWindow) {
       throw new Error("The desktop app started without an Electrobun main window.");
     }
+
+    await mountDevBrowserToolsForMainWindow(mainWindow);
 
     if (devBrowserToolsMetadata) {
       const activeWorkspace = await readActiveWorkspaceFromState();
@@ -1775,17 +1906,29 @@ await runDesktopBootstrap({
       },
     });
   },
+  onStartupFailure: (cause) => {
+    recordAppRuntimeError(
+      "app",
+      "Desktop startup failed before the inspection bridge became ready.",
+      "desktop.startup",
+      {},
+      cause,
+    );
+    console.error("svvy desktop startup failed", cause);
+  },
   finalizeFailure: () => desktopHost!.lifecycle.finishQuit(),
   onAuxiliaryFailure: (error, phase) => {
     recordDevBrowserToolsError(
       "app",
       phase === "cleanup"
         ? "Desktop startup cleanup failed."
-        : phase === "failure-surface"
-          ? "Desktop startup failure surface could not be shown."
-          : phase === "finalization"
-            ? "Desktop startup failure finalization failed."
-            : "Desktop renderer rejection failed during startup cleanup.",
+        : phase === "startup-diagnostics"
+          ? "Desktop startup failure diagnostics could not be recorded."
+          : phase === "failure-surface"
+            ? "Desktop startup failure surface could not be shown."
+            : phase === "finalization"
+              ? "Desktop startup failure finalization failed."
+              : "Desktop renderer rejection failed during startup cleanup.",
       "desktop.startup",
       {},
       error,

@@ -42,8 +42,43 @@ function noAuthEnv(overrides: Record<string, string> = {}): Record<string, strin
   };
 }
 
-function stateValue<T extends Record<string, unknown>>(state: { namespace?: string; value: T }): T {
-  return state.value;
+type ProviderState = {
+  connected: number;
+  items: Array<{
+    provider: string;
+    keyType: string;
+  }>;
+};
+
+function providerStateValue(state: {
+  namespace?: string;
+  value: Record<string, unknown>;
+}): ProviderState {
+  const connected = state.value.connected;
+  if (typeof connected !== "number") {
+    throw new Error("Expected provider state connected count to be a number.");
+  }
+
+  const rawItems = state.value.items;
+  if (!Array.isArray(rawItems)) {
+    throw new Error("Expected provider state items to be an array.");
+  }
+
+  const items: ProviderState["items"] = [];
+  for (const item of rawItems) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error("Expected every provider state item to be an object.");
+    }
+    if (!("provider" in item) || typeof item.provider !== "string") {
+      throw new Error("Expected every provider state item to have a provider id.");
+    }
+    if (!("keyType" in item) || typeof item.keyType !== "string") {
+      throw new Error("Expected every provider state item to have a key type.");
+    }
+    items.push({ provider: item.provider, keyType: item.keyType });
+  }
+
+  return { connected, items };
 }
 
 async function waitForEvent(
@@ -55,87 +90,18 @@ async function waitForEvent(
     timeout?: number;
   } = {},
 ) {
-  const deadline = Date.now() + (options.timeout ?? 10_000);
-  let lastResult: Awaited<ReturnType<SvvyApp["driver"]["eventsWait"]>> | null = null;
-
-  while (Date.now() < deadline) {
-    lastResult = await driver.eventsWait(eventName, {
-      match: options.match,
-      since: options.since,
-      timeout: Math.min(2_000, Math.max(250, deadline - Date.now())),
-    });
-
-    if (lastResult.matched) {
-      if (!lastResult.event) {
-        throw new Error(`Expected event "${eventName}" but bridge returned no event.`);
-      }
-      return lastResult.event;
-    }
-
-    await Bun.sleep(100);
+  const result = await driver.eventsWait(eventName, {
+    match: options.match,
+    since: options.since,
+    timeout: options.timeout ?? 10_000,
+  });
+  if (!result.matched) {
+    throw new Error(`Timed out waiting for bridge event "${eventName}".`);
   }
-
-  expect(lastResult?.matched ?? false).toBe(true);
-  throw new Error(`Timed out waiting for bridge event "${eventName}".`);
-}
-
-async function waitForEnabled(
-  locator: {
-    isDisabled?: () => Promise<boolean>;
-    getAttribute?: (name: string) => Promise<string | null>;
-  },
-  timeoutMs = 5_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    const disabled =
-      typeof locator.isDisabled === "function"
-        ? await locator.isDisabled()
-        : typeof locator.getAttribute === "function"
-          ? (await locator.getAttribute("disabled")) !== null
-          : false;
-    if (!disabled) {
-      return;
-    }
-    await Bun.sleep(100);
+  if (!result.event) {
+    throw new Error(`Expected event "${eventName}" but bridge returned no event.`);
   }
-
-  throw new Error("Timed out waiting for a control to become enabled.");
-}
-
-function isRetryableClickError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error.message.includes("Resolved element is disabled") ||
-      error.message.includes("Bridge request timed out"))
-  );
-}
-
-async function clickWhenEnabled(
-  locator: {
-    click: (options?: { force?: boolean }) => Promise<void>;
-    isDisabled?: () => Promise<boolean>;
-    getAttribute?: (name: string) => Promise<string | null>;
-  },
-  timeoutMs = 5_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    await waitForEnabled(locator, Math.min(500, timeoutMs));
-    try {
-      await locator.click({ force: true });
-      return;
-    } catch (error) {
-      if (!isRetryableClickError(error)) {
-        throw error;
-      }
-    }
-    await Bun.sleep(100);
-  }
-
-  throw new Error("Timed out clicking an enabled control.");
+  return result.event;
 }
 
 function sinceNow(): string {
@@ -182,12 +148,10 @@ test("provider auth.updated is emitted when saving an api key from settings", as
       const openaiRow = await providerRowByName(page, "openai");
       const openaiActions = openaiRow.locator(".provider-actions");
 
-      await clickWhenEnabled(
-        openaiActions.getByRole("button", { name: "Change openai API key" }).first(),
-      );
+      await openaiActions.getByRole("button", { name: "Change openai API key" }).first().click();
       await openaiActions.locator('input[placeholder="Paste API key..."]').fill("fresh-openai-key");
       const updatedSince = sinceNow();
-      await clickWhenEnabled(openaiActions.getByRole("button", { name: "Save" }).first());
+      await openaiActions.getByRole("button", { name: "Save" }).first().click();
       const updated = await waitForEvent(driver, "provider.auth.updated", {
         since: updatedSince,
         match: { providerId: "openai" },
@@ -197,7 +161,7 @@ test("provider auth.updated is emitted when saving an api key from settings", as
         keyType: "apikey",
       });
 
-      const providersState = stateValue(await driver.stateGet("providers"));
+      const providersState = providerStateValue(await driver.stateGet("providers"));
       expect(providersState.items.find((provider) => provider.provider === "openai")?.keyType).toBe(
         "apikey",
       );
@@ -220,19 +184,19 @@ test("provider auth.removed is emitted when removing an api key from settings", 
       const openaiRow = await providerRowByName(page, "openai");
 
       const removedSince = sinceNow();
-      await clickWhenEnabled(openaiRow.getByRole("button", { name: "Remove openai credentials" }));
+      await openaiRow.getByRole("button", { name: "Remove openai credentials" }).click();
       const confirmRemove = openaiRow.getByRole("button", {
         name: "Confirm removing openai credentials",
       });
       await confirmRemove.waitFor({ state: "visible" });
-      await clickWhenEnabled(confirmRemove);
+      await confirmRemove.click();
       const removed = await waitForEvent(driver, "provider.auth.removed", {
         since: removedSince,
         match: { providerId: "openai" },
       });
       expect(removed.payload).toMatchObject({ providerId: "openai" });
 
-      const providersState = stateValue(await driver.stateGet("providers"));
+      const providersState = providerStateValue(await driver.stateGet("providers"));
       expect(providersState.connected).toBe(0);
       expect(providersState.items.find((provider) => provider.provider === "openai")?.keyType).toBe(
         "none",

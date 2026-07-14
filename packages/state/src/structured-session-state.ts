@@ -118,7 +118,7 @@ import {
   type AcquireWorkspaceResult,
   type CloseSurfaceInput,
   type CloseSurfaceResult,
-  type CreateOrchestratorSurfaceInput,
+  type CreateRuntimeOrchestratorSurfaceStateInput,
   type CreateSurfaceResult,
   type DeleteOrchestratorSurfaceResult,
   type OpenSurfaceInput,
@@ -1557,7 +1557,7 @@ export interface StructuredSessionStateStore {
   acquireWorkspace(input: AcquireWorkspaceInput): AcquireWorkspaceResult;
   acquireDefaultWorkspace(input: AcquireDefaultWorkspaceInput): AcquireWorkspaceResult;
   releaseWorkspace(input: ReleaseWorkspaceInput): ReleaseWorkspaceResult;
-  createOrchestratorSurface(input: CreateOrchestratorSurfaceInput): CreateSurfaceResult;
+  createOrchestratorSurface(input: CreateRuntimeOrchestratorSurfaceStateInput): CreateSurfaceResult;
   readOrchestratorLifecycle(input: {
     workspaceId: WorkspaceId;
     workspaceSessionId: WorkspaceSessionId;
@@ -2007,6 +2007,7 @@ export interface StructuredSessionStateStore {
     idempotencyKey: string;
     status: "completed" | "failed" | "cancelled";
     result?: { text: string; usage?: unknown; output?: unknown };
+    contextBudget?: { usedTokens: number; maxTokens: number };
     error?: string;
   }):
     | {
@@ -5978,32 +5979,25 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     };
   }
 
-  createOrchestratorSurface(input: CreateOrchestratorSurfaceInput): CreateSurfaceResult {
+  createOrchestratorSurface(
+    input: CreateRuntimeOrchestratorSurfaceStateInput,
+  ): CreateSurfaceResult {
     if (input.workspaceId !== this.workspace.id) {
       throw new Error(`Workspace ${input.workspaceId} is not managed by this state store.`);
     }
     const timestamp = this.now();
     const sessionId = this.createId("session");
     const title = input.title?.trim() || "New orchestrator";
-    const profileId = input.profileId ?? ("default-orchestrator" as AgentProfileId);
-    const profile = this.findAgentProfileRow("orchestrator", profileId);
-    if (!profile || !profile.provider_id || !profile.model_id) {
-      throw new StateContractError({
-        operation: "structured-session.createOrchestratorSurface",
-        reason: "not-found",
-        message: `Orchestrator profile ${profileId} does not have complete prompt defaults.`,
-      });
-    }
-    const reasoning = fromJson<{ effort?: unknown }>(profile.reasoning_json);
-    const reasoningEffort = typeof reasoning?.effort === "string" ? reasoning.effort : "medium";
     const stateRevision = this.db.transaction(() => {
       this.upsertPiSession({
         sessionId,
         title,
-        provider: profile.provider_id,
-        model: profile.model_id,
-        reasoningEffort,
-        orchestratorAgentProfileId: profileId,
+        provider: input.provider,
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        orchestratorAgentProfileId: input.profileId,
+        loadedExtensionIds: [...input.loadedExtensionIds],
+        availableExtensionIds: [...input.availableExtensionIds],
         messageCount: 0,
         status: "idle",
         createdAt: timestamp,
@@ -11710,6 +11704,7 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
     idempotencyKey: string;
     status: "completed" | "failed" | "cancelled";
     result?: { text: string; usage?: unknown; output?: unknown };
+    contextBudget?: { usedTokens: number; maxTokens: number };
     error?: string;
   }):
     | {
@@ -11755,6 +11750,9 @@ class SqliteStructuredSessionStateStore implements StructuredSessionStateStore {
       }
       const nextMeta = {
         ...meta,
+        ...(transactionInput.contextBudget
+          ? { contextBudget: transactionInput.contextBudget }
+          : {}),
         bridgeResult:
           transactionInput.status === "completed"
             ? {

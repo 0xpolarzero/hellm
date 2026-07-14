@@ -678,9 +678,10 @@
       streamMessage={visibleStreamMessage}
       currentModel={currentModel ?? controller.view.model}
       {pendingToolCalls}
-      {isStreaming}
-      {turnTimings}
-      semanticBlocks={transcriptSemanticBlocks}
+			{isStreaming}
+			{turnTimings}
+			commandRollups={currentCommandRollups}
+			semanticBlocks={transcriptSemanticBlocks}
       {workspaceMentionPaths}
       initialScroll={pane?.scroll ?? null}
       {editingUserMessageTimestamp}
@@ -738,7 +739,7 @@
         controller?.setExtensionUsage(extensionId, state)}
       onOpenExtension={openExtension}
       listWorkspacePaths={(options) => runtime.listWorkspacePaths(options)}
-      pickWorkspaceAttachments={() => runtime.pickWorkspaceAttachments()}
+      pickWorkspaceAttachments={(kind) => runtime.pickWorkspaceAttachments(kind)}
       importComposerAttachments={(files) => runtime.importComposerAttachments(files)}
       listSnippets={() => runtime.getSnippets()}
     />

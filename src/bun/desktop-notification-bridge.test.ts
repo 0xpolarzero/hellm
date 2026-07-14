@@ -24,6 +24,51 @@ const target = {
 } as never;
 
 describe("desktop notification bridge", () => {
+  it("observes each emitted notification without coupling delivery failures", async () => {
+    const appSubscription = new PushSubscription();
+    const rendered: DesktopRendererNotification[] = [];
+    const observed: DesktopRendererNotification[] = [];
+    const errors: string[] = [];
+    const bridge = createDesktopNotificationBridge({
+      runtimeEvents: async () => appSubscription,
+      state: stateWithWorkspaceTabs([]),
+      rendererEmit: (notification) => {
+        rendered.push(notification);
+        throw new Error("renderer failed");
+      },
+      onNotification: (notification) => {
+        observed.push(notification);
+        throw new Error("observer failed");
+      },
+      onError: (_error, context) => errors.push(context),
+    });
+
+    await bridge.start();
+    try {
+      appSubscription.push(
+        runtimeEvent({
+          type: "app_read_model.changed",
+          eventGenerationId: generationId,
+          sequence: 1 as never,
+          invalidation: { model: "settings" },
+        }),
+      );
+      await waitFor(() => rendered.length === 1 && observed.length === 1 && errors.length === 2);
+
+      expect(rendered[0]).toEqual(observed[0]);
+      expect(observed[0]).toMatchObject({
+        kind: "read-model-changed",
+        invalidation: { scope: "app", invalidation: { model: "settings" } },
+      });
+      expect(errors).toEqual([
+        "desktop-notification-bridge.rendererEmit",
+        "desktop-notification-bridge.onNotification",
+      ]);
+    } finally {
+      await bridge.stop();
+    }
+  });
+
   it("maps the eight runtime event rows to exact renderer notifications", () => {
     const surfaceStream = mapRuntimeEventToDesktopNotification(
       runtimeEvent({

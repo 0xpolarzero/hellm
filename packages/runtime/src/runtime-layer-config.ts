@@ -36,6 +36,10 @@ import {
 } from "./runtime-workflow-agent-source-index";
 import { RuntimeShutdownAdmission } from "./runtime-shutdown-admission";
 import { RuntimeLayerCommandControlPort } from "./runtime-command-host-ports";
+import {
+  RuntimeExtensionStartupReconcileService,
+  type RuntimeExtensionStartupReconcileServiceService,
+} from "./runtime-extension-startup-reconcile-service";
 
 const PositiveSafeIntegerSchema = Schema.Number.check(
   Schema.isFinite(),
@@ -408,6 +412,7 @@ export const layerRuntimeStartupReadiness = Layer.effect(
   Effect.gen(function* () {
     const runtimeConfig = yield* RuntimeLayerConfigService;
     const requestInputWaitService = yield* RuntimeRequestInputWaitService;
+    const extensionStartupReconcile = yield* RuntimeExtensionStartupReconcileService;
     const workflowAgentSources = yield* RuntimeWorkflowAgentSourceIndex;
     const recoveryState = yield* RuntimeRecoveryStatePort;
     const turnState = yield* RuntimeTurnStatePort;
@@ -416,6 +421,7 @@ export const layerRuntimeStartupReadiness = Layer.effect(
       awaitReady: makeRuntimeStartupReadinessEffect(
         runtimeConfig,
         requestInputWaitService,
+        extensionStartupReconcile,
         workflowAgentSources,
         recoveryState,
         turnState,
@@ -580,12 +586,25 @@ const awaitRuntimeStartupReadinessEffect = Effect.gen(function* () {
 function makeRuntimeStartupReadinessEffect(
   _runtimeConfig: RuntimeLayerConfig,
   requestInputWaitService: RuntimeRequestInputWaitServiceService,
+  extensionStartupReconcile: RuntimeExtensionStartupReconcileServiceService,
   workflowAgentSources: RuntimeWorkflowAgentSourceIndexService,
   recoveryState: RuntimeRecoveryStatePortService,
   turnState: RuntimeTurnStatePortService,
   eventBus: RuntimeEventBus["Service"],
 ): Effect.Effect<RuntimeStartupReadinessReceipt, RuntimeStartupError> {
   return Effect.gen(function* () {
+    yield* extensionStartupReconcile.reconcile.pipe(
+      Effect.mapError(
+        (cause) =>
+          new RuntimeStartupError({
+            operation: "runtime.startup.awaitReadiness",
+            phase: "app-source-reconcile",
+            reason: "required-startup-check-failed",
+            message: `Runtime startup could not scaffold and build required builtin extensions. ${cause.message}`,
+            cause,
+          }),
+      ),
+    );
     yield* workflowAgentSources.scaffoldAndReconcile.pipe(
       Effect.mapError(
         (cause) =>

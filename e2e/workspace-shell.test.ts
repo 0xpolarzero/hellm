@@ -42,6 +42,10 @@ beforeAll(async () => {
 
 type Page = SvvyApp["page"];
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function workspaceShellArtifactSession(): SeedSessionInput {
   const reportCall = toolCall("artifacts", {
     command: "create",
@@ -127,15 +131,22 @@ async function waitForShellChrome(page: Page): Promise<void> {
 }
 
 async function createNewOrchestrator(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Create a new orchestrator" }).click({ force: true });
+  const createButton = page
+    .getByRole("button", { name: "Create a new orchestrator" })
+    .filter({ visible: true });
+  await createButton.waitFor({ state: "visible" });
+  await createButton.click();
   await page.locator(".composer-shell").waitFor({ state: "visible" });
 }
 
 async function openSession(page: Page, title: string): Promise<void> {
-  await page
-    .locator(".session-main")
-    .filter({ has: page.getByText(title, { exact: true }) })
-    .click({ force: true });
+  const session = page
+    .getByRole("button", {
+      name: new RegExp(`^(?:Unread session: )?${escapeRegExp(title)}$`),
+    })
+    .filter({ visible: true });
+  await session.waitFor({ state: "visible" });
+  await session.click();
   await page.locator(".composer-shell").waitFor({ state: "visible" });
 }
 
@@ -178,7 +189,7 @@ test("keeps the workspace chrome visible while toggling the sidebar and opening 
 
     await app.page.getByRole("button", { name: "Show sidebar" }).click();
     await app.page.locator(".session-sidebar").waitFor({ state: "visible" });
-    await app.page.getByRole("button", { name: "Open settings" }).click({ force: true });
+    await app.page.getByRole("button", { name: "Open settings" }).click();
     const settings = app.page.getByTestId("settings-pane");
     await settings.waitFor({ state: "visible" });
 

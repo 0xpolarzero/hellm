@@ -236,21 +236,21 @@ describe("Electrobun desktop host adapter", () => {
     expect(calls).toContain("clipboard:copied");
   });
 
-  it("owns native folder and attachment picking through typed host actions", async () => {
+  it("owns native folder and file picking through typed host actions", async () => {
     const { host } = createHost();
     openFileDialogResult = ["/workspace/first", "/workspace/second"];
 
     await expect(
       host.actions.dialogs.pickFolder({ startingFolder: "/workspace" }),
     ).resolves.toEqual({ selectedPaths: ["/workspace/first", "/workspace/second"] });
-    await expect(
-      host.actions.dialogs.pickFilesAndFolders({ startingFolder: "/workspace" }),
-    ).resolves.toEqual({ selectedPaths: ["/workspace/first", "/workspace/second"] });
+    await expect(host.actions.dialogs.pickFiles({ startingFolder: "/workspace" })).resolves.toEqual(
+      { selectedPaths: ["/workspace/first", "/workspace/second"] },
+    );
     expect(calls).toContain(
       'dialog:{"startingFolder":"/workspace","allowedFileTypes":"*","canChooseFiles":false,"canChooseDirectory":true,"allowsMultipleSelection":false}',
     );
     expect(calls).toContain(
-      'dialog:{"startingFolder":"/workspace","allowedFileTypes":"*","canChooseFiles":true,"canChooseDirectory":true,"allowsMultipleSelection":true}',
+      'dialog:{"startingFolder":"/workspace","allowedFileTypes":"*","canChooseFiles":true,"canChooseDirectory":false,"allowsMultipleSelection":true}',
     );
   });
 

@@ -3330,6 +3330,7 @@ describe("structured session state write API", () => {
       meta: {
         kind: "agent",
         agentResume: "/tmp/task-agent-session.json",
+        bridgeRequestIdempotencyKey: "workflow-task-context-budget",
       },
     });
     const workflowTaskQueueRow = store.enqueueSurfaceMessage({
@@ -3417,34 +3418,23 @@ describe("structured session state write API", () => {
         },
       ],
     });
-    store.upsertWorkflowTaskAttempt({
-      workflowRunId: workflowRun.id,
-      smithersRunId: workflowRun.smithersRunId,
-      nodeId: "task",
-      iteration: 0,
-      attempt: 1,
-      summary: "Workflow task attempt completed.",
-      kind: "agent",
+    expect(
+      store.settleWorkflowTaskAgentAttempt({
+        workflowTaskAttemptId: workflowTaskAttempt.id,
+        idempotencyKey: "workflow-task-context-budget",
+        status: "completed",
+        result: {
+          text: '{"status":"completed"}',
+          usage: { input: 120_000, output: 500 },
+        },
+        contextBudget: { usedTokens: 120_000, maxTokens: 200_000 },
+      }),
+    ).toEqual({
       status: "completed",
-      smithersState: "finished",
-      responseText: '{"status":"completed"}',
-      agentResume: "/tmp/task-agent-session.json",
-      generatedAgentContextBinding: {
-        systemPrompt: "Use the initial workflow task generated context.",
-        svvyxGuidance: "Workflow svvyx guidance.",
-        commandsDts: "declare const workflowTask: true;",
-        nativeToolSchemasJson: "{}",
-        generatedAgentContextRevision: 3,
-        loadedExtensionIds: ["base-workflow-task", "shell"],
-        availableExtensionIds: ["github"],
-        externalSourceHashes: ["AGENTS.md:initial:true"],
+      result: {
+        text: '{"status":"completed"}',
+        usage: { input: 120_000, output: 500 },
       },
-      meta: {
-        kind: "agent",
-        agentResume: "/tmp/task-agent-session.json",
-      },
-      startedAt: "2026-04-18T09:00:10.000Z",
-      finishedAt: "2026-04-18T09:00:20.000Z",
     });
 
     const snapshot = store.getSessionState("session-workflow-task-attempts");
@@ -3472,6 +3462,9 @@ describe("structured session state write API", () => {
         status: "completed",
         agentResume: "/tmp/task-agent-session.json",
         generatedAgentContextFingerprint: "workflow-task-fingerprint-001",
+        meta: expect.objectContaining({
+          contextBudget: { usedTokens: 120_000, maxTokens: 200_000 },
+        }),
       }),
     ]);
     expect(snapshot.commands).toContainEqual(

@@ -74,6 +74,7 @@ import {
   type CloseSurfaceInput,
   type CloseSurfaceResult,
   type CreateOrchestratorSurfaceInput,
+  type CreateRuntimeOrchestratorSurfaceStateInput,
   type CreateSurfaceResult,
   type DeleteOrchestratorSurfaceInput,
   type DeleteOrchestratorSurfaceResult,
@@ -130,6 +131,8 @@ import {
   type SurfaceStreamGenerationId,
   type RuntimeSurfaceLifecycleStatePortService,
   type RuntimeActorExtensionBindingStatePortService,
+  type GeneratedContextPreviewSubjectStatePortService,
+  type AgentProfileId,
   type RuntimeWorkspaceStatePortService,
   type OpenExtensionSourceEditInput,
   type SourceEditSaveResult,
@@ -245,6 +248,8 @@ import {
 import { admitRuntimeWorkflowAgentModel } from "./runtime-workflow-agent-source-index";
 import { RuntimeShutdownAdmission } from "./runtime-shutdown-admission";
 
+const DEFAULT_ORCHESTRATOR_PROFILE_ID = "default-orchestrator" as AgentProfileId;
+
 export { RuntimeGeneratedContextRefreshHostPort } from "./runtime-generated-context-refresh-service";
 export type { RuntimeGeneratedContextRefreshHostPortService } from "./runtime-generated-context-refresh-service";
 export { RuntimeGeneratedPackageRefreshHostPort } from "./runtime-generated-package-refresh-service";
@@ -351,6 +356,7 @@ export function makeRuntimeService() {
     const workspaceScopes = yield* RuntimeWorkspaceScopeService;
     const surfaceScopes = yield* RuntimeSurfaceScopeService;
     const surfaceLifecycleState = yield* RuntimeSurfaceLifecycleStatePort;
+    const generatedContextPreviewSubjects = yield* GeneratedContextPreviewSubjectStatePort;
     const transcriptState = yield* RuntimeTranscriptStatePort;
     const actorBindingState = yield* RuntimeActorExtensionBindingStatePort;
     const sourceState = yield* RuntimeSourceStatePort;
@@ -424,7 +430,7 @@ export function makeRuntimeService() {
               input,
               surfaceLifecycleState,
               surfaceScopes,
-              promptDefaults,
+              generatedContextPreviewSubjects,
               actorBindingState,
               eventBus,
               surfaceEvents,
@@ -1200,39 +1206,38 @@ function createOrchestratorSurface(input: {
   readonly input: CreateOrchestratorSurfaceInput;
   readonly surfaceLifecycleState: RuntimeSurfaceLifecycleStatePortService;
   readonly surfaceScopes: RuntimeSurfaceScopeServiceService;
-  readonly promptDefaults: RuntimePromptDefaultsServiceService;
+  readonly generatedContextPreviewSubjects: GeneratedContextPreviewSubjectStatePortService;
   readonly actorBindingState: RuntimeActorExtensionBindingStatePortService;
   readonly eventBus: RuntimeEventBus["Service"];
   readonly surfaceEvents: RuntimeSurfaceEventPublisher["Service"];
 }): Effect.Effect<CreateSurfaceResult, RuntimeContractError> {
   const operation = "runtime.surfaces.createOrchestrator";
   return Effect.gen(function* () {
-    const result = yield* commitStateMutation({
-      operation,
-      effect: input.surfaceLifecycleState.createOrchestratorSurface(input.input),
-      eventBus: input.eventBus,
-    });
-    const defaults = yield* input.promptDefaults
-      .resolve({ target: result.target as PromptTarget })
-      .pipe(
-        Effect.catch((error) =>
-          error.reason === "stale-state"
-            ? Effect.succeed({
-                provider: "openai",
-                model: "gpt-4o",
-                reasoningEffort: "medium" as const,
-              })
-            : Effect.fail(error),
-        ),
-      );
-    yield* input.actorBindingState
-      .setActorExtensionBinding({
-        target: result.target as PromptTarget,
-        loadedExtensionIds: [],
-        availableExtensionIds: [],
-        reason: "source-refresh",
+    const profileId = input.input.profileId ?? DEFAULT_ORCHESTRATOR_PROFILE_ID;
+    const subject = yield* input.generatedContextPreviewSubjects
+      .readSubject({
+        workspaceId: input.input.workspaceId,
+        subject: {
+          kind: "configured-profile",
+          actorKind: "orchestrator",
+          profileId,
+        },
       })
       .pipe(Effect.mapError((cause) => runtimeStateError(operation, cause)));
+    const result = yield* commitStateMutation({
+      operation,
+      effect: input.surfaceLifecycleState.createOrchestratorSurface({
+        workspaceId: input.input.workspaceId,
+        ...(input.input.title === undefined ? {} : { title: input.input.title }),
+        profileId,
+        provider: subject.providerId,
+        model: subject.modelId,
+        reasoningEffort: subject.reasoningEffort,
+        loadedExtensionIds: subject.actorBinding.loadedExtensionIds,
+        availableExtensionIds: subject.actorBinding.availableExtensionIds,
+      } satisfies CreateRuntimeOrchestratorSurfaceStateInput),
+      eventBus: input.eventBus,
+    });
     const binding = yield* input.actorBindingState
       .readRuntimePromptBinding({ target: result.target as PromptTarget })
       .pipe(
@@ -1245,8 +1250,8 @@ function createOrchestratorSurface(input: {
                   `${result.surfacePiSessionId}:initial` as RuntimePromptBindingRecord["generatedAgentContextFingerprint"],
                 generatedAgentContextRevision: 0,
                 systemPrompt: "",
-                loadedExtensionIds: [],
-                availableExtensionIds: [],
+                loadedExtensionIds: subject.actorBinding.loadedExtensionIds,
+                availableExtensionIds: subject.actorBinding.availableExtensionIds,
                 externalSourceHashes: [],
                 updateExtensionContextBeforeNextTurn: true,
               } satisfies RuntimePromptBindingRecord)
@@ -1262,11 +1267,11 @@ function createOrchestratorSurface(input: {
       ...(input.input.profileId ? { agentProfileId: input.input.profileId } : {}),
       generatedContextFingerprint: binding.generatedAgentContextFingerprint,
       model: {
-        providerId: defaults.provider as never,
-        modelId: defaults.model as never,
+        providerId: subject.providerId,
+        modelId: subject.modelId,
       },
       reasoning: {
-        effort: defaults.reasoningEffort,
+        effort: subject.reasoningEffort,
       },
     });
     yield* publishSurfaceChanged({

@@ -60,8 +60,11 @@ import {
   type ConfigureExtensionTypescriptApiInput,
   type ConfigureExtensionTypescriptApiResult,
   type CreateOrchestratorSurfaceInput,
+  type CreateRuntimeOrchestratorSurfaceStateInput,
   type CreateSurfaceResult,
   type FinishRuntimeCommandInput,
+  type GeneratedContextPreviewSubjectRecord,
+  type GeneratedContextPreviewSubjectStatePortService,
   type GeneratedPackageBuildInput,
   type GeneratedPackageBuildPlanResult,
   type GeneratedPackageName,
@@ -172,7 +175,10 @@ import {
   RuntimeWorkspaceScopeService,
   runtimeWorkspaceScopeOwnerKey,
 } from "./workspace-runtime-scope-service";
-import { RuntimeSurfaceScopeService } from "./surface-runtime-scope-service";
+import {
+  RuntimeSurfaceScopeService,
+  type RuntimeSurfaceScopeServiceService,
+} from "./surface-runtime-scope-service";
 import {
   RuntimeShutdownAdmission,
   layerRuntimeShutdownAdmission,
@@ -328,6 +334,8 @@ function fakeRuntimeActorExtensionBindingStatePort(): RuntimeActorExtensionBindi
   let binding: RuntimePromptBindingRecord | null = null;
   const makeBinding = (
     bindingTarget: RuntimePromptBindingRecord["target"],
+    loadedExtensionIds: RuntimePromptBindingRecord["loadedExtensionIds"] = [],
+    availableExtensionIds: RuntimePromptBindingRecord["availableExtensionIds"] = [],
   ): RuntimePromptBindingRecord => ({
     target: bindingTarget,
     generatedAgentContextBindingId: "binding_runtime_layer_effect",
@@ -335,8 +343,8 @@ function fakeRuntimeActorExtensionBindingStatePort(): RuntimeActorExtensionBindi
       "ctx_runtime_layer_effect" as RuntimePromptBindingRecord["generatedAgentContextFingerprint"],
     generatedAgentContextRevision: 1,
     systemPrompt: "Runtime layer test prompt.",
-    loadedExtensionIds: [],
-    availableExtensionIds: [],
+    loadedExtensionIds,
+    availableExtensionIds,
     externalSourceHashes: [],
     updateExtensionContextBeforeNextTurn: false,
   });
@@ -362,7 +370,7 @@ function fakeRuntimeActorExtensionBindingStatePort(): RuntimeActorExtensionBindi
       }),
     setActorExtensionBinding: (input) =>
       Effect.sync(() => {
-        binding = makeBinding(input.target);
+        binding = makeBinding(input.target, input.loadedExtensionIds, input.availableExtensionIds);
         return {
           value: {
             bindingId: "binding_runtime_layer_effect",
@@ -375,9 +383,40 @@ function fakeRuntimeActorExtensionBindingStatePort(): RuntimeActorExtensionBindi
             updateExtensionContextBeforeNextTurn: false,
             updatedAt: "2026-04-18T09:00:00.000Z" as IsoDateTimeString,
           } as never,
-          afterCommit: [],
+          afterCommit: [surfaceInvalidation, workspaceInvalidation],
         };
       }),
+  };
+}
+
+function fakeGeneratedContextPreviewSubjectStatePort(): GeneratedContextPreviewSubjectStatePortService {
+  return {
+    readSubject: (input) => {
+      if (input.subject.kind !== "configured-profile") {
+        return Effect.die("Unexpected workflow-agent generated context subject read.");
+      }
+      return Effect.succeed({
+        workspaceId: input.workspaceId,
+        subject: input.subject,
+        profileId: input.subject.profileId,
+        profileName: "Runtime layer orchestrator",
+        providerId: "openai" as never,
+        modelId: "gpt-4o" as never,
+        reasoningEffort: "medium",
+        actorBinding: {
+          actorKind: "orchestrator",
+          loadedExtensionIds: ["base-common" as never, "base-orchestrator" as never],
+          availableExtensionIds: ["extension-managing" as never],
+          unavailableExtensionIds: [],
+          instructionOrder: [
+            "base-common" as never,
+            "base-orchestrator" as never,
+            "extension-managing" as never,
+          ],
+          source: "profile-default",
+        },
+      } satisfies GeneratedContextPreviewSubjectRecord);
+    },
   };
 }
 
@@ -606,7 +645,7 @@ describe("@svvy/runtime Runtime.layer", () => {
       const surfaceEventActions: string[] = [];
       const acquired: AcquireWorkspaceInput[] = [];
       const requestInputRestoreCalls: string[] = [];
-      const createdSurfaces: CreateOrchestratorSurfaceInput[] = [];
+      const createdSurfaces: CreateRuntimeOrchestratorSurfaceStateInput[] = [];
       const closedSurfaces: CloseSurfaceInput[] = [];
 
       return Effect.gen(function* () {
@@ -637,7 +676,30 @@ describe("@svvy/runtime Runtime.layer", () => {
 
         assert.deepStrictEqual(acquired, [workspaceInput]);
         assert.deepStrictEqual(requestInputRestoreCalls, ["restore"]);
-        assert.deepStrictEqual(createdSurfaces, [createSurfaceInput]);
+        assert.deepStrictEqual(
+          createdSurfaces.map((input) => ({
+            workspaceId: String(input.workspaceId),
+            title: input.title,
+            profileId: String(input.profileId),
+            provider: String(input.provider),
+            model: String(input.model),
+            reasoningEffort: input.reasoningEffort,
+            loadedExtensionIds: input.loadedExtensionIds.map(String),
+            availableExtensionIds: input.availableExtensionIds.map(String),
+          })),
+          [
+            {
+              workspaceId: String(createSurfaceInput.workspaceId),
+              title: createSurfaceInput.title,
+              profileId: "default-orchestrator",
+              provider: "openai",
+              model: "gpt-4o",
+              reasoningEffort: "medium",
+              loadedExtensionIds: ["base-common", "base-orchestrator"],
+              availableExtensionIds: ["extension-managing"],
+            },
+          ],
+        );
         assert.deepStrictEqual(closedSurfaces, [closeSurfaceInput]);
         assert.deepStrictEqual(acquiredWorkspace, workspaceResult("created"));
         assert.deepStrictEqual(createdSurface, surfaceResult);
@@ -711,6 +773,198 @@ describe("@svvy/runtime Runtime.layer", () => {
                 lifecycle: "idle",
               };
             },
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "atomically commits new orchestrator profile defaults and bindings before pi scope creation",
+    () => {
+      const subjectReads: Array<
+        Parameters<GeneratedContextPreviewSubjectStatePortService["readSubject"]>[0]
+      > = [];
+      const lifecycleWrites: CreateRuntimeOrchestratorSurfaceStateInput[] = [];
+      const scopeCreates: Array<Parameters<RuntimeSurfaceScopeServiceService["create"]>[0]> = [];
+      const published: StateInvalidationDescriptor[][] = [];
+      const subjects = fakeGeneratedContextPreviewSubjectStatePort();
+      const surfaceScopes = fakeRuntimeSurfaceScopeService();
+
+      return Effect.gen(function* () {
+        const runtime = yield* Runtime;
+
+        yield* runtime.surfaces.createOrchestrator({ workspaceId });
+        yield* runtime.surfaces.createOrchestrator({
+          workspaceId,
+          profileId: "review-orchestrator" as never,
+        });
+
+        assert.deepStrictEqual(
+          subjectReads.map((input) =>
+            input.subject.kind === "configured-profile"
+              ? { ...input.subject, profileId: String(input.subject.profileId) }
+              : input.subject,
+          ),
+          [
+            {
+              kind: "configured-profile",
+              actorKind: "orchestrator",
+              profileId: "default-orchestrator",
+            },
+            {
+              kind: "configured-profile",
+              actorKind: "orchestrator",
+              profileId: "review-orchestrator",
+            },
+          ],
+        );
+        assert.deepStrictEqual(
+          lifecycleWrites.map((input) => ({
+            profileId: String(input.profileId),
+            provider: String(input.provider),
+            model: String(input.model),
+            reasoningEffort: input.reasoningEffort,
+            loadedExtensionIds: input.loadedExtensionIds.map(String),
+            availableExtensionIds: input.availableExtensionIds.map(String),
+          })),
+          [
+            {
+              profileId: "default-orchestrator",
+              provider: "openai",
+              model: "gpt-4o",
+              reasoningEffort: "medium",
+              loadedExtensionIds: ["base-common", "base-orchestrator"],
+              availableExtensionIds: ["extension-managing"],
+            },
+            {
+              profileId: "review-orchestrator",
+              provider: "anthropic",
+              model: "claude-review",
+              reasoningEffort: "high",
+              loadedExtensionIds: ["base-common", "review-tools"],
+              availableExtensionIds: ["extension-managing", "web"],
+            },
+          ],
+        );
+        assert.deepStrictEqual(
+          scopeCreates.map((input) => ({
+            agentProfileId: input.agentProfileId ? String(input.agentProfileId) : undefined,
+            model: {
+              providerId: String(input.model.providerId),
+              modelId: String(input.model.modelId),
+            },
+            reasoning: input.reasoning,
+          })),
+          [
+            {
+              agentProfileId: undefined,
+              model: { providerId: "openai", modelId: "gpt-4o" },
+              reasoning: { effort: "medium" },
+            },
+            {
+              agentProfileId: "review-orchestrator",
+              model: { providerId: "anthropic", modelId: "claude-review" },
+              reasoning: { effort: "high" },
+            },
+          ],
+        );
+        assert.deepStrictEqual(published, [[surfaceInvalidation], [surfaceInvalidation]]);
+      }).pipe(
+        Effect.provide(
+          testRuntimeLayer({
+            published,
+            generatedContextPreviewSubjectState: {
+              readSubject: (input) => {
+                subjectReads.push(input);
+                return subjects.readSubject(input).pipe(
+                  Effect.map((record) =>
+                    input.subject.kind === "configured-profile" &&
+                    input.subject.profileId === "review-orchestrator"
+                      ? {
+                          ...record,
+                          providerId: "anthropic" as never,
+                          modelId: "claude-review" as never,
+                          reasoningEffort: "high" as const,
+                          actorBinding: {
+                            ...record.actorBinding,
+                            loadedExtensionIds: ["base-common" as never, "review-tools" as never],
+                            availableExtensionIds: ["extension-managing" as never, "web" as never],
+                            instructionOrder: [
+                              "base-common" as never,
+                              "review-tools" as never,
+                              "extension-managing" as never,
+                              "web" as never,
+                            ],
+                          },
+                        }
+                      : record,
+                  ),
+                );
+              },
+            },
+            onCreateSurface: (input) => {
+              lifecycleWrites.push(input);
+              return surfaceResult;
+            },
+            surfaceScopes: RuntimeSurfaceScopeService.of({
+              ...surfaceScopes,
+              create: (input) => {
+                scopeCreates.push(input);
+                return surfaceScopes.create(input);
+              },
+            }),
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "surfaces orchestrator profile resolution failures before binding or pi scope creation",
+    () => {
+      const resolutionFailure = new StateContractError({
+        operation: "runtime-layer-effect.read-profile",
+        reason: "not-found",
+        message: "Configured orchestrator profile is unavailable.",
+      });
+      const surfaceScopes = fakeRuntimeSurfaceScopeService();
+      let lifecycleCreates = 0;
+      let scopeCreates = 0;
+
+      return Effect.gen(function* () {
+        const runtime = yield* Runtime;
+        const failure = yield* runtime.surfaces
+          .createOrchestrator({ workspaceId })
+          .pipe(Effect.flip);
+
+        assert.instanceOf(failure, RuntimeContractError);
+        assert.deepInclude(failure, {
+          operation: "runtime.surfaces.createOrchestrator",
+          reason: "target-not-found",
+          message: "Configured orchestrator profile is unavailable.",
+        });
+        assert.strictEqual(failure.cause, resolutionFailure);
+        assert.strictEqual(lifecycleCreates, 0);
+        assert.strictEqual(scopeCreates, 0);
+      }).pipe(
+        Effect.provide(
+          testRuntimeLayer({
+            published: [],
+            onCreateSurface: () => {
+              lifecycleCreates += 1;
+              return surfaceResult;
+            },
+            generatedContextPreviewSubjectState: {
+              readSubject: () => Effect.fail(resolutionFailure),
+            },
+            surfaceScopes: RuntimeSurfaceScopeService.of({
+              ...surfaceScopes,
+              create: (input) => {
+                scopeCreates += 1;
+                return surfaceScopes.create(input);
+              },
+            }),
           }),
         ),
       );
@@ -2134,7 +2388,9 @@ interface TestLayerOverrides {
   readonly livePublished?: RuntimeEvent[];
   readonly surfaceEventActions?: string[];
   readonly onAcquireWorkspace?: (input: AcquireWorkspaceInput) => AcquireWorkspaceResult;
-  readonly onCreateSurface?: (input: CreateOrchestratorSurfaceInput) => CreateSurfaceResult;
+  readonly onCreateSurface?: (
+    input: CreateRuntimeOrchestratorSurfaceStateInput,
+  ) => CreateSurfaceResult;
   readonly onCloseSurface?: (input: CloseSurfaceInput) => CloseSurfaceResult;
   readonly failAcquireWorkspace?: StateContractError;
   readonly commandRecord?: RuntimeCommandRecord | null;
@@ -2168,6 +2424,9 @@ interface TestLayerOverrides {
   readonly onRestoreOpenBlockingRequests?: () => void;
   readonly extensionUsageState?: ExtensionUsageStatePortService;
   readonly extensionContextImpact?: RuntimeExtensionContextImpactStatePortService;
+  readonly generatedContextPreviewSubjectState?: GeneratedContextPreviewSubjectStatePortService;
+  readonly actorBindingState?: RuntimeActorExtensionBindingStatePortService;
+  readonly surfaceScopes?: RuntimeSurfaceScopeServiceService;
 }
 
 function testRuntimeLayer(overrides: TestLayerOverrides) {
@@ -2350,10 +2609,13 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
           RuntimeExtensionContextImpactStatePort,
           overrides.extensionContextImpact ?? unusedPort("RuntimeExtensionContextImpactStatePort"),
         ),
-        Layer.succeed(RuntimeSurfaceScopeService, fakeRuntimeSurfaceScopeService()),
+        Layer.succeed(
+          RuntimeSurfaceScopeService,
+          overrides.surfaceScopes ?? fakeRuntimeSurfaceScopeService(),
+        ),
         Layer.succeed(
           RuntimeActorExtensionBindingStatePort,
-          fakeRuntimeActorExtensionBindingStatePort(),
+          overrides.actorBindingState ?? fakeRuntimeActorExtensionBindingStatePort(),
         ),
         Layer.succeed(
           RuntimeSourceInvalidationService,
@@ -2477,9 +2739,11 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
           readExternalInstructions: () =>
             Effect.die("external instruction projection read was not expected"),
         }),
-        Layer.succeed(GeneratedContextPreviewSubjectStatePort, {
-          readSubject: () => Effect.die("generated context preview subject read was not expected"),
-        }),
+        Layer.succeed(
+          GeneratedContextPreviewSubjectStatePort,
+          overrides.generatedContextPreviewSubjectState ??
+            fakeGeneratedContextPreviewSubjectStatePort(),
+        ),
         Layer.succeed(RuntimeLayerCommandStdinPort, {
           writeStdin: () =>
             Effect.succeed({
@@ -2496,6 +2760,7 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
                   status: "already_terminal" as const,
                 },
             ),
+          runExecuteTypescript: () => Effect.die("Unexpected execute_typescript host execution."),
         }),
         Layer.succeed(RuntimeWorkspaceScopeService, {
           acquire: (input) =>
@@ -2710,6 +2975,14 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
         Layer.succeed(
           Extensions,
           Extensions.of({
+            builtin: {
+              scaffoldMissing: () =>
+                Effect.succeed({
+                  materializedExtensionIds: [],
+                  existingExtensionIds: [],
+                  appNativeExtensionIds: [],
+                }),
+            },
             registry: {
               observe: () =>
                 Effect.succeed({
@@ -2839,7 +3112,11 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
               value: { observation, observedAt },
               afterCommit: [{ scope: "app", invalidation: { model: "extensions" } }],
             }),
-          reconcileBuildEvidence: () => Effect.die("unused extension build evidence"),
+          reconcileBuildEvidence: () =>
+            Effect.succeed({
+              value: { changed: false, changedExtensionIds: [] },
+              afterCommit: [],
+            }),
           startBuildAttempt: () => Effect.die("unused extension build attempt start"),
           recordBuildSuccess: () => Effect.die("unused extension build success"),
           recordBuildFailure: () => Effect.die("unused extension build failure"),
@@ -2864,6 +3141,7 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
               commandId: input.commandId,
               status: "already_terminal" as const,
             }),
+          runExecuteTypescript: () => Effect.die("Unexpected execute_typescript host execution."),
         }),
         testPiAdapterHostLayer(),
         Layer.succeed(RuntimeWorkspaceStatePort, unusedPort("RuntimeWorkspaceStatePort")),

@@ -2,10 +2,15 @@ import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { basename, join } from "node:path";
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import type { JsonValue, WorkspacePaneId } from "@svvy/core";
+import {
+  SurfacePiSessionId,
+  WorkspaceSessionId,
+  type JsonValue,
+  type WorkspacePaneId,
+} from "@svvy/core";
 import type { SaveWorkspaceLayoutSlotCommandInput } from "@svvy/state";
 import { createStructuredSessionStateStore } from "@svvy/state/structured-session-state";
-import type { SerializedDockview } from "dockview-core";
+import { Orientation, type SerializedDockview } from "dockview-core";
 import { connect, type Page } from "electrobun-browser-tools";
 import { ensureBuilt, type SvvyApp, withSvvyApp } from "./harness";
 import {
@@ -43,7 +48,9 @@ async function waitForDockviewShell(page: Page): Promise<void> {
 
 async function expectNoUnavailablePane(page: Page): Promise<void> {
   expect(await page.locator(".dockview-empty-panel").count()).toBe(0);
-  expect((await page.locator("body").textContent()).includes("Surface unavailable")).toBe(false);
+  expect(((await page.locator("body").textContent()) ?? "").includes("Surface unavailable")).toBe(
+    false,
+  );
 }
 
 async function waitForWorkspacePaneCount(
@@ -52,14 +59,13 @@ async function waitForWorkspacePaneCount(
   timeoutMs = 15_000,
 ): Promise<void> {
   const panes = page.locator('[data-testid="workspace-pane"]');
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if ((await panes.count()) === expectedCount) {
-      return;
-    }
-    await Bun.sleep(100);
+  if (expectedCount === 0) {
+    await panes.first().waitFor({ state: "detached", timeout: timeoutMs });
+  } else {
+    await panes.nth(expectedCount - 1).waitFor({ state: "attached", timeout: timeoutMs });
+    await panes.nth(expectedCount).waitFor({ state: "detached", timeout: timeoutMs });
   }
-  throw new Error(`Timed out waiting for ${expectedCount} visible workspace panes.`);
+  expect(await panes.count()).toBe(expectedCount);
 }
 
 async function waitForDockviewTabCount(
@@ -68,32 +74,30 @@ async function waitForDockviewTabCount(
   timeoutMs = 15_000,
 ): Promise<void> {
   const tabs = page.locator(".dockview-surface-tab");
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if ((await tabs.count()) === expectedCount) {
-      return;
-    }
-    await Bun.sleep(100);
+  if (expectedCount === 0) {
+    await tabs.first().waitFor({ state: "detached", timeout: timeoutMs });
+  } else {
+    await tabs.nth(expectedCount - 1).waitFor({ state: "attached", timeout: timeoutMs });
+    await tabs.nth(expectedCount).waitFor({ state: "detached", timeout: timeoutMs });
   }
-  throw new Error(`Timed out waiting for ${expectedCount} Dockview tabs.`);
+  expect(await tabs.count()).toBe(expectedCount);
 }
 
 async function clickPaneAction(page: Page, name: string): Promise<void> {
-  const actionClass =
-    name === "Duplicate pane right"
-      ? "action-split-right"
-      : name === "Duplicate pane below"
-        ? "action-split-below"
-        : "action-close";
-  await page.locator(`.dockview-surface-action.${actionClass}`).first().click({ force: true });
+  const action = page
+    .getByRole("button", { name: new RegExp(`^${escapeRegExp(name)}$`) })
+    .filter({ visible: true })
+    .first();
+  await action.waitFor({ state: "visible" });
+  await action.click();
 }
 
 async function clickSessionByTitle(page: Page, title: string): Promise<void> {
   const sessionButton = page
-    .locator(".session-main")
-    .filter({
-      has: page.locator("strong").filter({ hasText: title }),
+    .getByRole("button", {
+      name: new RegExp(`^(?:Unread session: )?${escapeRegExp(title)}$`),
     })
+    .filter({ visible: true })
     .first();
   try {
     await sessionButton.waitFor({ state: "visible" });
@@ -110,7 +114,11 @@ async function clickSessionByTitle(page: Page, title: string): Promise<void> {
       { cause: error },
     );
   }
-  await sessionButton.click({ force: true });
+  await sessionButton.click();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function seedWorkspaceLayoutSlot(
@@ -179,7 +187,7 @@ function serializedDockviewFixture(sessionPanelId: string): SerializedDockview {
     grid: {
       width: 1200,
       height: 760,
-      orientation: "HORIZONTAL",
+      orientation: Orientation.HORIZONTAL,
       root: {
         type: "branch",
         data: [
@@ -212,7 +220,7 @@ function serializedDockviewFixture(sessionPanelId: string): SerializedDockview {
           views: ["workflows"],
           activeView: "workflows",
         },
-        position: { x: 40, y: 64, width: 520, height: 420 },
+        position: { left: 40, top: 64, width: 520, height: 420 },
       },
     ],
     edgeGroups: {
@@ -334,7 +342,7 @@ test("opens session and workspace-scoped surface panes without unavailable Dockv
         .getByRole("button", { name: "Open workflows" })
         .filter({ visible: true })
         .first()
-        .click({ force: true });
+        .click();
       await page.locator(".workflows-pane").waitFor({
         state: "visible",
       });
@@ -345,7 +353,7 @@ test("opens session and workspace-scoped surface panes without unavailable Dockv
         .getByRole("button", { name: "Open app logs" })
         .filter({ visible: true })
         .first()
-        .click({ force: true });
+        .click();
       await page.locator(".app-logs-pane").waitFor({ state: "visible" });
       await waitForDockviewTabCount(page, 1);
       await expectNoUnavailablePane(page);
@@ -384,9 +392,9 @@ test("restores serialized Dockview edge, floating, and focused panel state on mo
             {
               paneId: "primary" as WorkspacePaneId,
               target: {
-                workspaceSessionId: seededSession.id,
+                workspaceSessionId: WorkspaceSessionId.make(seededSession.id),
                 surface: "orchestrator",
-                surfacePiSessionId: seededSession.id,
+                surfacePiSessionId: SurfacePiSessionId.make(seededSession.id),
               },
               localState: {
                 scroll: { transcriptAnchorId: "assistant-restore", offsetPx: 24 },

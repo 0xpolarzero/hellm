@@ -255,7 +255,13 @@ export function createSurfaceQueueDispatcher<
 
         surface = yield* runHost("runtime.queue.dispatch.refreshBeforeDispatch", () =>
           host.refreshBeforeDispatch({ target: currentTarget, surface }),
-        ).pipe(Effect.catch((error) => requeueClaimedDelivery(currentTarget, queued, error)));
+        ).pipe(
+          Effect.catch((error) =>
+            isPermanentPreDispatchFailure(error)
+              ? failQueuedDelivery(currentTarget, queued, error)
+              : requeueClaimedDelivery(currentTarget, queued, error),
+          ),
+        );
         retainedSurface = surface;
 
         const materialized = yield* runHost("runtime.queue.dispatch.materializeQueuedMessage", () =>
@@ -379,6 +385,16 @@ export function createSurfaceQueueDispatcher<
       }),
     drainNextQueuedSurfaceMessage,
   };
+}
+
+function isPermanentPreDispatchFailure(error: RuntimeContractError): boolean {
+  return (
+    error.reason === "dependency-not-ready" ||
+    error.reason === "invalid-input" ||
+    error.reason === "schema-error" ||
+    error.reason === "target-not-found" ||
+    error.reason === "unsupported-operation"
+  );
 }
 
 export function createRuntimeSurfaceQueueDispatcher<

@@ -520,12 +520,12 @@ export function createElectrobunDesktopHostAdapter(
         });
         return { selectedPaths };
       },
-      async pickFilesAndFolders({ startingFolder }) {
+      async pickFiles({ startingFolder }) {
         const selectedPaths = await Utils.openFileDialog({
           startingFolder,
           allowedFileTypes: "*",
           canChooseFiles: true,
-          canChooseDirectory: true,
+          canChooseDirectory: false,
           allowsMultipleSelection: true,
         });
         return { selectedPaths };

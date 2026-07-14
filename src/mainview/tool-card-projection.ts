@@ -61,7 +61,10 @@ export function projectCommandToolCall(command: WorkspaceCommandRollup): Transcr
   return {
     id: command.commandId,
     name: command.toolName,
-    title: command.title,
+    title:
+      command.toolName === "request_user_input" && command.title === command.toolName
+        ? "Request User Input"
+        : command.title,
     target: commandTarget(command),
     commandId: command.commandId,
     status: commandTranscriptStatus(command.status),

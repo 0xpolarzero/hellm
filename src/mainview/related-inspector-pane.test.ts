@@ -98,4 +98,14 @@ describe("RelatedInspectorPane", () => {
 
     expect(sandbox).toBe("allow-scripts");
   });
+
+  test("renders the durable artifact identity alongside its path", async () => {
+    const source = await readFile(
+      new URL("./RelatedInspectorPane.svelte", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("<span>Artifact</span>");
+    expect(source).toContain("<code>{content.artifactId}</code>");
+  });
 });

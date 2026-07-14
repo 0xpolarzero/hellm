@@ -147,6 +147,59 @@ describe("sandbox policy source", () => {
     );
   });
 
+  it("reads current app preferences from explicit policy input without copying workspace state", async () => {
+    let currentAppPreferences: {
+      approvalMode: "auto-review" | "user" | "full-access";
+      networkAccess: boolean;
+    } = {
+      approvalMode: "full-access",
+      networkAccess: false,
+    };
+    await runTestEffect(
+      Effect.gen(function* () {
+        const state = yield* StructuredSessionState;
+        expect(yield* state.readAppPreferences()).toMatchObject({
+          approvalMode: "auto-review",
+          networkAccess: true,
+        });
+
+        const source = yield* SandboxPolicySource;
+        const fullAccess = yield* source.snapshot({
+          scope: { kind: "workspace", workspaceId },
+          commandId,
+          launchKind: "direct_shell",
+          cwd: workspaceCwd,
+        });
+        expect(fullAccess).toMatchObject({
+          sandboxMode: "omitted_full_access",
+          networkPolicy: "allow",
+          filesystemPolicy: { defaultAccess: "read", entries: [] },
+        });
+
+        currentAppPreferences = {
+          approvalMode: "auto-review",
+          networkAccess: false,
+        };
+        const managed = yield* source.snapshot({
+          scope: { kind: "workspace", workspaceId },
+          commandId,
+          launchKind: "direct_shell",
+          cwd: workspaceCwd,
+        });
+        expect(managed).toMatchObject({
+          sandboxMode: "managed",
+          networkPolicy: "deny",
+        });
+      }).pipe(
+        Effect.provide(
+          testLayerWithConfig({
+            currentAppPreferences: () => currentAppPreferences,
+          }),
+        ),
+      ),
+    );
+  });
+
   it("builds generated-package link-repair snapshots from committed package facts", async () => {
     await runTestEffect(
       Effect.gen(function* () {

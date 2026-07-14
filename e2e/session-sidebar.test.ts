@@ -46,13 +46,13 @@ async function readSessionTitles(page: SvvyApp["page"]): Promise<string[]> {
 
 async function clickSessionByTitle(page: SvvyApp["page"], title: string): Promise<void> {
   const sessionButton = page
-    .locator(".session-main")
-    .filter({
-      has: page.locator("strong").filter({ hasText: title }),
+    .getByRole("button", {
+      name: new RegExp(`^(?:Unread session: )?${escapeRegExp(title)}$`),
     })
+    .filter({ visible: true })
     .first();
   await sessionButton.waitFor({ state: "visible" });
-  await sessionButton.click({ force: true });
+  await sessionButton.click();
 }
 
 async function waitForSessionRows(
@@ -61,49 +61,33 @@ async function waitForSessionRows(
   timeoutMs = 15_000,
 ): Promise<void> {
   const rows = page.locator(".session-item");
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    if ((await rows.count()) === expectedCount) {
-      return;
-    }
-    await Bun.sleep(100);
+  if (expectedCount === 0) {
+    await rows.first().waitFor({ state: "detached", timeout: timeoutMs });
+  } else {
+    await rows.nth(expectedCount - 1).waitFor({ state: "attached", timeout: timeoutMs });
+    await rows.nth(expectedCount).waitFor({ state: "detached", timeout: timeoutMs });
   }
-
-  throw new Error(`Timed out waiting for ${expectedCount} session rows.`);
+  expect(await rows.count()).toBe(expectedCount);
 }
 
 async function expectMainTitle(page: SvvyApp["page"], expected: string): Promise<void> {
-  const title = page.locator("[data-testid=active-surface-title]");
-  await waitForText(title, expected);
+  const title = page
+    .locator("[data-testid=active-surface-title]")
+    .filter({ hasText: new RegExp(`^${escapeRegExp(expected)}$`) });
+  await title.waitFor({ state: "visible", timeout: 15_000 });
   expect((await title.textContent())?.trim()).toBe(expected);
 }
 
 async function expectActiveSessionTitle(page: SvvyApp["page"], expected: string): Promise<void> {
-  const activeTitle = page.locator('.session-main[aria-current="true"] strong');
-  await waitForText(activeTitle, expected);
+  const activeTitle = page
+    .locator('.session-main[aria-current="true"] strong')
+    .filter({ hasText: new RegExp(`^${escapeRegExp(expected)}$`) });
+  await activeTitle.waitFor({ state: "visible", timeout: 15_000 });
   expect((await activeTitle.textContent())?.trim()).toBe(expected);
 }
 
-async function waitForText(
-  locator: {
-    textContent(): Promise<string | null>;
-  },
-  expected: string,
-  timeoutMs = 15_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastText = "";
-
-  while (Date.now() < deadline) {
-    lastText = (await locator.textContent())?.trim() ?? "";
-    if (lastText === expected) {
-      return;
-    }
-    await Bun.sleep(100);
-  }
-
-  throw new Error(`Timed out waiting for text "${expected}". Last text was "${lastText}".`);
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 test("renders seeded sessions in recency order, projects the fork badge, and opens selected sessions", async () => {
@@ -182,9 +166,11 @@ test("creates a new session, activates it, and keeps it after relaunch", async (
       },
       async ({ page }) => {
         await waitForSessionRows(page, 1);
-        await page
+        const createButton = page
           .getByRole("button", { name: "Create a new orchestrator" })
-          .click({ force: true });
+          .filter({ visible: true });
+        await createButton.waitFor({ state: "visible" });
+        await createButton.click();
 
         await waitForSessionRows(page, 2);
         await expectMainTitle(page, "New orchestrator");

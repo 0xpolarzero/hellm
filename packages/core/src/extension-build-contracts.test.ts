@@ -7,6 +7,7 @@ import {
   decodeUnknownBuildRuntimeExtensionResultExit,
   decodeUnknownExtensionCurrentBuildManifestExit,
   decodeUnknownExtensionBuildProcessPlanExit,
+  decodeUnknownExtensionBuildProcessEvidenceExit,
   decodeUnknownSvvyxCommandManifestExit,
   decodeUnknownExtensionSourceBuildObservationExit,
   encodeExtensionCurrentBuildManifestExit,
@@ -102,6 +103,20 @@ describe("extension build contracts", () => {
     expect(Exit.isFailure(decodeUnknownExtensionBuildProcessPlanExit({ ...plan, env: {} }))).toBe(
       true,
     );
+  });
+
+  test("requires an actionable stage for failed build process evidence", () => {
+    expect(
+      Exit.isSuccess(
+        decodeUnknownExtensionBuildProcessEvidenceExit({
+          status: "failed",
+          stage: "output-verification",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(decodeUnknownExtensionBuildProcessEvidenceExit({ status: "failed" })),
+    ).toBe(true);
   });
 
   test("strictly decodes unique svvyx command manifests", () => {

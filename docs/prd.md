@@ -304,6 +304,12 @@ Every normal builtin or user extension has the same composable shape: an editabl
 
 Normal builtin and user extension sources are real local files under `~/.config/svvy/extensions/sources/...`: builtin sources live under `sources/builtin/<id>/`, user sources under `sources/user/<id>/`. Packaged app defaults are read-only templates used only to scaffold missing builtin source and to reset builtin source back to its default state. For normal source-backed `svvyx` extensions, `source/index.ts` is the editable command source; `commands.json` is generated build output that enters generated prompt/tool context. App-owned builtin command namespaces may instead expose a read-only generated command contract from product code when their runtime is implemented directly by `svvy`. Extension Managing is that kind of app-owned builtin `svvyx` namespace: it is reached through Shell as `svvyx extensions ...`, has no native tool schema, and has no editable runtime `source/index.ts`. Generated `execute_typescript` facade declarations are separate generated artifacts for app-owned builtin TypeScript-enabled `svvyx` extensions; they expose typed injected facades through `execute_typescript` and are not command schemas. User `svvyx` extensions do not contribute generated `execute_typescript` facades.
 
+App startup makes a fresh install usable before exposing runtime facades: it scaffolds every missing
+source-backed builtin from packaged templates, commits initial registry/build evidence, builds only
+pristine required builtins whose build is missing or stale, then re-observes and commits final
+registry, build, and CLI-readiness evidence. Startup fails closed when any pristine required builtin
+is not current and context-ready; it never auto-builds customized builtin or user sources.
+
 The Extension Managing child process only validates a shipped command and returns one exact
 response-bearing request intent. The parent runtime applies that request through the same runtime
 facade used by other app consumers and returns the committed receipt/facts; the child does not run
@@ -949,6 +955,22 @@ Electrobun owns:
 - packaging
 - app lifecycle
 - OS integration
+
+The shipped macOS shell uses Electrobun's native platform renderer. Linux dev and stable packages
+bundle Electrobun's pinned CEF renderer for deterministic renderer behavior and must not silently
+fall back to the system WebKitGTK path. The larger Linux package is an intentional reliability
+tradeoff shared by production and desktop E2E builds, not test-only product behavior. A Linux CEF
+view without an explicit partition uses CEF's ephemeral request context; durable product state is
+owned by the app's state/runtime stores rather than Electrobun's invalid nested default profile
+layout. Reused e2e homes replay only durable config/data/state roots and recreate cache/temp roots,
+so native IPC or renderer residue never becomes persistence input. The pinned Electrobun 1.18.1
+Linux CEF quit path exits only after svvy's app-owned asynchronous shutdown has flushed resources,
+avoiding the framework's unsafe stop-event-loop/`CefShutdown()` ordering; every discovered native
+core fails its e2e run and receives exact-executable resolver, signal, register, instruction, and
+all-thread backtrace evidence. The Electrobun app runtime uses Bun's official rolling canary at a
+minimum of 1.4.0 while stable 1.3.14 lacks required upstream threadsafe-FFI fix
+`9e6a19ba2e3c43f0782c9c9fa24a608f9824bb06`; runtime versions and revisions are receipted, and the
+rolling channel remains required until an official stable Bun release contains that fix.
 
 ### pi
 
@@ -1741,3 +1763,5 @@ The design is successful when:
 - the user can understand the current state of sessions, threads, and saved generated Workflows from durable state
 - meaningful delegated work terminates in reusable episodes instead of transcript archaeology
 - pi remains the runtime substrate and Smithers remains the workflow engine rather than replacing the product shell
+- a coding agent can launch an isolated production-reachable dev app through one documented live-inspection command, drive and inspect it through the dev-only browser-tools bridge plus native interaction tooling when available, reproduce automated failures without inventing a new harness, and retain correlated non-secret forensic evidence from every failed OrbStack e2e journey
+- the exhaustive feature inventory has an equally exhaustive machine-checked e2e coverage inventory that distinguishes real lifecycle journeys from seeded projection tests and prevents projection-only evidence from being presented as full product coverage

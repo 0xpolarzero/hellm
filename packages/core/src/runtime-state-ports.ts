@@ -105,6 +105,7 @@ import {
   NonNegativeSafeIntegerSchema,
   FiniteDurationMsSchema,
   PositiveDurationMsSchema,
+  PositiveSafeIntegerSchema,
   ProviderId,
   RequestInputRequestId,
   RequestInputAnswerId,
@@ -129,7 +130,6 @@ import {
   WorkspaceSessionId,
   WorkflowRunId,
   WorkflowTaskAttemptId,
-  PositiveSafeIntegerSchema,
   type IsoDateTimeString,
 } from "./ids";
 import { PiHistoryEntryRefSchema, type PiHistoryEntryRef } from "./pi-adapter-contracts";
@@ -192,7 +192,7 @@ export const RuntimeWorkspaceStatePort = Context.Service<
 
 export interface RuntimeSurfaceLifecycleStatePortService {
   createOrchestratorSurface(
-    input: CreateOrchestratorSurfaceInput,
+    input: CreateRuntimeOrchestratorSurfaceStateInput,
   ): Effect.Effect<StateMutationResult<CreateSurfaceResult>, StateContractError>;
   openSurface(
     input: OpenSurfaceInput,
@@ -226,6 +226,21 @@ export interface RuntimeSurfaceLifecycleStatePortService {
     readonly workspaceId: WorkspaceId;
     readonly workspaceSessionId: WorkspaceSessionId;
   }): Effect.Effect<StateMutationResult<DeleteOrchestratorSurfaceResult>, StateContractError>;
+}
+
+/**
+ * Trusted runtime-to-state input used after the app-global agent profile and
+ * extension binding have been resolved. This is intentionally distinct from
+ * the public CreateOrchestratorSurfaceInput so callers cannot supply prompt or
+ * capability authority at the public facade boundary.
+ */
+export interface CreateRuntimeOrchestratorSurfaceStateInput extends CreateOrchestratorSurfaceInput {
+  readonly profileId: AgentProfileId;
+  readonly provider: ProviderId;
+  readonly model: ModelId;
+  readonly reasoningEffort: ReasoningEffort;
+  readonly loadedExtensionIds: readonly ExtensionId[];
+  readonly availableExtensionIds: readonly ExtensionId[];
 }
 
 export interface RuntimeSurfaceLifecycleStatePort {
@@ -726,6 +741,12 @@ export const SettleRuntimeWorkflowTaskAgentAttemptInputSchema = Schema.Struct({
   idempotencyKey: Schema.String,
   status: Schema.Literals(["completed", "failed", "cancelled"]),
   result: Schema.optionalKey(RuntimeWorkflowTaskAgentTerminalResultSchema),
+  contextBudget: Schema.optionalKey(
+    Schema.Struct({
+      usedTokens: NonNegativeSafeIntegerSchema,
+      maxTokens: PositiveSafeIntegerSchema,
+    }),
+  ),
   error: Schema.optionalKey(Schema.String),
 });
 export type SettleRuntimeWorkflowTaskAgentAttemptInput =

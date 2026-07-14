@@ -270,8 +270,12 @@ export async function seedSessions(
       manager.appendMessage(message);
     }
 
-    const seededSession = {
-      file: manager.getSessionFile(),
+    const file = manager.getSessionFile();
+    if (!file) {
+      throw new Error("Pi did not create a durable session file for the seeded e2e session.");
+    }
+    const seededSession: SeededSession = {
+      file,
       id: manager.getSessionId(),
       key: session.key ?? `session-${index + 1}`,
     };
@@ -363,10 +367,13 @@ export async function seedSessions(
         structuredNow = messageTimestamp;
         if (message.role === "user") {
           finishActiveTurn();
-          const text = message.content
-            .filter((part) => part.type === "text")
-            .map((part) => part.text)
-            .join("\n");
+          const text =
+            typeof message.content === "string"
+              ? message.content
+              : message.content
+                  .filter((part) => part.type === "text")
+                  .map((part) => part.text)
+                  .join("\n");
           activeTurn = store.startTurn({
             sessionId: seeded.id,
             surfacePiSessionId: seeded.id,

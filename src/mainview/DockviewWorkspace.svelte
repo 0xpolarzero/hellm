@@ -637,11 +637,7 @@
     if (nextWidth === observedDockviewWidth && nextHeight === observedDockviewHeight) return;
     observedDockviewWidth = nextWidth;
     observedDockviewHeight = nextHeight;
-    if (layoutFrame !== null) {
-      window.cancelAnimationFrame(layoutFrame);
-      layoutFrame = null;
-    }
-    layoutDockview();
+    scheduleDockviewLayout();
   }
 
   function observeDockviewHostSize(): void {

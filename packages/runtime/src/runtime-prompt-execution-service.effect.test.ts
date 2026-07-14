@@ -230,7 +230,9 @@ describe("@svvy/runtime prompt execution service", () => {
         subscribe: () => Effect.die("Unexpected subscription."),
       });
       const toolExecutor = buildRuntimeToolExecutor({
+        workspaceId: "workspace-runtime-tool-executor" as WorkspaceId,
         acceptedNativeTools: {
+          runExecuteTypescript: () => Effect.die("Unexpected execute_typescript execution."),
           runRequestUserInput: () => Effect.die("Unexpected accepted request input execution."),
         },
         extensions,
@@ -350,7 +352,9 @@ describe("@svvy/runtime prompt execution service", () => {
         details: { status: "succeeded" as const, commandFacts: { questionCount: 0 } },
       };
       const toolExecutor = buildRuntimeToolExecutor({
+        workspaceId: "workspace-runtime-tool-executor" as WorkspaceId,
         acceptedNativeTools: {
+          runExecuteTypescript: () => Effect.die("Unexpected execute_typescript execution."),
           runRequestUserInput: (input) =>
             Effect.sync(() => {
               acceptedInputs.push(input);
@@ -408,6 +412,113 @@ describe("@svvy/runtime prompt execution service", () => {
               (acceptedInputs[0] as { commandRecord: RuntimeCommandRecord }).commandRecord.status,
               "running",
             );
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "routes execute_typescript through the runtime built-in lane before extension handlers",
+    () => {
+      const calls: string[] = [];
+      const acceptedInputs: unknown[] = [];
+      const commandState = {
+        createOrReuseStreamingCommand: () =>
+          Effect.succeed({ value: commandRecord({ status: "requested" }), afterCommit: [] }),
+        startCommand: () =>
+          Effect.sync(() => {
+            calls.push("command:start");
+            return { value: commandRecord({ status: "running" }), afterCommit: [] };
+          }),
+        finishCommand: () =>
+          Effect.sync(() => {
+            calls.push("command:generic-finish");
+            return { value: commandRecord({ status: "succeeded" }), afterCommit: [] };
+          }),
+        createCommand: () => Effect.die("Unexpected createCommand call."),
+        findCommandByToolCallId: () => Effect.die("Unexpected command lookup."),
+        findCommandById: () => Effect.die("Unexpected command lookup."),
+        updateCommandArguments: () => Effect.die("Unexpected argument update."),
+        recordCommandEvent: () => Effect.die("Unexpected command event."),
+        recordStdinWrite: () => Effect.die("Unexpected stdin write."),
+        hasCommandOutputEvent: () => Effect.die("Unexpected command output query."),
+      } satisfies RuntimeCommandStatePortService;
+      const toolResult = {
+        content: [{ type: "text" as const, text: '{"success":true,"result":42}' }],
+        details: { commandFacts: { success: true, result: 42 } },
+      };
+      const toolExecutor = buildRuntimeToolExecutor({
+        workspaceId,
+        acceptedNativeTools: {
+          runExecuteTypescript: (input) =>
+            Effect.sync(() => {
+              calls.push("accepted:execute-typescript");
+              acceptedInputs.push(input);
+              return toolResult;
+            }),
+          runRequestUserInput: () => Effect.die("Unexpected request_user_input execution."),
+        },
+        extensions: Extensions.of({
+          nativeTools: {
+            handler: () => Effect.die("Generic handler must not receive execute_typescript."),
+          },
+        } as unknown as ExtensionsService),
+        target,
+        actorBinding: {
+          actorKind: "orchestrator",
+          loadedExtensionIds: ["execute-typescript" as ExtensionId],
+          availableExtensionIds: [],
+          unavailableExtensionIds: [],
+          instructionOrder: ["execute-typescript" as ExtensionId],
+          source: "surface-binding",
+        },
+        promptContext,
+        commandState,
+        requestState: {} as RuntimeRequestStatePortService,
+        actorBindingState: {} as RuntimeActorExtensionBindingStatePortService,
+        episodeState: {} as RuntimeEpisodeStatePortService,
+        threadState: {} as RuntimeThreadStatePortService,
+        queueState: {} as RuntimeQueueStatePortService,
+        eventBus: RuntimeEventBus.of({
+          publishLive: () => Effect.die("Unexpected live publication."),
+          publishStateInvalidations: () => Effect.succeed([]),
+          subscribe: () => Effect.die("Unexpected subscription."),
+        }),
+        sourceInvalidation: {} as RuntimeSourceInvalidationService["Service"],
+      });
+
+      return toolExecutor({
+        turnId,
+        surfacePiSessionId,
+        piToolCallId: toolCallId,
+        toolName: "execute_typescript",
+        argumentsJson: JSON.stringify({ typescriptCode: "return 40 + 2;" }),
+        emit: () => Effect.void,
+      }).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            assert.deepStrictEqual(result, toolResult);
+            assert.deepStrictEqual(calls, ["command:start", "accepted:execute-typescript"]);
+            assert.deepStrictEqual(acceptedInputs, [
+              {
+                workspaceId,
+                target,
+                turnId,
+                toolCallId,
+                commandId,
+                typescriptCode: "return 40 + 2;",
+                promptContext,
+                actorBinding: {
+                  actorKind: "orchestrator",
+                  loadedExtensionIds: ["execute-typescript"],
+                  availableExtensionIds: [],
+                  unavailableExtensionIds: [],
+                  instructionOrder: ["execute-typescript"],
+                  source: "surface-binding",
+                },
+              },
+            ]);
           }),
         ),
       );

@@ -337,7 +337,14 @@ describe("@svvy/runtime durable prompt transcript", () => {
         providerId: "openai",
         modelId: "gpt-5",
         responseId: "response_transcript",
-        usage: null,
+        usage: {
+          input: 100_000,
+          output: 100,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 100_100,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
         stopReason: "stop",
         errorMessage: null,
         piHistoryEntry: {
@@ -425,6 +432,14 @@ describe("@svvy/runtime durable prompt transcript", () => {
 
       assert.strictEqual(result.status, "completed");
       assert.strictEqual(result.assistantText, "Durable response.");
+      assert.deepStrictEqual(result.usage, {
+        input: 100_000,
+        output: 100,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 100_100,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      });
       assert.deepStrictEqual(transcriptCalls, [
         "cursor",
         "user",

@@ -45,6 +45,7 @@ import { getDefaultWorkspaceCwd } from "./workspace-context";
 import { createTestSandboxHostSupport } from "./sandbox-host-support.test-support";
 import { defaultRuntimeLayerConfig } from "@svvy/runtime/bootstrap";
 import type { LiveCommandStdinRegistry } from "./live-command-stdin-registry";
+import { successfulExtensionBuildProcessTestService } from "./extension-build-process.test-support";
 
 const tempDirs: string[] = [];
 const registries: WorkspaceRuntimeRegistry[] = [];
@@ -3513,6 +3514,43 @@ describe("WorkspaceRuntimeRegistry", () => {
     );
   });
 
+  it("hydrates saved full-access preferences into the catalog sandbox policy source", async () => {
+    const cwd = tempWorkspace("state-owned-full-access-sandbox-policy");
+    const registry = createRegistry(cwd);
+    const runtime = await registry.acquireWorkspace(cwd);
+    const stateCommands = await registry.getStateCommandsFacade();
+    await stateCommands.appPreferences.update({
+      patch: {
+        approvalMode: "full-access",
+        networkAccess: false,
+      },
+      clientSubmission: {
+        clientRequestId: "state-owned-full-access-sandbox-policy" as RuntimeClientRequestId,
+        source: "test" as RuntimeClientSubmissionSource,
+      },
+    });
+
+    await registry.hydrateStateOwnedAppPreferencesFromStateRows();
+
+    expect(runtime.agentSettingsStore.getState().appPreferences).toMatchObject({
+      approvalMode: "full-access",
+      networkAccess: false,
+    });
+    const snapshot = await Effect.runPromise(
+      runtime.catalog.getSandboxPolicySource().snapshot({
+        scope: { kind: "workspace", workspaceId: runtime.workspaceId as WorkspaceId },
+        commandId: "command-state-owned-full-access-policy" as CommandId,
+        launchKind: "execute_typescript_runtime",
+        cwd: cwd as AbsolutePath,
+      }),
+    );
+    expect(snapshot).toMatchObject({
+      sandboxMode: "omitted_full_access",
+      networkPolicy: "allow",
+      filesystemPolicy: { defaultAccess: "read", entries: [] },
+    });
+  });
+
   it("refreshes external-instruction watcher inputs for every open workspace", async () => {
     const cwd = tempWorkspace("external-instruction-watcher-refresh");
     const registry = createRegistry(cwd);
@@ -3636,9 +3674,7 @@ function createRegistry(
     sourceWatchEnabled: false,
     runtimeLayerConfig: defaultRuntimeLayerConfig,
     sandboxHostSupport: createTestSandboxHostSupport(),
-    extensionBuildProcess: {
-      run: () => Effect.succeed({ status: "failed" as const }),
-    },
+    extensionBuildProcess: successfulExtensionBuildProcessTestService,
     extensionCliRequirementProbe: {
       probe: (plan) =>
         Effect.succeed(

@@ -53,7 +53,11 @@ The adopted `svvy` direction is:
 - `@` mentions are composer UI shortcuts for inserting workspace path links.
 - Mentions support files and folders.
 - Selecting an `@` result inserts normal editable `@path` text into the textarea. It does not create an attachment chip.
-- Paperclip picker selections, dropped files, and pasted files create removable attachment chips above the composer. They do not mutate textarea text.
+- The paperclip opens one compact attachment menu with explicit `Files` and `Folder` actions. The
+  `Files` action uses a file-only native picker and the `Folder` action uses a folder-only native
+  picker, so users never receive an ambiguous mixed file/folder chooser. Picker selections, dropped
+  files, and pasted files create removable attachment chips above the composer. They do not mutate
+  textarea text.
 - Paperclip picker selections, dropped files, and pasted files submit typed attachment metadata
   through the runtime message facade while creating removable renderer-visible chips above the
   composer. `@svvy/state` persists submitted-message attachment metadata for composer and

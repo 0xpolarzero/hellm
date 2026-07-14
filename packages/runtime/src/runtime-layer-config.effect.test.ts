@@ -34,6 +34,7 @@ import {
 } from "./surface-runtime-scope-service";
 import { RuntimeWorkflowAgentSourceIndex } from "./runtime-workflow-agent-source-index";
 import { layerRuntimeShutdownAdmission } from "./runtime-shutdown-admission";
+import { RuntimeExtensionStartupReconcileService } from "./runtime-extension-startup-reconcile-service";
 
 describe("@svvy/runtime Effect runtime-layer config", () => {
   it.effect("parses environment overrides through the Effect config service", () =>
@@ -145,6 +146,7 @@ describe("@svvy/runtime Effect runtime-layer config", () => {
       const receipt = yield* readiness.awaitReady;
 
       assert.deepStrictEqual(calls, [
+        "extensions",
         "sources",
         "snapshots",
         "recover:turn_startup_recovery",
@@ -171,6 +173,22 @@ describe("@svvy/runtime Effect runtime-layer config", () => {
               ...noRequestInputWaitService(),
               restoreOpenBlockingRequests: () =>
                 Effect.sync(() => calls.push("restore-request-input")),
+            }),
+          ),
+          Layer.provide(
+            Layer.succeed(RuntimeExtensionStartupReconcileService, {
+              reconcile: Effect.sync(() => {
+                calls.push("extensions");
+                return {
+                  scaffold: {
+                    materializedExtensionIds: [],
+                    existingExtensionIds: [],
+                    appNativeExtensionIds: [],
+                  },
+                  builtExtensionIds: [],
+                  readyExtensionIds: [],
+                };
+              }),
             }),
           ),
           Layer.provide(
@@ -306,6 +324,8 @@ describe("@svvy/runtime Effect runtime-layer config", () => {
             Layer.provide(
               Layer.succeed(RuntimeLayerCommandControlPort, {
                 cancel: () => Effect.die("Unexpected live command cancellation."),
+                runExecuteTypescript: () =>
+                  Effect.die("Unexpected execute_typescript host execution."),
               }),
             ),
             Layer.provide(
@@ -389,6 +409,8 @@ describe("@svvy/runtime Effect runtime-layer config", () => {
                     calls.push(`cancel-command:${commandId}`);
                     return { commandId, status: "cancelled" as const };
                   }),
+                runExecuteTypescript: () =>
+                  Effect.die("Unexpected execute_typescript host execution."),
               }),
             ),
             Layer.provide(

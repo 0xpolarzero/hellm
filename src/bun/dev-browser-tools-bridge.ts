@@ -1,4 +1,4 @@
-import type { BrowserWindow } from "electrobun/bun";
+import type { BrowserView, BrowserWindow, BuildConfig } from "electrobun/bun";
 import { mountElectrobunToolBridge } from "electrobun-browser-tools/bridge";
 import type { AgentDefaults } from "../shared/agent-settings";
 import type {
@@ -54,6 +54,32 @@ type WorkspaceSessionsState = {
 
 type DevBrowserToolsState = Record<string, Record<string, unknown>>;
 
+export type DevBrowserToolsNamespaceError = {
+  kind: "read-model-error";
+  name: string;
+  message: string;
+};
+
+export type DevBrowserToolsNamespaceState<Value = unknown> =
+  | { status: "ready"; value: Value }
+  | { status: "unavailable"; reason: "no-active-workspace"; value: null }
+  | { status: "error"; error: DevBrowserToolsNamespaceError; value: null };
+
+export type DevBrowserToolsInspectionState = {
+  settings: DevBrowserToolsNamespaceState;
+  agents: DevBrowserToolsNamespaceState;
+  extensions: DevBrowserToolsNamespaceState;
+  appLogs: DevBrowserToolsNamespaceState;
+  promptHistory: DevBrowserToolsNamespaceState;
+  requestInput: DevBrowserToolsNamespaceState;
+  approvals: DevBrowserToolsNamespaceState;
+  snippets: DevBrowserToolsNamespaceState;
+  workflowsGenerated: DevBrowserToolsNamespaceState;
+  workspaceChrome: DevBrowserToolsNamespaceState;
+  workspaceLayout: DevBrowserToolsNamespaceState;
+  externalInstructions: DevBrowserToolsNamespaceState;
+};
+
 export type DevBrowserToolsRecorder = {
   close: () => Promise<void>;
   recordError: (
@@ -80,10 +106,15 @@ export const noopDevBrowserToolsRecorder: DevBrowserToolsRecorder = {
 };
 
 type MountDevBrowserToolsBridgeOptions = {
+  browserView: typeof BrowserView;
+  buildConfig: typeof BuildConfig;
   getDefaultAgentSettings: () => AgentDefaults;
   getActiveWorkspace: () => Promise<WorkspaceInfoResponse | null>;
   getMainWindow: () => BrowserWindow | null;
   getWorkspaceBranch: (cwd: string) => string | undefined;
+  readInspectionState: (
+    activeWorkspaceId: string | null,
+  ) => Promise<DevBrowserToolsInspectionState>;
   getOpenWorkspaces: () => WorkspaceInfoResponse[];
   listProviderAuthSummaries: () => Promise<ProviderAuthInfo[]>;
   listOpenSurfaceReadModels: (
@@ -91,19 +122,60 @@ type MountDevBrowserToolsBridgeOptions = {
   ) => Promise<DevBrowserToolsSurfaceReadModelBundle[]>;
   listWorkspaceSessions: (workspaceId: string) => Promise<WorkspaceSessionsState>;
   mainWindow: BrowserWindow;
+  requestQuit?: () => void;
 };
 
-const DEV_BROWSER_TOOLS_PORT_BASE = 59_000;
-const DEV_BROWSER_TOOLS_PORT_RANGE = 1_000;
+const PRIVATE_BRIDGE_KEYS = new Set([
+  "acceptedarguments",
+  "accesstoken",
+  "apikey",
+  "argv",
+  "authorization",
+  "command",
+  "commandpayload",
+  "credential",
+  "credentials",
+  "generatedsystemprompt",
+  "idtoken",
+  "oauthcredential",
+  "oauthcredentials",
+  "rawarguments",
+  "rawauth",
+  "refreshtoken",
+  "secretvalue",
+  "stdin",
+  "systemprompt",
+]);
 
-function getPreferredDevBrowserToolsPort(): number {
-  return DEV_BROWSER_TOOLS_PORT_BASE + (process.pid % DEV_BROWSER_TOOLS_PORT_RANGE);
+function safeBridgeValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  if (seen.has(value)) {
+    return "[circular]";
+  }
+  seen.add(value);
+  if (Array.isArray(value)) {
+    const items = value.map((item) => safeBridgeValue(item, seen));
+    seen.delete(value);
+    return items;
+  }
+  const object = Object.fromEntries(
+    Object.entries(value).flatMap(([key, item]) =>
+      PRIVATE_BRIDGE_KEYS.has(key.replaceAll(/[^a-zA-Z0-9]/g, "").toLowerCase())
+        ? []
+        : [[key, safeBridgeValue(item, seen)]],
+    ),
+  );
+  seen.delete(value);
+  return object;
 }
 
 export async function mountDevBrowserToolsBridge(
   options: MountDevBrowserToolsBridgeOptions,
 ): Promise<DevBrowserToolsRecorder & { appId: string; url?: string }> {
   let browserToolsBridge: DevBrowserToolsBridgeInstance | null = null;
+  let initialStateCaptured = false;
 
   function getBridgeContext(): { viewId?: number; windowId?: number } {
     const mainWindow = options.getMainWindow();
@@ -114,18 +186,24 @@ export async function mountDevBrowserToolsBridge(
   }
 
   async function buildState(): Promise<DevBrowserToolsState> {
+    if (!initialStateCaptured) {
+      console.info("svvy startup phase: dev-browser-tools.state.begin");
+    }
     const activeWorkspace = await options.getActiveWorkspace();
     const defaults = options.getDefaultAgentSettings();
-    const sessions = activeWorkspace
-      ? await options.listWorkspaceSessions(activeWorkspace.workspaceId)
-      : { sessions: [] };
-    const openSurfaceReadModels = activeWorkspace
-      ? await options.listOpenSurfaceReadModels(activeWorkspace.workspaceId)
-      : [];
-    const providerAuths = await options.listProviderAuthSummaries();
+    const [inspectionState, sessions, openSurfaceReadModels, providerAuths] = await Promise.all([
+      options.readInspectionState(activeWorkspace?.workspaceId ?? null),
+      activeWorkspace
+        ? options.listWorkspaceSessions(activeWorkspace.workspaceId)
+        : Promise.resolve({ sessions: [] }),
+      activeWorkspace
+        ? options.listOpenSurfaceReadModels(activeWorkspace.workspaceId)
+        : Promise.resolve([]),
+      options.listProviderAuthSummaries(),
+    ]);
     const openWorkspaces = options.getOpenWorkspaces();
 
-    return {
+    const state = safeBridgeValue({
       workspace: {
         workspaceId: activeWorkspace?.workspaceId ?? null,
         cwd: activeWorkspace?.cwd ?? null,
@@ -157,13 +235,23 @@ export async function mountDevBrowserToolsBridge(
         })),
         total: openSurfaceReadModels.length,
       },
-    };
+      ...inspectionState,
+    }) as DevBrowserToolsState;
+    if (!initialStateCaptured) {
+      initialStateCaptured = true;
+      console.info("svvy startup phase: dev-browser-tools.state.ready");
+    }
+    return state;
   }
 
   browserToolsBridge = await mountElectrobunToolBridge({
+    browserView: options.browserView,
+    buildConfig: options.buildConfig,
     mainWindow: options.mainWindow,
-    port: getPreferredDevBrowserToolsPort(),
+    port: 0,
+    requestQuit: options.requestQuit,
     state: buildState,
+    trustedRuntime: true,
   });
 
   return {

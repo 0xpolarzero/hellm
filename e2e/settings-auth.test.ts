@@ -128,29 +128,13 @@ async function providerNames(page: SvvyApp["page"]): Promise<string[]> {
   return names;
 }
 
-async function waitForProviderNames(
-  page: SvvyApp["page"],
-  expected: string[],
-  timeoutMs = 5_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastNames = await providerNames(page);
-
-  while (Date.now() < deadline) {
-    if (
-      lastNames.length === expected.length &&
-      lastNames.every((name, index) => name === expected[index])
-    ) {
-      return;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    lastNames = await providerNames(page);
+async function waitForProviderNames(page: SvvyApp["page"], expected: string[]): Promise<void> {
+  const rows = page.locator(".provider-row");
+  if (expected.length > 0) {
+    await rows.nth(expected.length - 1).waitFor({ state: "visible" });
   }
-
-  throw new Error(
-    `Timed out waiting for provider names ${JSON.stringify(expected)}. Last names: ${JSON.stringify(lastNames)}`,
-  );
+  await rows.nth(expected.length).waitFor({ state: "detached" });
+  expect(await providerNames(page)).toEqual(expected);
 }
 
 async function providerStatus(page: SvvyApp["page"], providerId: string): Promise<string> {
@@ -260,24 +244,24 @@ test("API key editor supports cancel and save flows", async () => {
     await page.locator(".provider-row").first().waitFor({ state: "visible" });
 
     const openaiRow = await providerRow(page, "openai");
-    await openaiRow.getByRole("button", { name: "Add openai API key" }).click({ force: true });
+    await openaiRow.getByRole("button", { name: "Add openai API key" }).click();
 
     const apiKeyInput = openaiRow.locator('input[placeholder="Paste API key..."]');
     await apiKeyInput.waitFor({ state: "visible" });
     await apiKeyInput.fill("temporary-cancel-key");
-    await openaiRow.getByRole("button", { name: "Cancel" }).click({ force: true });
+    await openaiRow.getByRole("button", { name: "Cancel" }).click();
     await apiKeyInput.waitFor({ state: "detached" });
     expect(await providerStatus(page, "openai")).toBe("Not configured");
 
-    await openaiRow.getByRole("button", { name: "Add openai API key" }).click({ force: true });
+    await openaiRow.getByRole("button", { name: "Add openai API key" }).click();
     await openaiRow.locator('input[placeholder="Paste API key..."]').fill("saved-openai-key");
-    await openaiRow.getByRole("button", { name: "Save" }).click({ force: true });
+    await openaiRow.getByRole("button", { name: "Save" }).click();
 
     await page.getByText("Saved").waitFor({ state: "visible" });
     await page.getByText("API key").waitFor({ state: "visible" });
     expect(await providerStatus(page, "openai")).toBe("API key");
 
-    await closeSettings(page);
+    await closeSettings(page, "close after saving API key");
     await openSettings(page);
     await page.locator(".provider-row").first().waitFor({ state: "visible" });
     expect(await providerStatus(page, "openai")).toBe("API key");
@@ -311,7 +295,7 @@ test("removing provider auth clears the status and shows feedback", async () => 
       await page.getByText("Not configured").waitFor({ state: "visible" });
       expect(await providerStatus(page, "openai")).toBe("Not configured");
 
-      await closeSettings(page);
+      await closeSettings(page, "close after removing provider auth");
       await openSettings(page);
       await page.locator(".provider-row").first().waitFor({ state: "visible" });
       expect(await providerStatus(page, "openai")).toBe("Not configured");

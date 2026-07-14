@@ -8,6 +8,7 @@ coverage/
 .svelte-kit/
 .vite/
 test-results/
+e2e-results/
 frontend-replit/
 screenshots/
 .idea/

@@ -18,6 +18,10 @@ describe("desktop bootstrap sequencing", () => {
       startDesktop: async () => {
         events.push("desktop");
       },
+      onStartupFailure: (error) => {
+        expect(error).toBe(readinessFailure);
+        events.push("startup-diagnostics");
+      },
       rejectRendererCalls: (error) => {
         events.push(`reject:${error.reason}`);
       },
@@ -39,6 +43,7 @@ describe("desktop bootstrap sequencing", () => {
     });
     expect(events).toEqual([
       "readiness",
+      "startup-diagnostics",
       "reject:desktop-shutdown",
       "cleanup:startup-failure",
       "failure-surface",
@@ -93,6 +98,9 @@ describe("desktop bootstrap sequencing", () => {
       },
       acquireFacades: async () => ({}),
       startDesktop: async () => {},
+      onStartupFailure: () => {
+        throw new Error("startup diagnostics failed");
+      },
       rejectRendererCalls: () => {
         throw new Error("renderer rejection failed");
       },
@@ -116,6 +124,7 @@ describe("desktop bootstrap sequencing", () => {
       reason: "desktop-shutdown",
     });
     expect(auxiliaryFailures).toEqual([
+      "startup-diagnostics:Error: startup diagnostics failed",
       "renderer-rejection:Error: renderer rejection failed",
       "cleanup:Error: cleanup failed: startup-failure",
       "failure-surface:Error: dialog failed",

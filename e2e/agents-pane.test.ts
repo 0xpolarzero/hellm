@@ -9,7 +9,7 @@ beforeAll(async () => {
 });
 
 async function openAgentsPane(page: SvvyApp["page"]): Promise<void> {
-  await page.getByRole("button", { name: "Open agent profiles" }).click({ force: true });
+  await page.getByRole("button", { name: "Open agent profiles" }).click();
   await page.getByTestId("agents-pane").waitFor({ state: "visible" });
 }
 
@@ -18,41 +18,8 @@ async function agentsPaneText(page: SvvyApp["page"]): Promise<string> {
 }
 
 async function waitForAgentsPaneTokens(page: SvvyApp["page"]): Promise<string> {
-  const deadline = Date.now() + 15_000;
-  let text = "";
-  let previewError = "";
-
-  while (Date.now() < deadline) {
-    text = await agentsPaneText(page);
-    previewError =
-      (await page
-        .attrs("css:.profile-extension-preview-error")
-        .then((result) => result.attributes.title ?? "")
-        .catch(() => "")) || previewError;
-    if (/~[\d,.]+k? tokens total/.test(text) && /~[\d,.]+k? tokens/.test(text)) {
-      return text;
-    }
-    await Bun.sleep(100);
-  }
-
-  throw new Error(
-    `Timed out waiting for Agents pane token counts. Preview error: ${previewError || "none"}. Last text: ${text}`,
-  );
-}
-
-async function waitForButton(page: SvvyApp["page"], name: string): Promise<void> {
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    try {
-      if ((await page.getByRole("button", { name }).count()) > 0) {
-        return;
-      }
-    } catch {
-      // Tolerate transient bridge timeouts while the pane loads.
-    }
-    await Bun.sleep(150);
-  }
-  throw new Error(`Timed out waiting for button: ${name}`);
+  await page.locator(".profile-extension-total").waitFor({ state: "visible" });
+  return await agentsPaneText(page);
 }
 
 test("keeps expanded agent token counts visible across extension state refresh", async () => {
@@ -63,18 +30,44 @@ test("keeps expanded agent token counts visible across extension state refresh",
         await seedInitialExtensionSnapshot(homeDir);
       },
     },
-    async ({ page }) => {
+    async ({ driver, page }) => {
       await openAgentsPane(page);
 
-      await page.locator('button[aria-label="Expand Default"]').click({ force: true });
+      await page.locator('button[aria-label="Expand Default"]').click();
       const initialText = await waitForAgentsPaneTokens(page);
 
       expect(initialText).toContain("tokens total");
       expect(initialText).not.toContain("Preview failed");
       expect(await page.locator(".agents-error").count()).toBe(0);
 
-      await waitForButton(page, "Shell usage state: set Off");
-      await page.getByRole("button", { name: "Shell usage state: set Off" }).click({ force: true });
+      const shellOff = page.getByRole("button", { name: "Shell usage state: set Off" });
+      await shellOff.waitFor({ state: "visible" });
+      const agentsChangedSince = new Date().toISOString();
+      await shellOff.click();
+      await page
+        .getByRole("button", { name: "Shell usage state: Off" })
+        .waitFor({ state: "visible" });
+      let sawAgentsInvalidation = false;
+      for await (const event of driver.eventsTail({
+        follow: false,
+        since: agentsChangedSince,
+        types: "app_read_model.changed",
+      })) {
+        const invalidation = event.payload?.invalidation;
+        if (
+          invalidation &&
+          typeof invalidation === "object" &&
+          "model" in invalidation &&
+          invalidation.model === "agents"
+        ) {
+          sawAgentsInvalidation = true;
+        }
+      }
+      if (!sawAgentsInvalidation) {
+        throw new Error(
+          "Changing Shell usage did not commit the expected agents read-model update.",
+        );
+      }
       const refreshText = await waitForAgentsPaneTokens(page);
 
       expect(refreshText).toContain("tokens total");

@@ -25,7 +25,7 @@ export type LiveCommandStdinRegistration = {
 };
 
 export type LiveCommandStdinRegistry = RuntimeLayerCommandStdinPortService &
-  RuntimeLayerCommandControlPortService & {
+  Pick<RuntimeLayerCommandControlPortService, "cancel"> & {
     register(input: LiveCommandStdinRegistration): void;
     unregister(input: { readonly commandId: string; readonly sessionId: string }): void;
   };

@@ -102,7 +102,7 @@ async function openSession(page: SvvyApp["page"], title: string): Promise<void> 
     .filter({ has: page.locator("strong").filter({ hasText: title }) })
     .first();
   await session.waitFor({ state: "visible" });
-  await session.click({ force: true });
+  await session.click();
 }
 
 async function writeCorruptedSessionFile(
@@ -167,8 +167,12 @@ test("an orphaned forked session still opens, stays labeled as a fork, and remai
             ],
             workspaceDir,
           );
+          const parentSession = seeded[0];
+          if (!parentSession) {
+            throw new Error("Expected the orphan recovery parent session to be seeded.");
+          }
 
-          await rm(seeded[0].file, { force: true });
+          await rm(parentSession.file, { force: true });
           const canonicalWorkspace = realpathSync.native(workspaceDir);
           const store = createStructuredSessionStateStore({
             databasePath: join(
@@ -183,7 +187,7 @@ test("an orphaned forked session still opens, stays labeled as a fork, and remai
             },
           });
           try {
-            store.deleteSessionState(seeded[0].id);
+            store.deleteSessionState(parentSession.id);
           } finally {
             store.close();
           }
@@ -238,7 +242,6 @@ test("a workspace with many sessions restores the explicitly opened newest sessi
         beforeLaunch: async ({ homeDir: launchHomeDir, workspaceDir }) => {
           for (const session of sessions) {
             await seedSessions(launchHomeDir, [session], workspaceDir);
-            await Bun.sleep(5);
           }
         },
       },

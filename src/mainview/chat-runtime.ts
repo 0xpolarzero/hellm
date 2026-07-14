@@ -71,6 +71,7 @@ import {
   type AppLogUpdateMessage,
   type ConversationTurnTiming,
   type ComposerAttachment,
+  type ComposerAttachmentPickerKind,
   type ComposerDraft,
   type CreateSessionRequest,
   type EditCommittedUserMessageRequest,
@@ -1034,7 +1035,7 @@ export interface ChatRuntime {
   listWorkspaceBranches: () => Promise<WorkspaceBranchInfo[]>;
   switchWorkspaceBranch: (branch: string) => Promise<void>;
   listWorkspacePaths: (options?: { refresh?: boolean }) => Promise<WorkspacePathIndexEntry[]>;
-  pickWorkspaceAttachments: () => Promise<ComposerAttachment[]>;
+  pickWorkspaceAttachments: (kind: ComposerAttachmentPickerKind) => Promise<ComposerAttachment[]>;
   importComposerAttachments: (files: File[]) => Promise<ComposerAttachment[]>;
   openWorkspacePath: (workspaceRelativePath: string) => Promise<boolean>;
   getWorkflowsGenerated: () => Promise<WorkflowsGeneratedReadModel>;
@@ -4719,8 +4720,8 @@ export async function createChatRuntime(
     },
     listWorkspacePaths: (pathOptions) =>
       rpcClient.request.listWorkspacePaths(scoped(pathOptions ?? {})),
-    pickWorkspaceAttachments: async () => {
-      const result = await rpcClient.request.pickWorkspaceAttachments(scoped());
+    pickWorkspaceAttachments: async (kind) => {
+      const result = await rpcClient.request.pickWorkspaceAttachments(scoped({ kind }));
       return result.attachments;
     },
     importComposerAttachments: async (files) => {

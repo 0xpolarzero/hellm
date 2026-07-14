@@ -53,6 +53,7 @@ import {
 } from "./runtime-effect-requests";
 import { RuntimeEventBus } from "./runtime-event-bus";
 import { RuntimeLaunchPolicyService } from "./runtime-launch-policy-service";
+import { RuntimeLayerCommandControlPort } from "./runtime-command-host-ports";
 import { RuntimeApprovalWaitService } from "./runtime-approval-wait-service";
 import { RuntimeQueueWakeService } from "./runtime-queue-wake-service";
 import { RuntimeRequestInputWaitService } from "./runtime-request-input-wait-service";
@@ -103,6 +104,11 @@ const handlerThreadInvalidation = {
   workspaceId,
   invalidation: { model: "surface", ids: [handlerSurfacePiSessionId] },
 } satisfies StateInvalidationDescriptor;
+
+const unusedCommandControl = RuntimeLayerCommandControlPort.of({
+  cancel: () => Effect.die("Unexpected command cancellation."),
+  runExecuteTypescript: () => Effect.die("Unexpected execute_typescript host execution."),
+});
 
 describe("RuntimeAcceptedNativeToolExecution", () => {
   it.effect("builds direct-tool launch facts through the runtime launch-policy mapper", () => {
@@ -180,6 +186,7 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
       assert.strictEqual(calls.length, cases.length);
     }).pipe(
       Effect.provide(layerRuntimeAcceptedNativeToolExecution),
+      Effect.provideService(RuntimeLayerCommandControlPort, unusedCommandControl),
       Effect.provide(layerRuntimeShutdownAdmission),
       Effect.provideService(RuntimeRequestStatePort, requestStatePort({ createCalls: [] })),
       Effect.provideService(
@@ -281,6 +288,7 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
         ]);
       }).pipe(
         Effect.provide(layerRuntimeAcceptedNativeToolExecution),
+        Effect.provideService(RuntimeLayerCommandControlPort, unusedCommandControl),
         Effect.provide(layerRuntimeShutdownAdmission),
         Effect.provideService(
           RuntimeRequestStatePort,
@@ -368,6 +376,7 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
       assert.strictEqual(result.result.threads[0]?.threadId, threadId);
     }).pipe(
       Effect.provide(layerRuntimeAcceptedNativeToolExecution),
+      Effect.provideService(RuntimeLayerCommandControlPort, unusedCommandControl),
       Effect.provide(layerRuntimeShutdownAdmission),
       Effect.provideService(
         RuntimeCommandStatePort,
@@ -504,6 +513,7 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
         assert.deepStrictEqual(published, [[requestInvalidation], [commandInvalidation]]);
       }).pipe(
         Effect.provide(layerRuntimeAcceptedNativeToolExecution),
+        Effect.provideService(RuntimeLayerCommandControlPort, unusedCommandControl),
         Effect.provide(layerRuntimeShutdownAdmission),
         Effect.provideService(RuntimeApprovalStatePort, unusedApprovalStatePort()),
         Effect.provideService(RuntimeSessionWaitStatePort, unusedSessionWaitStatePort()),
@@ -951,6 +961,9 @@ function unusedSourceInvalidationService(): RuntimeSourceInvalidationService["Se
 
 function unusedExtensionsService(): ExtensionsService {
   return Extensions.of({
+    builtin: {
+      scaffoldMissing: () => Effect.die("Unexpected builtin extension scaffold."),
+    },
     snapshots: {
       captureSourcePayload: () => Effect.die("Unexpected snapshot source capture."),
       prepareSourceRestore: () => Effect.die("Unexpected snapshot source restore preparation."),

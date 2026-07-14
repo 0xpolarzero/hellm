@@ -32,7 +32,7 @@ export async function runExtensionBuildProcess(
   },
 ): Promise<ExtensionBuildProcessEvidence> {
   try {
-    if (!isAbsolute(host.executable)) return { status: "failed" };
+    if (!isAbsolute(host.executable)) return failed("validation");
     const sourceRoot = await realpath(plan.sourceRoot);
     const stagingRoot = await realpath(plan.stagingRoot);
     const generatedOutputs = new Set<string>();
@@ -44,28 +44,36 @@ export async function runExtensionBuildProcess(
     const expectedOutputs = new Set<string>();
     for (const output of plan.expectedProcessOutputs) {
       if (!canonicalRelativePath(output.relativePath) || expectedOutputs.has(output.relativePath))
-        return { status: "failed" };
+        return failed("validation");
       expectedOutputs.add(output.relativePath);
     }
     for (const generator of plan.generators) {
       lexicalContained(plan.sourceRoot, generator.scriptPath);
       const scriptPath = await realContainedFile(sourceRoot, await realpath(generator.scriptPath));
-      const outputPath = lexicalContained(stagingRoot, generator.outputPath);
-      const relativeOutput = relative(stagingRoot, outputPath).split(sep).join("/");
+      const lexicalOutputPath = lexicalContained(plan.stagingRoot, generator.outputPath);
+      const relativeOutput = relative(resolve(plan.stagingRoot), lexicalOutputPath)
+        .split(sep)
+        .join("/");
+      lexicalContained(stagingRoot, resolve(stagingRoot, relativeOutput));
       if (!expectedOutputs.has(relativeOutput) || generatedOutputs.has(relativeOutput))
-        return { status: "failed" };
+        return failed("validation");
       generatedOutputs.add(relativeOutput);
-      if (outputPath !== generator.outputPath) return { status: "failed" };
       validatedGenerators.push({ ...generator, scriptPath });
     }
 
     if (plan.svvyxRuntime) {
       lexicalContained(plan.sourceRoot, plan.svvyxRuntime.sourcePath);
       await realContainedFile(sourceRoot, await realpath(plan.svvyxRuntime.sourcePath));
-      const runtimeOutput = lexicalContained(stagingRoot, plan.svvyxRuntime.runtimeOutputPath);
-      const runtimeRelative = relative(stagingRoot, runtimeOutput).split(sep).join("/");
+      const lexicalRuntimeOutput = lexicalContained(
+        plan.stagingRoot,
+        plan.svvyxRuntime.runtimeOutputPath,
+      );
+      const runtimeRelative = relative(resolve(plan.stagingRoot), lexicalRuntimeOutput)
+        .split(sep)
+        .join("/");
+      lexicalContained(stagingRoot, resolve(stagingRoot, runtimeRelative));
       if (!expectedOutputs.has(runtimeRelative) || generatedOutputs.has(runtimeRelative))
-        return { status: "failed" };
+        return failed("validation");
       generatedOutputs.add(runtimeRelative);
     }
 
@@ -87,7 +95,7 @@ export async function runExtensionBuildProcess(
         stdoutLimit: plan.maxStdoutBytes - stdout.byteLength,
         stderrLimit: plan.maxStderrBytes - stderr.byteLength,
       });
-      if (result.status !== "completed") return { status: result.status };
+      if (result.status !== "completed") return result;
       stdout = Buffer.concat([stdout, result.stdout]);
       stderr = Buffer.concat([stderr, result.stderr]);
       stdoutTruncated ||= result.stdoutTruncated;
@@ -130,19 +138,19 @@ export async function runExtensionBuildProcess(
         stdoutLimit: plan.maxStdoutBytes,
         stderrLimit: Math.max(0, plan.maxStderrBytes - stderr.byteLength),
       });
-      if (helper.status !== "completed") return { status: helper.status };
+      if (helper.status !== "completed") return helper;
       stderr = Buffer.concat([stderr, helper.stderr]);
       stderrTruncated ||= helper.stderrTruncated;
-      if (helper.exitCode !== 0) return { status: "failed" };
+      if (helper.exitCode !== 0) return failed("runtime-helper");
       let protocol: unknown;
       try {
         protocol = JSON.parse(helper.stdout.toString("utf8"));
       } catch {
-        return { status: "failed" };
+        return failed("runtime-protocol");
       }
-      if (!isRecord(protocol) || protocol.ok !== true) return { status: "failed" };
+      if (!isRecord(protocol) || protocol.ok !== true) return failed("runtime-protocol");
       const decoded = decodeUnknownSvvyxCommandManifestExit(protocol.commandManifest);
-      if (Exit.isFailure(decoded)) return { status: "failed" };
+      if (Exit.isFailure(decoded)) return failed("runtime-protocol");
       commandManifest = decoded.value;
     }
 
@@ -151,7 +159,7 @@ export async function runExtensionBuildProcess(
       actualFiles.length !== expectedOutputs.size ||
       actualFiles.some((relativePath) => !expectedOutputs.has(relativePath))
     )
-      return { status: "failed" };
+      return failed("output-verification");
 
     const stagedFiles: ExtensionBuildFileEvidence[] = [];
     for (const output of plan.expectedProcessOutputs) {
@@ -175,8 +183,24 @@ export async function runExtensionBuildProcess(
       commandManifest,
     };
   } catch {
-    return { status: "failed" };
+    return failed("validation");
   }
+}
+
+type ExtensionBuildProcessFailureStage =
+  | "validation"
+  | "spawn"
+  | "runtime-helper"
+  | "runtime-protocol"
+  | "output-verification";
+
+type FailedExtensionBuildProcessEvidence = {
+  readonly status: "failed";
+  readonly stage: ExtensionBuildProcessFailureStage;
+};
+
+function failed(stage: ExtensionBuildProcessFailureStage): FailedExtensionBuildProcessEvidence {
+  return { status: "failed", stage };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -219,7 +243,8 @@ async function runGenerator(input: {
       stdoutTruncated: boolean;
       stderrTruncated: boolean;
     }
-  | { status: "timed-out" | "failed" }
+  | { status: "timed-out" }
+  | FailedExtensionBuildProcessEvidence
 > {
   return new Promise((finish) => {
     let settled = false;
@@ -251,10 +276,10 @@ async function runGenerator(input: {
       stderr = appended.output;
       stderrTruncated ||= appended.truncated;
     });
-    child.once("error", () => complete({ status: "failed" }));
+    child.once("error", () => complete(failed("spawn")));
     child.once("close", (exitCode) => {
       if (timedOut) return complete({ status: "timed-out" });
-      if (exitCode === null) return complete({ status: "failed" });
+      if (exitCode === null) return complete(failed("spawn"));
       complete({
         status: "completed",
         exitCode,

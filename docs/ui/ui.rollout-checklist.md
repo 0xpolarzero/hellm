@@ -21,10 +21,10 @@ Use this checklist for product UI verification. Capture manual verification scre
 
 ## Manual Inspection Steps
 
-1. Launch the app through the dev/e2e/manual-inspection lane that enables `electrobun-browser-tools`, and record the printed `appId` or inspection `bridgeUrl`.
+1. Launch the app with `bun run inspect:app -- --workspace <absolute-path>` and use the printed `appId` or inspection `bridgeUrl`.
 2. Run `electrobun-browser-tools doctor`, `status`, or `tree` against the inspection-enabled app before taking screenshots.
 3. Drive the real app with `electrobun-browser-tools page ...` commands for production-reachable UI states.
-4. Capture screenshots with `electrobun-browser-tools capture screenshot --path screenshots/<state>.png`.
+4. Capture screenshots with `electrobun-browser-tools page screenshot --path screenshots/<state>.png` or CuaDriver when the native/physical surface is part of the check.
 5. Inspect each screenshot for horizontal overflow, clipped labels, overlapping controls, focus visibility, accessible names, color contrast, reduced-motion behavior, and screen-reader-critical state.
 6. Only use fixture or preview states as supplemental visual evidence; they do not replace verification of reachable production behavior.
 
@@ -32,4 +32,6 @@ Use this checklist for product UI verification. Capture manual verification scre
 
 - Run focused unit tests for affected renderer helpers and selectors.
 - Run `bun run test:e2e` only through the configured OrbStack machine lane.
+- Inspect retained failure evidence under `e2e-results/<runId>/`; do not discard the isolated state before the product or contract cause is understood.
+- Run `bun run check:e2e-coverage:complete` before claiming exhaustive shipped-feature coverage.
 - Do not add retries, broad waits, selector churn, test-only behavior, or alternate desktop/Docker e2e paths to force a pass.

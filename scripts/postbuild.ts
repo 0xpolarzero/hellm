@@ -1,9 +1,19 @@
 #!/usr/bin/env bun
 
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { resolveElectrobunAppCodeDir } from "electrobun-e2e/electrobun-paths";
+import electrobunConfig from "../electrobun.config";
+import { installE2EEmbeddedBun } from "./e2e-embedded-bun";
 
 const buildDir = process.env.ELECTROBUN_BUILD_DIR;
 const appName = process.env.ELECTROBUN_APP_NAME;
@@ -152,6 +162,20 @@ function copyNativeSandboxHelper(): void {
 }
 
 if (buildEnv === "dev") {
+  const embeddedBunReceipt = await installE2EEmbeddedBun({
+    appName,
+    buildDir,
+    buildEnv,
+    expectedVersion: electrobunConfig.build.bunVersion,
+    sourcePath: process.env.SVVY_E2E_EMBEDDED_BUN_PATH,
+    targetArch: process.env.ELECTROBUN_ARCH,
+    targetOS: process.env.ELECTROBUN_OS,
+  });
+  if (embeddedBunReceipt) {
+    const receiptPath = join(buildDir, appName, "e2e-embedded-bun.json");
+    writeFileSync(receiptPath, `${JSON.stringify(embeddedBunReceipt, null, 2)}\n`);
+    console.log(`postbuild: embedded E2E runner Bun ${JSON.stringify(embeddedBunReceipt)}`);
+  }
   mkdirSync(appCodeDir, { recursive: true });
   if (!existsSync(nodeModulesDest)) {
     symlinkSync(nodeModulesSource, nodeModulesDest, "dir");

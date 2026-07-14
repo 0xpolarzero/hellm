@@ -52,6 +52,10 @@ import {
   buildRuntimeDirectToolLaunchFacts,
   type RuntimeDirectToolLaunchPolicyInput,
 } from "./runtime-direct-tool-launch-policy";
+import {
+  RuntimeLayerCommandControlPort,
+  type RuntimeLayerCommandControlPortService,
+} from "./runtime-command-host-ports";
 
 export type RunAcceptedLoadExtensionThroughRuntimeInput = Omit<
   RunAcceptedLoadExtensionToolCallInput,
@@ -65,6 +69,9 @@ export interface RuntimeAcceptedNativeToolExecutionService {
   requestDirectToolApproval(
     input: RuntimeDirectToolApprovalAdmissionInput,
   ): Effect.Effect<RuntimeDirectToolApprovalDecision, RuntimeContractError>;
+  runExecuteTypescript(
+    input: Parameters<RuntimeLayerCommandControlPortService["runExecuteTypescript"]>[0],
+  ): Effect.Effect<import("@svvy/core").NativeToolResult, RuntimeContractError>;
   runLoadExtension(
     input: RunAcceptedLoadExtensionThroughRuntimeInput,
   ): Effect.Effect<RunAcceptedLoadExtensionToolCallResult, RuntimeContractError>;
@@ -103,6 +110,7 @@ export const layerRuntimeAcceptedNativeToolExecution = Layer.effect(
     const requestInputWaitService = yield* RuntimeRequestInputWaitService;
     const launchPolicy = yield* RuntimeLaunchPolicyService;
     const sourceInvalidation = yield* RuntimeSourceInvalidationService;
+    const commandControl = yield* RuntimeLayerCommandControlPort;
     const handlerThreadStartPreparationHostOption = yield* Effect.serviceOption(
       RuntimeHandlerThreadStartPreparationHost,
     );
@@ -139,6 +147,11 @@ export const layerRuntimeAcceptedNativeToolExecution = Layer.effect(
               ),
             ),
           ),
+      runExecuteTypescript: (input) =>
+        shutdownAdmission.withAdmission(
+          "runtime.acceptedNativeTool.runExecuteTypescript",
+          commandControl.runExecuteTypescript(input),
+        ),
       runLoadExtension: (input) =>
         shutdownAdmission.withAdmission(
           "runtime.acceptedNativeTool.runLoadExtension",

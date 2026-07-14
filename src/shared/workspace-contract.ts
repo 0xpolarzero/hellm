@@ -994,6 +994,12 @@ export interface OpenWorkspacePathResponse {
   kind: ComposerMentionKind | "missing";
 }
 
+export type ComposerAttachmentPickerKind = "files" | "folder";
+
+export interface PickWorkspaceAttachmentsRequest {
+  kind: ComposerAttachmentPickerKind;
+}
+
 export interface PickWorkspaceAttachmentResponse {
   attachments: ComposerAttachment[];
   skippedPaths: string[];
@@ -1745,7 +1751,7 @@ export interface ChatRPCSchema {
         response: WorkspacePathIndexEntry[];
       };
       pickWorkspaceAttachments: {
-        params: WorkspaceScopedRequest;
+        params: WorkspaceScoped<PickWorkspaceAttachmentsRequest>;
         response: PickWorkspaceAttachmentResponse;
       };
       importComposerAttachments: {

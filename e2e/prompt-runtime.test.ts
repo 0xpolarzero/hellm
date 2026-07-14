@@ -10,10 +10,9 @@ import {
   type SeedSessionInput,
 } from "./support";
 
-const PROMPT_RUNTIME_TIMEOUT_MS = process.env.ELECTROBUN_E2E_LAUNCH_RETRIES ? 90_000 : 45_000;
 const TIMESTAMP = Date.parse("2026-04-10T12:00:00.000Z");
 
-setDefaultTimeout(PROMPT_RUNTIME_TIMEOUT_MS);
+setDefaultTimeout(45_000);
 
 beforeAll(async () => {
   await ensureBuilt();
@@ -103,13 +102,9 @@ async function launchSeededApp<T>(
 }
 
 async function openSession(page: SvvyApp["page"], title: string): Promise<void> {
-  await page
-    .locator(".session-main")
-    .filter({
-      has: page.locator("strong").filter({ hasText: title }),
-    })
-    .first()
-    .click({ force: true });
+  const sessionButton = page.locator(`button.session-main[aria-label="${title}"]`);
+  await sessionButton.waitFor({ state: "visible" });
+  await sessionButton.click();
 }
 
 test("transcript rendering projects assistant metadata, tool cards, tool results, and reasoning", async () => {
@@ -218,8 +213,14 @@ test("transcript rendering shows execute_typescript bodies on tool cards", async
 
       const toolCard = page.locator('[data-testid^="tool-card-"]').first();
       await toolCard.waitFor({ state: "visible" });
-      await toolCard.locator(".transcript-tool-toggle").click({ force: true });
-      const toolBody = (await toolCard.locator(".transcript-tool-pre").textContent()) ?? "";
+      const detailsToggle = toolCard.getByRole("button", {
+        name: /^Show tool details for /,
+      });
+      await detailsToggle.waitFor({ state: "visible" });
+      await detailsToggle.click();
+      const toolBodyLocator = toolCard.locator(".transcript-tool-pre");
+      await toolBodyLocator.waitFor({ state: "visible" });
+      const toolBody = (await toolBodyLocator.textContent()) ?? "";
       expect(toolBody).toContain("const result = { files: ['docs/prd.md'] };");
       expect(toolBody).toContain("return result;");
     },

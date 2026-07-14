@@ -35,6 +35,7 @@ import {
   type RuntimeSubmittedMessage,
   type RuntimeTranscriptStatePortService,
   type RuntimeTranscriptStreamCursor,
+  type RuntimeTranscriptUsage,
   type RuntimeTurnRecord,
   type RuntimeTurnStatePortService,
   type RunPiTurnInput,
@@ -83,6 +84,7 @@ export type RuntimePromptExecutionResult = {
   readonly turnId: TurnId;
   readonly status: "completed" | "failed" | "cancelled";
   readonly assistantText: string;
+  readonly usage: RuntimeTranscriptUsage | null;
   readonly commandReceipts: readonly RuntimePromptCommandReceipt[];
 };
 
@@ -312,9 +314,10 @@ export function actorBindingFromRuntimePromptBinding(
 }
 
 export function buildRuntimeToolExecutor(input: {
+  readonly workspaceId: WorkspaceId;
   readonly acceptedNativeTools: Pick<
     RuntimeAcceptedNativeToolExecutionService,
-    "runRequestUserInput"
+    "runExecuteTypescript" | "runRequestUserInput"
   >;
   readonly extensions: Extensions["Service"];
   readonly target: RuntimeSurfaceTarget;
@@ -361,6 +364,25 @@ export function buildRuntimeToolExecutor(input: {
       );
 
       const args = parseToolArguments(toolInput.argumentsJson);
+      if (toolInput.toolName === "execute_typescript") {
+        const typescriptCode = decodeExecuteTypescriptCode(toolInput, args);
+        return yield* input.acceptedNativeTools
+          .runExecuteTypescript({
+            workspaceId: input.workspaceId,
+            target: input.target,
+            turnId: toolInput.turnId,
+            toolCallId: toolInput.piToolCallId,
+            commandId: command.id as CommandId,
+            typescriptCode,
+            promptContext: input.promptContext,
+            actorBinding: input.actorBinding,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              runtimeToolExecutionError(toolInput, "runtime-effect-failed", cause.message, cause),
+            ),
+          );
+      }
       if (toolInput.toolName === "request_user_input") {
         if (input.target.surface === "workflow-task") {
           return yield* Effect.fail(
@@ -489,7 +511,10 @@ export function buildRuntimeToolExecutor(input: {
           commandId: command.id,
           status: "succeeded",
           summary: toolResultSummary(result.result),
-          facts: toolResultFacts(result.result),
+          facts: {
+            ...command.facts,
+            ...toolResultFacts(result.result),
+          },
         }),
         input.eventBus,
       ).pipe(
@@ -510,6 +535,7 @@ type PromptExecutionState = {
   readonly activeAssistantMessageId: MessageId | null;
   readonly assistantMessageIds: Readonly<Record<string, MessageId>>;
   readonly assistantText: string;
+  readonly latestAssistantUsage: RuntimeTranscriptUsage | null;
   readonly commandReceipts: readonly RuntimePromptCommandReceipt[];
   readonly toolCommandIds: Readonly<Record<string, CommandId>>;
   readonly toolArgumentsJson: Readonly<Record<string, string>>;
@@ -529,6 +555,7 @@ function initialPromptExecutionState(
     activeAssistantMessageId: null,
     assistantMessageIds: {},
     assistantText: "",
+    latestAssistantUsage: null,
     commandReceipts: [],
     toolCommandIds: {},
     toolArgumentsJson: {},
@@ -700,6 +727,7 @@ function handlePiRuntimeEvent(input: {
           cursor: committed.value.cursor,
           assistantMessageId: messageId,
           activeAssistantMessageId: null,
+          latestAssistantUsage: event.usage,
           assistantText: event.content
             .filter((block) => block.kind === "text")
             .map((block) => block.text)
@@ -1233,6 +1261,7 @@ function settlePromptTurn(input: {
       turnId: state.input.turn.id as TurnId,
       status,
       assistantText: state.assistantText,
+      usage: state.latestAssistantUsage,
       commandReceipts: state.commandReceipts,
     };
     return { ...state, result };
@@ -1463,6 +1492,41 @@ function toolResultFacts(result: NativeToolResult | undefined) {
 
 function parseToolArguments(argumentsJson: string): unknown {
   return JSON.parse(argumentsJson);
+}
+
+function decodeExecuteTypescriptCode(
+  toolInput: {
+    readonly turnId: TurnId;
+    readonly surfacePiSessionId: string;
+    readonly piToolCallId: ToolCallId;
+    readonly toolName: string;
+  },
+  value: unknown,
+): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw runtimeToolExecutionError(
+      toolInput,
+      "invalid-arguments",
+      "execute_typescript arguments must be an object.",
+    );
+  }
+  const record = value as Record<string, unknown>;
+  const typescriptCode = record.typescriptCode;
+  if (typeof typescriptCode !== "string" || typescriptCode.length === 0) {
+    throw runtimeToolExecutionError(
+      toolInput,
+      "invalid-arguments",
+      "execute_typescript requires a non-empty typescriptCode string.",
+    );
+  }
+  if (Object.keys(record).some((key) => key !== "typescriptCode")) {
+    throw runtimeToolExecutionError(
+      toolInput,
+      "invalid-arguments",
+      "execute_typescript arguments contain unsupported fields.",
+    );
+  }
+  return typescriptCode;
 }
 
 function streamGenerationIdForTurn(turnId: string): SurfaceStreamGenerationId {

@@ -121,7 +121,7 @@ function createInput(events: string[] = []): CreateDesktopAppInput {
         },
         dialogs: {
           pickFolder: async () => ({ selectedPaths: [] }),
-          pickFilesAndFolders: async () => ({ selectedPaths: [] }),
+          pickFiles: async () => ({ selectedPaths: [] }),
         },
         paths: {
           open: async () => ({ opened: true }),

@@ -424,6 +424,8 @@
       <Badge tone={content.missingFile ? "warning" : "info"}>{content.kind}</Badge>
     </article>
     <div class="metadata-grid">
+      <span>Artifact</span>
+      <code>{content.artifactId}</code>
       <span>Created</span>
       <code>{content.createdAt}</code>
       {#if content.workflowName}

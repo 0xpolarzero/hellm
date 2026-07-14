@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import {
   PiSessionReferencePort,
+  type CreateRuntimeOrchestratorSurfaceStateInput,
   type PiSessionReference,
   type SurfacePiSessionId,
   type WorkspaceId,
@@ -26,6 +27,19 @@ const workspace = {
 };
 
 const surfacePiSessionId = "session-pi-reference" as SurfacePiSessionId;
+
+function orchestratorStateInput(title: string): CreateRuntimeOrchestratorSurfaceStateInput {
+  return {
+    workspaceId: workspace.id as WorkspaceId,
+    title,
+    profileId: "default-orchestrator" as never,
+    provider: "zai" as never,
+    model: "glm-5-turbo" as never,
+    reasoningEffort: "medium",
+    loadedExtensionIds: ["extension-loading" as never],
+    availableExtensionIds: [],
+  };
+}
 
 const reference: PiSessionReference = {
   surfacePiSessionId,
@@ -179,10 +193,7 @@ describe("PiSessionReferencePort", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const state = yield* StructuredSessionState;
-          yield* state.createOrchestratorSurface({
-            workspaceId: workspace.id as WorkspaceId,
-            title: "Layer pi reference",
-          });
+          yield* state.createOrchestratorSurface(orchestratorStateInput("Layer pi reference"));
           const port = yield* PiSessionReferencePort;
           return yield* port.savePiSessionReference({
             surfacePiSessionId: "session_000001" as SurfacePiSessionId,
@@ -214,10 +225,7 @@ describe("PiSessionReferencePort", () => {
 });
 
 function seedOrchestratorSurface(store: StructuredSessionStateStore): void {
-  store.createOrchestratorSurface({
-    workspaceId: workspace.id as WorkspaceId,
-    title: "Pi reference",
-  });
+  store.createOrchestratorSurface(orchestratorStateInput("Pi reference"));
 }
 
 function createStore(): StructuredSessionStateStore {

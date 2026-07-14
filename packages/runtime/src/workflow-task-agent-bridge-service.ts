@@ -15,6 +15,10 @@ import {
 } from "@svvy/core";
 import { RuntimeGeneratedContextRefreshService } from "./runtime-generated-context-refresh-service";
 import {
+  RuntimeLayerModelResolverPort,
+  type RuntimeLayerModelResolverPortService,
+} from "./runtime-layer-provider-ports";
+import {
   RuntimeSurfaceQueueDispatcherService,
   type RuntimeSurfaceQueueDispatcherServiceService,
 } from "./runtime-surface-queue-dispatcher-service";
@@ -57,6 +61,7 @@ export const layerRuntimeWorkflowTaskAgentBridgeService = Layer.effect(
     const generatedContextRefresh = yield* RuntimeGeneratedContextRefreshService;
     const queueDispatcher = yield* RuntimeSurfaceQueueDispatcherService;
     const eventBus = yield* RuntimeEventBus;
+    const modelResolver = yield* RuntimeLayerModelResolverPort;
     const verifier = yield* RuntimeWorkflowTaskAgentBridgeBearerVerifier;
     const shutdownAdmission = yield* RuntimeShutdownAdmission;
 
@@ -71,6 +76,7 @@ export const layerRuntimeWorkflowTaskAgentBridgeService = Layer.effect(
               generatedContextRefresh,
               queueDispatcher,
               eventBus,
+              modelResolver,
               verifier,
             }),
           ),
@@ -86,6 +92,7 @@ function runWorkflowTaskAgent(input: {
   readonly generatedContextRefresh: RuntimeGeneratedContextRefreshService["Service"];
   readonly queueDispatcher: RuntimeSurfaceQueueDispatcherServiceService;
   readonly eventBus: RuntimeEventBus["Service"];
+  readonly modelResolver: RuntimeLayerModelResolverPortService;
   readonly verifier: RuntimeWorkflowTaskAgentBridgeBearerVerifierService;
 }): Effect.Effect<RunTaskAgentResult, RuntimeContractError> {
   const operation = "runtime.workflowTaskAgentBridge.runTaskAgent";
@@ -157,6 +164,11 @@ function runWorkflowTaskAgent(input: {
         }),
       );
     }
+
+    const resolvedModel = yield* input.modelResolver.resolveModel({
+      provider: request.agent.provider,
+      model: request.agent.model,
+    });
 
     const baseStartInput: Omit<AcceptRuntimeWorkflowTaskAgentStartInput, "smithersContext"> = {
       workspaceSessionId: request.workspaceSessionId as WorkspaceSessionId,
@@ -269,7 +281,18 @@ function runWorkflowTaskAgent(input: {
         workflowTaskAttemptId: receipt.target.workflowTaskAttemptId,
         idempotencyKey,
         status: "completed",
-        result: { text: result.assistantText },
+        result: {
+          text: result.assistantText,
+          ...(result.usage ? { usage: result.usage } : {}),
+        },
+        ...(result.usage && resolvedModel.contextWindow
+          ? {
+              contextBudget: {
+                usedTokens: result.usage.input + result.usage.cacheRead + result.usage.cacheWrite,
+                maxTokens: resolvedModel.contextWindow,
+              },
+            }
+          : {}),
       })
       .pipe(
         Effect.mapError((cause) =>

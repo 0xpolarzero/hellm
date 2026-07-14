@@ -568,6 +568,43 @@ describe("surface queue dispatcher", () => {
     }),
   );
 
+  it.effect("settles a permanently unready generated context as a visible queue failure", () =>
+    Effect.gen(function* () {
+      const { queueStatePort, calls: stateCalls } = createState([createQueued("queue_01")]);
+      const { host, calls: hostCalls } = createHost({
+        refreshBeforeDispatch: () =>
+          Effect.fail(
+            new RuntimeContractError({
+              operation: "runtime.generatedContext.refresh.assemble",
+              reason: "dependency-not-ready",
+              message: "Loaded extension cx is not ready for generated context.",
+            }),
+          ),
+      });
+      const dispatcher = createTestDispatcher(host);
+
+      const error = yield* runDispatcher(
+        queueStatePort,
+        dispatcher.drainNextQueuedSurfaceMessage(
+          { surfacePiSessionId: "surface_01" },
+          { awaitPrompt: false },
+        ),
+      ).pipe(Effect.flip);
+
+      assertRuntimeError(error, {
+        _tag: "RuntimeContractError",
+        operation: "runtime.generatedContext.refresh.assemble",
+        reason: "dependency-not-ready",
+        message: "Loaded extension cx is not ready for generated context.",
+      });
+      assert.deepStrictEqual(stateCalls, [
+        TEST_CLAIM_CALL,
+        `failed:queue_01:Loaded extension cx is not ready for generated context.:${TEST_CLAIM_OWNER_ID}:${TEST_LEASE_VERSION}`,
+      ]);
+      assert.deepStrictEqual(hostCalls, ["retain", "notify", "release"]);
+    }),
+  );
+
   it.effect("marks materialization failures on the queue row and releases the surface", () =>
     Effect.gen(function* () {
       const { queueStatePort, calls: stateCalls } = createState([createQueued("queue_01")]);

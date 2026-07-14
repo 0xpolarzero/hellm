@@ -1,0 +1,199 @@
+diff --git a/src/config.ts b/src/config.ts
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -15,14 +15,18 @@ const DEFAULT_BUILD_INPUT_PATHS = [
+ const DEFAULT_SYNC_EXCLUDES = ["build", "dist", "node_modules"];
+ const DEFAULT_TEST_FILE_GLOBS = ["*.test.ts", "*.spec.ts", "*_test.ts", "*_spec.ts"];
+ 
++export type OrbStackMachineArch = "amd64" | "arm64";
++
+ export interface ElectrobunE2EConfig {
+   appName: string;
++  bunVersion?: string;
+   buildInputPaths?: string[];
+   buildCommand?: string[];
+   extraAptPackages?: string[];
+   installCommand?: string[];
+   linuxWorkspaceDir?: string;
+   localDependencyPaths?: string[];
++  machineArch?: OrbStackMachineArch;
+   machineImage?: string;
+   machineName?: string;
+   runtimeEnv?: Record<string, string>;
+@@ -42,6 +46,7 @@ export interface ResolvedElectrobunE2EConfig {
+   installCommand: string[];
+   linuxWorkspaceDir: string;
+   localDependencyPaths: string[];
++  machineArch: OrbStackMachineArch;
+   machineImage: string;
+   machineName: string;
+   packageRootDir: string;
+@@ -89,12 +94,15 @@ export async function loadElectrobunE2EConfig(
+     process.env.ELECTROBUN_E2E_ORB_WORKSPACE?.trim() ||
+     config.linuxWorkspaceDir?.trim() ||
+     `$HOME/code/${slug}`;
++  const machineArch = resolveOrbStackMachineArch(
++    process.env.ELECTROBUN_E2E_ORB_ARCH?.trim() || config.machineArch?.trim(),
++  );
+ 
+   return {
+     appName: config.appName,
+     buildInputPaths: dedupe(config.buildInputPaths ?? DEFAULT_BUILD_INPUT_PATHS),
+     buildCommand: config.buildCommand ?? ["bun", "run", "build"],
+-    bunVersion: readBunVersion(join(consumerRootDir, "package.json")),
++    bunVersion: config.bunVersion?.trim() || readBunVersion(join(consumerRootDir, "package.json")),
+     configPath: resolvedConfigPath,
+     consumerRootDir: realpathSync(consumerRootDir),
+     extraAptPackages: dedupe(config.extraAptPackages ?? []),
+@@ -103,6 +111,7 @@ export async function loadElectrobunE2EConfig(
+     localDependencyPaths: dedupe(
+       (config.localDependencyPaths ?? []).map((value) => realpathSync(resolve(consumerRootDir, value))),
+     ),
++    machineArch,
+     machineImage: config.machineImage?.trim() || DEFAULT_MACHINE_IMAGE,
+     machineName,
+     packageRootDir: realpathSync(packageRootDir),
+@@ -126,6 +135,26 @@ export function resolveSiblingLinuxPath(parentPath: string, hostPath: string): s
+   return join(parentPath, basename(hostPath));
+ }
+ 
++export function resolveOrbStackMachineArch(
++  configuredArch: string | undefined,
++  hostArch: string = process.arch,
++): OrbStackMachineArch {
++  const candidate = configuredArch || hostArch;
++  switch (candidate.toLowerCase()) {
++    case "arm64":
++    case "aarch64":
++      return "arm64";
++    case "x64":
++    case "x86_64":
++    case "amd64":
++      return "amd64";
++    default:
++      throw new Error(
++        `Unsupported OrbStack machine architecture "${candidate}". Expected "amd64" or "arm64".`,
++      );
++  }
++}
++
+ function readBunVersion(packageJsonPath: string): string {
+   if (!existsSync(packageJsonPath)) {
+     throw new Error(`Could not find package.json for Bun version lookup: ${packageJsonPath}`);
+diff --git a/src/orbstack.ts b/src/orbstack.ts
+--- a/src/orbstack.ts
++++ b/src/orbstack.ts
+@@ -1,7 +1,7 @@
+ import { spawn, spawnSync } from "node:child_process";
+ import { once } from "node:events";
+ import { dirname } from "node:path";
+-import type { ResolvedElectrobunE2EConfig } from "./config";
++import type { OrbStackMachineArch, ResolvedElectrobunE2EConfig } from "./config";
+ import { resolveSiblingLinuxPath } from "./config";
+ 
+ const BASE_APT_PACKAGES = [
+@@ -48,11 +48,13 @@ export async function setupOrbStackMachine(
+       "orb",
+       "create",
+       "-a",
+-      resolveMachineArch(),
++      config.machineArch,
+       config.machineImage,
+       config.machineName,
+     ]);
+   }
++
++  assertOrbStackMachineArch(config.machineName, config.machineArch);
+ 
+   const aptPackages = [...new Set([...BASE_APT_PACKAGES, ...config.extraAptPackages])];
+   const remoteScript = `
+@@ -59,14 +61,18 @@ export async function setupOrbStackMachine(
+ set -euo pipefail
+ 
+ bun_version=${shellQuote(config.bunVersion)}
++bun_install_spec="bun-v${config.bunVersion}"
++if [[ "$bun_version" == "canary" ]]; then
++  bun_install_spec="canary"
++fi
+ apt_packages=(${toShellArray(aptPackages)})
+ 
+ sudo apt-get update
+ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "\${apt_packages[@]}"
+ 
+ export PATH="$HOME/.bun/bin:$PATH"
+ 
+-if ! command -v bun >/dev/null 2>&1 || [[ "$(bun --version)" != "$bun_version" ]]; then
++if ! command -v bun >/dev/null 2>&1 || { [[ "$bun_version" == "canary" ]] && [[ "$(bun --revision)" != *-canary.* ]]; } || { [[ "$bun_version" != "canary" ]] && [[ "$(bun --version)" != "$bun_version" ]]; }; then
+   rm -rf "$HOME/.bun"
+-  curl -fsSL https://bun.sh/install | bash -s -- "bun-v\${bun_version}"
++  curl -fsSL https://bun.sh/install | bash -s -- "\${bun_install_spec}"
+ fi
+@@ -89,6 +95,8 @@ export async function runOrbStackTests(
+     );
+   }
+ 
++  assertOrbStackMachineArch(config.machineName, config.machineArch);
++
+   const sharedLinuxPath = resolveSiblingLinuxPath(
+     dirname(config.linuxWorkspaceDir),
+     config.packageRootDir,
+@@ -407,8 +415,8 @@ function machineExists(machineName: string): boolean {
+   return result.status === 0;
+ }
+ 
+-function resolveMachineArch(hostArch: string = process.arch): "amd64" | "arm64" {
+-  switch (hostArch) {
++export function normalizeOrbStackGuestArch(guestArch: string): OrbStackMachineArch {
++  switch (guestArch.trim().toLowerCase()) {
+     case "arm64":
+     case "aarch64":
+       return "arm64";
+@@ -417,10 +425,47 @@ function resolveMachineArch(hostArch: string = process.arch): "amd64" | "arm64
+     case "amd64":
+       return "amd64";
+     default:
+-      throw new Error(`Unsupported host architecture for OrbStack machine setup: ${hostArch}`);
++      throw new Error(
++        `Unsupported architecture reported by the OrbStack machine: "${guestArch.trim()}".`,
++      );
+   }
+ }
+ 
++export function assertOrbStackMachineArchMatches(
++  machineName: string,
++  expectedArch: OrbStackMachineArch,
++  actualArch: OrbStackMachineArch,
++): void {
++  if (actualArch === expectedArch) return;
++  throw new Error(
++    `OrbStack machine "${machineName}" has architecture "${actualArch}", but this e2e config requires "${expectedArch}". ` +
++      `Use a different machineName or explicitly delete and recreate this machine before running setup again; ` +
++      `electrobun-e2e will not replace it automatically.`,
++  );
++}
++
++function assertOrbStackMachineArch(
++  machineName: string,
++  expectedArch: OrbStackMachineArch,
++): void {
++  const result = spawnSync("orb", ["-m", machineName, "uname", "-m"], {
++    encoding: "utf8",
++  });
++  if (result.status !== 0) {
++    const detail = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
++    throw new Error(
++      `Could not determine the architecture of OrbStack machine "${machineName}"${
++        detail ? `: ${detail}` : "."
++      }`,
++    );
++  }
++  assertOrbStackMachineArchMatches(
++    machineName,
++    expectedArch,
++    normalizeOrbStackGuestArch(result.stdout),
++  );
++}
++
+ function runHostCommand(command: string[]): void {
+   const result = spawnSync(command[0] as string, command.slice(1), {
+     stdio: "inherit",

@@ -8,10 +8,12 @@ import {
   type ConfigureExtensionTypescriptApiResult,
   ExtensionError,
   type ExtensionError as ExtensionErrorType,
+  type ExtensionId,
 } from "@svvy/core";
 import { ExtensionSourceRootsPort } from "./extension-source-roots-port";
 import { PackagedExtensionTemplatesPort } from "./packaged-extension-templates-port";
-import { getExtensionRecord } from "./extension-records";
+import { BUILTIN_EXTENSIONS, getExtensionRecord } from "./extension-records";
+import { APP_NATIVE_SVVYX_METADATA } from "./svvyx-build-metadata";
 
 const ManifestObjectSchema = Schema.Record(Schema.String, Schema.Unknown);
 export const TypescriptApiExtensionManifestSchema = Schema.Struct({
@@ -24,6 +26,12 @@ const decodeManifestObject = Schema.decodeUnknownEffect(ManifestObjectSchema);
 const decodeTypescriptApiExtensionManifest = Schema.decodeUnknownEffect(
   TypescriptApiExtensionManifestSchema,
 );
+
+export interface ScaffoldMissingBuiltinSourcesResult {
+  readonly materializedExtensionIds: readonly ExtensionId[];
+  readonly existingExtensionIds: readonly ExtensionId[];
+  readonly appNativeExtensionIds: readonly ExtensionId[];
+}
 
 export function materializeBuiltinExtensionSource(
   extensionId: string,
@@ -144,6 +152,175 @@ export function materializeBuiltinExtensionSource(
       Effect.ensuring(fs.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore)),
     );
     return { liveRoot, created: published };
+  });
+}
+
+export function scaffoldMissingBuiltinExtensionSources(): Effect.Effect<
+  ScaffoldMissingBuiltinSourcesResult,
+  ExtensionErrorType,
+  | FileSystem.FileSystem
+  | Path.Path
+  | Crypto.Crypto
+  | ExtensionSourceRootsPort
+  | PackagedExtensionTemplatesPort
+> {
+  const operation = "extensions.builtin.scaffoldMissing";
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const roots = yield* (yield* ExtensionSourceRootsPort).roots();
+    const templates = yield* (yield* PackagedExtensionTemplatesPort).roots();
+    const liveBuiltinRoot = path.resolve(roots.extensionsRoot, "sources", "builtin");
+    const packagedBuiltinRoot = path.resolve(templates.builtinExtensionsRoot);
+    const fail = (
+      message: string,
+      reason: "invalid-input" | "not-found" | "execution-failed",
+      extensionId?: string,
+      cause?: unknown,
+    ) =>
+      new ExtensionError({
+        ...(extensionId === undefined ? {} : { extensionId }),
+        operation,
+        reason,
+        message,
+        ...(cause === undefined ? {} : { cause }),
+      });
+    const exists = (target: string, message: string, extensionId?: string) =>
+      fs
+        .exists(target)
+        .pipe(Effect.mapError((cause) => fail(message, "execution-failed", extensionId, cause)));
+    const assertDirectory = (
+      target: string,
+      label: string,
+      missingReason: "invalid-input" | "not-found",
+      extensionId?: string,
+    ) =>
+      Effect.gen(function* () {
+        if (!(yield* exists(target, `Failed to inspect ${label}.`, extensionId))) {
+          return yield* Effect.fail(
+            fail(`${label} does not exist: ${target}`, missingReason, extensionId),
+          );
+        }
+        const linked = yield* fs.readLink(target).pipe(
+          Effect.as(true),
+          Effect.catch(() => Effect.succeed(false)),
+        );
+        if (linked) {
+          return yield* Effect.fail(
+            fail(`${label} cannot be a symbolic link: ${target}`, "invalid-input", extensionId),
+          );
+        }
+        const info = yield* fs
+          .stat(target)
+          .pipe(
+            Effect.mapError((cause) =>
+              fail(`Failed to inspect ${label}.`, "execution-failed", extensionId, cause),
+            ),
+          );
+        if (info.type !== "Directory") {
+          return yield* Effect.fail(
+            fail(`${label} must be a directory: ${target}`, "invalid-input", extensionId),
+          );
+        }
+      });
+    const assertManifest = (
+      target: string,
+      label: string,
+      missingReason: "invalid-input" | "not-found",
+      extensionId: string,
+    ) =>
+      Effect.gen(function* () {
+        if (!(yield* exists(target, `Failed to inspect ${label}.`, extensionId))) {
+          return yield* Effect.fail(
+            fail(`${label} does not exist: ${target}`, missingReason, extensionId),
+          );
+        }
+        const linked = yield* fs.readLink(target).pipe(
+          Effect.as(true),
+          Effect.catch(() => Effect.succeed(false)),
+        );
+        if (linked) {
+          return yield* Effect.fail(
+            fail(`${label} cannot be a symbolic link: ${target}`, "invalid-input", extensionId),
+          );
+        }
+        const info = yield* fs
+          .stat(target)
+          .pipe(
+            Effect.mapError((cause) =>
+              fail(`Failed to inspect ${label}.`, "execution-failed", extensionId, cause),
+            ),
+          );
+        if (info.type !== "File") {
+          return yield* Effect.fail(
+            fail(`${label} must be a file: ${target}`, "invalid-input", extensionId),
+          );
+        }
+      });
+
+    yield* assertDirectory(packagedBuiltinRoot, "Packaged builtin template root", "not-found");
+    if (yield* exists(liveBuiltinRoot, "Failed to inspect live builtin source root.")) {
+      yield* assertDirectory(liveBuiltinRoot, "Live builtin source root", "invalid-input");
+    }
+
+    // Validate the complete batch before publishing any source so a malformed packaged root or
+    // ambiguous live root cannot leave startup with only a prefix of the builtins scaffolded.
+    for (const builtin of BUILTIN_EXTENSIONS) {
+      const liveRoot = path.resolve(liveBuiltinRoot, builtin.id);
+      if (yield* exists(liveRoot, "Failed to inspect live builtin extension source.", builtin.id)) {
+        yield* assertDirectory(
+          liveRoot,
+          "Live builtin extension source",
+          "invalid-input",
+          builtin.id,
+        );
+        yield* assertManifest(
+          path.resolve(liveRoot, "manifest.json"),
+          "Live builtin extension manifest",
+          "invalid-input",
+          builtin.id,
+        );
+      }
+      if (APP_NATIVE_SVVYX_METADATA.has(builtin.id)) continue;
+      const packagedRoot = path.resolve(packagedBuiltinRoot, builtin.id);
+      yield* assertDirectory(
+        packagedRoot,
+        "Packaged builtin extension template",
+        "not-found",
+        builtin.id,
+      );
+      yield* assertManifest(
+        path.resolve(packagedRoot, "manifest.json"),
+        "Packaged builtin extension manifest",
+        "not-found",
+        builtin.id,
+      );
+    }
+
+    const materializedExtensionIds: ExtensionId[] = [];
+    const existingExtensionIds: ExtensionId[] = [];
+    const appNativeExtensionIds: ExtensionId[] = [];
+    for (const builtin of BUILTIN_EXTENSIONS) {
+      const extensionId = builtin.id as ExtensionId;
+      if (APP_NATIVE_SVVYX_METADATA.has(builtin.id)) {
+        appNativeExtensionIds.push(extensionId);
+        continue;
+      }
+      const result = yield* materializeBuiltinExtensionSource(builtin.id).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ExtensionError({
+              extensionId: builtin.id,
+              operation,
+              reason: cause.reason,
+              message: cause.message,
+              cause,
+            }),
+        ),
+      );
+      (result.created ? materializedExtensionIds : existingExtensionIds).push(extensionId);
+    }
+    return { materializedExtensionIds, existingExtensionIds, appNativeExtensionIds };
   });
 }
 

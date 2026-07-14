@@ -1,0 +1,96 @@
+diff --git a/dist/utils/clipboard-image.js b/dist/utils/clipboard-image.js
+index 64ae86a59..6a45548d3 100644
+--- a/dist/utils/clipboard-image.js
++++ b/dist/utils/clipboard-image.js
+@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
+ import { readFileSync, unlinkSync } from "fs";
+ import { tmpdir } from "os";
+ import { join } from "path";
+-import { clipboard } from "./clipboard-native.js";
++import { getClipboard } from "./clipboard-native.js";
+ import { loadPhoton } from "./photon.js";
+ const SUPPORTED_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+ const DEFAULT_LIST_TIMEOUT_MS = 1000;
+@@ -196,6 +196,7 @@ function readClipboardImageViaXclip() {
+     return null;
+ }
+ async function readClipboardImageViaNativeClipboard() {
++    const clipboard = getClipboard();
+     if (!clipboard || !clipboard.hasImage()) {
+         return null;
+     }
+diff --git a/dist/utils/clipboard-native.d.ts b/dist/utils/clipboard-native.d.ts
+index 1670c4f71..8014be35c 100644
+--- a/dist/utils/clipboard-native.d.ts
++++ b/dist/utils/clipboard-native.d.ts
+@@ -3,6 +3,6 @@ export type ClipboardModule = {
+     hasImage: () => boolean;
+     getImageBinary: () => Promise<Array<number>>;
+ };
+-declare let clipboard: ClipboardModule | null;
+-export { clipboard };
++declare function getClipboard(): ClipboardModule | null;
++export { getClipboard };
+ //# sourceMappingURL=clipboard-native.d.ts.map
+diff --git a/dist/utils/clipboard-native.js b/dist/utils/clipboard-native.js
+index 0eb4b6fa5..da71bcd9f 100644
+--- a/dist/utils/clipboard-native.js
++++ b/dist/utils/clipboard-native.js
+@@ -1,14 +1,21 @@
+ import { createRequire } from "module";
+ const require = createRequire(import.meta.url);
+ let clipboard = null;
++let resolved = false;
+ const hasDisplay = process.platform !== "linux" || Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
+-if (!process.env.TERMUX_VERSION && hasDisplay) {
+-    try {
+-        clipboard = require("@mariozechner/clipboard");
+-    }
+-    catch {
+-        clipboard = null;
++function getClipboard() {
++    if (!resolved) {
++        resolved = true;
++        if (!process.env.TERMUX_VERSION && hasDisplay) {
++            try {
++                clipboard = require("@mariozechner/clipboard");
++            }
++            catch {
++                clipboard = null;
++            }
++        }
+     }
++    return clipboard;
+ }
+-export { clipboard };
++export { getClipboard };
+ //# sourceMappingURL=clipboard-native.js.map
+diff --git a/dist/utils/clipboard.js b/dist/utils/clipboard.js
+index 3659457e9..a85fe9d60 100644
+--- a/dist/utils/clipboard.js
++++ b/dist/utils/clipboard.js
+@@ -1,7 +1,7 @@
+ import { execSync, spawn } from "child_process";
+ import { platform } from "os";
+ import { isWaylandSession } from "./clipboard-image.js";
+-import { clipboard } from "./clipboard-native.js";
++import { getClipboard } from "./clipboard-native.js";
+ function copyToX11Clipboard(options) {
+     try {
+         execSync("xclip -selection clipboard", options);
+@@ -36,9 +36,12 @@ export async function copyToClipboard(text) {
+     // clipboard. The platform tools below (wl-copy, xclip, xsel) properly
+     // daemonize and keep ownership.
+     try {
+-        if (clipboard && p !== "linux") {
+-            await clipboard.setText(text);
+-            copied = true;
++        if (p !== "linux") {
++            const clipboard = getClipboard();
++            if (clipboard) {
++                await clipboard.setText(text);
++                copied = true;
++            }
+         }
+     }
+     catch {

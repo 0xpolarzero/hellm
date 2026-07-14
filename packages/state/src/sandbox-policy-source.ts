@@ -38,7 +38,12 @@ type SandboxPolicySourceSettings = {
 export type SandboxPolicySourceConfig = Pick<
   SandboxPolicySourceSettings,
   "generatedOutputRoots" | "extensionDependencyRoots" | "temporaryRoots"
->;
+> & {
+  readonly currentAppPreferences?: () => {
+    readonly approvalMode: "auto-review" | "user" | "full-access";
+    readonly networkAccess: boolean;
+  };
+};
 
 export interface SandboxPolicySourceConfigPort {
   readonly _tag: "SandboxPolicySourceConfigPort";
@@ -84,7 +89,21 @@ function sandboxPolicySourceFromStructuredSessionState(
     snapshot: (input) =>
       Effect.gen(function* () {
         const workspace = yield* state.getWorkspaceRecord();
-        const appPreferences = yield* state.readAppPreferences();
+        const appPreferences = config.currentAppPreferences
+          ? yield* Effect.try({
+              try: config.currentAppPreferences,
+              catch: (cause) =>
+                new SandboxPolicyError({
+                  operation: "SandboxPolicySource.snapshot",
+                  reason: "invalid-policy",
+                  message:
+                    cause instanceof Error
+                      ? cause.message
+                      : "Unable to read current app preferences for sandbox policy.",
+                  cause,
+                }),
+            })
+          : yield* state.readAppPreferences();
         const generatedPackageRoots = yield* readGeneratedPackageRoots(state);
         const resolvedAt = yield* state.getCurrentTimestamp();
         const digest = yield* state.getDigestHelper();

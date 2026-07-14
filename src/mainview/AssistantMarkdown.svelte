@@ -75,8 +75,17 @@
 		return document.documentElement.dataset.theme === "light" ? "light" : "dark";
 	}
 
-	function cssVariable(name: string) {
-		return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+	function mermaidColorVariable(name: string) {
+		const cssColor = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+		const canvas = document.createElement("canvas");
+		canvas.width = 1;
+		canvas.height = 1;
+		const context = canvas.getContext("2d");
+		if (!context) return cssColor;
+		context.fillStyle = cssColor;
+		context.fillRect(0, 0, 1, 1);
+		const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+		return `rgba(${red}, ${green}, ${blue}, ${alpha / 255})`;
 	}
 
 	function normalizeLanguage(lang: string | undefined) {
@@ -275,17 +284,6 @@
 		linkify: false,
 		breaks: false,
 		typographer: false,
-		highlight(text, lang) {
-			const normalizedLanguage = normalizeLanguage(lang);
-			if (normalizedLanguage === "mermaid") return renderMermaidFrame(text);
-			const highlighted = highlightedCode[codeKey(text, normalizedLanguage, activeColorTheme)];
-			if (highlighted) return renderCodeFrame(text, normalizedLanguage, highlighted);
-			return renderCodeFrame(
-				text,
-				normalizedLanguage,
-				`<pre class="shiki shiki-fallback"><code>${escapeHtml(text)}</code></pre>`,
-			);
-		},
 	})
 		.use(footnote)
 		.use(deflist)
@@ -295,6 +293,20 @@
 			output: "html",
 		})
 		.use(taskLists, { enabled: false });
+	markdown.renderer.rules.fence = (tokens, index) => {
+		const token = tokens[index];
+		const normalizedLanguage = normalizeLanguage(token.info);
+		if (normalizedLanguage === "mermaid") return renderMermaidFrame(token.content);
+		const highlighted = highlightedCode[
+			codeKey(token.content, normalizedLanguage, activeColorTheme)
+		];
+		return renderCodeFrame(
+			token.content,
+			normalizedLanguage,
+			highlighted ??
+				`<pre class="shiki shiki-fallback"><code>${escapeHtml(token.content)}</code></pre>`,
+		);
+	};
 
 	$effect(() => {
 		activeColorTheme = readColorTheme();
@@ -376,38 +388,57 @@
 			await tick();
 			const blocks = [...root.querySelectorAll<HTMLElement>(".mermaid-block[data-mermaid-source]")];
 			if (blocks.length === 0) return;
+			for (const block of blocks) block.dataset.renderState = "loading";
 
-			const { default: mermaid } = await import("mermaid");
-			mermaid.initialize({
-				startOnLoad: false,
-				securityLevel: "strict",
-				theme: theme === "dark" ? "dark" : "base",
-				themeVariables: {
-					background: "transparent",
-					mainBkg: cssVariable("--ui-surface"),
-					primaryColor: cssVariable("--ui-surface"),
-					primaryTextColor: cssVariable("--ui-text-primary"),
-					primaryBorderColor: cssVariable("--ui-border-strong"),
-					lineColor: cssVariable("--ui-text-tertiary"),
-					secondaryColor: cssVariable("--ui-surface-subtle"),
-					tertiaryColor: cssVariable("--ui-bg"),
-					fontFamily: "var(--font-sans)",
-				},
-			});
+			let mermaid: (typeof import("mermaid"))["default"];
+			try {
+				({ default: mermaid } = await import("mermaid"));
+				mermaid.initialize({
+					startOnLoad: false,
+					securityLevel: "strict",
+					theme: theme === "dark" ? "dark" : "base",
+					themeVariables: {
+						background: "transparent",
+						mainBkg: mermaidColorVariable("--ui-surface"),
+						primaryColor: mermaidColorVariable("--ui-surface"),
+						primaryTextColor: mermaidColorVariable("--ui-text-primary"),
+						primaryBorderColor: mermaidColorVariable("--ui-border-strong"),
+						lineColor: mermaidColorVariable("--ui-text-tertiary"),
+						secondaryColor: mermaidColorVariable("--ui-surface-subtle"),
+						tertiaryColor: mermaidColorVariable("--ui-bg"),
+						fontFamily: "var(--font-sans)",
+					},
+				});
+			} catch (error) {
+				if (cancelled) return;
+				const message = error instanceof Error ? error.message : String(error);
+				for (const block of blocks) {
+					block.dataset.renderState = "error";
+					block.dataset.renderError = message;
+					block.classList.add("mermaid-error");
+				}
+				console.error("Failed to load Mermaid renderer:", error);
+				return;
+			}
 
 			for (const [index, block] of blocks.entries()) {
 				const sourceAttribute = block.dataset.mermaidSource;
 				if (!sourceAttribute) continue;
 				const source = decodeURIComponent(sourceAttribute);
+				block.dataset.renderState = "rendering";
 				try {
 					const id = `assistant-mermaid-${++mermaidRenderCounter}-${index}`;
 					const { svg, bindFunctions } = await mermaid.render(id, source);
 					if (cancelled) return;
 					block.innerHTML = `<div class="mermaid-rendered">${svg}</div>`;
 					bindFunctions?.(block);
-					block.dataset.rendered = "true";
-				} catch {
+					block.dataset.renderState = "rendered";
+				} catch (error) {
+					if (cancelled) return;
+					block.dataset.renderState = "error";
+					block.dataset.renderError = error instanceof Error ? error.message : String(error);
 					block.classList.add("mermaid-error");
+					console.error("Failed to render Mermaid diagram:", error);
 				}
 			}
 		})();

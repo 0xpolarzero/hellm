@@ -241,7 +241,7 @@ export interface DesktopHostActionsAdapter {
     pickFolder(input: {
       readonly startingFolder: string;
     }): Promise<{ readonly selectedPaths: readonly string[] }>;
-    pickFilesAndFolders(input: {
+    pickFiles(input: {
       readonly startingFolder: string;
     }): Promise<{ readonly selectedPaths: readonly string[] }>;
   };

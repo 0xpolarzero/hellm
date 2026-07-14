@@ -7,6 +7,10 @@ setDefaultTimeout(90_000);
 
 const TIMELINE = Date.parse("2026-04-10T10:00:00.000Z");
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 beforeAll(async () => {
   await ensureBuilt();
 });
@@ -59,19 +63,27 @@ test("renders the integrated workspace tab counters and selectable A/B/C layout 
       expect(await page.locator(".workspace-layout-tab.initialized").count()).toBe(0);
       expect(await page.locator(".workspace-layout-tab.empty").count()).toBe(3);
 
+      const betaSession = page
+        .getByRole("button", {
+          name: new RegExp(`^(?:Unread session: )?${escapeRegExp("Header Beta")}$`),
+        })
+        .filter({ visible: true });
+      await betaSession.waitFor({ state: "visible" });
+      await betaSession.click();
       await page
-        .locator(".session-main")
-        .filter({ has: page.getByText("Header Beta", { exact: true }) })
-        .click({ force: true });
-      await page.locator('[data-testid="workspace-pane"]').waitFor({ state: "visible" });
+        .getByTestId("active-surface-title")
+        .filter({ hasText: "Header Beta" })
+        .waitFor({ state: "visible" });
       expect((await page.locator(".workspace-layout-tab.initialized").textContent())?.trim()).toBe(
         "A",
       );
       expect(await page.locator(".workspace-layout-tab.empty").count()).toBe(2);
 
-      await page
-        .locator('button[aria-label="Layout B: start a new pane arrangement"]')
-        .click({ force: true });
+      const layoutB = page.getByRole("tab", {
+        name: "Layout B: start a new pane arrangement",
+      });
+      await layoutB.waitFor({ state: "visible" });
+      await layoutB.click();
 
       await page.locator(".workspace-layout-tab.active.empty").waitFor({ state: "visible" });
       expect((await page.locator(".workspace-layout-tab.active").textContent())?.trim()).toBe("B");

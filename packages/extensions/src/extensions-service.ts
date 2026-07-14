@@ -88,7 +88,12 @@ import {
   revertExtensionSourceMutation,
   resetExtensionInstructions,
 } from "./extension-source-lifecycle";
-import { configureExtensionTypescriptApi } from "./extension-source-management";
+import {
+  configureExtensionTypescriptApi,
+  scaffoldMissingBuiltinExtensionSources,
+  type ScaffoldMissingBuiltinSourcesResult,
+} from "./extension-source-management";
+export type { ScaffoldMissingBuiltinSourcesResult } from "./extension-source-management";
 import { buildExtension } from "./extension-build-execution";
 import { observeCurrentExtensionBuilds } from "./extension-build-observation";
 import { ExtensionBuildProcessPort } from "./extension-build-process-port";
@@ -192,6 +197,9 @@ export interface ToolMetadataInput {
 }
 
 export interface ExtensionsService {
+  builtin: {
+    scaffoldMissing(): Effect.Effect<ScaffoldMissingBuiltinSourcesResult, ExtensionError>;
+  };
   snapshots: {
     captureSourcePayload(
       input: CaptureExtensionSnapshotSourcePayloadInput,
@@ -348,6 +356,16 @@ export const makeExtensions = Effect.fn("@svvy/extensions/makeExtensions")(() =>
     const cliRequirementProbe = yield* ExtensionCliRequirementProbePort;
     return yield* Effect.succeed(
       Extensions.of({
+        builtin: {
+          scaffoldMissing: () =>
+            scaffoldMissingBuiltinExtensionSources().pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ExtensionSourceRootsPort, extensionSourceRoots),
+              Effect.provideService(PackagedExtensionTemplatesPort, packagedExtensionTemplates),
+            ),
+        },
         snapshots: {
           captureSourcePayload: (input) =>
             captureExtensionSnapshotSourcePayload(input).pipe(

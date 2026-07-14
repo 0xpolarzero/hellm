@@ -55,6 +55,7 @@ import {
 import { createAppLogger } from "./app-logger";
 import { createLiveCommandStdinRegistry } from "./live-command-stdin-registry";
 import { createExtensionSnapshotPayloadStore } from "./extension-snapshot-storage";
+import { successfulExtensionBuildProcessTestService } from "./extension-build-process.test-support";
 import { createTestSandboxHostSupport } from "./sandbox-host-support.test-support";
 import {
   DEFAULT_AGENT_SETTINGS_STATE,
@@ -973,9 +974,7 @@ function createBootstrapHarness() {
         readReadiness: () => Effect.succeed(null),
       },
     },
-    extensionBuildProcess: {
-      run: () => Effect.succeed({ status: "failed" as const }),
-    },
+    extensionBuildProcess: successfulExtensionBuildProcessTestService,
     extensionCliRequirementProbe: {
       probe: (plan) =>
         Effect.succeed(
@@ -1012,6 +1011,9 @@ function createBootstrapHarness() {
     sandboxHostSupport: createTestSandboxHostSupport(),
     runtimeLayerConfig: defaultRuntimeLayerConfig,
     commandRegistry,
+    executeTypescriptHost: {
+      runExecuteTypescript: () => Effect.die("Unexpected execute_typescript host execution."),
+    },
     providerAuth: {
       ensureUsableProviderAuth: async () => "test-api-key",
       getProviderAuthUnavailableMessage: (provider: string) => `${provider} auth unavailable.`,

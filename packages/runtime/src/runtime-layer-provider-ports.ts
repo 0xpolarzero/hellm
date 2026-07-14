@@ -22,6 +22,7 @@ export interface RuntimeLayerResolvedModel {
   readonly provider: string;
   readonly model: string;
   readonly supportedReasoning: readonly ReasoningEffort[];
+  readonly contextWindow?: number;
 }
 
 export interface RuntimeLayerModelResolverPortService {

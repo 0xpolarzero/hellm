@@ -19,6 +19,7 @@ import type {
   SandboxLaunchFacts,
   StateContractError,
 } from "@svvy/core";
+import { unsafeDecodeNativeToolResultSyncForTestsAndBootstrap } from "@svvy/core";
 import * as Effect from "effect/Effect";
 import type { AppLoggerEvent } from "./app-logger";
 import {
@@ -784,6 +785,7 @@ describe("execute_typescript tool", () => {
       success: true,
       result: "allowed",
     });
+    expect(() => unsafeDecodeNativeToolResultSyncForTestsAndBootstrap(result)).not.toThrow();
   });
 
   it("launches approved execute_typescript with runtime-owned SandboxLaunchFacts", async () => {

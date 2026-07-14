@@ -334,7 +334,7 @@ describe("retired desktop integration RPC paths", () => {
 
     expect(handlerSource).toContain("facades.appActions.workspaceFiles.listPaths(input)");
     expect(handlerSource).toContain("facades.appActions.workspaceFiles.getRoot(input)");
-    expect(handlerSource).toContain("facades.hostActions.dialogs.pickFilesAndFolders");
+    expect(handlerSource).toContain("facades.hostActions.dialogs.pickFiles");
     expect(handlerSource).toContain(
       "facades.appActions.workspaceFiles.materializeSelectedAttachments",
     );

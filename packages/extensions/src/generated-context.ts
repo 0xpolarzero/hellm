@@ -16,6 +16,7 @@ import {
 } from "@svvy/core";
 import { buildExecuteTypescriptFacadeDeclarations } from "./execute-typescript-facade-declarations";
 import { nativeToolDeclarationsForExtensions } from "./native-tool-catalog";
+import { getRequestUserInputVariantInstructions } from "./request-user-input-variant-instructions";
 
 const operation = "extensions.generatedContext.build";
 
@@ -180,10 +181,16 @@ export function buildGeneratedContextArtifacts(
       actorKind: input.actorKind,
       actorBinding: input.actorBinding,
     });
+    const requestInputVariantInstructions = nativeRecords.some(
+      (record) => record.id === "request-user-input",
+    )
+      ? normalizePromptText(getRequestUserInputVariantInstructions(sources.requestInputVariant))
+      : "";
     const promptSections = [
       ...promptBlocks.map((block) => block.text),
       ...externalInstructionBlocks.map((block) => block.text),
       ...svvyxGuidanceBlocks.map((block) => block.text),
+      requestInputVariantInstructions,
       executeTypescriptFacadeDeclarations.text,
     ].filter((text) => text.trim().length > 0);
     const systemPrompt = promptSections.join("\n\n");
@@ -201,6 +208,7 @@ export function buildGeneratedContextArtifacts(
         promptBlocks,
         externalInstructionBlocks,
         nativeToolDeclarations,
+        requestInputVariantInstructions,
         svvyxGuidanceBlocks,
         executeTypescriptFacadeDeclarations,
         sourceFingerprints,

@@ -2441,6 +2441,7 @@ export class WorkspaceRuntimeRegistry {
     const hosts = [appGlobal, ...this.workspaceHostRecords()];
     for (const host of new Set(hosts)) {
       host.agentSettingsStore.hydrateStateOwnedAppPreferences(preferences);
+      host.catalog.updateAppPreferences(preferences);
       host.catalog
         .workspaceStateRouterRegistration()
         .store.setWorkspaceArtifactDirectory(
@@ -2817,6 +2818,36 @@ export class WorkspaceRuntimeRegistry {
       sandboxHostSupport: this.options.sandboxHostSupport,
       runtimeLayerConfig: this.options.runtimeLayerConfig,
       commandRegistry,
+      executeTypescriptHost: {
+        runExecuteTypescript: (request) =>
+          Effect.tryPromise({
+            try: async (signal) => {
+              const runtime =
+                this.getWorkspaceHostRecord(request.workspaceId) ??
+                (appGlobal.workspaceId === request.workspaceId ? appGlobal : undefined);
+              if (!runtime) {
+                throw new RuntimeContractError({
+                  operation: "workspace-runtime-registry.executeTypescript",
+                  reason: "target-not-found",
+                  message: `Execute TypeScript requires an open workspace runtime for ${request.workspaceId}.`,
+                });
+              }
+              return runtime.catalog.runAcceptedExecuteTypescript(request, signal);
+            },
+            catch: (cause) =>
+              cause instanceof RuntimeContractError
+                ? cause
+                : new RuntimeContractError({
+                    operation: "workspace-runtime-registry.executeTypescript",
+                    reason: "state-conflict",
+                    message:
+                      cause instanceof Error
+                        ? cause.message
+                        : "Execute TypeScript host execution failed.",
+                    cause,
+                  }),
+          }),
+      },
       providerAuth: this.runtimeDependencies(),
       piRuntimePaths: {
         resolve: async (workspaceId) => this.resolvePiRuntimePaths(workspaceId),
@@ -2946,7 +2977,7 @@ export class WorkspaceRuntimeRegistry {
 
   private createAppCommandRegistry(
     appGlobalCommandStdin: ReturnType<typeof createLiveCommandStdinRegistry>,
-  ): RuntimeLayerCommandStdinPortService & RuntimeLayerCommandControlPortService {
+  ): RuntimeLayerCommandStdinPortService & Pick<RuntimeLayerCommandControlPortService, "cancel"> {
     const registries = () => [
       ...this.workspaceHostRecords().map((runtime) => runtime.commandStdin),
       appGlobalCommandStdin,

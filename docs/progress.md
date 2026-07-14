@@ -2001,6 +2001,7 @@ This section is governed by `docs/specs/context-budget-observability.spec.md`.
 - [x] Define compact bottom-edge context indicators for open unfocused orchestrator and handler-thread panes. Commit(s): `8d3e362`
 - [x] Render bottom-edge context indicators on open unfocused orchestrator and handler-thread panes. Commit(s): `8d3e362`
 - [x] Render context bars on focused handler-thread panes and workflow task-agent attempt summaries. Commit(s): `8d3e362`
+- [ ] Exercise provider-backed context budgets through production handler-thread and workflow task-agent attempt lifecycles once those in-progress surface lifecycles are runnable; the shipped orchestrator path must remain live-tested without seeded or test-only substitutes for unavailable surfaces.
 
 ## 18. Workflows Library Surface
 
@@ -2026,3 +2027,16 @@ This section is governed by `docs/specs/app-logs.spec.md`.
 - [x] Render a dense app logs pane with level filters, grouped source filtering, search, viewport-based read marking during unfiltered browsing, expandable details, stack traces, and links to related sessions, threads, commands, and artifacts where available. Commit(s): `dab04ac`.
 - [x] Render the app logs row list with TanStack Virtual, preserving variable-height expanded rows, stable row identity, persisted scroll position during live updates, older-page loading, and the explicit `New logs` affordance across filtering, search, expansion, and live updates. Commit(s): `ed7e6ea88e`.
 - [ ] Add representative mounted/integration coverage for the app logs pane, sidebar badges, and live-update read model.
+
+## 20. Testing And Live Inspection
+
+This section is governed by `docs/specs/testing-and-live-inspection.spec.md`.
+
+- [ ] Provide `bun run inspect:app -- --workspace <absolute-path>` as the canonical isolated live-app launcher with bounded validated dependency bootstrap, bridge metadata parsing, ready-to-run diagnostic commands, process-group signal forwarding, explicit home retention, and deterministic cleanup.
+- [ ] Retain one host-visible `e2e-results/<runId>/` record for every OrbStack invocation, including complete runner stdout/stderr, exit/duration facts, and remote failure-evidence sync even when the test command fails.
+- [ ] Capture a shared pre-cleanup forensic bundle for every failed e2e callback: original error, process output, an immediate native-display screenshot before bridge probes, doctor/status/tree, page/DOM, state namespaces, events/logs/errors/network/perf, an additional browser screenshot when available, non-secret persisted session/log/SQLite evidence, and exact-executable native-core resolver/backtrace receipts that retain unresolved cores.
+- [ ] Keep `e2e/feature-coverage.ts` exhaustive with `docs/features.ts`, enforce structural drift in `bun run check`, and make `bun run check:e2e-coverage:complete` green for every shipped feature.
+- [ ] Replace projection-only acceptance with deterministic real lifecycle journeys for prompt/system-context, direct tools, approvals/sandboxing, artifacts, command projection, delegation/episodes, queues/Steer, request input/waits, Agents/Extensions/source refresh, Workflows/Smithers/task-agent bridge, logs, and crash recovery.
+- [ ] Remove retry, forced-action, broad-wait, selector-churn, test-only product behavior, and seeded-lifecycle substitutes from e2e paths; retain direct seeding only in explicitly projection-scoped tests.
+- [ ] Keep native ARM64 OrbStack plus packaged Linux CEF as the canonical desktop lane, validate exact machine/runtime/renderer provenance per run, and retain AMD64 only as an explicitly named diagnostic lane until native AMD64 infrastructure exists.
+- [ ] Verify the complete lane through focused and full OrbStack runs, a zero-retry startup soak, `bun run check`, the strict e2e coverage gate, and representative local macOS live/native/visual inspection.

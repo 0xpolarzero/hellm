@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import {
   RuntimeSurfaceLifecycleStatePort,
   StateContractError,
+  type CreateRuntimeOrchestratorSurfaceStateInput,
   type SurfacePiSessionId,
   type WorkspaceId,
 } from "@svvy/core";
@@ -22,16 +23,26 @@ const workspace = {
 };
 const workspaceId = workspace.id as WorkspaceId;
 
+function createOrchestratorStateInput(title?: string): CreateRuntimeOrchestratorSurfaceStateInput {
+  return {
+    workspaceId,
+    ...(title === undefined ? {} : { title }),
+    profileId: "custom-orchestrator" as never,
+    provider: "openai" as never,
+    model: "gpt-5" as never,
+    reasoningEffort: "high",
+    loadedExtensionIds: ["extension-loading" as never, "request-user-input" as never],
+    availableExtensionIds: ["smithers" as never],
+  };
+}
+
 describe("RuntimeSurfaceLifecycleStatePort", () => {
   it("creates, opens, and closes orchestrator surfaces", async () => {
     const store = createStructuredSessionStateStore({ workspace });
     const port = runtimeSurfaceLifecycleStatePortFromStore(store);
 
     const created = await runTestEffect(
-      port.createOrchestratorSurface({
-        workspaceId,
-        title: "Runtime lifecycle",
-      }),
+      port.createOrchestratorSurface(createOrchestratorStateInput("Runtime lifecycle")),
     );
     const opened = await runTestEffect(
       port.openSurface({
@@ -56,10 +67,12 @@ describe("RuntimeSurfaceLifecycleStatePort", () => {
       created: "new",
     });
     expect(store.getSessionState(created.value.workspaceSessionId).pi).toMatchObject({
-      provider: "zai",
-      model: "glm-5-turbo",
-      reasoningEffort: "medium",
-      orchestratorAgentProfileId: "default-orchestrator",
+      provider: "openai",
+      model: "gpt-5",
+      reasoningEffort: "high",
+      orchestratorAgentProfileId: "custom-orchestrator",
+      loadedExtensionIds: ["extension-loading", "request-user-input"],
+      availableExtensionIds: ["smithers"],
     });
     expect(opened.value).toMatchObject({
       workspaceSessionId: created.value.workspaceSessionId,
@@ -93,9 +106,7 @@ describe("RuntimeSurfaceLifecycleStatePort", () => {
     const store = createStructuredSessionStateStore({ workspace });
     const port = runtimeSurfaceLifecycleStatePortFromStore(store);
     const created = await runTestEffect(
-      port.createOrchestratorSurface({
-        workspaceId,
-      }),
+      port.createOrchestratorSurface(createOrchestratorStateInput()),
     );
 
     await expect(
@@ -112,11 +123,28 @@ describe("RuntimeSurfaceLifecycleStatePort", () => {
     store.close();
   });
 
+  it("leaves no partial session or binding facts when atomic creation is rejected", async () => {
+    const store = createStructuredSessionStateStore({ workspace });
+    const port = runtimeSurfaceLifecycleStatePortFromStore(store);
+
+    await expect(
+      runTestEffect(
+        port.createOrchestratorSurface({
+          ...createOrchestratorStateInput("Rejected atomic create"),
+          workspaceId: "workspace-other" as WorkspaceId,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(StateContractError);
+
+    expect(store.listSessionStates()).toEqual([]);
+    store.close();
+  });
+
   it("renames, forks, and hard-deletes orchestrator lifecycle state", async () => {
     const store = createStructuredSessionStateStore({ workspace });
     const port = runtimeSurfaceLifecycleStatePortFromStore(store);
     const created = await runTestEffect(
-      port.createOrchestratorSurface({ workspaceId, title: "Source" }),
+      port.createOrchestratorSurface(createOrchestratorStateInput("Source")),
     );
     const renamed = await runTestEffect(
       port.renameOrchestrator({
@@ -155,10 +183,9 @@ describe("RuntimeSurfaceLifecycleStatePort", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const port = yield* RuntimeSurfaceLifecycleStatePort;
-          const result = yield* port.createOrchestratorSurface({
-            workspaceId,
-            title: "Layer surface",
-          });
+          const result = yield* port.createOrchestratorSurface(
+            createOrchestratorStateInput("Layer surface"),
+          );
           expect(result.value.target.surface).toBe("orchestrator");
         }).pipe(
           Effect.provide(

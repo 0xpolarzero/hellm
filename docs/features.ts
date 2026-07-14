@@ -330,7 +330,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
   {
     id: "context-budget-observability",
     name: "Context Budget Observability",
-    status: "shipped",
+    status: "in-progress",
     summary:
       "Shows active context usage as a percentage of the current model's maximum for orchestrator surfaces, handler-thread surfaces, workflow task-agent attempts, and individual assistant messages, with neutral below 40%, orange from 40%, red from 60%, decimal percentages, and hover details so context pressure is visible without treating any single percentage as a universal model failure point.",
     sourceSpecs: ["docs/prd.md", "docs/specs/context-budget-observability.spec.md"],
@@ -398,7 +398,7 @@ export const PRODUCT_FEATURES: ProductFeature[] = [
     name: "Composer Mention Links",
     status: "shipped",
     summary:
-      "Lets the composer autocomplete indexed workspace files and folders after `@` as ordinary inline `@path` text, attach picker/drop/paste files as removable chip-only attachments without mutating textarea text, render sent file, folder, and image attachments as transcript tiles without visible attachment-provenance prose, pass attachment paths through tagged agent-facing metadata, send images to pi as image content blocks while warning when model metadata does not list image input, and render sent transcript mentions as actionable workspace links that reveal files, open folders, and visibly mark missing paths without eager file reads, folder expansion, or a special context-target model.",
+      "Lets the composer autocomplete indexed workspace files and folders after `@` as ordinary inline `@path` text, use an explicit Files-or-Folder paperclip menu with file-only and folder-only native pickers, attach picker/drop/paste files as removable chip-only attachments without mutating textarea text, render sent file, folder, and image attachments as transcript tiles without visible attachment-provenance prose, pass attachment paths through tagged agent-facing metadata, send images to pi as image content blocks while warning when model metadata does not list image input, and render sent transcript mentions as actionable workspace links that reveal files, open folders, and visibly mark missing paths without eager file reads, folder expansion, or a special context-target model.",
     sourceSpecs: ["docs/prd.md", "docs/specs/composer-mention-links.spec.md"],
   },
   {

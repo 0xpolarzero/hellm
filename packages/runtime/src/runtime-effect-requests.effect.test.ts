@@ -168,7 +168,10 @@ function stateMutation<T>(value: T, afterCommit: readonly StateInvalidationDescr
 }
 
 function requestUserInputCommandRecord(
-  input: { readonly status?: RuntimeCommandRecord["status"] } = {},
+  input: {
+    readonly status?: RuntimeCommandRecord["status"];
+    readonly facts?: RuntimeCommandRecord["facts"];
+  } = {},
 ): RuntimeCommandRecord {
   return {
     id: commandId,
@@ -187,7 +190,7 @@ function requestUserInputCommandRecord(
     title: "Request user input",
     summary: "Request user input",
     arguments: null,
-    facts: null,
+    facts: input.facts ?? null,
     error: null,
     startedAt: "2026-04-18T09:00:00.000Z",
     updatedAt: "2026-04-18T09:00:00.000Z",
@@ -247,6 +250,9 @@ function extensionsServiceWithReadiness(
   } = { envReadiness: "not_required", dependencyReadiness: "ready" },
 ): Extensions["Service"] {
   return Extensions.of({
+    builtin: {
+      scaffoldMissing: () => Effect.die("Unexpected builtin extension scaffold."),
+    },
     snapshots: {
       captureSourcePayload: () => Effect.die("Unexpected snapshot source capture."),
       prepareSourceRestore: () => Effect.die("Unexpected snapshot source restore preparation."),
@@ -2083,7 +2089,9 @@ describe("runtime effect request application", () => {
               cwd: "",
               baseEnv: {},
             },
-            commandRecord: requestUserInputCommandRecord(),
+            commandRecord: requestUserInputCommandRecord({
+              facts: { toolCallId: "tool_call_runtime_effects_01" },
+            }),
           }).pipe(
             Effect.provideService(RuntimeRequestStatePort, requestStatePort),
             Effect.provideService(RuntimeCommandStatePort, commandStatePort),
@@ -2164,6 +2172,7 @@ describe("runtime effect request application", () => {
               status: "succeeded",
               summary: "Defaulted answer for Scope.",
               facts: {
+                toolCallId: "tool_call_runtime_effects_01",
                 questionCount: 1,
                 answeredBy: "default",
                 result: executed.result,

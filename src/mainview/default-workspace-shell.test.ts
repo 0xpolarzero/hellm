@@ -1233,8 +1233,9 @@ describe("default workspace renderer shell", () => {
     expect(transcriptSource).toContain(
       'block.type === "text" && parseComposerAttachmentTextSignature(block.textSignature).length === 0',
     );
-    expect(transcriptSource).toContain('aria-label="Attached files"');
-    expect(transcriptSource).toContain('aria-label="Attached images"');
+    expect(transcriptSource).toContain('role="group" aria-label="Attached files"');
+    expect(transcriptSource).toContain('role="group" aria-label="Attached images"');
+    expect(transcriptSource).toContain('role="group" aria-label="Attached files and folders"');
     expect(transcriptSource).toContain("user-image-attachment");
     expect(transcriptSource).toContain("user-file-attachment");
     expect(transcriptSource).not.toContain(
@@ -1323,7 +1324,7 @@ describe("default workspace renderer shell", () => {
       "style={`transform: translate3d(0, ${firstVirtualRowStart}px, 0); gap: ${transcriptRowGap}px;`}",
     );
     expect(transcriptSource).not.toContain("${virtualRow.start}px");
-    expect(transcriptSource).not.toContain("requestAnimationFrame");
+    expect(transcriptSource.match(/useAnimationFrameWithResizeObserver: true/g)).toHaveLength(2);
   });
 
   it("renders a stop control instead of the send button while a surface is streaming", async () => {

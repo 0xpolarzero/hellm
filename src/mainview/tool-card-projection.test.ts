@@ -115,6 +115,21 @@ describe("tool card projection", () => {
     );
   });
 
+  it("presents a live request_user_input command with its product label", () => {
+    const card = projectCommandToolCall(
+      commandRollup({
+        toolName: "request_user_input",
+        title: "request_user_input",
+        summary: "Answered with the default.",
+        arguments: {
+          questions: [{ title: "Lifecycle check", question: "Choose verification mode." }],
+        },
+      }),
+    );
+
+    expect(card.title).toBe("Request User Input");
+  });
+
   it("caps transcript section content and points users to the inspector for full output", () => {
     const card = projectCommandToolCall(
       commandRollup({

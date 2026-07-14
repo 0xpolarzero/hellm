@@ -1,5 +1,4 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import type { SvvyApp } from "./harness";
 import { ensureBuilt, withSvvyApp } from "./harness";
 import { seedAppLogs } from "./support";
 
@@ -12,26 +11,8 @@ beforeAll(async () => {
   await ensureBuilt();
 });
 
-type Page = SvvyApp["page"];
-
-async function waitForAppLogPaneText(
-  page: Page,
-  text: string,
-  timeoutMs = UI_TIMEOUT,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const paneText = await page.locator(".app-logs-pane").textContent();
-      if (typeof paneText === "string" && paneText.includes(text)) {
-        return;
-      }
-    } catch {
-      // The browser-tools bridge has a short per-request timeout; keep polling until our deadline.
-    }
-    await Bun.sleep(150);
-  }
-  throw new Error(`Timed out waiting for app log pane text: ${text}`);
+function sinceNow(): string {
+  return new Date().toISOString();
 }
 
 test("renders seeded app logs with badges, redaction, filters, and mark-read behavior", async () => {
@@ -68,45 +49,54 @@ test("renders seeded app logs with badges, redaction, filters, and mark-read beh
         );
       },
     },
-    async ({ page }) => {
+    async ({ driver, page }) => {
       const logsButton = page.getByRole("button", {
         name: "Open app logs: 1 errors, 1 warnings unread",
       });
       await logsButton.waitFor({ state: "visible", timeout: UI_TIMEOUT });
-      await logsButton.click({ force: true });
+      const markReadSince = sinceNow();
+      await logsButton.click();
 
       const pane = page.locator(".app-logs-pane");
       await pane.waitFor({ state: "visible", timeout: UI_TIMEOUT });
-      await waitForAppLogPaneText(page, "Background workspace log 12");
-      await waitForAppLogPaneText(page, "Seeded compile failure");
-      expect((await pane.textContent()).includes(SECRET_TOKEN)).toBe(false);
-      await waitForAppLogPaneText(page, "[REDACTED]");
+      await pane.getByText("Background workspace log 12").waitFor({ state: "visible" });
+      await pane.getByText("Seeded compile failure").waitFor({ state: "visible" });
+      expect(((await pane.textContent()) ?? "").includes(SECRET_TOKEN)).toBe(false);
+      await pane.getByText("[REDACTED]").waitFor({ state: "visible" });
       expect(await pane.locator(".logs-virtual-spacer").count()).toBe(1);
 
       await pane
         .getByRole("button", {
           name: "Error logs: 1 log",
         })
-        .click({ force: true });
-      await waitForAppLogPaneText(page, "Seeded compile failure");
-      expect((await pane.textContent()).includes("Provider token")).toBe(false);
+        .click();
+      await pane.getByText("Seeded compile failure").waitFor({ state: "visible" });
+      expect(((await pane.textContent()) ?? "").includes("Provider token")).toBe(false);
 
       await pane.locator('input[aria-label="Search app logs"]').fill("cmd-seeded-logs");
-      await waitForAppLogPaneText(page, "Seeded compile failure");
-      await pane
-        .getByRole("button", { name: "Expand Seeded compile failure" })
-        .first()
-        .click({ force: true });
-      await waitForAppLogPaneText(page, "cmd-seeded-logs");
+      await pane.getByText("Seeded compile failure").waitFor({ state: "visible" });
+      await pane.getByRole("button", { name: "Expand Seeded compile failure" }).first().click();
+      await pane.getByText("cmd-seeded-logs").waitFor({ state: "visible" });
 
-      const unreadLogsButton = page.getByRole("button", {
-        name: "Open app logs: 1 errors, 1 warnings unread",
-      });
-      const markReadDeadline = Date.now() + UI_TIMEOUT;
-      while (Date.now() < markReadDeadline && (await unreadLogsButton.count()) > 0) {
-        await Bun.sleep(150);
+      let sawAppLogsInvalidation = false;
+      for await (const event of driver.eventsTail({
+        follow: false,
+        since: markReadSince,
+        types: "workspace_read_model.changed",
+      })) {
+        const invalidation = event.payload?.invalidation;
+        if (
+          invalidation &&
+          typeof invalidation === "object" &&
+          "model" in invalidation &&
+          invalidation.model === "appLogs"
+        ) {
+          sawAppLogsInvalidation = true;
+        }
       }
-      expect(await unreadLogsButton.count()).toBe(0);
+      if (!sawAppLogsInvalidation) {
+        throw new Error("Opening app logs did not commit the expected appLogs read-model update.");
+      }
       await page
         .getByRole("button", { name: "Open app logs" })
         .waitFor({ state: "visible", timeout: UI_TIMEOUT });

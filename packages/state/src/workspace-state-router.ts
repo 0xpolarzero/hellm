@@ -82,6 +82,7 @@ import {
 export interface WorkspaceStateRegistration {
   readonly store: StructuredSessionStateStore;
   readonly isDefaultWorkspace?: boolean;
+  readonly turnStatePort?: RuntimeTurnStatePortService;
 }
 
 export interface WorkspaceStateRouterInput {
@@ -143,14 +144,15 @@ interface RegisteredStore {
     readonly sessionWait: RuntimeSessionWaitStatePortService;
     readonly thread: RuntimeThreadStatePortService;
     readonly transcript: RuntimeTranscriptStatePortService;
-    readonly turn: RuntimeTurnStatePortService;
+    turn: RuntimeTurnStatePortService;
     readonly workflowTask: RuntimeWorkflowTaskStatePortService;
     readonly episode: RuntimeEpisodeStatePortService;
     readonly piSessionReference: PiSessionReferencePortService;
   };
 }
 
-function registerStore(store: StructuredSessionStateStore): RegisteredStore {
+function registerStore(registration: WorkspaceStateRegistration): RegisteredStore {
+  const { store } = registration;
   const structuredSession = structuredSessionStateFromStore(store);
   return {
     store,
@@ -178,7 +180,9 @@ function registerStore(store: StructuredSessionStateStore): RegisteredStore {
       sessionWait: runtimeSessionWaitStatePortFromStructuredSessionState(structuredSession),
       thread: runtimeThreadStatePortFromStructuredSessionState(structuredSession),
       transcript: runtimeTranscriptStatePortFromStructuredSessionState(structuredSession),
-      turn: runtimeTurnStatePortFromStructuredSessionState(structuredSession),
+      turn:
+        registration.turnStatePort ??
+        runtimeTurnStatePortFromStructuredSessionState(structuredSession),
       workflowTask: runtimeWorkflowTaskStatePortFromStructuredSessionState(structuredSession),
       episode: runtimeEpisodeStatePortFromStructuredSessionState(structuredSession),
       piSessionReference: piSessionReferencePortFromStructuredSessionState(structuredSession),
@@ -267,15 +271,18 @@ const threadProbe =
 
 export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): WorkspaceStateRouter {
   const registrations = new Map<StructuredSessionStateStore, RegisteredStore>();
-  const registerOnce = (store: StructuredSessionStateStore): RegisteredStore => {
-    const existing = registrations.get(store);
-    if (existing) return existing;
-    const created = registerStore(store);
-    registrations.set(store, created);
+  const registerOnce = (registration: WorkspaceStateRegistration): RegisteredStore => {
+    const existing = registrations.get(registration.store);
+    if (existing) {
+      if (registration.turnStatePort) existing.ports.turn = registration.turnStatePort;
+      return existing;
+    }
+    const created = registerStore(registration);
+    registrations.set(registration.store, created);
     return created;
   };
 
-  const appGlobal = registerOnce(input.appGlobalStore);
+  const appGlobal = registerOnce({ store: input.appGlobalStore });
   const workspaceRegistrations = new Map<
     string,
     { readonly registered: RegisteredStore; readonly isDefaultWorkspace: boolean }
@@ -307,7 +314,7 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
   };
 
   const registerWorkspaceState = (registration: WorkspaceStateRegistration): void => {
-    const registered = registerOnce(registration.store);
+    const registered = registerOnce(registration);
     workspaceRegistrations.set(registered.workspaceId, {
       registered,
       isDefaultWorkspace: registration.isDefaultWorkspace === true,

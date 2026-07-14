@@ -100,8 +100,16 @@ import {
   type AgentProfileAuthoritySnapshot,
   type AgentProfileMutation,
 } from "./agent-profile-mutation-store";
-import { defaultRuntimeLayerConfig, type RuntimeLayerConfig } from "@svvy/runtime/bootstrap";
+import {
+  defaultRuntimeLayerConfig,
+  type RuntimeLayerCommandControlPortService,
+  type RuntimeLayerConfig,
+} from "@svvy/runtime/bootstrap";
 import { type PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
+
+type RuntimeExecuteTypescriptHostInput = Parameters<
+  RuntimeLayerCommandControlPortService["runExecuteTypescript"]
+>[0];
 import {
   createStructuredSessionStateStore,
   StructuredSessionState,
@@ -111,7 +119,7 @@ import {
   structuredSessionStateFromStore,
 } from "@svvy/state/structured-session-state";
 import {
-  layerSandboxPolicySource,
+  layerSandboxPolicySourceWithConfig,
   type AgentActorExtensionDefaultsReadModelRecord,
   type ConfiguredAgentProfileReadModelRecord,
   type OrchestratorAgentProfileInput,
@@ -141,7 +149,7 @@ import {
   type WorkspaceStateRegistration,
 } from "@svvy/state/structured-session-adapters";
 import type { AppLoggerEvent } from "./app-logger";
-import { createExecuteTypescriptTool } from "./execute-typescript-tool";
+import { createExecuteTypescriptTool, runExecuteTypescript } from "./execute-typescript-tool";
 import {
   createListExtensionsTool,
   createLoadExtensionTool,
@@ -584,7 +592,6 @@ export class WorkspaceSessionCatalog {
       this.structuredSessionStore,
     );
     this.runtimeThreadStatePort = runtimeThreadStatePortFromStore(this.structuredSessionStore);
-    this.runtimeTurnStatePort = runtimeTurnStatePortFromStore(this.structuredSessionStore);
     this.runtimeWorkspaceStatePort = runtimeWorkspaceStatePortFromStore(
       this.structuredSessionStore,
     );
@@ -635,6 +642,36 @@ export class WorkspaceSessionCatalog {
       },
       this.runRuntimeState.bind(this),
     );
+    const runtimeTurnStatePort = runtimeTurnStatePortFromStore(this.structuredSessionStore);
+    this.runtimeTurnStatePort = {
+      ...runtimeTurnStatePort,
+      queueTopLevelTitleGeneration: (input) =>
+        runtimeTurnStatePort.queueTopLevelTitleGeneration(input).pipe(
+          Effect.tap((mutation) =>
+            mutation.value.queued
+              ? Effect.sync(() => {
+                  this.recoveryCoordinator.enqueue({
+                    kind: "title_generation",
+                    ownerScope: {
+                      kind: "title_job",
+                      titleJobId: `session:${input.sessionId}` as TitleJobId,
+                    },
+                    idempotencyKey: `title_generation:session:${input.sessionId}`,
+                    orderingKey: `surface:${input.surfacePiSessionId}`,
+                    priority: 70,
+                    payloadJson: { sessionId: input.sessionId },
+                  });
+                  this.emitTitleGenerationLog({
+                    level: "info",
+                    status: "queued",
+                    sessionId: input.sessionId,
+                  });
+                  this.recoveryCoordinator.wake();
+                })
+              : Effect.void,
+          ),
+        ),
+    };
     if (this.recoveryOptions.runtimeStartupOwnsRecovery) {
       this.activeTurnRecovery = Promise.resolve();
     } else {
@@ -733,7 +770,10 @@ export class WorkspaceSessionCatalog {
   }
 
   workspaceStateRouterRegistration(): WorkspaceStateRegistration {
-    return { store: this.structuredSessionStore };
+    return {
+      store: this.structuredSessionStore,
+      turnStatePort: this.runtimeTurnStatePort,
+    };
   }
 
   getRuntimeQueueStatePort(): RuntimeQueueStatePortService {
@@ -788,12 +828,104 @@ export class WorkspaceSessionCatalog {
     return this.runtimeGeneratedPackageStatePort;
   }
 
+  async runAcceptedExecuteTypescript(
+    input: RuntimeExecuteTypescriptHostInput,
+    signal?: AbortSignal,
+  ): Promise<NativeToolResult> {
+    const afterCommit: StateInvalidationDescriptor[] = [];
+    const runState = <A>(effect: Effect.Effect<A, StateContractError>): A => {
+      const value = this.runRuntimeState(effect);
+      if (
+        value &&
+        typeof value === "object" &&
+        "afterCommit" in value &&
+        Array.isArray((value as { afterCommit?: unknown }).afterCommit)
+      ) {
+        afterCommit.push(
+          ...((value as { afterCommit: readonly StateInvalidationDescriptor[] }).afterCommit ?? []),
+        );
+      }
+      return value;
+    };
+    let result: Awaited<ReturnType<typeof runExecuteTypescript>> | undefined;
+    try {
+      result = await runExecuteTypescript({
+        cwd: this.cwd,
+        workspaceId: input.workspaceId,
+        artifactState: this.runtimeArtifactStatePort,
+        commandState: this.runtimeCommandStatePort,
+        runState,
+        readArtifactRootForSession: (sessionId) =>
+          this.structuredSessionStore.getSessionState(sessionId).workspace.artifactDir,
+        signal,
+        typescriptCode: input.typescriptCode,
+        context: {
+          sessionId: input.target.workspaceSessionId,
+          turnId: input.turnId,
+          workflowTaskAttemptId:
+            input.target.surface === "workflow-task" ? input.target.workflowTaskAttemptId : null,
+          workflowRunId:
+            input.target.surface === "workflow-task" ? input.target.workflowRunId : null,
+          actor: input.target.surface,
+          surfacePiSessionId: input.target.surfacePiSessionId,
+          threadId: input.target.surface === "handler" ? input.target.threadId : null,
+          executor:
+            input.target.surface === "workflow-task" ? "workflow-task-agent" : input.target.surface,
+          loadedExtensionIds: input.actorBinding.loadedExtensionIds,
+        },
+        onWorkflowsGeneratedPackageChanged: this.emitWorkflowsGeneratedPackageLog.bind(this),
+        workflowsExtensionsGeneratedPackagePath:
+          this.recoveryOptions.workflowsExtensionsGeneratedPackagePath,
+        extensionsRoot: this.extensionsRoot,
+        workflowsGeneratedPackagePath: this.recoveryOptions.workflowsGeneratedPackagePath,
+        workflowsSourceRoot: this.recoveryOptions.workflowsSourceRoot,
+        agentSettingsStore: this.agentSettingsStore,
+        applyAgentProfileMutations: this.applyAgentProfileMutations.bind(this),
+        requestWorkflowsRuntime: this.recoveryOptions.applyWorkflowsRuntimeRequest,
+        extensionsEnvValues: () =>
+          this.agentSettingsStore.getState().extensionEnv.nonSecretOverrides,
+        onAppLog: this.emitAppLog.bind(this),
+        approvalBoundary: this.approvalBoundary,
+        approvalMode: () => this.agentSettingsStore.getState().appPreferences.approvalMode,
+        acquireExecuteTypescriptLaunch: requiredExecuteTypescriptLaunchAcquisition(
+          this.recoveryOptions.acquireExecuteTypescriptLaunch,
+        ),
+        toolCallId: input.toolCallId,
+      });
+    } finally {
+      await this.publishCommittedCatalogMutation(
+        "execute_typescript.accepted",
+        { value: undefined, afterCommit },
+        {
+          commandId: input.commandId,
+          toolCallId: input.toolCallId,
+          workspaceSessionId: input.target.workspaceSessionId,
+          surfacePiSessionId: input.target.surfacePiSessionId,
+        },
+      );
+    }
+    return {
+      content: [{ type: "text", text: JSON.stringify(result) }],
+      details: {
+        commandFacts: result as unknown as import("@svvy/core").CommandFactsPayload,
+      },
+    };
+  }
+
   getSandboxPolicySource(): SandboxPolicySourceService {
     return this.runRuntimeState(
       Effect.gen(function* () {
         return yield* SandboxPolicySource;
       }).pipe(
-        Effect.provide(layerSandboxPolicySource),
+        Effect.provide(
+          layerSandboxPolicySourceWithConfig({
+            currentAppPreferences: () => {
+              const { approvalMode, networkAccess } =
+                this.agentSettingsStore.getState().appPreferences;
+              return { approvalMode, networkAccess };
+            },
+          }),
+        ),
         Effect.provideService(
           StructuredSessionState,
           structuredSessionStateFromStore(this.structuredSessionStore),

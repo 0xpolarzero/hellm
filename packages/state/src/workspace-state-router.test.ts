@@ -23,6 +23,7 @@ import {
   StateContractError,
   type AbsolutePath,
   type CommandId,
+  type CreateRuntimeOrchestratorSurfaceStateInput,
   type GeneratedPackageName,
   type PromptTarget,
   type PositiveDurationMs,
@@ -99,6 +100,22 @@ function createRegistry() {
 
 const packageName = "@svvyx/extensions" as GeneratedPackageName;
 
+function orchestratorStateInput(
+  workspaceId: WorkspaceId,
+  title?: string,
+): CreateRuntimeOrchestratorSurfaceStateInput {
+  return {
+    workspaceId,
+    ...(title === undefined ? {} : { title }),
+    profileId: "default-orchestrator" as never,
+    provider: "zai" as never,
+    model: "glm-5-turbo" as never,
+    reasoningEffort: "medium",
+    loadedExtensionIds: ["extension-loading" as never],
+    availableExtensionIds: [],
+  };
+}
+
 describe("workspace state router", () => {
   it("adds and removes workspace stores dynamically without rebuilding port objects", async () => {
     const { registry, cleanup } = createRegistry();
@@ -113,19 +130,17 @@ describe("workspace state router", () => {
     try {
       await expect(
         runTestEffect(
-          surfaceLifecycle.createOrchestratorSurface({
-            workspaceId: "workspace_dynamic" as WorkspaceId,
-            title: "Before registration",
-          }),
+          surfaceLifecycle.createOrchestratorSurface(
+            orchestratorStateInput("workspace_dynamic" as WorkspaceId, "Before registration"),
+          ),
         ),
       ).rejects.toMatchObject({ reason: "not-found" });
 
       router.registerWorkspaceState({ store: workspace.store });
       const surface = await runTestEffect(
-        surfaceLifecycle.createOrchestratorSurface({
-          workspaceId: "workspace_dynamic" as WorkspaceId,
-          title: "After registration",
-        }),
+        surfaceLifecycle.createOrchestratorSurface(
+          orchestratorStateInput("workspace_dynamic" as WorkspaceId, "After registration"),
+        ),
       );
       expect(workspace.store.getSessionState(surface.value.workspaceSessionId)).toBeDefined();
 
@@ -158,10 +173,9 @@ describe("workspace state router", () => {
 
     try {
       const surface = await runTestEffect(
-        router.surfaceLifecycle.createOrchestratorSurface({
-          workspaceId: "workspace_b" as WorkspaceId,
-          title: "Routed surface",
-        }),
+        router.surfaceLifecycle.createOrchestratorSurface(
+          orchestratorStateInput("workspace_b" as WorkspaceId, "Routed surface"),
+        ),
       );
 
       expect(surface.value.target.surface).toBe("orchestrator");
@@ -262,9 +276,9 @@ describe("workspace state router", () => {
 
     try {
       const surface = await runTestEffect(
-        router.surfaceLifecycle.createOrchestratorSurface({
-          workspaceId: "workspace_a" as WorkspaceId,
-        }),
+        router.surfaceLifecycle.createOrchestratorSurface(
+          orchestratorStateInput("workspace_a" as WorkspaceId),
+        ),
       );
 
       const turn = await runTestEffect(
@@ -328,9 +342,9 @@ describe("workspace state router", () => {
     try {
       await expect(
         runTestEffect(
-          router.surfaceLifecycle.createOrchestratorSurface({
-            workspaceId: "workspace_unregistered" as WorkspaceId,
-          }),
+          router.surfaceLifecycle.createOrchestratorSurface(
+            orchestratorStateInput("workspace_unregistered" as WorkspaceId),
+          ),
         ),
       ).rejects.toMatchObject({
         operation: "workspace-state-router.createOrchestratorSurface",
@@ -338,9 +352,9 @@ describe("workspace state router", () => {
       });
       await expect(
         runTestEffect(
-          router.surfaceLifecycle.createOrchestratorSurface({
-            workspaceId: "workspace_unregistered" as WorkspaceId,
-          }),
+          router.surfaceLifecycle.createOrchestratorSurface(
+            orchestratorStateInput("workspace_unregistered" as WorkspaceId),
+          ),
         ),
       ).rejects.toBeInstanceOf(StateContractError);
       await expect(
@@ -427,9 +441,9 @@ describe("workspace state router", () => {
 
     try {
       const surface = await runTestEffect(
-        router.surfaceLifecycle.createOrchestratorSurface({
-          workspaceId: "workspace_a" as WorkspaceId,
-        }),
+        router.surfaceLifecycle.createOrchestratorSurface(
+          orchestratorStateInput("workspace_a" as WorkspaceId),
+        ),
       );
 
       expect(createCalls).toBe(1);
@@ -484,9 +498,9 @@ describe("workspace state router", () => {
 
     const openApproval = async (registered: TestStore, workspaceId: string): Promise<string> => {
       const surface = await runTestEffect(
-        router.surfaceLifecycle.createOrchestratorSurface({
-          workspaceId: workspaceId as WorkspaceId,
-        }),
+        router.surfaceLifecycle.createOrchestratorSurface(
+          orchestratorStateInput(workspaceId as WorkspaceId),
+        ),
       );
       const turn = await runTestEffect(
         router.turn.startTurn({
@@ -609,9 +623,9 @@ describe("workspace state router", () => {
               }),
             ),
             surfaceLifecycle: yield* tolerate(
-              surfaceLifecycle.createOrchestratorSurface({
-                workspaceId: "workspace_unregistered" as WorkspaceId,
-              }),
+              surfaceLifecycle.createOrchestratorSurface(
+                orchestratorStateInput("workspace_unregistered" as WorkspaceId),
+              ),
             ),
             promptDefaults: yield* tolerate(
               promptDefaults.resolvePromptDefaults({ target: unknownTarget }),

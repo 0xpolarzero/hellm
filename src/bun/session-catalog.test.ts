@@ -20,10 +20,14 @@ import {
   RuntimeSessionWaitStatePort,
   type AbsolutePath,
   type BuildLaunchPolicyInput,
+  type CommandId,
   type PromptExecutionContext,
   type RuntimeApprovalId,
+  type RuntimeSurfaceTarget,
   type SandboxLaunchFacts,
   type StateInvalidationDescriptor,
+  type ToolCallId,
+  type TurnId,
   type WorkspaceId,
 } from "@svvy/core";
 import { RuntimeEventBus } from "../../packages/runtime/src/runtime-event-bus";
@@ -48,6 +52,7 @@ import {
 import type { RuntimeApprovalBoundary } from "./approval-boundary";
 import { createAgentSettingsStore } from "./agent-settings-store";
 import type { StructuredSessionStateStore } from "@svvy/state/structured-session-state";
+import { createWorkspaceStateRouter } from "@svvy/state/structured-session-adapters";
 import type { ExtensionUsageState } from "@svvy/extensions";
 import { setPiTitleCompletionForTests } from "../../packages/pi-adapter/src/pi-adapter";
 
@@ -718,6 +723,12 @@ describe("WorkspaceSessionCatalog", () => {
         catalog.getRuntimeSurfaceLifecycleStatePort().createOrchestratorSurface({
           workspaceId: store.workspaceId as WorkspaceId,
           title: "Accessor Wiring",
+          profileId: DEFAULT_ORCHESTRATOR_PROFILE_ID as never,
+          provider: "zai" as never,
+          model: "glm-5-turbo" as never,
+          reasoningEffort: "medium",
+          loadedExtensionIds: ["extension-loading" as never],
+          availableExtensionIds: [],
         }),
       );
 
@@ -725,6 +736,68 @@ describe("WorkspaceSessionCatalog", () => {
       expect(invoked).toBe(true);
     } finally {
       store.createOrchestratorSurface = createOrchestratorSurface;
+    }
+  });
+
+  it("projects sandbox policy from hydrated app preferences without copying workspace state", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(
+      cwd,
+      agentDir,
+      sessionDir,
+      undefined,
+      false,
+      { workflowsSourceRoot: join(agentDir, "..", "workflows") },
+      false,
+    );
+
+    try {
+      const { store } = catalog.workspaceStateRouterRegistration();
+      const source = catalog.getSandboxPolicySource();
+      const defaults = createAgentSettingsStore({ agentDir }).getState().appPreferences;
+      catalog.updateAppPreferences({
+        ...defaults,
+        approvalMode: "full-access",
+        networkAccess: false,
+      });
+
+      expect(store.readAppPreferences()).toMatchObject({
+        approvalMode: "auto-review",
+        networkAccess: true,
+      });
+      const fullAccess = await runCatalogEffect(
+        source.snapshot({
+          scope: { kind: "workspace", workspaceId: store.workspaceId as WorkspaceId },
+          commandId: "command-catalog-full-access-policy" as CommandId,
+          launchKind: "execute_typescript_runtime",
+          cwd: cwd as AbsolutePath,
+        }),
+      );
+      expect(fullAccess).toMatchObject({
+        sandboxMode: "omitted_full_access",
+        networkPolicy: "allow",
+        filesystemPolicy: { defaultAccess: "read", entries: [] },
+      });
+
+      catalog.updateAppPreferences({
+        ...defaults,
+        approvalMode: "auto-review",
+        networkAccess: false,
+      });
+      const managed = await runCatalogEffect(
+        source.snapshot({
+          scope: { kind: "workspace", workspaceId: store.workspaceId as WorkspaceId },
+          commandId: "command-catalog-managed-policy" as CommandId,
+          launchKind: "execute_typescript_runtime",
+          cwd: cwd as AbsolutePath,
+        }),
+      );
+      expect(managed).toMatchObject({
+        sandboxMode: "managed",
+        networkPolicy: "deny",
+      });
+    } finally {
+      await catalog.dispose();
     }
   });
 
@@ -929,6 +1002,191 @@ describe("WorkspaceSessionCatalog", () => {
           profileDigest: "session-catalog-execute-ts-profile",
         },
       });
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
+  it("runs accepted execute_typescript without a synchronous profile snapshot and publishes committed facts", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const published: StateInvalidationDescriptor[][] = [];
+    const catalog = createWorkspaceSessionCatalog(
+      cwd,
+      agentDir,
+      sessionDir,
+      () => ({ approved: true }),
+      false,
+      {
+        artifactDirectory: join(agentDir, "artifacts"),
+        workflowsSourceRoot: join(agentDir, "..", "workflows"),
+        acquireExecuteTypescriptLaunch: async (input) => ({
+          facts: {
+            mode: "managed",
+            spawn: {
+              executable: process.execPath as AbsolutePath,
+              args: input.command.slice(1),
+              cwd: input.cwd,
+              envFacts: input.envFacts,
+            },
+            helperPath: join(agentDir, "sandbox-helper") as AbsolutePath,
+            helperArgs: [],
+            policySnapshot: {
+              snapshotId: "accepted-execute-ts-snapshot",
+              fingerprint: "accepted-execute-ts-fingerprint",
+              resolvedAt: "2026-07-13T00:00:00.000Z" as never,
+              scope: input.scope,
+              ...(input.surfacePiSessionId ? { surfacePiSessionId: input.surfacePiSessionId } : {}),
+              commandId: input.commandId,
+              launchKind: "execute_typescript_runtime",
+              cwd: input.cwd,
+              sandboxMode: "managed",
+              networkPolicy: "allow",
+              filesystemPolicy: { defaultAccess: "read", entries: [] },
+            },
+          },
+          close: async () => {},
+        }),
+      },
+    );
+
+    try {
+      await catalog.setCommittedStateInvalidationPublisher(async (afterCommit) => {
+        published.push([...afterCommit]);
+      });
+      const created = await catalog.createSession(
+        { title: "Accepted Execute TypeScript" },
+        DEFAULTS,
+      );
+      catalog.setAgentProfileAuthority(createInMemoryCatalogAgentProfileAuthority());
+      const store = getStructuredSessionStore(catalog);
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Run accepted execute_typescript",
+      });
+      const toolCallId = "tool-call-accepted-execute-ts" as never;
+      const command = await runCatalogEffect(
+        catalog.getRuntimeCommandStatePort().createOrReuseStreamingCommand({
+          toolCallId,
+          turnId: turn.id,
+          workflowTaskAttemptId: null,
+          surfacePiSessionId: created.target.surfacePiSessionId,
+          threadId: null,
+          workflowRunId: null,
+          toolName: "execute_typescript",
+          executor: "orchestrator",
+          visibility: "surface",
+          title: "Run execute_typescript",
+          summary: "Execute bounded TypeScript.",
+          arguments: { typescriptCode: "return { answer: 42 };" },
+        }),
+      );
+      await runCatalogEffect(
+        catalog.getRuntimeCommandStatePort().startCommand({ commandId: command.value.id }),
+      );
+
+      const result = await catalog.runAcceptedExecuteTypescript({
+        workspaceId: store.workspaceId as WorkspaceId,
+        target: created.target as unknown as RuntimeSurfaceTarget,
+        turnId: turn.id as TurnId,
+        toolCallId: toolCallId as ToolCallId,
+        commandId: command.value.id as CommandId,
+        typescriptCode: "return { answer: 42 };",
+        promptContext: createPromptExecutionContext({
+          workspaceSessionId: created.target.workspaceSessionId,
+          turnId: turn.id,
+          surfacePiSessionId: created.target.surfacePiSessionId,
+          rootThreadId: null,
+          generatedAgentContextFingerprint: "accepted_execute_ts_context",
+          generatedAgentContextRevision: "1",
+        }),
+        actorBinding: {
+          actorKind: "orchestrator",
+          loadedExtensionIds: [],
+          availableExtensionIds: [],
+          unavailableExtensionIds: [],
+          instructionOrder: [],
+          source: "surface-binding",
+        },
+      });
+
+      expect(
+        JSON.parse(result.content?.[0]?.type === "text" ? result.content[0].text : "{}"),
+      ).toEqual({
+        success: true,
+        result: { answer: 42 },
+      });
+      const snapshot = store.getSessionState(created.target.workspaceSessionId);
+      expect(
+        snapshot.commands.find((candidate) => candidate.id === command.value.id),
+      ).toMatchObject({
+        status: "succeeded",
+        facts: { snippetArtifactId: expect.any(String) },
+      });
+      expect(snapshot.artifacts).toHaveLength(1);
+      expect(
+        published.flat().some((descriptor) => descriptor.invalidation.model === "commandInspector"),
+      ).toBe(true);
+      expect(
+        published
+          .flat()
+          .some((descriptor) => descriptor.invalidation.model === "sessionNavigation"),
+      ).toBe(true);
+
+      const failureToolCallId = "tool-call-accepted-execute-ts-failure" as never;
+      const failedCommand = await runCatalogEffect(
+        catalog.getRuntimeCommandStatePort().createOrReuseStreamingCommand({
+          toolCallId: failureToolCallId,
+          turnId: turn.id,
+          workflowTaskAttemptId: null,
+          surfacePiSessionId: created.target.surfacePiSessionId,
+          threadId: null,
+          workflowRunId: null,
+          toolName: "execute_typescript",
+          executor: "orchestrator",
+          visibility: "surface",
+          title: "Run execute_typescript",
+          summary: "Execute bounded TypeScript.",
+          arguments: { typescriptCode: "return missingIdentifier;" },
+        }),
+      );
+      await runCatalogEffect(
+        catalog.getRuntimeCommandStatePort().startCommand({ commandId: failedCommand.value.id }),
+      );
+      const failedResult = await catalog.runAcceptedExecuteTypescript({
+        workspaceId: store.workspaceId as WorkspaceId,
+        target: created.target as unknown as RuntimeSurfaceTarget,
+        turnId: turn.id as TurnId,
+        toolCallId: failureToolCallId as ToolCallId,
+        commandId: failedCommand.value.id as CommandId,
+        typescriptCode: "return missingIdentifier;",
+        promptContext: createPromptExecutionContext({
+          workspaceSessionId: created.target.workspaceSessionId,
+          turnId: turn.id,
+          surfacePiSessionId: created.target.surfacePiSessionId,
+          rootThreadId: null,
+          generatedAgentContextFingerprint: "accepted_execute_ts_context",
+          generatedAgentContextRevision: "1",
+        }),
+        actorBinding: {
+          actorKind: "orchestrator",
+          loadedExtensionIds: [],
+          availableExtensionIds: [],
+          unavailableExtensionIds: [],
+          instructionOrder: [],
+          source: "surface-binding",
+        },
+      });
+      expect(
+        JSON.parse(
+          failedResult.content?.[0]?.type === "text" ? failedResult.content[0].text : "{}",
+        ),
+      ).toMatchObject({ success: false, error: { stage: "typecheck" } });
+      expect(
+        store
+          .getSessionState(created.target.workspaceSessionId)
+          .commands.find((candidate) => candidate.id === failedCommand.value.id),
+      ).toMatchObject({ status: "failed", facts: { diagnosticsArtifactId: expect.any(String) } });
     } finally {
       await catalog.dispose();
     }
@@ -1384,7 +1642,7 @@ describe("WorkspaceSessionCatalog", () => {
   });
 
   it("publishes running and completed top-level title invalidations from the asynchronous job", async () => {
-    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const { cwd, agentDir, sessionDir, workflowsSourceRoot } = createWorkspaceFixture();
     const restoreTitleNamerEnv = configureHermeticTitleNamer(agentDir);
     const restoreTitleCompletion = setPiTitleCompletionForTests(
       async () =>
@@ -1393,11 +1651,32 @@ describe("WorkspaceSessionCatalog", () => {
           model: "claude-sonnet-4-5",
         }) as AssistantMessage,
     );
-    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+    const catalog = createWorkspaceSessionCatalog(
+      cwd,
+      agentDir,
+      sessionDir,
+      undefined,
+      false,
+      { workflowsSourceRoot },
+      false,
+    );
     const publications: StateInvalidationDescriptor[][] = [];
+    const titleLogStatuses: string[] = [];
+    const completedTitle = Promise.withResolvers<void>();
 
     try {
+      catalog.setTitleGenerationLogListener((event) => {
+        titleLogStatuses.push(event.status);
+        if (event.status === "completed") completedTitle.resolve();
+      });
+      await catalog.prepareWorkspaceRecoveryAfterRegistration();
+      catalog.startWorkspaceRecovery();
       const created = await catalog.createSession({ title: "New orchestrator" }, DEFAULTS);
+      const registration = catalog.workspaceStateRouterRegistration();
+      const stateRouter = createWorkspaceStateRouter({
+        appGlobalStore: registration.store,
+        workspaceStores: [{ ...registration, isDefaultWorkspace: true }],
+      });
       await catalog.setCommittedStateInvalidationPublisher(async (afterCommit) => {
         publications.push([...afterCommit]);
       });
@@ -1408,22 +1687,27 @@ describe("WorkspaceSessionCatalog", () => {
         surfacePiSessionId: created.target.surfacePiSessionId,
         requestSummary: "Generate a useful title asynchronously",
       });
-      store.queueTitleGeneration(created.target.workspaceSessionId);
-
-      await (
-        catalog as unknown as { runTitleGenerationJob(sessionId: string): Promise<void> }
-      ).runTitleGenerationJob(created.target.workspaceSessionId);
+      const queued = await runCatalogEffect(
+        stateRouter.turn.queueTopLevelTitleGeneration({
+          sessionId: created.target.workspaceSessionId as never,
+          surfacePiSessionId: created.target.surfacePiSessionId as never,
+        }),
+      );
+      expect(queued.value.queued).toBe(true);
+      await completedTitle.promise;
 
       expect(store.getSessionState(created.target.workspaceSessionId).pi).toMatchObject({
         title: "Generated async title",
         titleGenerationStatus: "completed",
       });
+      expect(titleLogStatuses).toEqual(["queued", "started", "completed"]);
       expect(publications).toHaveLength(2);
       expect(publications.map((batch) => batch.map((item) => item.invalidation.model))).toEqual([
         ["surface", "sessionNavigation"],
         ["surface", "sessionNavigation"],
       ]);
     } finally {
+      catalog.setTitleGenerationLogListener(null);
       restoreTitleCompletion();
       restoreTitleNamerEnv();
       await catalog.dispose();

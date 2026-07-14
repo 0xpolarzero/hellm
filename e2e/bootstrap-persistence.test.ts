@@ -2,7 +2,7 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
-import { launchSvvyApp, createHomeDir } from "./harness";
+import { assertNoElectrobunRuntimePortCollision, launchSvvyApp, createHomeDir } from "./harness";
 import { assistantTextMessage, seedSessions, userMessage } from "./support";
 
 setDefaultTimeout(90_000);
@@ -107,11 +107,17 @@ async function expectBlankBootState(page: Awaited<ReturnType<typeof launchSvvyAp
 
 async function openSession(page: Awaited<ReturnType<typeof launchSvvyApp>>["page"], title: string) {
   const session = page
-    .locator(".session-main")
-    .filter({ has: page.locator("strong").filter({ hasText: title }) })
+    .getByRole("button", {
+      name: new RegExp(`^(?:Unread session: )?${escapeRegExp(title)}$`),
+    })
+    .filter({ visible: true })
     .first();
   await session.waitFor({ state: "visible" });
-  await session.click({ force: true });
+  await session.click();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 test("a clean isolated home dir boots the shell with a blank workspace", async () => {
@@ -127,6 +133,20 @@ test("a clean isolated home dir boots the shell with a blank workspace", async (
       expect(await app.page.locator(".session-item [aria-current='true']").count()).toBe(0);
     } finally {
       await app.close();
+    }
+  });
+});
+
+test("immediate sequential launches keep one Electrobun runtime per process", async () => {
+  await withHomeDir(async (homeDir) => {
+    for (let launch = 0; launch < 2; launch += 1) {
+      const app = await launchSvvyApp({ homeDir });
+      try {
+        await app.page.locator('[data-testid="dockview-watermark"]').waitFor({ state: "visible" });
+        expect(() => assertNoElectrobunRuntimePortCollision(app)).not.toThrow();
+      } finally {
+        await app.close();
+      }
     }
   });
 });

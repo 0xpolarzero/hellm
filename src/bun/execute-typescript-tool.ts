@@ -677,8 +677,8 @@ export async function runExecuteTypescript(input: {
 
     const result: ExecuteTypescriptResult = {
       success: true,
-      result: redactedResultValue,
-      logs: logs.length > 0 ? logs : undefined,
+      ...(redactedResultValue === undefined ? {} : { result: redactedResultValue }),
+      ...(logs.length > 0 ? { logs } : {}),
     };
     return result;
   } catch (error) {
@@ -728,14 +728,15 @@ export async function runExecuteTypescript(input: {
         logsCount: logs.length,
       },
     });
+    const errorLine = getRuntimeErrorLine(error);
     const result: ExecuteTypescriptResult = {
       success: false,
-      logs: logs.length > 0 ? logs : undefined,
+      ...(logs.length > 0 ? { logs } : {}),
       error: {
         message,
-        name: error instanceof Error ? error.name : undefined,
+        ...(error instanceof Error ? { name: error.name } : {}),
         stage: "runtime",
-        line: getRuntimeErrorLine(error),
+        ...(errorLine === undefined ? {} : { line: errorLine }),
       },
     };
     return result;

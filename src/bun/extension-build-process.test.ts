@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AbsolutePath, ExtensionBuildProcessPlan, ExtensionId } from "@svvy/core";
@@ -81,7 +89,10 @@ describe("extension build process host", () => {
       expectedProcessOutputs: [{ role: "full-instruction", relativePath: "other.md" }],
     });
     expect(await runExtensionBuildProcess(base, { executable: process.execPath, env: {} })).toEqual(
-      { status: "failed" },
+      {
+        status: "failed",
+        stage: "validation",
+      },
     );
     expect(
       await runExtensionBuildProcess(
@@ -93,7 +104,7 @@ describe("extension build process host", () => {
         }),
         { executable: process.execPath, env: {} },
       ),
-    ).toEqual({ status: "failed" });
+    ).toEqual({ status: "failed", stage: "validation" });
   });
 
   it("rejects undeclared files left in the staging tree", async () => {
@@ -118,7 +129,41 @@ describe("extension build process host", () => {
         }),
         { executable: process.execPath, env: {} },
       ),
-    ).toEqual({ status: "failed" });
+    ).toEqual({ status: "failed", stage: "output-verification" });
+  });
+
+  it("accepts a staging root reached through a filesystem alias", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "svvy-extension-build-alias-")));
+    tempDirs.push(root);
+    const canonicalRoot = join(root, "canonical");
+    const aliasedRoot = join(root, "alias");
+    mkdirSync(canonicalRoot, { recursive: true });
+    symlinkSync(canonicalRoot, aliasedRoot, "dir");
+    const fixture = {
+      sourceRoot: join(aliasedRoot, "source"),
+      stagingRoot: join(aliasedRoot, "staging"),
+    };
+    mkdirSync(fixture.sourceRoot, { recursive: true });
+    mkdirSync(fixture.stagingRoot, { recursive: true });
+    writeSource(fixture, "generate.ts", 'await Bun.write(process.argv[3]!, "ok\\n");\n');
+    const output = join(fixture.stagingRoot, "generated.md") as AbsolutePath;
+
+    const evidence = await runExtensionBuildProcess(
+      plan(fixture, {
+        generators: [
+          {
+            scriptPath: join(fixture.sourceRoot, "generate.ts") as AbsolutePath,
+            outputPath: output,
+            argv: ["--output", output],
+          },
+        ],
+        expectedProcessOutputs: [{ role: "full-instruction", relativePath: "generated.md" }],
+      }),
+      { executable: process.execPath, env: {} },
+    );
+
+    expect(evidence.status).toBe("completed");
+    expect(readFileSync(output, "utf8")).toBe("ok\n");
   });
 
   it("caps aggregate output and times out the operation", async () => {

@@ -9,9 +9,15 @@ export interface RunDesktopBootstrapInput<Facades, Result> {
   readonly cleanup: (reason: "startup-failure") => Promise<void>;
   readonly showStartupFailure: (cause: unknown) => Promise<void>;
   readonly finalizeFailure?: () => void;
+  readonly onStartupFailure?: (error: unknown) => void;
   readonly onAuxiliaryFailure?: (
     error: unknown,
-    phase: "renderer-rejection" | "cleanup" | "failure-surface" | "finalization",
+    phase:
+      | "startup-diagnostics"
+      | "renderer-rejection"
+      | "cleanup"
+      | "failure-surface"
+      | "finalization",
   ) => void;
 }
 
@@ -20,7 +26,12 @@ export async function runDesktopBootstrap<Facades, Result>(
 ): Promise<Result> {
   const reportAuxiliaryFailure = (
     error: unknown,
-    phase: "renderer-rejection" | "cleanup" | "failure-surface" | "finalization",
+    phase:
+      | "startup-diagnostics"
+      | "renderer-rejection"
+      | "cleanup"
+      | "failure-surface"
+      | "finalization",
   ): void => {
     try {
       input.onAuxiliaryFailure?.(error, phase);
@@ -35,6 +46,11 @@ export async function runDesktopBootstrap<Facades, Result>(
     return await input.startDesktop(facades);
   } catch (cause) {
     const startupError = normalizeStartupFailure(cause);
+    try {
+      input.onStartupFailure?.(cause);
+    } catch (diagnosticError) {
+      reportAuxiliaryFailure(diagnosticError, "startup-diagnostics");
+    }
     try {
       input.rejectRendererCalls(startupError);
     } catch (rejectionError) {

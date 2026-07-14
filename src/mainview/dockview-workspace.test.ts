@@ -52,6 +52,12 @@ describe("Dockview workspace chrome", () => {
     expect(dockviewSource).toContain("transition: none !important");
     expect(dockviewSource).toContain("ResizeObserver");
     expect(dockviewSource).toContain("syncDockviewLayoutFromResize");
+    const resizeSyncSource = dockviewSource.slice(
+      dockviewSource.indexOf("function syncDockviewLayoutFromResize"),
+      dockviewSource.indexOf("function observeDockviewHostSize"),
+    );
+    expect(resizeSyncSource).toContain("scheduleDockviewLayout();");
+    expect(resizeSyncSource).not.toContain("layoutDockview();");
     expect(dockviewSource).not.toContain("layoutEpoch");
     expect(workspaceSource).not.toContain("dockviewLayoutEpoch");
     expect(workspaceSource).not.toContain("syncDockviewAfterSidebarToggle");

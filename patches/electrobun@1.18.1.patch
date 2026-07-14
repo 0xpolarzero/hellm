@@ -1,0 +1,300 @@
+diff --git a/bin/electrobun.cjs b/bin/electrobun.cjs
+index ad104296a..02badb1de 100755
+--- a/bin/electrobun.cjs
++++ b/bin/electrobun.cjs
+@@ -1,7 +1,18 @@
+ #!/usr/bin/env node
+ 
+-const { execSync, spawn } = require('child_process');
++const { execFileSync, execSync, spawn } = require('child_process');
+-const { existsSync, mkdirSync, unlinkSync, chmodSync, copyFileSync, createWriteStream } = require('fs');
++const {
++  existsSync,
++  mkdirSync,
++  unlinkSync,
++  chmodSync,
++  copyFileSync,
++  createWriteStream,
++  mkdtempSync,
++  renameSync,
++  rmSync,
++  writeFileSync,
++} = require('fs');
+ const { join, dirname } = require('path');
+ const https = require('https');
+ const ProxyAgent = require('proxy-agent').ProxyAgent;
+@@ -47,34 +58,208 @@ const electrobunDir = join(__dirname, '..');
+ const cacheDir = join(electrobunDir, '.cache');
+ const cliBinary = join(cacheDir, `electrobun${binExt}`);
+ 
+-async function downloadFile(url, filePath) {
++async function downloadFile(url, filePath, redirectCount = 0) {
++  if (redirectCount > 10) {
++    throw new Error(`Download exceeded 10 redirects: ${url}`);
++  }
++
+   return new Promise((resolve, reject) => {
+     mkdirSync(dirname(filePath), { recursive: true });
+-    const file = createWriteStream(filePath);
+-
+-    https.get(url, {agent}, (response) => {
+-      if (response.statusCode === 302 || response.statusCode === 301) {
+-        // Follow redirect
+-        return downloadFile(response.headers.location, filePath).then(resolve).catch(reject);
++    const request = https.get(url, {agent}, (response) => {
++      if ([301, 302, 307, 308].includes(response.statusCode)) {
++        response.resume();
++        if (!response.headers.location) {
++          reject(new Error(`Download redirect omitted Location: ${url}`));
++          return;
++        }
++        const redirectUrl = new URL(response.headers.location, url).toString();
++        downloadFile(redirectUrl, filePath, redirectCount + 1).then(resolve).catch(reject);
++        return;
+       }
+ 
+       if (response.statusCode !== 200) {
++        response.resume();
+         reject(new Error(`Download failed: ${response.statusCode}`));
+         return;
+       }
+ 
++      const file = createWriteStream(filePath);
++      let downloadedBytes = 0;
++      response.on('data', (chunk) => {
++        downloadedBytes += chunk.length;
++      });
+       response.pipe(file);
+ 
+       file.on('finish', () => {
+         file.close();
++        console.log(`Downloaded ${downloadedBytes} bytes.`);
+         resolve();
+       });
+ 
+       file.on('error', reject);
+-    }).on('error', reject);
++      response.on('error', reject);
++    });
++    request.setTimeout(120_000, () => {
++      request.destroy(new Error(`Download timed out after 120s: ${url}`));
++    });
++    request.on('error', reject);
+   });
+ }
+ 
++async function ensureCoreDependencies() {
++  const corePlatform = platform === 'darwin' ? 'macos' : platform;
++  const coreDir = join(electrobunDir, `dist-${corePlatform}-${arch}`);
++  const requiredFiles = [
++    'bun' + binExt,
++    'bsdiff' + binExt,
++    'bspatch' + binExt,
++    'zig-zstd' + binExt,
++    ...(platform === 'darwin'
++      ? ['launcher', 'libNativeWrapper.dylib']
++      : platform === 'win'
++        ? ['libNativeWrapper.dll']
++        : ['libNativeWrapper.so']),
++  ];
++  const missingFiles = requiredFiles.filter((file) => !existsSync(join(coreDir, file)));
++  if (missingFiles.length === 0) {
++    return;
++  }
++
++  const packageJson = require(join(electrobunDir, 'package.json'));
++  const version = packageJson.version;
++  const tarballUrl = `https://github.com/blackboardsh/electrobun/releases/download/v${version}/electrobun-core-${platform}-${arch}.tar.gz`;
++  mkdirSync(cacheDir, { recursive: true });
++  const stagingRoot = mkdtempSync(join(cacheDir, `core-${platform}-${arch}-`));
++  const stagingCoreDir = join(stagingRoot, 'core');
++  const tarballPath = join(stagingRoot, 'core.tar.gz');
++  const backupDir = join(stagingRoot, 'previous-core');
++
++  try {
++    console.log(`Downloading electrobun core for ${platform}-${arch}...`);
++    await downloadFile(tarballUrl, tarballPath);
++    mkdirSync(stagingCoreDir, { recursive: true });
++    execSync(`${getTarCommand()} -xzf "${tarballPath}"`, {
++      cwd: stagingCoreDir,
++      stdio: 'pipe',
++    });
++
++    const stillMissing = requiredFiles.filter(
++      (file) => !existsSync(join(stagingCoreDir, file)),
++    );
++    if (stillMissing.length > 0) {
++      throw new Error(
++        `Electrobun core archive is incomplete for ${platform}-${arch}: ${stillMissing.join(', ')}`,
++      );
++    }
++
++    if (existsSync(coreDir)) {
++      renameSync(coreDir, backupDir);
++    }
++    try {
++      renameSync(stagingCoreDir, coreDir);
++    } catch (error) {
++      if (existsSync(backupDir)) {
++        renameSync(backupDir, coreDir);
++      }
++      throw error;
++    }
++    rmSync(backupDir, { force: true, recursive: true });
++    console.log('electrobun core downloaded successfully!');
++  } finally {
++    rmSync(stagingRoot, { force: true, recursive: true });
++  }
++}
++
++function readBunIdentity(binaryPath) {
++  try {
++    return {
++      revision: execFileSync(binaryPath, ['--revision'], { encoding: 'utf8' }).trim(),
++      version: execFileSync(binaryPath, ['--version'], { encoding: 'utf8' }).trim(),
++    };
++  } catch {
++    return null;
++  }
++}
++
++function isFixedCanaryBun(binaryPath) {
++  const identity = readBunIdentity(binaryPath);
++  if (!identity || !identity.revision.includes('-canary.')) {
++    return false;
++  }
++  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(identity.version);
++  if (!match) return false;
++  const version = match.slice(1).map(Number);
++  return version[0] > 1 || (version[0] === 1 && version[1] >= 4);
++}
++
++function resolveConsumerElectrobunDir() {
++  let directory = process.cwd();
++  while (directory !== dirname(directory)) {
++    const candidate = join(directory, 'node_modules', 'electrobun');
++    if (existsSync(join(candidate, 'package.json'))) {
++      return candidate;
++    }
++    directory = dirname(directory);
++  }
++  return electrobunDir;
++}
++
++async function ensureCanaryBunOverride() {
++  const targetOS = platform === 'darwin' ? 'macos' : platform;
++  const targetArch = arch;
++  mkdirSync(cacheDir, { recursive: true });
++  const overrideDir = join(dirname(resolveConsumerElectrobunDir()), '.electrobun-cache', 'bun-override', `${targetOS}-${targetArch}`);
++  const overrideBinary = join(overrideDir, `bun${binExt}`);
++  const versionFile = join(overrideDir, '.bun-version');
++  if (existsSync(overrideBinary) && isFixedCanaryBun(overrideBinary)) {
++    writeFileSync(versionFile, 'canary');
++    return;
++  }
++
++  const stagingRoot = mkdtempSync(join(cacheDir, `bun-canary-${targetOS}-${targetArch}-`));
++  const stagedOverride = join(stagingRoot, 'override');
++  const stagedBinary = join(stagedOverride, `bun${binExt}`);
++  try {
++    mkdirSync(stagedOverride, { recursive: true });
++    if (targetOS === (process.platform === 'darwin' ? 'macos' : platform) && targetArch === getArch() && isFixedCanaryBun(process.execPath)) {
++      copyFileSync(process.execPath, stagedBinary);
++    } else {
++      const asset =
++        targetOS === 'macos'
++          ? targetArch === 'arm64' ? 'bun-darwin-aarch64' : 'bun-darwin-x64'
++          : targetOS === 'linux'
++            ? targetArch === 'arm64' ? 'bun-linux-aarch64' : 'bun-linux-x64'
++            : 'bun-windows-x64-baseline';
++      const zipPath = join(stagingRoot, 'bun.zip');
++      await downloadFile(`https://github.com/oven-sh/bun/releases/download/canary/${asset}.zip`, zipPath);
++      if (targetOS === 'win') {
++        execFileSync('powershell', [
++          '-NoProfile',
++          '-Command',
++          'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force',
++          zipPath,
++          stagingRoot,
++        ]);
++      } else {
++        execFileSync('unzip', ['-q', '-o', zipPath, '-d', stagingRoot]);
++      }
++      copyFileSync(join(stagingRoot, asset, `bun${binExt}`), stagedBinary);
++    }
++    if (targetOS !== 'win') chmodSync(stagedBinary, '755');
++    if (!isFixedCanaryBun(stagedBinary)) {
++      throw new Error('Downloaded Bun canary does not satisfy the required >=1.4.0 runtime contract.');
++    }
++    writeFileSync(join(stagedOverride, '.bun-version'), 'canary');
++    rmSync(overrideDir, { force: true, recursive: true });
++    mkdirSync(dirname(overrideDir), { recursive: true });
++    renameSync(stagedOverride, overrideDir);
++    const identity = readBunIdentity(overrideBinary);
++    console.log(`Prepared Electrobun Bun runtime ${identity.version} (${identity.revision}).`);
++  } finally {
++    rmSync(stagingRoot, { force: true, recursive: true });
++  }
++}
++
+ async function ensureCliBinary() {
+   // Check if CLI binary exists in bin location (where npm expects it)
+   const binLocation = join(electrobunDir, 'bin', 'electrobun' + binExt);
+@@ -143,6 +328,8 @@ async function ensureCliBinary() {
+ async function main() {
+   try {
+     const args = process.argv.slice(2);
++    await ensureCoreDependencies();
++    await ensureCanaryBunOverride();
+     const cliPath = await ensureCliBinary();
+ 
+     // Replace this process with the actual CLI
+diff --git a/dist/api/bun/proc/native.ts b/dist/api/bun/proc/native.ts
+index f0f6c2532..409d126b4 100644
+--- a/dist/api/bun/proc/native.ts
++++ b/dist/api/bun/proc/native.ts
+@@ -1320,7 +1320,11 @@ window.__electrobunBunBridge = window.__electrobunBunBridge || window.webkit?.me
+ 				width,
+ 				height,
+ 				autoResize,
+-				toCString(partition || "persist:default"),
++				toCString(
++					process.platform === "linux"
++						? (partition ?? "")
++						: (partition || "persist:default"),
++				),
+ 				webviewDecideNavigation,
+ 				webviewEventJSCallback,
+ 				eventBridgeHandler, // Event-only bridge (always active, for dom-ready, navigation, etc.)
+diff --git a/dist/api/bun/core/Utils.ts b/dist/api/bun/core/Utils.ts
+index 54d629801..1a660e365 100644
+--- a/dist/api/bun/core/Utils.ts
++++ b/dist/api/bun/core/Utils.ts
+@@ -137,6 +137,14 @@ export const quit = () => {
+ 	}
+ 
+ 	if (native) {
++		// Linux CEF schedules browser teardown on the native event loop. Electrobun
++		// v1.18.1 stops that loop and calls CefShutdown before the queued teardown
++		// completes, which segfaults after the app has already flushed its state.
++		// Exit directly only after svvy's before-quit lifecycle has completed.
++		if (process.platform === "linux") {
++			native.symbols.forceExit(0);
++			return;
++		}
+ 		native.symbols.stopEventLoop();
+ 		native.symbols.waitForShutdownComplete(5000);
+ 		native.symbols.forceExit(0);
+diff --git a/src/cli/index.ts b/src/cli/index.ts
+--- a/src/cli/index.ts
++++ b/src/cli/index.ts
+@@ -556,7 +556,8 @@ async function downloadCustomBun(
+ 	const binExt = platformOS === "win" ? ".exe" : "";
+ 	const overrideDir = join(ELECTROBUN_CACHE_PATH, "bun-override", `${platformOS}-${platformArch}`);
+ 	const overrideBinary = join(overrideDir, `bun${binExt}`);
+-	const bunUrl = `https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/${bunUrlSegment}`;
++	const releaseTag = bunVersion === "canary" ? "canary" : `bun-v${bunVersion}`;
++	const bunUrl = `https://github.com/oven-sh/bun/releases/download/${releaseTag}/${bunUrlSegment}`;
+ 
+ 	console.log(`Using custom Bun version: ${bunVersion}`);
+ 	console.log(`Downloading from: ${bunUrl}`);

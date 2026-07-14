@@ -149,7 +149,9 @@ export function buildExtension(
       if (processEvidence.status !== "completed") {
         return yield* fail(
           input.extensionId,
-          `Extension build process ${processEvidence.status}.`,
+          processEvidence.status === "timed-out"
+            ? "Extension build process timed out."
+            : `Extension build process failed during ${processEvidence.stage}.`,
           processEvidence.status === "timed-out" ? "timed-out" : "process-failed",
         );
       }

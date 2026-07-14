@@ -52,6 +52,7 @@ import {
   APP_NATIVE_SVVYX_METADATA,
   appNativeSvvyxMetadataFingerprintInput,
 } from "./svvyx-build-metadata";
+import { BUILTIN_EXTENSIONS, type ExtensionRecord } from "./extension-records";
 
 function nativeToolLookup(input: {
   toolName: string;
@@ -284,7 +285,12 @@ function makeSourceEditHarness(
         }),
         Effect.provideService(ExtensionBuildProcessPort, {
           run: (plan) =>
-            Effect.succeed(harnessOptions.buildProcess?.(plan, files) ?? { status: "failed" }),
+            Effect.succeed(
+              harnessOptions.buildProcess?.(plan, files) ?? {
+                status: "failed",
+                stage: "validation",
+              },
+            ),
         }),
         Effect.provide(extensionSourceRootsLayer),
         Effect.provide(packagedTemplatesLayer),
@@ -395,7 +401,167 @@ function packagedWorkflowAgentSourceText(sourceId: DefaultWorkflowAgentSourceId)
   return workflowAgentSourceText(sourceId, { label: labels[sourceId] });
 }
 
+function seedPackagedBuiltinTemplates(harness: ReturnType<typeof makeSourceEditHarness>): void {
+  for (const builtinRecord of BUILTIN_EXTENSIONS) {
+    const builtin: ExtensionRecord = builtinRecord;
+    const generatedInstructions = builtin.generatedInstructions ?? [];
+    const instructionFiles = generatedInstructions.map((entry) => ({
+      file: entry.output.split("/").at(-1)!,
+      bypassed: false,
+    }));
+    harness.writeFile(
+      `${harness.packagedExtensionsRoot}/${builtin.id}/manifest.json`,
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          id: builtin.id,
+          interface: builtin.interface,
+          title: builtin.title,
+          description: builtin.description,
+          typescriptApiEnabled: builtin.typescriptApiEnabled,
+          instructionFiles,
+          ...(generatedInstructions.length > 0 ? { generatedInstructions } : {}),
+          ...(builtin.cliRequirements ? { cliRequirements: builtin.cliRequirements } : {}),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    harness.writeFile(
+      `${harness.packagedExtensionsRoot}/${builtin.id}/instructions/minimal.mdx`,
+      `packaged minimal ${builtin.id}\n`,
+    );
+    for (const entry of generatedInstructions) {
+      harness.writeFile(
+        `${harness.packagedExtensionsRoot}/${builtin.id}/${entry.script}`,
+        `export const extensionId = ${JSON.stringify(builtin.id)};\n`,
+      );
+      harness.writeFile(
+        `${harness.packagedExtensionsRoot}/${builtin.id}/${entry.output}`,
+        `generated ${builtin.id}\n`,
+      );
+    }
+  }
+}
+
 describe("@svvy/extensions Effect service", () => {
+  it.effect(
+    "scaffolds every missing source-backed builtin once and preserves customized sources",
+    () => {
+      const harness = makeSourceEditHarness();
+      seedPackagedBuiltinTemplates(harness);
+      const customManifest = `${JSON.stringify({
+        schemaVersion: 1,
+        id: "base-common",
+        interface: "instructions",
+        title: "Base Common",
+        description: "Customized shared instructions.",
+        typescriptApiEnabled: false,
+        instructionFiles: [],
+        customField: { preserved: true },
+      })}\n`;
+      const customMinimal = "customized base common bytes\n";
+      harness.writeFile(
+        `${harness.extensionsRoot}/sources/builtin/base-common/manifest.json`,
+        customManifest,
+      );
+      harness.writeFile(
+        `${harness.extensionsRoot}/sources/builtin/base-common/instructions/minimal.mdx`,
+        customMinimal,
+      );
+
+      return Effect.gen(function* () {
+        const extensions = yield* Extensions;
+        const sourceBackedIds = BUILTIN_EXTENSIONS.filter(
+          (builtin) => !APP_NATIVE_SVVYX_METADATA.has(builtin.id),
+        ).map((builtin) => builtin.id);
+        const appNativeIds = BUILTIN_EXTENSIONS.filter((builtin) =>
+          APP_NATIVE_SVVYX_METADATA.has(builtin.id),
+        ).map((builtin) => builtin.id);
+        const first = yield* extensions.builtin.scaffoldMissing();
+
+        assert.deepStrictEqual(
+          first.materializedExtensionIds.map(String),
+          sourceBackedIds.filter((extensionId) => extensionId !== "base-common"),
+        );
+        assert.deepStrictEqual(first.existingExtensionIds.map(String), ["base-common"]);
+        assert.deepStrictEqual(first.appNativeExtensionIds.map(String), appNativeIds);
+        for (const extensionId of sourceBackedIds) {
+          assert.isNotNull(
+            harness.readFile(
+              `${harness.extensionsRoot}/sources/builtin/${extensionId}/manifest.json`,
+            ),
+          );
+        }
+        for (const extensionId of appNativeIds) {
+          assert.isNull(
+            harness.readFile(
+              `${harness.extensionsRoot}/sources/builtin/${extensionId}/manifest.json`,
+            ),
+          );
+        }
+        assert.strictEqual(
+          harness.readFile(`${harness.extensionsRoot}/sources/builtin/base-common/manifest.json`),
+          customManifest,
+        );
+        assert.strictEqual(
+          harness.readFile(
+            `${harness.extensionsRoot}/sources/builtin/base-common/instructions/minimal.mdx`,
+          ),
+          customMinimal,
+        );
+
+        const second = yield* extensions.builtin.scaffoldMissing();
+        assert.deepStrictEqual(second.materializedExtensionIds, []);
+        assert.deepStrictEqual(second.existingExtensionIds.map(String), sourceBackedIds);
+        assert.deepStrictEqual(second.appNativeExtensionIds.map(String), appNativeIds);
+
+        const registry = yield* extensions.registry.observe();
+        assert.deepStrictEqual(
+          registry.observations
+            .filter((observation) => observation.category === "builtin")
+            .flatMap((observation) =>
+              observation.materializationPlan === null ? [] : [observation.extensionId],
+            ),
+          [],
+        );
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
+
+  it.effect("rejects a partial live builtin root before materializing any source", () => {
+    const harness = makeSourceEditHarness();
+    seedPackagedBuiltinTemplates(harness);
+    harness.writeFile(
+      `${harness.extensionsRoot}/sources/builtin/smithers/partial.txt`,
+      "ambiguous partial source\n",
+    );
+    return Effect.gen(function* () {
+      const error = yield* (yield* Extensions).builtin.scaffoldMissing().pipe(Effect.flip);
+      assertExtensionError(error, {
+        _tag: "ExtensionError",
+        extensionId: "smithers",
+        operation: "extensions.builtin.scaffoldMissing",
+        reason: "invalid-input",
+      });
+      assert.isNull(
+        harness.readFile(`${harness.extensionsRoot}/sources/builtin/base-common/manifest.json`),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("rejects an unavailable packaged builtin root with a typed error", () => {
+    const harness = makeSourceEditHarness();
+    return Effect.gen(function* () {
+      const error = yield* (yield* Extensions).builtin.scaffoldMissing().pipe(Effect.flip);
+      assertExtensionError(error, {
+        _tag: "ExtensionError",
+        operation: "extensions.builtin.scaffoldMissing",
+        reason: "not-found",
+      });
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("lists and inspects builtin extension registry records", () =>
     Effect.gen(function* () {
       const service = yield* makeTestExtensions();
@@ -4113,7 +4279,7 @@ function provideGeneratedPackagePlatform<A, E>(
       probe: () => Effect.succeed({ status: "missing" }),
     }),
     Effect.provideService(ExtensionBuildProcessPort, {
-      run: () => Effect.succeed({ status: "failed" }),
+      run: () => Effect.succeed({ status: "failed", stage: "spawn" }),
     }),
     Effect.provide(
       layerExtensionSourceRootsPort({

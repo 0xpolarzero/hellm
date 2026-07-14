@@ -160,7 +160,16 @@ export const ExtensionBuildProcessPlanSchema = Schema.Struct({
 
 export const ExtensionBuildProcessEvidenceSchema = Schema.Union([
   Schema.Struct({ status: Schema.Literal("timed-out") }),
-  Schema.Struct({ status: Schema.Literal("failed") }),
+  Schema.Struct({
+    status: Schema.Literal("failed"),
+    stage: Schema.Literals([
+      "validation",
+      "spawn",
+      "runtime-helper",
+      "runtime-protocol",
+      "output-verification",
+    ]),
+  }),
   Schema.Struct({
     status: Schema.Literal("completed"),
     exitCode: Schema.Int,

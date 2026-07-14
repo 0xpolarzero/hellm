@@ -22,8 +22,19 @@ describe("dev browser tools production boundary", () => {
 
   test("e2e builds the dev channel so browser-tools inspection stays dev-only", () => {
     const configSource = readProjectFile("electrobun-e2e.config.ts");
+    const e2eBuildSource = readProjectFile("scripts/build-e2e-app.ts");
+    const embeddedBunSource = readProjectFile("scripts/e2e-embedded-bun.ts");
+    const packageJson = JSON.parse(readProjectFile("package.json")) as {
+      scripts: Record<string, string>;
+    };
 
-    expect(configSource).toContain('buildCommand: ["bun", "run", "build:dev"]');
+    expect(configSource).toContain('buildCommand: ["bun", "scripts/build-e2e-app.ts"]');
+    expect(e2eBuildSource).toContain('"run", "build:dev"');
+    expect(e2eBuildSource).toContain("E2E_EMBEDDED_BUN_PATH_ENV");
+    expect(embeddedBunSource).toContain('"SVVY_E2E_EMBEDDED_BUN_PATH"');
+    expect(packageJson.scripts.build).not.toContain("SVVY_E2E_EMBEDDED_BUN_PATH");
+    expect(packageJson.scripts["build:dev"]).not.toContain("SVVY_E2E_EMBEDDED_BUN_PATH");
+    expect(packageJson.scripts["build:check"]).not.toContain("SVVY_E2E_EMBEDDED_BUN_PATH");
   });
 
   test("production startup does not statically import or mount browser tools", () => {
@@ -33,13 +44,35 @@ describe("dev browser tools production boundary", () => {
     expect(indexSource).not.toContain("electrobun-browser-tools/bridge");
     expect(indexSource).not.toContain("mountElectrobunToolBridge");
     expect(indexSource).not.toContain("tool-bridge");
-    const prepareStart = indexSource.indexOf("prepareMainWindow:");
-    const devOnlyReturn = indexSource.indexOf('(await appChannelPromise) !== "dev"', prepareStart);
+    const mountFunctionStart = indexSource.indexOf("const mountDevBrowserToolsForMainWindow");
+    const devOnlyReturn = indexSource.indexOf(
+      '(await appChannelPromise) !== "dev"',
+      mountFunctionStart,
+    );
     const dynamicImport = indexSource.indexOf('await import("./dev-browser-tools-bridge")');
-    expect(prepareStart).toBeGreaterThanOrEqual(0);
-    expect(devOnlyReturn).toBeGreaterThan(prepareStart);
+    expect(mountFunctionStart).toBeGreaterThanOrEqual(0);
+    expect(devOnlyReturn).toBeGreaterThan(mountFunctionStart);
     expect(devOnlyReturn).toBeLessThan(dynamicImport);
-    expect(dynamicImport).toBeGreaterThan(prepareStart);
+    expect(dynamicImport).toBeGreaterThan(mountFunctionStart);
+  });
+
+  test("dev browser tools mount after renderer readiness and before app.ready", () => {
+    const indexSource = readProjectFile("src/bun/index.ts");
+
+    expect(indexSource).not.toContain("prepareMainWindow:");
+    const desktopStarted = indexSource.indexOf("await desktopApp.start();");
+    const mainWindowResolved = indexSource.indexOf("const mainWindow = host.getMainWindow();");
+    const browserToolsMounted = indexSource.indexOf(
+      "await mountDevBrowserToolsForMainWindow(mainWindow);",
+    );
+    const appReadyRecorded = indexSource.indexOf('recordDevBrowserToolsEvent("app.ready"');
+    const bridgeMetadataPrinted = indexSource.indexOf("svvy bridge:");
+
+    expect(desktopStarted).toBeGreaterThanOrEqual(0);
+    expect(mainWindowResolved).toBeGreaterThan(desktopStarted);
+    expect(browserToolsMounted).toBeGreaterThan(mainWindowResolved);
+    expect(appReadyRecorded).toBeGreaterThan(browserToolsMounted);
+    expect(bridgeMetadataPrinted).toBeGreaterThan(appReadyRecorded);
   });
 
   test("stable bundle package copy list excludes browser-tools bridge runtime", () => {
