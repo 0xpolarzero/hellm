@@ -205,12 +205,13 @@ const packages: WorkPackage[] = [
   },
 ];
 
-const planner = createCodexAgent({ taskSlug: "complete-product-audit", model: "gpt-5.6-luna", reasoningEffort: "xhigh", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 3_000_000, sandbox: "read-only", fullAuto: true });
-const packagePlanner = createCodexAgent({ taskSlug: "complete-product-package-plan", model: "gpt-5.6-luna", reasoningEffort: "high", timeoutMs: 90 * 60 * 1000, maxOutputBytes: 3_000_000, sandbox: "read-only", fullAuto: true });
-const testAuthor = createCodexAgent({ taskSlug: "complete-product-tests", model: "gpt-5.6-luna", reasoningEffort: "xhigh", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
-const implementer = createCodexAgent({ taskSlug: "complete-product-implement", model: "gpt-5.6-luna", reasoningEffort: "xhigh", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
-const reviewer = createCodexAgent({ taskSlug: "complete-product-review", model: "gpt-5.6-luna", reasoningEffort: "xhigh", timeoutMs: 90 * 60 * 1000, maxOutputBytes: 3_000_000, sandbox: "read-only", fullAuto: true });
-const fixer = createCodexAgent({ taskSlug: "complete-product-fix", model: "gpt-5.6-luna", reasoningEffort: "xhigh", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
+const generalModel = process.env.SVVY_WORKFLOWS_CODEX_MODEL?.trim() || "gpt-5.4";
+const planner = createCodexAgent({ taskSlug: "complete-product-audit", model: generalModel, reasoningEffort: "xhigh", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 3_000_000, sandbox: "read-only", fullAuto: true });
+const packagePlanner = createCodexAgent({ taskSlug: "complete-product-package-plan", model: generalModel, reasoningEffort: "high", timeoutMs: 90 * 60 * 1000, maxOutputBytes: 3_000_000, sandbox: "read-only", fullAuto: true });
+const testAuthor = createCodexAgent({ taskSlug: "complete-product-tests", model: generalModel, reasoningEffort: "xhigh", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
+const implementer = createCodexAgent({ taskSlug: "complete-product-implement", model: generalModel, reasoningEffort: "xhigh", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
+const reviewer = createCodexAgent({ taskSlug: "complete-product-review", model: generalModel, reasoningEffort: "xhigh", timeoutMs: 90 * 60 * 1000, maxOutputBytes: 3_000_000, sandbox: "read-only", fullAuto: true });
+const fixer = createCodexAgent({ taskSlug: "complete-product-fix", model: generalModel, reasoningEffort: "xhigh", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
 const e2eAgent = createCodexAgent({ taskSlug: "complete-product-e2e", model: "gpt-5.3-codex-spark", reasoningEffort: "high", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
 
 export default smithers((ctx) => {
