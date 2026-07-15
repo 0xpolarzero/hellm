@@ -10,6 +10,7 @@ const inputSchema = z.object({
   worktreeRoot: z.string().default(".worktrees/complete-product"),
   branch: z.string().default("workflow/complete-product"),
   baseBranch: z.string().default("main"),
+  packageIds: z.array(z.string()).optional(),
   taskTimeoutMs: z.number().int().positive().default(parsePositiveInt(process.env.SVVY_COMPLETE_PRODUCT_TASK_TIMEOUT_MS, 3 * 60 * 60 * 1000)),
   reviewTimeoutMs: z.number().int().positive().default(parsePositiveInt(process.env.SVVY_COMPLETE_PRODUCT_REVIEW_TIMEOUT_MS, 90 * 60 * 1000)),
   maxReviewIterations: z.number().int().positive().default(4),
@@ -216,10 +217,16 @@ export default smithers((ctx) => {
   const input = inputSchema.parse(ctx.input ?? {});
   const repoRoot = resolve(input.repoRoot);
   const worktreePath = resolve(repoRoot, input.worktreeRoot);
+  const requestedPackageIds = new Set(input.packageIds ?? packages.map((item) => item.id));
+  const unknownPackageIds = [...requestedPackageIds].filter((id) => !packages.some((item) => item.id === id));
+  if (unknownPackageIds.length > 0) {
+    throw new Error(`Unknown package ids: ${unknownPackageIds.join(", ")}`);
+  }
+  const activePackages = packages.filter((item) => requestedPackageIds.has(item.id));
   const audit = ctx.latest("audit", "audit-product");
-  const packageReviews = new Map(packages.map((item) => [item.id, ctx.latest("review", `${item.id}-review`) as Review | undefined]));
-  const packageImplementations = new Map(packages.map((item) => [item.id, ctx.latest("implementation", `${item.id}-implement`)]));
-  const allPackagesReady = packages.every((item) => packageImplementations.get(item.id)?.status !== "BLOCKED" && packageReviews.get(item.id)?.approved === true);
+  const packageReviews = new Map(activePackages.map((item) => [item.id, ctx.latest("review", `${item.id}-review`) as Review | undefined]));
+  const packageImplementations = new Map(activePackages.map((item) => [item.id, ctx.latest("implementation", `${item.id}-implement`)]));
+  const allPackagesReady = activePackages.every((item) => packageImplementations.get(item.id)?.status !== "BLOCKED" && packageReviews.get(item.id)?.approved === true);
   const finalReview = ctx.latest("review", "final-review") as Review | undefined;
   const finalReviewCount = (ctx.outputs.review ?? []).filter((row) => row.packageId === "final").length;
   const stopFinal = finalReview?.approved === true || finalReview?.continueLoop === false;
@@ -235,13 +242,13 @@ export default smithers((ctx) => {
           {audit?.status === "READY" ? (
             <Sequence>
               <Parallel maxConcurrency={3}>
-                {packages.map((item) => (
+                {activePackages.map((item) => (
                   <Task id={`${item.id}-plan`} output={outputs.plans} agent={packagePlanner} timeoutMs={input.reviewTimeoutMs}>
                     {packagePlanPrompt(item, audit)}
                   </Task>
                 ))}
               </Parallel>
-              {packages.map((item) => {
+              {activePackages.map((item) => {
                 const plan = ctx.latest("plans", `${item.id}-plan`);
                 const testResult = ctx.latest("tests", `${item.id}-tests`);
                 const implementation = packageImplementations.get(item.id);
@@ -311,13 +318,13 @@ export default smithers((ctx) => {
               approved: finalReview?.approved ?? false,
               branch: input.branch,
               worktreePath,
-              packageCount: packages.length,
-              packageApprovals: packages.filter((item) => packageReviews.get(item.id)?.approved).map((item) => item.id),
+              packageCount: activePackages.length,
+              packageApprovals: activePackages.filter((item) => packageReviews.get(item.id)?.approved).map((item) => item.id),
               finalVerdict: finalReview?.verdict ?? null,
               summary: finalReview?.approved ? "All package, composed-app, backend coverage, and live journey gates were approved." : "Product completion workflow did not reach final approval.",
               unresolvedIssues: [
                 ...(audit?.blockers ?? []),
-                ...packages.flatMap((item) => packageReviews.get(item.id)?.blockers ?? []),
+                ...activePackages.flatMap((item) => packageReviews.get(item.id)?.blockers ?? []),
                 ...(finalReview?.blockers ?? []),
                 ...(finalReview?.findings ?? []).map((finding) => `${finding.severity} ${finding.location}: ${finding.problem}`),
               ],
