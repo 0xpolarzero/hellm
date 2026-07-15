@@ -1,5 +1,5 @@
 import { CodexAgent } from "smithers-orchestrator";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { resolve } from "node:path";
 
@@ -62,12 +62,24 @@ function createIsolatedCodexEnv(taskSlug: string): Record<string, string> {
   const sourceCodexHome =
     process.env.CODEX_HOME?.trim() || resolve(process.env.HOME ?? homedir(), ".codex");
 
-  for (const filename of ["auth.json", "config.toml"]) {
-    const source = resolve(sourceCodexHome, filename);
-    const target = resolve(codexHome, filename);
-    if (existsSync(source) && !existsSync(target)) {
-      copyFileSync(source, target);
+  const authSource = resolve(sourceCodexHome, "auth.json");
+  const authTarget = resolve(codexHome, "auth.json");
+  if (existsSync(authSource)) {
+    const auth = JSON.parse(readFileSync(authSource, "utf8")) as {
+      OPENAI_API_KEY?: string;
+      tokens?: { access_token?: string };
+    };
+    if (auth.tokens?.access_token) {
+      delete auth.OPENAI_API_KEY;
+      writeFileSync(authTarget, `${JSON.stringify(auth)}\n`, { mode: 0o600 });
+    } else {
+      copyFileSync(authSource, authTarget);
     }
+  }
+
+  const configSource = resolve(sourceCodexHome, "config.toml");
+  if (existsSync(configSource)) {
+    copyFileSync(configSource, resolve(codexHome, "config.toml"));
   }
 
   return {
