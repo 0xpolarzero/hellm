@@ -31,12 +31,13 @@ export function createCodexAgent(input: {
     maxOutputBytes: input.maxOutputBytes,
     skipGitRepoCheck: true,
     sandbox: input.sandbox,
-    fullAuto: input.fullAuto,
+    fullAuto: false,
     timeoutMs: input.timeoutMs,
     idleTimeoutMs: input.idleTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS,
     config: {
       model_reasoning_effort: input.reasoningEffort,
       "features.multi_agent": false,
+      "features.multi_agent_v2": false,
       "agents.max_threads": 1,
       ...input.config,
     },
@@ -71,5 +72,6 @@ function createIsolatedCodexEnv(taskSlug: string): Record<string, string> {
 
   return {
     CODEX_HOME: codexHome,
+    PATH: [process.env.NVM_BIN, process.env.PATH].filter(Boolean).join(":"),
   };
 }
