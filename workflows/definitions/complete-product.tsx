@@ -271,14 +271,14 @@ export default smithers((ctx) => {
                     {implementation && implementation.status !== "BLOCKED" ? (
                       <Loop id={`${item.id}-review-loop`} until={stop} maxIterations={input.maxReviewIterations} onMaxReached="fail">
                         <Sequence>
-                          {reviewCount > 0 ? (
+                          <Task id={`${item.id}-review`} output={outputs.review} agent={reviewer} timeoutMs={input.reviewTimeoutMs}>
+                            {reviewPrompt(item, testResult!, implementation, reviewCount + 1)}
+                          </Task>
+                          {reviewCount > 0 && review?.approved !== true && review?.continueLoop !== false ? (
                             <Task id={`${item.id}-address`} output={outputs.address} agent={fixer} timeoutMs={input.taskTimeoutMs}>
                               {addressPrompt(item, review)}
                             </Task>
                           ) : null}
-                          <Task id={`${item.id}-review`} output={outputs.review} agent={reviewer} timeoutMs={input.reviewTimeoutMs}>
-                            {reviewPrompt(item, testResult!, implementation, reviewCount + 1)}
-                          </Task>
                         </Sequence>
                       </Loop>
                     ) : null}
@@ -301,14 +301,14 @@ export default smithers((ctx) => {
               </Task>
               <Loop id="final-review-loop" until={stopFinal} maxIterations={input.maxFinalIterations} onMaxReached="fail">
                 <Sequence>
-                  {finalReviewCount > 0 ? (
+                  <Task id="final-review" output={outputs.review} agent={reviewer} timeoutMs={input.taskTimeoutMs}>
+                    {finalReviewPrompt(finalReviewCount + 1)}
+                  </Task>
+                  {finalReviewCount > 0 && finalReview?.approved !== true && finalReview?.continueLoop !== false ? (
                     <Task id="final-address" output={outputs.address} agent={fixer} timeoutMs={input.taskTimeoutMs}>
                       {finalAddressPrompt(finalReview)}
                     </Task>
                   ) : null}
-                  <Task id="final-review" output={outputs.review} agent={reviewer} timeoutMs={input.taskTimeoutMs}>
-                    {finalReviewPrompt(finalReviewCount + 1)}
-                  </Task>
                 </Sequence>
               </Loop>
             </Sequence>
