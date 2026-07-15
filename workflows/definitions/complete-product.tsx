@@ -1,6 +1,6 @@
 /** @jsxImportSource smithers-orchestrator */
 
-import { Loop, Parallel, Sequence, Task, Workflow, Worktree, createSmithers } from "smithers-orchestrator";
+import { Loop, Parallel, Sequence, Task, Worktree, openSmithersBackend } from "smithers-orchestrator";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { createCodexAgent, parsePositiveInt } from "../components/codex";
@@ -111,7 +111,7 @@ const resultSchema = z.object({
   unresolvedIssues: z.array(z.string()),
 });
 
-const { smithers, outputs } = createSmithers({
+const { smithers, Workflow, outputs } = await openSmithersBackend({
   audit: auditSchema,
   plans: packagePlanSchema,
   tests: testSchema,

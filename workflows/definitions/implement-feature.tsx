@@ -10,7 +10,7 @@
  * 6. Review the result, then address findings and re-review until the reviewer approves or reports a real block.
  */
 
-import { Loop, Sequence, Task, Workflow, Worktree, createSmithers } from "smithers-orchestrator";
+import { Loop, Sequence, Task, Worktree, openSmithersBackend } from "smithers-orchestrator";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { createCodexAgent, parsePositiveInt } from "../components/codex";
@@ -177,7 +177,7 @@ const resultSchema = z.object({
   unresolvedIssues: z.array(z.string()),
 });
 
-const { smithers, outputs } = createSmithers({
+const { smithers, Workflow, outputs } = await openSmithersBackend({
   featureInventory: featureInventorySchema,
   testCoveragePlan: testCoveragePlanSchema,
   testPlan: testPlanSchema,
