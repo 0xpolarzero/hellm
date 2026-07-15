@@ -241,9 +241,9 @@ export default smithers((ctx) => {
 
           {audit?.status === "READY" ? (
             <Sequence>
-              <Parallel maxConcurrency={3}>
+              <Parallel maxConcurrency={4}>
                 {activePackages.map((item) => (
-                  <Task id={`${item.id}-plan`} output={outputs.plans} agent={packagePlanner} timeoutMs={input.reviewTimeoutMs}>
+                  <Task key={item.id} id={`${item.id}-plan`} output={outputs.plans} agent={packagePlanner} timeoutMs={input.reviewTimeoutMs}>
                     {packagePlanPrompt(item, audit)}
                   </Task>
                 ))}
@@ -256,7 +256,7 @@ export default smithers((ctx) => {
                 const reviewCount = (ctx.outputs.review ?? []).filter((row) => row.packageId === item.id).length;
                 const stop = implementation?.status === "BLOCKED" || review?.approved === true || review?.continueLoop === false;
                 return (
-                  <Sequence>
+                  <Sequence key={item.id}>
                     {plan && plan.status !== "BLOCKED" ? (
                       <Task id={`${item.id}-tests`} output={outputs.tests} agent={testAuthor} timeoutMs={input.taskTimeoutMs}>
                         {testPrompt(item, audit, plan)}
