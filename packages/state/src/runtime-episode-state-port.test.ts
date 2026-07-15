@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import {
   RuntimeEpisodeStatePort,
+  RuntimeArtifactStatePort,
   StateContractError,
   type ArtifactId,
   type CommandId,
@@ -15,7 +16,7 @@ import {
   type WorkspaceId,
   type WorkspaceSessionId,
 } from "@svvy/core";
-import { layerRuntimeEpisodeStatePort } from "./index";
+import { layerRuntimeArtifactStatePort, layerRuntimeEpisodeStatePort } from "./index";
 import { layerStructuredSessionState, StructuredSessionState } from "./structured-session-state";
 import { runTestEffect } from "./effect.test-support";
 
@@ -70,14 +71,28 @@ describe("RuntimeEpisodeStatePort", () => {
             title: "Thread report",
             summary: "Record a thread report.",
           });
-          const artifact = yield* state.createArtifact({
-            sessionId: workspaceSessionId,
-            threadId: thread.id,
-            sourceCommandId: command.id,
-            kind: "text",
-            name: `${command.id}.md`,
-            content: "# Runtime episode report\n",
-          });
+          const artifactState = yield* RuntimeArtifactStatePort;
+          const artifact = (
+            yield* artifactState.recordArtifactMetadata({
+              workspaceSessionId,
+              threadId: thread.id as ThreadId,
+              sourceCommandId: command.id as CommandId,
+              kind: "text",
+              name: `${command.id}.md`,
+              storedPath: join(
+                workspace.artifactDir,
+                workspaceSessionId,
+                `${command.id}.md`,
+              ) as never,
+              mimeType: "text/markdown",
+              byteSize: Buffer.byteLength("# Runtime episode report\n"),
+              sha256: testDigest.sha256Hex("# Runtime episode report\n"),
+              immutable: false,
+              materializationStatus: "ready",
+            })
+          ).value;
+          const artifactId = artifact.artifactId as ArtifactId;
+          void artifactId;
 
           const port = yield* RuntimeEpisodeStatePort;
           const episodeResult = yield* port.recordHandlerThreadEpisode({
@@ -92,7 +107,7 @@ describe("RuntimeEpisodeStatePort", () => {
             outcome: "completed",
             notifyOrchestrator: true,
             relatedCommandIds: [command.id as CommandId],
-            relatedArtifactIds: [artifact.id as ArtifactId],
+            relatedArtifactIds: [artifact.artifactId as ArtifactId],
           });
           const episode = episodeResult.value;
           const snapshot = yield* state.getSessionState(workspaceSessionId);
@@ -148,14 +163,18 @@ describe("RuntimeEpisodeStatePort", () => {
           ]);
         }).pipe(
           Effect.provide(
-            layerRuntimeEpisodeStatePort.pipe(
-              Layer.provideMerge(
-                layerStructuredSessionState({
+              layerRuntimeEpisodeStatePort.pipe(
+                Layer.provideMerge(
+                  layerRuntimeArtifactStatePort.pipe(
+                    Layer.provideMerge(
+                      layerStructuredSessionState({
                   workspace,
                   digest: testDigest,
-                }),
+                      }),
+                    ),
+                  ),
+                ),
               ),
-            ),
           ),
         ),
       ),

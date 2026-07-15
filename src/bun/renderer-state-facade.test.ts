@@ -58,6 +58,7 @@ describe("narrowRendererStateFacade", () => {
         markRead: async () => ({ receipt: {} }) as never,
         markVisibleRangeRead: async () => ({ receipt: {} }) as never,
         clearWorkspaceUnread: async () => ({ receipt: {} }) as never,
+        setViewPreferences: async () => ({ receipt: {} }) as never,
       },
       appPreferences: {
         update: async () => ({ receipt: {} }) as never,
