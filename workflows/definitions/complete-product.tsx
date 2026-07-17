@@ -1,16 +1,19 @@
 /** @jsxImportSource smithers-orchestrator */
 
-import { Loop, Parallel, Sequence, Task, Worktree, openSmithersBackend } from "smithers-orchestrator";
+import { BaseCliAgent } from "@smithers-orchestrator/agents";
+import { Loop, Parallel, PiAgent, Sequence, Task, Worktree, openSmithersBackend } from "smithers-orchestrator";
 import { resolve } from "node:path";
 import { z } from "zod";
-import { createCodexAgent, parsePositiveInt } from "../components/codex";
+import { createCodexAgent, parsePositiveInt, type CodexSandbox } from "../components/codex";
 
 const inputSchema = z.object({
   repoRoot: z.string().default("."),
-  worktreeRoot: z.string().default(".worktrees/complete-product"),
-  branch: z.string().default("workflow/complete-product"),
+  worktreeRoot: z.string().default(".worktrees/complete-product-v2"),
+  branch: z.string().default("workflow/complete-product-v2"),
   baseBranch: z.string().default("main"),
+  referenceWorktree: z.string().optional(),
   packageIds: z.array(z.string()).optional(),
+  maxPackageConcurrency: z.number().int().positive().default(10),
   taskTimeoutMs: z.number().int().positive().default(parsePositiveInt(process.env.SVVY_COMPLETE_PRODUCT_TASK_TIMEOUT_MS, 3 * 60 * 60 * 1000)),
   reviewTimeoutMs: z.number().int().positive().default(parsePositiveInt(process.env.SVVY_COMPLETE_PRODUCT_REVIEW_TIMEOUT_MS, 90 * 60 * 1000)),
   maxReviewIterations: z.number().int().positive().default(4),
@@ -205,164 +208,527 @@ const packages: WorkPackage[] = [
   },
 ];
 
-const generalModel = process.env.SVVY_WORKFLOWS_CODEX_MODEL?.trim() || "gpt-5.4";
-const planner = createCodexAgent({ taskSlug: "complete-product-audit", model: generalModel, reasoningEffort: "xhigh", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 3_000_000, sandbox: "read-only", fullAuto: true });
-const packagePlanner = createCodexAgent({ taskSlug: "complete-product-package-plan", model: generalModel, reasoningEffort: "high", timeoutMs: 90 * 60 * 1000, maxOutputBytes: 3_000_000, sandbox: "read-only", fullAuto: true });
-const testAuthor = createCodexAgent({ taskSlug: "complete-product-tests", model: generalModel, reasoningEffort: "xhigh", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
-const implementer = createCodexAgent({ taskSlug: "complete-product-implement", model: generalModel, reasoningEffort: "xhigh", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
-const reviewer = createCodexAgent({ taskSlug: "complete-product-review", model: generalModel, reasoningEffort: "xhigh", timeoutMs: 90 * 60 * 1000, maxOutputBytes: 3_000_000, sandbox: "read-only", fullAuto: true });
-const fixer = createCodexAgent({ taskSlug: "complete-product-fix", model: generalModel, reasoningEffort: "xhigh", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
-const e2eAgent = createCodexAgent({ taskSlug: "complete-product-e2e", model: "gpt-5.3-codex-spark", reasoningEffort: "high", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
+
+class GeminiCliAgent extends BaseCliAgent {
+  readonly cliEngine = "gemini-cli";
+
+  createOutputInterpreter() {
+    let sessionId: string | undefined;
+    let answer = "";
+    let completed = false;
+
+    return {
+      onStdoutLine: (line: string) => {
+        let payload: Record<string, unknown>;
+        try {
+          const parsed: unknown = JSON.parse(line);
+          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return [];
+          payload = parsed as Record<string, unknown>;
+        } catch {
+          return [];
+        }
+
+        if (payload.type === "init") {
+          sessionId = typeof payload.session_id === "string" ? payload.session_id : undefined;
+          return [{
+            type: "started" as const,
+            engine: this.cliEngine,
+            title: "Gemini CLI",
+            resume: sessionId,
+            detail: { model: payload.model },
+          }];
+        }
+
+        if (payload.type === "message" && payload.role === "assistant" && typeof payload.content === "string") {
+          answer = payload.delta === true ? answer + payload.content : payload.content;
+          return [];
+        }
+
+        if (payload.type === "tool_use") {
+          const toolName = typeof payload.tool_name === "string" ? payload.tool_name : "tool";
+          return [{
+            type: "action" as const,
+            engine: this.cliEngine,
+            phase: "started" as const,
+            entryType: "thought" as const,
+            action: {
+              id: typeof payload.tool_id === "string" ? payload.tool_id : `${this.id}-${Date.now()}`,
+              kind: "tool" as const,
+              title: toolName,
+              detail: { parameters: payload.parameters },
+            },
+            message: `Running ${toolName}`,
+            level: "info" as const,
+          }];
+        }
+
+        if (payload.type === "tool_result") {
+          const ok = payload.status !== "error";
+          return [{
+            type: "action" as const,
+            engine: this.cliEngine,
+            phase: "completed" as const,
+            entryType: "thought" as const,
+            action: {
+              id: typeof payload.tool_id === "string" ? payload.tool_id : `${this.id}-${Date.now()}`,
+              kind: "tool" as const,
+              title: "tool result",
+              detail: { status: payload.status },
+            },
+            message: typeof payload.output === "string" ? payload.output.slice(0, 400) : undefined,
+            ok,
+            level: ok ? "info" as const : "warning" as const,
+          }];
+        }
+
+        if (payload.type === "result") {
+          completed = true;
+          return [{
+            type: "completed" as const,
+            engine: this.cliEngine,
+            ok: payload.status !== "error",
+            answer,
+            resume: sessionId,
+            usage: typeof payload.stats === "object" && payload.stats !== null
+              ? payload.stats as Record<string, unknown>
+              : undefined,
+          }];
+        }
+
+        return [];
+      },
+      onExit: (result: { exitCode: number | null; stderr: string }) => {
+        if (completed) return [];
+        completed = true;
+        return [{
+          type: "completed" as const,
+          engine: this.cliEngine,
+          ok: result.exitCode === 0,
+          answer: answer || undefined,
+          error: result.exitCode === 0 ? undefined : result.stderr.trim(),
+          resume: sessionId,
+        }];
+      },
+    };
+  }
+
+  async buildCommand(params: {
+    prompt: string;
+    systemPrompt?: string;
+    cwd: string;
+    options?: { resumeSession?: string };
+  }) {
+    const prompt = `${params.systemPrompt ? `${params.systemPrompt}\n\n` : ""}${params.prompt}${
+      params.prompt.includes("REQUIRED OUTPUT")
+        ? "\n\nREMINDER: Respond with only the required raw JSON object. The first character must be `{` and the last character must be `}`."
+        : ""
+    }`;
+    const args = [
+      "--model", this.model ?? "gemini-2.5-pro",
+      "--output-format", "stream-json",
+      "--approval-mode", "yolo",
+    ];
+    if (params.options?.resumeSession) args.push("--resume", params.options.resumeSession);
+    args.push("--prompt", prompt);
+    return { command: "gemini", args, outputFormat: "stream-json" as const };
+  }
+}
+
+type WorkflowAgentInput = {
+  taskSlug: string;
+  model: string;
+  reasoningEffort: "medium" | "high" | "xhigh";
+  timeoutMs: number;
+  maxOutputBytes: number;
+  sandbox: CodexSandbox;
+  fullAuto: boolean;
+};
+
+const workflowAgentKind = process.env.SVVY_WORKFLOWS_AGENT?.trim();
+const usePiAgent = workflowAgentKind === "pi";
+const useGeminiCliAgent = workflowAgentKind === "gemini";
+const createWorkflowAgent = (input: WorkflowAgentInput) => {
+  if (usePiAgent) {
+    return new PiAgent({
+      id: input.taskSlug,
+      provider: process.env.SVVY_WORKFLOWS_PI_PROVIDER?.trim() || "openrouter",
+      model: input.model,
+      thinking: input.reasoningEffort,
+      timeoutMs: input.timeoutMs,
+      idleTimeoutMs: parsePositiveInt(
+        process.env.SVVY_WORKFLOWS_HEARTBEAT_TIMEOUT_MS,
+        20 * 60 * 1000,
+      ),
+      maxOutputBytes: input.maxOutputBytes,
+      yolo: input.fullAuto,
+      noSession: true,
+    });
+  }
+  if (useGeminiCliAgent) {
+    return new GeminiCliAgent({
+      id: input.taskSlug,
+      model: input.model,
+      timeoutMs: input.timeoutMs,
+      idleTimeoutMs: parsePositiveInt(
+        process.env.SVVY_WORKFLOWS_HEARTBEAT_TIMEOUT_MS,
+        20 * 60 * 1000,
+      ),
+      maxOutputBytes: input.maxOutputBytes,
+    });
+  }
+  return createCodexAgent(input);
+};
+
+const generalModel = usePiAgent
+  ? process.env.SVVY_WORKFLOWS_PI_MODEL?.trim() || "openai/gpt-5.2-codex"
+  : useGeminiCliAgent
+    ? process.env.SVVY_WORKFLOWS_GEMINI_MODEL?.trim() || "gemini-2.5-pro"
+    : process.env.SVVY_WORKFLOWS_CODEX_MODEL?.trim() || "gpt-5.6-luna";
+const reviewModel = usePiAgent
+  ? process.env.SVVY_WORKFLOWS_PI_REVIEW_MODEL?.trim() || "openai/gpt-5.4"
+  : useGeminiCliAgent
+    ? process.env.SVVY_WORKFLOWS_GEMINI_REVIEW_MODEL?.trim() || "gemini-2.5-pro"
+    : process.env.SVVY_WORKFLOWS_REVIEW_MODEL?.trim() || "gpt-5.6-sol";
+const planner = createWorkflowAgent({ taskSlug: "complete-product-v2-audit", model: reviewModel, reasoningEffort: "xhigh", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 3_000_000, sandbox: "read-only", fullAuto: true });
+const packagePlanner = createWorkflowAgent({ taskSlug: "complete-product-v2-package-plan", model: generalModel, reasoningEffort: "medium", timeoutMs: 90 * 60 * 1000, maxOutputBytes: 3_000_000, sandbox: "read-only", fullAuto: true });
+const testAuthor = createWorkflowAgent({ taskSlug: "complete-product-v2-tests", model: generalModel, reasoningEffort: "high", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
+const implementer = createWorkflowAgent({ taskSlug: "complete-product-v2-implement", model: generalModel, reasoningEffort: "high", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
+const reviewer = createWorkflowAgent({ taskSlug: "complete-product-v2-review-restored", model: reviewModel, reasoningEffort: "xhigh", timeoutMs: 90 * 60 * 1000, maxOutputBytes: 3_000_000, sandbox: "read-only", fullAuto: true });
+const fixer = createWorkflowAgent({ taskSlug: "complete-product-v2-fix-restored", model: generalModel, reasoningEffort: "high", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
+const e2eAgent = createWorkflowAgent({ taskSlug: "complete-product-v2-e2e", model: usePiAgent ? generalModel : "gpt-5.3-codex-spark", reasoningEffort: "high", timeoutMs: 3 * 60 * 60 * 1000, maxOutputBytes: 4_000_000, sandbox: "workspace-write", fullAuto: true });
 
 export default smithers((ctx) => {
   const input = inputSchema.parse(ctx.input ?? {});
   const repoRoot = resolve(input.repoRoot);
   const worktreePath = resolve(repoRoot, input.worktreeRoot);
+  const referenceWorktreePath = input.referenceWorktree
+    ? resolve(repoRoot, input.referenceWorktree)
+    : undefined;
   const requestedPackageIds = new Set(input.packageIds ?? packages.map((item) => item.id));
-  const unknownPackageIds = [...requestedPackageIds].filter((id) => !packages.some((item) => item.id === id));
+  const unknownPackageIds = [...requestedPackageIds].filter(
+    (id) => !packages.some((item) => item.id === id),
+  );
   if (unknownPackageIds.length > 0) {
     throw new Error(`Unknown package ids: ${unknownPackageIds.join(", ")}`);
   }
   const activePackages = packages.filter((item) => requestedPackageIds.has(item.id));
   const audit = ctx.latest("audit", "audit-product");
-  const packageReviews = new Map(activePackages.map((item) => [item.id, ctx.latest("review", `${item.id}-review`) as Review | undefined]));
-  const packageImplementations = new Map(activePackages.map((item) => [item.id, ctx.latest("implementation", `${item.id}-implement`)]));
-  const allPackagesReady = activePackages.every((item) => packageImplementations.get(item.id)?.status !== "BLOCKED" && packageReviews.get(item.id)?.approved === true);
+  const packageReviews = new Map(
+    activePackages.map((item) => [
+      item.id,
+      ctx.latest("review", `${item.id}-review`) as Review | undefined,
+    ]),
+  );
+  const packageImplementations = new Map(
+    activePackages.map((item) => [
+      item.id,
+      ctx.latest("implementation", `${item.id}-implement`),
+    ]),
+  );
+  const allPackagesReady = activePackages.every(
+    (item) =>
+      packageImplementations.get(item.id)?.status !== "BLOCKED" &&
+      packageReviews.get(item.id)?.approved === true,
+  );
+  const packagePhaseTerminal =
+    audit?.status === "BLOCKED" ||
+    activePackages.every((item) => {
+      const implementation = packageImplementations.get(item.id);
+      const review = packageReviews.get(item.id);
+      return (
+        implementation?.status === "BLOCKED" ||
+        review?.approved === true ||
+        review?.continueLoop === false
+      );
+    });
   const finalReview = ctx.latest("review", "final-review") as Review | undefined;
-  const finalReviewCount = (ctx.outputs.review ?? []).filter((row) => row.packageId === "final").length;
+  const finalReviewCount = (ctx.outputs.review ?? []).filter(
+    (row) => row.packageId === "final",
+  ).length;
   const stopFinal = finalReview?.approved === true || finalReview?.continueLoop === false;
+  const resultReady =
+    audit?.status === "BLOCKED" ||
+    (packagePhaseTerminal && !allPackagesReady) ||
+    (allPackagesReady && stopFinal);
 
   return (
-    <Workflow name="svvy-complete-product" cache={false}>
-      <Worktree id="complete-product-worktree" path={worktreePath} branch={input.branch} baseBranch={input.baseBranch}>
-        <Sequence>
-          <Task id="audit-product" output={outputs.audit} agent={planner} timeoutMs={input.taskTimeoutMs}>
-            {auditPrompt()}
-          </Task>
+    <Workflow name="svvy-complete-product-v2" cache={false}>
+      <Sequence>
+        <Task id="audit-product" output={outputs.audit} agent={planner} timeoutMs={input.taskTimeoutMs}>
+          {auditPrompt(referenceWorktreePath)}
+        </Task>
 
-          {audit?.status === "READY" ? (
-            <Sequence>
-              <Parallel maxConcurrency={4}>
-                {activePackages.map((item) => (
-                  <Task key={item.id} id={`${item.id}-plan`} output={outputs.plans} agent={packagePlanner} timeoutMs={input.reviewTimeoutMs}>
-                    {packagePlanPrompt(item, audit)}
-                  </Task>
-                ))}
-              </Parallel>
-              {activePackages.map((item) => {
-                const plan = ctx.latest("plans", `${item.id}-plan`);
-                const testResult = ctx.latest("tests", `${item.id}-tests`);
-                const implementation = packageImplementations.get(item.id);
-                const review = packageReviews.get(item.id);
-                const reviewCount = (ctx.outputs.review ?? []).filter((row) => row.packageId === item.id).length;
-                const stop = implementation?.status === "BLOCKED" || review?.approved === true || review?.continueLoop === false;
-                return (
-                  <Sequence key={item.id}>
+        {audit?.status === "READY" ? (
+          <Parallel maxConcurrency={input.maxPackageConcurrency}>
+            {activePackages.map((item) => {
+              const plan = ctx.latest("plans", `${item.id}-plan`);
+              const testResult = ctx.latest("tests", `${item.id}-tests`);
+              const implementation = packageImplementations.get(item.id);
+              const review = packageReviews.get(item.id);
+              const reviewCount = (ctx.outputs.review ?? []).filter(
+                (row) => row.packageId === item.id,
+              ).length;
+              const stop =
+                implementation?.status === "BLOCKED" ||
+                review?.approved === true ||
+                review?.continueLoop === false;
+              return (
+                <Worktree
+                  key={item.id}
+                  id={`${item.id}-worktree`}
+                  path={`${worktreePath}-${item.id}`}
+                  branch={`${input.branch}-${item.id}`}
+                  baseBranch={input.baseBranch}
+                >
+                  <Sequence>
+                    <Task
+                      id={`${item.id}-plan`}
+                      output={outputs.plans}
+                      agent={packagePlanner}
+                      timeoutMs={input.reviewTimeoutMs}
+                    >
+                      {packagePlanPrompt(item, audit, referenceWorktreePath)}
+                    </Task>
                     {plan && plan.status !== "BLOCKED" ? (
-                      <Task id={`${item.id}-tests`} output={outputs.tests} agent={testAuthor} timeoutMs={input.taskTimeoutMs}>
-                        {testPrompt(item, audit, plan)}
+                      <Task
+                        id={`${item.id}-tests`}
+                        output={outputs.tests}
+                        agent={testAuthor}
+                        timeoutMs={input.taskTimeoutMs}
+                      >
+                        {testPrompt(item, audit, plan, referenceWorktreePath)}
                       </Task>
                     ) : null}
                     {testResult && testResult.status !== "BLOCKED" ? (
-                      <Task id={`${item.id}-implement`} output={outputs.implementation} agent={implementer} timeoutMs={input.taskTimeoutMs}>
-                        {implementationPrompt(item, testResult)}
+                      <Task
+                        id={`${item.id}-implement`}
+                        output={outputs.implementation}
+                        agent={implementer}
+                        timeoutMs={input.taskTimeoutMs}
+                      >
+                        {implementationPrompt(item, testResult, referenceWorktreePath)}
                       </Task>
                     ) : null}
                     {implementation && implementation.status !== "BLOCKED" ? (
-                      <Loop id={`${item.id}-review-loop`} until={stop} maxIterations={input.maxReviewIterations} onMaxReached="fail">
+                      <Loop
+                        id={`${item.id}-review-loop`}
+                        until={stop}
+                        maxIterations={input.maxReviewIterations}
+                        onMaxReached="fail"
+                      >
                         <Sequence>
-                          <Task id={`${item.id}-review`} output={outputs.review} agent={reviewer} timeoutMs={input.reviewTimeoutMs}>
-                            {reviewPrompt(item, testResult!, implementation, reviewCount + 1)}
-                          </Task>
-                          {reviewCount > 0 && review?.approved !== true && review?.continueLoop !== false ? (
-                            <Task id={`${item.id}-address`} output={outputs.address} agent={fixer} timeoutMs={input.taskTimeoutMs}>
-                              {addressPrompt(item, review)}
+                          {reviewCount > 0 &&
+                          review?.approved !== true &&
+                          review?.continueLoop !== false ? (
+                            <Task
+                              id={`${item.id}-address`}
+                              output={outputs.address}
+                              agent={fixer}
+                              timeoutMs={input.taskTimeoutMs}
+                            >
+                              {addressPrompt(item, review, referenceWorktreePath)}
                             </Task>
                           ) : null}
+                          <Task
+                            id={`${item.id}-review`}
+                            output={outputs.review}
+                            agent={reviewer}
+                            timeoutMs={input.reviewTimeoutMs}
+                          >
+                            {reviewPrompt(
+                              item,
+                              testResult!,
+                              implementation,
+                              reviewCount + 1,
+                              referenceWorktreePath,
+                            )}
+                          </Task>
                         </Sequence>
                       </Loop>
                     ) : null}
                   </Sequence>
-                );
-              })}
-            </Sequence>
-          ) : null}
+                </Worktree>
+              );
+            })}
+          </Parallel>
+        ) : null}
 
-          {allPackagesReady ? (
+        {allPackagesReady ? (
+          <Worktree
+            id="complete-product-integration-worktree"
+            path={worktreePath}
+            branch={input.branch}
+            baseBranch={input.baseBranch}
+          >
             <Sequence>
-              <Task id="backend-coverage" output={outputs.integration} agent={implementer} timeoutMs={input.taskTimeoutMs}>
+              <Task
+                id="integrate-package-branches"
+                output={outputs.integration}
+                agent={implementer}
+                timeoutMs={input.taskTimeoutMs}
+              >
+                {integrationPrompt(activePackages, input.branch, referenceWorktreePath)}
+              </Task>
+              <Task
+                id="backend-coverage"
+                output={outputs.integration}
+                agent={implementer}
+                timeoutMs={input.taskTimeoutMs}
+              >
                 {backendCoveragePrompt()}
               </Task>
-              <Task id="composed-app-verification" output={outputs.integration} agent={implementer} timeoutMs={input.taskTimeoutMs}>
+              <Task
+                id="composed-app-verification"
+                output={outputs.integration}
+                agent={implementer}
+                timeoutMs={input.taskTimeoutMs}
+              >
                 {composedAppPrompt()}
               </Task>
-              <Task id="live-journey-repair" output={outputs.integration} agent={e2eAgent} timeoutMs={input.taskTimeoutMs}>
+              <Task
+                id="live-journey-repair"
+                output={outputs.integration}
+                agent={e2eAgent}
+                timeoutMs={input.taskTimeoutMs}
+              >
                 {liveJourneyPrompt()}
               </Task>
-              <Loop id="final-review-loop" until={stopFinal} maxIterations={input.maxFinalIterations} onMaxReached="fail">
+              <Loop
+                id="final-review-loop"
+                until={stopFinal}
+                maxIterations={input.maxFinalIterations}
+                onMaxReached="fail"
+              >
                 <Sequence>
-                  <Task id="final-review" output={outputs.review} agent={reviewer} timeoutMs={input.taskTimeoutMs}>
-                    {finalReviewPrompt(finalReviewCount + 1)}
-                  </Task>
-                  {finalReviewCount > 0 && finalReview?.approved !== true && finalReview?.continueLoop !== false ? (
-                    <Task id="final-address" output={outputs.address} agent={fixer} timeoutMs={input.taskTimeoutMs}>
+                  {finalReviewCount > 0 &&
+                  finalReview?.approved !== true &&
+                  finalReview?.continueLoop !== false ? (
+                    <Task
+                      id="final-address"
+                      output={outputs.address}
+                      agent={fixer}
+                      timeoutMs={input.taskTimeoutMs}
+                    >
                       {finalAddressPrompt(finalReview)}
                     </Task>
                   ) : null}
+                  <Task
+                    id="final-review"
+                    output={outputs.review}
+                    agent={reviewer}
+                    timeoutMs={input.taskTimeoutMs}
+                  >
+                    {finalReviewPrompt(finalReviewCount + 1)}
+                  </Task>
                 </Sequence>
               </Loop>
             </Sequence>
-          ) : null}
+          </Worktree>
+        ) : null}
 
+        {resultReady ? (
           <Task id="complete-product-result" output={outputs.result}>
             {{
               approved: finalReview?.approved ?? false,
               branch: input.branch,
               worktreePath,
               packageCount: activePackages.length,
-              packageApprovals: activePackages.filter((item) => packageReviews.get(item.id)?.approved).map((item) => item.id),
+              packageApprovals: activePackages
+                .filter((item) => packageReviews.get(item.id)?.approved)
+                .map((item) => item.id),
               finalVerdict: finalReview?.verdict ?? null,
-              summary: finalReview?.approved ? "All package, composed-app, backend coverage, and live journey gates were approved." : "Product completion workflow did not reach final approval.",
+              summary: finalReview?.approved
+                ? "All package, composed-app, backend coverage, and live journey gates were approved."
+                : "Product completion workflow did not reach final approval.",
               unresolvedIssues: [
                 ...(audit?.blockers ?? []),
                 ...activePackages.flatMap((item) => packageReviews.get(item.id)?.blockers ?? []),
                 ...(finalReview?.blockers ?? []),
-                ...(finalReview?.findings ?? []).map((finding) => `${finding.severity} ${finding.location}: ${finding.problem}`),
+                ...(finalReview?.findings ?? []).map(
+                  (finding) => `${finding.severity} ${finding.location}: ${finding.problem}`,
+                ),
               ],
             }}
           </Task>
-        </Sequence>
-      </Worktree>
+        ) : null}
+      </Sequence>
     </Workflow>
   );
 });
 
-function commonRules() {
-  return `Read AGENTS.md, docs/prd.md, and docs/features.ts before work. Use docs/references/pi-mono for pi, docs/references/effect-smol and docs/references/t3code for Effect v4, and https://smithers.sh/llms-full.txt plus docs/references/smithers for Smithers. Treat unexpected changes as user work. Do not use compatibility paths, test-only product behavior, fake production facades, renderer-owned authority, or an alternate shell/TUI. Work through package APIs and composed layers. Run focused checks only during the task; the final stages run global gates. Update docs/features.ts and docs/progress.md only when behavior and verification genuinely satisfy the source-of-truth contract.`;
+function commonRules(referenceWorktreePath?: string) {
+  const priorWork =
+    referenceWorktreePath === undefined
+      ? ""
+      : `A prior unfinished workflow worktree exists at ${referenceWorktreePath}. Inspect only relevant scoped diffs as leads, independently verify every adopted change, and never merge or copy it wholesale.`;
+  return [
+    "Read AGENTS.md, docs/prd.md, and docs/features.ts before work.",
+    "Use docs/references/pi-mono for pi, docs/references/effect-smol and docs/references/t3code for Effect v4, and https://smithers.sh/llms-full.txt plus docs/references/smithers for Smithers.",
+    "Treat unexpected changes as user work. Do not use compatibility paths, test-only product behavior, fake production facades, renderer-owned authority, or an alternate shell/TUI.",
+    "Work through package APIs and composed layers. Run focused checks only during the task; the final stages run global gates.",
+    "Bound context aggressively: never run unbounded git diff or log, never read an entire file over 500 lines, and never paste generated artifacts or large tool output into the conversation. Start with name/status/stat, then inspect targeted hunks, symbols, ranges, searches, and focused tests.",
+    "Update docs/features.ts and docs/progress.md only when behavior and verification genuinely satisfy the source-of-truth contract.",
+    "If you edit an isolated worktree, commit every scoped change before returning so downstream integration can consume the branch.",
+    priorWork,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
-function auditPrompt() {
-  return `${commonRules()}\n\nRead the entire current product, roadmap, feature inventory, package boundaries, app bootstrap, and test inventories. Do not edit. Establish exact current facts after the package migration: every in-progress feature id, every unchecked roadmap contract, duplicate/stale roadmap claims, package/API seams still bypassed, tests that inject fakes instead of composing real layers, and live journeys lacking evidence. Validate that the ten ordered work packages in this workflow collectively cover every gap. Report READY unless an external credential or unavailable platform makes source implementation impossible; ordinary failing code is not a blocker.`;
+function auditPrompt(referenceWorktreePath?: string) {
+  return `${commonRules(referenceWorktreePath)}\n\nRead the entire current product, roadmap, feature inventory, package boundaries, app bootstrap, and test inventories. Do not edit. Establish exact current facts after the package migration: every in-progress feature id, every unchecked roadmap contract, duplicate or stale roadmap claims, package/API seams still bypassed, tests that inject fakes instead of composing real layers, and live journeys lacking evidence. Validate that the ten work packages in this workflow collectively cover every gap. Report READY unless an external credential or unavailable platform makes source implementation impossible; ordinary failing code is not a blocker.`;
 }
 
-function packagePlanPrompt(item: WorkPackage, audit: z.infer<typeof auditSchema>) {
-  return `${commonRules()}\n\nPackage: ${item.id} — ${item.title}\nDeclared feature ids: ${item.featureIds.join(", ")}\nRoadmap sections: ${item.progressSections.join("; ")}\nScope: ${item.scope}\nAudit: ${audit.summary}\n\nDo not edit. Build a complete contract-test plan for this package slice. Inspect every relevant unchecked roadmap contract, production owner, public package API, existing unit/integration/app test, and known migration defect. Name exact existing and planned test files, observable success/failure/recovery contracts, realistic composed layers, expected failing behavior, dependencies on earlier packages, and overlap hazards. Keep renderer/native e2e out unless package/app APIs cannot prove the behavior. Report READY_FOR_TESTS unless an external prerequisite makes the test contract impossible.`;
+function packagePlanPrompt(
+  item: WorkPackage,
+  audit: z.infer<typeof auditSchema>,
+  referenceWorktreePath?: string,
+) {
+  return `${commonRules(referenceWorktreePath)}\n\nPackage: ${item.id} — ${item.title}\nDeclared feature ids: ${item.featureIds.join(", ")}\nRoadmap sections: ${item.progressSections.join("; ")}\nScope: ${item.scope}\nAudit: ${audit.summary}\n\nDo not edit. Build a complete contract-test plan for this package slice. Inspect every relevant unchecked roadmap contract, production owner, public package API, existing unit/integration/app test, and known migration defect. Name exact existing and planned test files, observable success, failure, recovery, cancellation, precedence, ownership, and persistence contracts, realistic composed layers, expected failing behavior, dependencies on other package branches, and overlap hazards. Keep renderer/native e2e out unless package/app APIs cannot prove the behavior. Report READY_FOR_TESTS unless an external prerequisite makes the test contract impossible.`;
 }
 
-function testPrompt(item: WorkPackage, audit: z.infer<typeof auditSchema>, plan: z.infer<typeof packagePlanSchema>) {
-  return `${commonRules()}\n\nPackage: ${item.id} — ${item.title}\nDeclared feature ids: ${item.featureIds.join(", ")}\nRoadmap sections: ${item.progressSections.join("; ")}\nScope: ${item.scope}\nAudit: ${audit.summary}\nPlan: ${plan.summary}\nPlanned tests:\n${formatList(plan.plannedTestFiles)}\nPlanned failing contracts:\n${formatList(plan.failingContracts)}\n\nAuthor tests before product changes. Stay within this package slice and its directly owned integration-test files; do not modify product code, shared source-of-truth docs, generated ledgers, or another package's fixtures. Add or strengthen behavior tests at the lowest real boundary: package unit tests for pure invariants, package integration tests using real composed Effect layers and repositories, and app/bootstrap integration tests only where multiple packages meet. Replace shallow projection/source-shape assertions when they fail to prove behavior. Tests must fail on plausible migration defects and cover success, failure, cancellation/recovery, precedence, ownership, and persistence where relevant. Run focused tests and record expected failures precisely. Return the exact feature ids and roadmap items covered.`;
+function testPrompt(
+  item: WorkPackage,
+  audit: z.infer<typeof auditSchema>,
+  plan: z.infer<typeof packagePlanSchema>,
+  referenceWorktreePath?: string,
+) {
+  return `${commonRules(referenceWorktreePath)}\n\nPackage: ${item.id} — ${item.title}\nDeclared feature ids: ${item.featureIds.join(", ")}\nRoadmap sections: ${item.progressSections.join("; ")}\nScope: ${item.scope}\nAudit: ${audit.summary}\nPlan: ${plan.summary}\nPlanned tests:\n${formatList(plan.plannedTestFiles)}\nPlanned failing contracts:\n${formatList(plan.failingContracts)}\n\nAuthor tests before product changes. Stay within this package slice and its directly owned integration-test files; do not modify product code, shared source-of-truth docs, generated ledgers, or another package's fixtures. Add or strengthen behavior tests at the lowest real boundary: package unit tests for pure invariants, package integration tests using real composed Effect layers and repositories, and app/bootstrap integration tests only where multiple packages meet. Replace shallow projection/source-shape assertions when they fail to prove behavior. Tests must fail on plausible migration defects and cover success, failure, cancellation/recovery, precedence, ownership, and persistence where relevant. Run focused tests, record expected failures precisely, and commit the test-only change even while tests expose missing product behavior. Return the exact feature ids and roadmap items covered.`;
 }
 
-function implementationPrompt(item: WorkPackage, tests: z.infer<typeof testSchema>) {
-  return `${commonRules()}\n\nPackage: ${item.id} — ${item.title}\nScope: ${item.scope}\nTest author summary: ${tests.summary}\nFailing contracts:\n${formatList(tests.failingContracts)}\nUnresolved test issues:\n${formatList(tests.unresolvedIssues)}\n\nImplement the complete scoped behavior at its owning package boundary. Make the authored tests pass, then inspect the named roadmap sections for related gaps tests may have missed. Delete obsolete pre-package paths and fake production composition instead of bridging them. Keep allocation and copies bounded. Exercise a real smoke path through the changed package API or app facade, not only a test file. Run focused typecheck/tests. Update source-of-truth feature/progress records only for contracts now implemented and verified; completed progress items require the actual commit hash, so leave them unchecked until committed if this task does not commit.`;
+function implementationPrompt(
+  item: WorkPackage,
+  tests: z.infer<typeof testSchema>,
+  referenceWorktreePath?: string,
+) {
+  return `${commonRules(referenceWorktreePath)}\n\nPackage: ${item.id} — ${item.title}\nScope: ${item.scope}\nTest author summary: ${tests.summary}\nFailing contracts:\n${formatList(tests.failingContracts)}\nUnresolved test issues:\n${formatList(tests.unresolvedIssues)}\n\nImplement the complete scoped behavior at its owning package boundary. Make the authored tests pass, then inspect the named roadmap sections for related gaps tests may have missed. Delete obsolete pre-package paths and fake production composition instead of bridging them. Keep allocation and copies bounded. Exercise a real smoke path through the changed package API or app facade, not only a test file. Run focused typecheck/tests and commit the implementation. Update source-of-truth feature/progress records only for contracts now implemented and verified; completed progress items require the actual commit hash, so leave them unchecked until the commit exists.`;
 }
 
-function reviewPrompt(item: WorkPackage, tests: z.infer<typeof testSchema>, implementation: z.infer<typeof implementationSchema>, round: number) {
-  return `${commonRules()}\n\nReview round ${round} for ${item.id} — ${item.title}. Read the complete worktree diff and relevant source, not summaries alone. Scope: ${item.scope}\nTests: ${tests.summary}\nImplementation: ${implementation.summary}\n\nAct as a strict package-migration reviewer. Verify behavior is owned by the correct package, public APIs are real and composed, state transitions and failures are durable, renderer/desktop do not retain authority, tests defend observable contracts through real layers, and no unchecked scoped roadmap item is falsely treated as done. Run focused checks. Approve only with no blocker/high/medium findings and no unverified scoped behavior. Low findings still require a clear decision. Set continueLoop true for actionable code/test/doc findings and false only for a genuine external blocker.`;
+function reviewPrompt(
+  item: WorkPackage,
+  tests: z.infer<typeof testSchema>,
+  implementation: z.infer<typeof implementationSchema>,
+  round: number,
+  referenceWorktreePath?: string,
+) {
+  return `${commonRules(referenceWorktreePath)}\n\nReview round ${round} for ${item.id} — ${item.title}. Read the complete branch diff against main and relevant source, not summaries alone. Scope: ${item.scope}\nTests: ${tests.summary}\nImplementation: ${implementation.summary}\n\nAct as a strict package-migration reviewer. Verify behavior is owned by the correct package, public APIs are real and composed, state transitions and failures are durable, renderer/desktop do not retain authority, tests defend observable contracts through real layers, and no unchecked scoped roadmap item is falsely treated as done. Run focused checks. Approve only with no blocker, high, medium, or low findings and no unverified scoped behavior. Set continueLoop true for actionable code, test, or doc findings and false only for a genuine external blocker.`;
 }
 
-function addressPrompt(item: WorkPackage, review?: Review) {
-  return `${commonRules()}\n\nAddress every finding from the latest review for ${item.id} — ${item.title}.\nVerdict: ${review?.verdict ?? "CHANGES_REQUIRED"}\nSummary: ${review?.summary ?? "No summary"}\nFindings:\n${formatFindings(review)}\nBlockers:\n${formatList(review?.blockers)}\n\nFix causes, not assertions or symptoms. Add or adjust contract tests when a finding exposes an unprotected behavior. Run focused checks and a smoke path. Return BLOCKED only for an external prerequisite that source changes cannot resolve.`;
+function addressPrompt(
+  item: WorkPackage,
+  review?: Review,
+  referenceWorktreePath?: string,
+) {
+  return `${commonRules(referenceWorktreePath)}\n\nAddress every finding from the latest review for ${item.id} — ${item.title}.\nVerdict: ${review?.verdict ?? "CHANGES_REQUIRED"}\nSummary: ${review?.summary ?? "No summary"}\nFindings:\n${formatFindings(review)}\nBlockers:\n${formatList(review?.blockers)}\n\nFix causes, not assertions or symptoms. Add or adjust contract tests when a finding exposes an unprotected behavior. Run focused checks and a smoke path, then commit the repair. Return BLOCKED only for an external prerequisite that source changes cannot resolve.`;
+}
+
+function integrationPrompt(
+  items: WorkPackage[],
+  branch: string,
+  referenceWorktreePath?: string,
+) {
+  const branches = items.map((item) => `${branch}-${item.id}`);
+  return `${commonRules(referenceWorktreePath)}\n\nIntegrate the approved package branches into the current integration branch in this exact dependency order:\n${formatList(branches)}\n\nInspect every branch diff before merging. Require its approved review output to match the actual branch. Merge or cherry-pick the complete committed package work; never discard tests to resolve conflicts. Resolve overlaps according to the PRD, generated contracts, package ownership, and the current package architecture rather than whichever branch merged first. Reject and repair stale source-relative imports, fake facades, duplicated authorities, compatibility paths, invalid generated ledgers, and package cycles. After each logical dependency group, run its focused package and integration tests so failures are attributable. Finish with all package typechecks and backend tests green, a clean committed integration branch, and an exact list of merged package ids and unresolved issues.`;
 }
 
 function backendCoveragePrompt() {
