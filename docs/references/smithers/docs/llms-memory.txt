@@ -13,7 +13,7 @@ Memory persists state **across runs**. Task outputs are per-run; memory is per-n
 ## Three layers
 
 ```ts
-import { createMemoryStore } from "smithers-orchestrator/memory";
+import { createMemoryStore } from "smthrs/memory";
 import { Database } from "bun:sqlite";
 
 const store = createMemoryStore(new Database("smithers.db"));
@@ -58,7 +58,7 @@ Pick the kind to match the lifetime: `workflow` is scoped to a workflow definiti
 Maintenance jobs you run periodically:
 
 ```ts
-import { TtlGarbageCollector, TokenLimiter, Summarizer } from "smithers-orchestrator/memory";
+import { TtlGarbageCollector, TokenLimiter, Summarizer } from "smthrs/memory";
 
 const gc         = TtlGarbageCollector();   // expire facts past their TTL
 const limiter    = TokenLimiter(4000);      // keep history under token budget
@@ -72,7 +72,7 @@ await summarizer.process(store);
 ## Inspect from the CLI
 
 ```bash
-bunx smithers-orchestrator memory list workflow:code-review -w workflow.tsx
+bunx smthrs memory list workflow:code-review -w workflow.tsx
 ```
 
 The CLI currently exposes fact listing. Use the store API for writes, deletes, threads, messages, and TTL cleanup.

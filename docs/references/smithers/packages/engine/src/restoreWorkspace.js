@@ -8,7 +8,7 @@
 
 import { Effect } from "effect";
 import * as BunContext from "@effect/platform-bun/BunContext";
-import { revertToJjPointer } from "@smithers-orchestrator/vcs/jj";
+import { revertToJjPointer } from "@smthrs/vcs/jj";
 
 /**
  * @param {string} commitId

@@ -43,7 +43,7 @@ export const { Workflow, Task, useCtx, smithers, tables, outputs } = createSmith
 
 ```tsx
 // scripts/worktree-feature/workflow.tsx
-import { Sequence, Branch } from "smithers-orchestrator";
+import { Sequence, Branch } from "smthrs";
 import { Discover, TicketPipeline } from "./components";
 import { Workflow, smithers, outputs } from "./smithers";
 
@@ -74,7 +74,7 @@ export default smithers((ctx) => {
 import { ToolLoopAgent as Agent, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { openai } from "@ai-sdk/openai";
-import { ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
+import { ClaudeCodeAgent, CodexAgent } from "smthrs";
 import { SYSTEM_PROMPT } from "./system-prompt";
 
 const USE_CLI = process.env.USE_CLI_AGENTS !== "0";
@@ -109,7 +109,7 @@ export const codex = new CodexAgent({
 
 ```tsx
 // scripts/worktree-feature/components/ValidationLoop.tsx
-import { Loop, Sequence } from "smithers-orchestrator";
+import { Loop, Sequence } from "smthrs";
 import { Implement } from "./Implement";
 import { Validate } from "./Validate";
 import { Review } from "./Review";
@@ -149,7 +149,7 @@ export function ValidationLoop({ ticket }: { ticket: { id: string } }) {
 
 ```tsx
 // scripts/worktree-feature/components/Review.tsx
-import { Parallel } from "smithers-orchestrator";
+import { Parallel } from "smthrs";
 import { Task, useCtx, outputs } from "../smithers";
 import { claude, codex } from "../agents";
 import ReviewPrompt from "./Review.mdx";
@@ -191,7 +191,7 @@ export function Review({ ticket }: { ticket: { id: string; title: string } }) {
 
 ```tsx
 // scripts/worktree-feature/components/TicketPipeline.tsx
-import { Sequence } from "smithers-orchestrator";
+import { Sequence } from "smthrs";
 import { ValidationLoop } from "./ValidationLoop";
 import { Report } from "./Report";
 import { useCtx } from "../smithers";

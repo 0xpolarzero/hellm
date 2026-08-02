@@ -13,8 +13,8 @@ This document proposes a simpler local-first Smithers experience centered on:
 The key product insight is that users mostly want a ready-made folder of workflows they can use immediately and edit later if they choose. The hello-world path should feel like:
 
 ```bash
-bunx smithers-orchestrator init
-bunx smithers-orchestrator workflow implement --prompt "Commit the .smithers folder created with smithers init"
+bunx smthrs init
+bunx smthrs workflow implement --prompt "Commit the .smithers folder created with smithers init"
 ```
 
 ## Goals
@@ -201,14 +201,14 @@ Why this shape:
 Recommended command surface:
 
 ```bash
-bunx smithers-orchestrator init
-bunx smithers-orchestrator workflow               # same as workflow list
-bunx smithers-orchestrator workflow list
-bunx smithers-orchestrator workflow <name>
-bunx smithers-orchestrator workflow run <name>
-bunx smithers-orchestrator workflow create <name>
-bunx smithers-orchestrator workflow path <name>
-bunx smithers-orchestrator workflow doctor [<name>]
+bunx smthrs init
+bunx smthrs workflow               # same as workflow list
+bunx smthrs workflow list
+bunx smthrs workflow <name>
+bunx smthrs workflow run <name>
+bunx smthrs workflow create <name>
+bunx smthrs workflow path <name>
+bunx smthrs workflow doctor [<name>]
 ```
 
 Behavior:
@@ -259,7 +259,7 @@ The generated `.smithers/` directory should be a real Bun workspace package.
 Recommended dependency policy:
 
 - runtime dependencies
-  - `smithers-orchestrator`
+  - `smthrs`
   - `zod`
 - dev dependencies
   - `typescript`
@@ -427,7 +427,7 @@ Implements a single ticket from:
 Discovers or reads multiple tickets from:
 
 - local markdown files under `.smithers/tickets/*.md`
-- Linear via custom tools or MCP-backed agent integrations, not a core `smithers-orchestrator/linear` export
+- Linear via custom tools or MCP-backed agent integrations, not a core `smthrs/linear` export
 - GitHub issues via `gh` CLI or HTTP integration
 
 Important design note:

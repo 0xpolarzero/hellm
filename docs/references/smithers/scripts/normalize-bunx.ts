@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 /**
- * Normalize CLI invocations across docs to use `bunx smithers-orchestrator`.
+ * Normalize CLI invocations across docs to use `bunx smthrs`.
  *
- * - Replaces bare `smithers <subcommand>` with `bunx smithers-orchestrator <subcommand>`
+ * - Replaces bare `smithers <subcommand>` with `bunx smthrs <subcommand>`
  *   inside fenced bash code blocks only (so prose like "the smithers init command"
  *   stays untouched).
  * - Also strips the "or globally if linked" note in package-configuration.mdx.
@@ -69,7 +69,7 @@ function walk(dir: string, out: string[] = []): string[] {
 
 function normalizeCodeBlock(body: string): string {
   // Inside a code block body, replace lines like `smithers <sub> ...`
-  // with `bunx smithers-orchestrator <sub> ...`. Tolerate leading
+  // with `bunx smthrs <sub> ...`. Tolerate leading
   // whitespace and a leading `$ ` shell prompt.
   const sub = KNOWN_SUBCOMMANDS.join("|");
   const re = new RegExp(
@@ -77,7 +77,7 @@ function normalizeCodeBlock(body: string): string {
     "g",
   );
   return body.replace(re, (_m, lead, indent, prompt, tail) => {
-    return `${lead}${indent}${prompt ?? ""}bunx smithers-orchestrator${tail}`;
+    return `${lead}${indent}${prompt ?? ""}bunx smthrs${tail}`;
   });
 }
 
@@ -131,8 +131,8 @@ function rewriteFile(path: string): { changed: boolean; before: number; after: n
 
   // Strip the "or globally if linked" sentence wherever it appears.
   out = out.replace(
-    /the\s+`smithers`\s+command is available via\s+`bunx smithers-orchestrator`\s+or globally if linked\./g,
-    "the `smithers` command is invoked via `bunx smithers-orchestrator`. Smithers does not need to be installed globally.",
+    /the\s+`smithers`\s+command is available via\s+`bunx smthrs`\s+or globally if linked\./g,
+    "the `smithers` command is invoked via `bunx smthrs`. Smithers does not need to be installed globally.",
   );
 
   if (out !== original) {

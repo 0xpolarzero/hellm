@@ -99,7 +99,7 @@ The generated `Agents` namespace contract is:
 
 ```ts
 import type { ExtensionId as GeneratedExtensionId } from "@svvyx/extensions";
-import type { AgentLike } from "smithers-orchestrator";
+import type { AgentLike } from "smthrs";
 
 // @svvyx/workflows index.ts
 export * as Agents from "./agents";
@@ -920,23 +920,23 @@ resolve to active files after process restart or later refresh/link entry.
   `RunTaskAgentResult`, `RunTaskAgentPromptSource`, and `RunTaskAgentError`. It must not import
   branded ids, runtime service types, schema namespaces, runtime service/facade types, or broad
   task-agent/core contracts.
-- Generated `@svvyx/workflows` may type-import or value-import `smithers-orchestrator` only as a
+- Generated `@svvyx/workflows` may type-import or value-import `smthrs` only as a
   workspace Smithers authoring dependency resolved from the target workspace `.smithers` package,
   not from the svvy app bundle, repo-root `workflows/`, generated package root, or global package
   cache. Workspace-link repair treats a missing `.smithers` package root or unresolved
-  `smithers-orchestrator` dependency as a typed non-ready link/dependency diagnostic and must not
-  install, vendor, or rewrite Smithers dependencies outside official `bunx smithers-orchestrator
+  `smthrs` dependency as a typed non-ready link/dependency diagnostic and must not
+  install, vendor, or rewrite Smithers dependencies outside official `bunx smthrs
 init` / official CLI guidance.
-  App-global generated-package build treats `smithers-orchestrator` as an external workspace
+  App-global generated-package build treats `smthrs` as an external workspace
   authoring dependency. It typechecks generated source only with the generated
-  `smithers-orchestrator.ambient.d.ts` declaration under the generated package root. That
+  `smthrs.ambient.d.ts` declaration under the generated package root. That
   declaration contains only the exact `AgentLike` shape required by
   `Agents.defineTaskAgent(...)`: optional `id`, optional `tools`, optional
   `supportsNativeStructuredOutput`, optional `capabilities`, and
-  `generate(args: unknown): Promise<unknown>`. It must not resolve `smithers-orchestrator` from the
+  `generate(args: unknown): Promise<unknown>`. It must not resolve `smthrs` from the
   app bundle, repo-root `workflows/`, app generated root, or global package cache.
   Workspace-specific Smithers dependency resolution diagnostics are produced during workspace-link
-  readiness/repair, not during app-global generated-package build. `smithers-orchestrator` is a
+  readiness/repair, not during app-global generated-package build. `smthrs` is a
   workspace authoring dependency for generated/workspace Smithers source only. It is not a product
   package dependency channel, runtime control API, or app-bundled bridge dependency; product runtime
   uses only the runtime-owned `runTaskAgent` bridge contracts.

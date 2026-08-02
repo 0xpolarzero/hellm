@@ -4,7 +4,7 @@ Use Smithers from handler-thread workflow work when a workflow is the right unit
 
 Work in the workspace `.smithers/` package.
 
-Use official `bunx smithers-orchestrator ...` commands through Shell for workflow initialization,
+Use official `bunx smthrs ...` commands through Shell for workflow initialization,
 execution, resume, inspection, approval, and debugging flows.
 
 Use `svvyx workflows ...` only for reusable source-library operations owned by the Workflows

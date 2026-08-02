@@ -1,5 +1,5 @@
 import { createElement, useMemo, type ReactNode } from "react";
-import { SmithersGatewayClient, type SmithersGatewayClientOptions } from "@smithers-orchestrator/gateway-client";
+import { SmithersGatewayClient, type SmithersGatewayClientOptions } from "@smthrs/gateway-client";
 import { SmithersGatewayContext } from "./SmithersGatewayContext.ts";
 
 export function SmithersGatewayProvider(props: {

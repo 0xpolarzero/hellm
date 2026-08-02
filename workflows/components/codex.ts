@@ -1,4 +1,4 @@
-import { CodexAgent } from "smithers-orchestrator";
+import { CodexAgent } from "smthrs";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { resolve } from "node:path";

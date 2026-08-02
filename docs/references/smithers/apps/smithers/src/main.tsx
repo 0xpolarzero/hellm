@@ -8,7 +8,7 @@ import { bindDock } from "./apps/bindDock";
 import { bindGateway } from "./gateway/bindGateway";
 import { startApprovalWatcher } from "./runs/watchApprovals";
 import { registerServiceWorker } from "./registerServiceWorker";
-import { SyncProvider } from "@smithers-orchestrator/gateway-react";
+import { SyncProvider } from "@smthrs/gateway-react";
 import { appSyncClient } from "./sync/appSyncClient";
 import { platformFetch } from "./jjhub/platformFetch";
 import { platformJson, PlatformError } from "./jjhub/platformJson";

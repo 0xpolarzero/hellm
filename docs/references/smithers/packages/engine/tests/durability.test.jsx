@@ -1,13 +1,13 @@
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventBus } from "../src/events.js";
-import { runWorkflow, Task, Workflow } from "smithers-orchestrator";
-import { ensureSmithersTables } from "@smithers-orchestrator/db/ensure";
-import { SmithersDb } from "@smithers-orchestrator/db/adapter";
-import { nowMs } from "@smithers-orchestrator/scheduler/nowMs";
+import { runWorkflow, Task, Workflow } from "smthrs";
+import { ensureSmithersTables } from "@smthrs/db/ensure";
+import { SmithersDb } from "@smthrs/db/adapter";
+import { nowMs } from "@smthrs/scheduler/nowMs";
 import { createTestDb, createTestSmithers, sleep } from "../../smithers/tests/helpers.js";
 import { ddl, outputSchemas, schema } from "../../smithers/tests/schema.js";
 import { Effect } from "effect";

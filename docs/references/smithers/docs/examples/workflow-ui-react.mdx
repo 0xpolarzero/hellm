@@ -3,7 +3,7 @@ title: Workflow UI (React)
 description: A complete `gateway-react` workflow UI you can drop next to a workflow — boot, run state, pushed live events, metrics, node output, approvals, and a stale-data-free render model.
 ---
 
-This example is a minimal first-class React UI for a workflow that ships with the Gateway. It demonstrates every piece a real UI exercises: the `createGatewayReactRoot` bootstrap, reading `?runId=` and the boot config, live event subscription, node-output reads, a lifecycle action, and an approvals strip — all in one file. Drop it at `.smithers/ui/<your-workflow>.tsx`, register your workflow with `ui: { entry: ".smithers/ui/<your-workflow>.tsx" }`, and open it with `bunx smithers-orchestrator ui`.
+This example is a minimal first-class React UI for a workflow that ships with the Gateway. It demonstrates every piece a real UI exercises: the `createGatewayReactRoot` bootstrap, reading `?runId=` and the boot config, live event subscription, node-output reads, a lifecycle action, and an approvals strip — all in one file. Drop it at `.smithers/ui/<your-workflow>.tsx`, register your workflow with `ui: { entry: ".smithers/ui/<your-workflow>.tsx" }`, and open it with `bunx smthrs ui`.
 
 For the full conceptual walkthrough, see [Custom Workflow UIs](/guides/custom-workflow-ui).
 
@@ -20,7 +20,7 @@ import {
   useGatewayRun,
   useGatewayRunEvents,
   useGatewayRuns,
-} from "smithers-orchestrator/gateway-react";
+} from "smthrs/gateway-react";
 
 function runIdFromUrl(): string | undefined {
   if (typeof location === "undefined") return undefined;
@@ -181,7 +181,7 @@ createGatewayReactRoot(<App />);
 In your workflow's gateway setup (the `bun .smithers/scripts/<workflow>.ts` boot, or your hosted server):
 
 ```ts
-import { Gateway } from "smithers-orchestrator";
+import { Gateway } from "smthrs";
 import { demoReactUi } from "./.smithers/workflows/demo-react-ui";
 
 const gateway = new Gateway({
@@ -204,8 +204,8 @@ await gateway.listen({ port: 7331 });
 Then:
 
 ```bash
-bunx smithers-orchestrator up demo-react-ui -d
-bunx smithers-orchestrator ui                          # opens the bundle in your browser
+bunx smthrs up demo-react-ui -d
+bunx smthrs ui                          # opens the bundle in your browser
 ```
 
 The bundle is served at `/workflows/demo-react-ui`. The HTML shell injects `__SMITHERS_GATEWAY_UI__` and `?runId=` before your script runs; `createGatewayReactRoot` picks both up automatically.

@@ -4,8 +4,8 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, } from "node:fs";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
-import { SmithersError } from "@smithers-orchestrator/errors";
-import { accountsRoot } from "@smithers-orchestrator/accounts";
+import { SmithersError } from "@smthrs/errors";
+import { accountsRoot } from "@smthrs/accounts";
 
 /** @typedef {import("./DiscoveredWorkflow.ts").DiscoveredWorkflow} DiscoveredWorkflow */
 
@@ -268,8 +268,8 @@ export function createWorkflowFile(name, from = process.cwd(), options = {}) {
         "// smithers-source: generated",
         `// smithers-metadata-version: ${WORKFLOW_METADATA_VERSION}`,
         `// smithers-display-name: ${displayNameFromWorkflowName(name)}`,
-        "/** @jsxImportSource smithers-orchestrator */",
-        'import { createSmithers, Workflow } from "smithers-orchestrator";',
+        "/** @jsxImportSource smthrs */",
+        'import { createSmithers, Workflow } from "smthrs";',
         "",
         "const { smithers } = createSmithers({});",
         "",

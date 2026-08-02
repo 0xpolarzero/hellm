@@ -1,4 +1,4 @@
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
+import { SmithersError } from "@smthrs/errors/SmithersError";
 import { buildCurrentScopes } from "./buildCurrentScopes.js";
 import { filterRowsByNodeId } from "./filterRowsByNodeId.js";
 import { normalizeInputRow } from "./normalizeInputRow.js";

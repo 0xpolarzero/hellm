@@ -74,5 +74,5 @@ test("CLI overview documents every current CLI command", () => {
     expect(documented.has("mcp.add")).toBe(true);
     expect(documented.has("tui")).toBe(false);
     expect(documented.has("memory.recall")).toBe(false);
-    expect(readFileSync(DOCS_MEMORY_CONCEPT, "utf8")).not.toContain("smithers-orchestrator memory recall");
+    expect(readFileSync(DOCS_MEMORY_CONCEPT, "utf8")).not.toContain("smthrs memory recall");
 }, 30_000);

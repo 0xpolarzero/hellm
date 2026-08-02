@@ -6,7 +6,7 @@ description: Restore the workspace to a previous task attempt's filesystem state
 Each successful task attempt captures the current [JJ](https://jj-vcs.github.io/jj/) change ID into `_smithers_attempts.jj_pointer`. `revert` restores the workspace to that state and discards any graph snapshots recorded after the attempt began, so the run's timeline rolls back to the point-in-time of that attempt.
 
 ```bash
-bunx smithers-orchestrator revert workflow.tsx \
+bunx smthrs revert workflow.tsx \
   --run-id <id> --node-id <node> [--attempt N=1] [--iteration N=0]
 ```
 
@@ -21,7 +21,7 @@ Revert restores files only — it doesn't alter JJ history; the restoration crea
 ## Programmatic
 
 ```ts
-import { revertToAttempt } from "smithers-orchestrator";
+import { revertToAttempt } from "smthrs";
 
 const result = await revertToAttempt(adapter, {
   runId: "abc123",

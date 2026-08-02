@@ -1,5 +1,5 @@
 {
-  "name": "@smithers-orchestrator/db",
+  "name": "@smthrs/db",
   "version": "0.23.0",
   "description": "SQLite and Drizzle persistence adapter for Smithers workflows",
   "type": "module",
@@ -27,10 +27,10 @@
   "dependencies": {
     "@effect/experimental": "^0.60.0",
     "@effect/sql": "^0.51.0",
-    "@smithers-orchestrator/errors": "workspace:*",
-    "@smithers-orchestrator/graph": "workspace:*",
-    "@smithers-orchestrator/observability": "workspace:*",
-    "@smithers-orchestrator/scheduler": "workspace:*",
+    "@smthrs/errors": "^0.33.0",
+    "@smthrs/graph": "^0.33.0",
+    "@smthrs/observability": "^0.33.0",
+    "@smthrs/scheduler": "^0.33.0",
     "drizzle-orm": "^0.45.2",
     "drizzle-zod": "^0.8.3",
     "effect": "^3.21.1",

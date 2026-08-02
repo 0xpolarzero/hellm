@@ -50,12 +50,12 @@ function markerScript(label) {
 const POSIX_BIN_SHIM = [
     "#!/bin/sh",
     "basedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")",
-    "exec bun \"$basedir/../smithers-orchestrator/src/bin/smithers.js\" \"$@\"",
+    "exec bun \"$basedir/../smthrs/src/bin/smithers.js\" \"$@\"",
     "",
 ].join("\n");
 
 /**
- * Install a fake `smithers-orchestrator` package at <root>/node_modules/ whose
+ * Install a fake `smthrs` package at <root>/node_modules/ whose
  * bin entry prints `label`. Also drops the matching `.bin/smithers` shell shim
  * so the layout matches what npm/pnpm actually produce on disk.
  *
@@ -63,9 +63,9 @@ const POSIX_BIN_SHIM = [
  * @param {string} label
  */
 function installFakeSmithersPackage(root, label) {
-    const pkgDir = join(root, "node_modules/smithers-orchestrator");
+    const pkgDir = join(root, "node_modules/smthrs");
     writeFile(join(pkgDir, "package.json"), JSON.stringify({
-        name: "smithers-orchestrator",
+        name: "smthrs",
         version: "0.0.0-test",
         bin: { smithers: "./src/bin/smithers.js" },
     }) + "\n");
@@ -125,10 +125,10 @@ test("bin shim keeps workflow-pack commands on the .smithers local CLI", () => {
 });
 
 test("bin shim ignores a bare .bin/smithers shell shim with no local package (regression)", () => {
-    // Reproduces the user-reported crash: `bunx smithers-orchestrator agent --help`
+    // Reproduces the user-reported crash: `bunx smthrs agent --help`
     // found `.smithers/node_modules/.bin/smithers` (a `#!/bin/sh` shim) and tried
     // to re-exec it with `bun`, producing `Expected ")" but found ""$(echo ""`.
-    // After the fix we resolve via `node_modules/smithers-orchestrator/package.json`,
+    // After the fix we resolve via `node_modules/smthrs/package.json`,
     // so a bare `.bin/` shim must NOT trigger delegation.
     const dir = mkdtempSync(join(tmpdir(), "smithers-bin-delegation-shim-"));
     onTestFinished(() => {

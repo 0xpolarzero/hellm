@@ -9,7 +9,7 @@ two surfaces with *different* MCP schemas — the in-editor agent (VS Code) and 
 autonomous coding agent (cloud) — so they're covered separately below.
 
 ```bash
-bunx smithers-orchestrator skills add --agent copilot
+bunx smthrs skills add --agent copilot
 ```
 
 That installs the Smithers skill set under `~/.copilot/skills/`.
@@ -25,7 +25,7 @@ requires a `type`:
     "smithers": {
       "type": "stdio",
       "command": "bunx",
-      "args": ["smithers-orchestrator", "--mcp"]
+      "args": ["smthrs", "--mcp"]
     }
   }
 }
@@ -45,7 +45,7 @@ agent → MCP configuration**. It uses a different schema — `mcpServers`, a
     "smithers": {
       "type": "local",
       "command": "bunx",
-      "args": ["smithers-orchestrator", "--mcp"],
+      "args": ["smthrs", "--mcp"],
       "tools": ["*"]
     }
   }
@@ -64,7 +64,7 @@ agent, `AGENTS.md`. Add a section pointing at Smithers:
 ```md
 ## Orchestration
 Use Smithers for durable, multi-step, or human-in-the-loop agent work.
-`bunx smithers-orchestrator starters` lists ready-made workflows.
+`bunx smthrs starters` lists ready-made workflows.
 ```
 
 For a slash command, drop a prompt file at `.github/prompts/smithers.prompt.md`.

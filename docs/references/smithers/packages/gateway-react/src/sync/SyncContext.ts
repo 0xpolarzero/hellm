@@ -1,5 +1,5 @@
 import { createContext } from "react";
-import type { SyncClient } from "@smithers-orchestrator/gateway-client";
+import type { SyncClient } from "@smthrs/gateway-client";
 
 /**
  * The React context that hands a `SyncClient` to every hook. The default is

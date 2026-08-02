@@ -13,7 +13,7 @@
 ## Quick start
 
 ```ts
-import { startServer } from "smithers-orchestrator";
+import { startServer } from "smthrs";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 
 const server = startServer({
@@ -78,8 +78,8 @@ Errors use the envelope `{ "error": { "code", "message", "details" } }`. Common 
 Tools resolve relative to `rootDir`. The example below exposes a workflow that uses the built-in `bash` tool through the server; clients call it via `POST /v1/runs`.
 
 ```tsx
-/** @jsxImportSource smithers-orchestrator */
-import { Task, Workflow, createSmithers, bash } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { Task, Workflow, createSmithers, bash } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({
@@ -124,7 +124,7 @@ Serve mode starts a Hono-based HTTP server alongside a running workflow. Every r
 ## CLI
 
 ```bash
-bunx smithers-orchestrator up workflow.tsx --serve --port 3000 --host 0.0.0.0
+bunx smthrs up workflow.tsx --serve --port 3000 --host 0.0.0.0
 ```
 
 | Flag | Default | Description |
@@ -140,13 +140,13 @@ The process stays alive after the workflow completes so final state remains quer
 Detached mode:
 
 ```bash
-bunx smithers-orchestrator up workflow.tsx --serve --port 8080 -d
+bunx smthrs up workflow.tsx --serve --port 8080 -d
 ```
 
 ## Programmatic
 
 ```ts
-import { createServeApp } from "smithers-orchestrator/serve";
+import { createServeApp } from "smthrs/serve";
 
 const app = createServeApp({
   workflow,
@@ -307,7 +307,7 @@ Unknown routes return `404` with code `NOT_FOUND`.
 
 ```bash
 # Start a workflow with serve mode
-bunx smithers-orchestrator up workflow.tsx --serve --port 8080 --auth-token sk-secret
+bunx smthrs up workflow.tsx --serve --port 8080 --auth-token sk-secret
 
 # Status
 curl http://localhost:8080/ -H "Authorization: Bearer sk-secret"
@@ -336,8 +336,8 @@ curl http://localhost:8080/health
 ## Quick start
 
 ```tsx
-/** @jsxImportSource smithers-orchestrator */
-import { Gateway, Task, Workflow, createSmithers } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { Gateway, Task, Workflow, createSmithers } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({
@@ -383,7 +383,7 @@ ws.onopen = () => ws.send(JSON.stringify({
 Programmatic clients — bots, schedulers, dashboards, third-party UIs — talk to the Gateway through the typed client SDK over the same RPC and WebSocket API. For the full custom-UI guide (declarative queries, pushed updates, stale guards, reconnect/resume, backpressure, optimistic mutations, auth, vanilla JS + React hooks) see [Custom UIs](/integrations/custom-ui).
 
 ```ts
-import { SmithersGatewayClient } from "smithers-orchestrator/gateway-client";
+import { SmithersGatewayClient } from "smthrs/gateway-client";
 
 const gateway = new SmithersGatewayClient();
 const workflows = await gateway.listWorkflows();
@@ -399,8 +399,8 @@ Gateway client exports:
 
 | Package | Exports |
 |---|---|
-| `smithers-orchestrator/gateway-client` | `SmithersGatewayClient`, `SmithersGatewayConnection`, `GatewayRpcError`, `gatewayBackoffDelay`, RPC frame/type-map types, `GatewayUiBootConfig`, `SmithersGatewayClientOptions` |
-| `smithers-orchestrator/gateway-react` | `SmithersGatewayProvider`, `createGatewayReactRoot`, `useGatewayRun`, `useGatewayRuns`, `useGatewayWorkflows`, `useGatewayApprovals`, `useGatewayNodeOutput`, `useGatewayRunEvents`, `useGatewayActions`, `useGatewayRpc`, `useSmithersGateway` |
+| `smthrs/gateway-client` | `SmithersGatewayClient`, `SmithersGatewayConnection`, `GatewayRpcError`, `gatewayBackoffDelay`, RPC frame/type-map types, `GatewayUiBootConfig`, `SmithersGatewayClientOptions` |
+| `smthrs/gateway-react` | `SmithersGatewayProvider`, `createGatewayReactRoot`, `useGatewayRun`, `useGatewayRuns`, `useGatewayWorkflows`, `useGatewayApprovals`, `useGatewayNodeOutput`, `useGatewayRunEvents`, `useGatewayActions`, `useGatewayRpc`, `useSmithersGateway` |
 
 ## RPC methods (TOON)
 
@@ -760,20 +760,20 @@ For clients that read JSON config directly:
   "mcpServers": {
     "smithers": {
       "command": "bunx",
-      "args": ["smithers-orchestrator", "--mcp"]
+      "args": ["smthrs", "--mcp"]
     }
   }
 }
 ```
 
-Project-scoped install (e.g. a monorepo where Smithers is a dev dependency — ensure `smithers-orchestrator` is in the local `package.json`):
+Project-scoped install (e.g. a monorepo where Smithers is a dev dependency — ensure `smthrs` is in the local `package.json`):
 
 ```json
 {
   "mcpServers": {
     "smithers": {
       "command": "bunx",
-      "args": ["smithers-orchestrator", "--mcp"]
+      "args": ["smthrs", "--mcp"]
     }
   }
 }

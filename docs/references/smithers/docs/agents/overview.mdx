@@ -32,18 +32,18 @@ agent it detects on your machine — no per-agent config by hand.
 ```bash
 # Install the Smithers skill set into every detected agent
 # (Claude Code, Codex, Cursor, Copilot, Gemini, OpenCode, Amp, Windsurf, …)
-bunx smithers-orchestrator skills add
+bunx smthrs skills add
 
 # Register Smithers as an MCP server in every detected agent
-bunx smithers-orchestrator mcp add
+bunx smthrs mcp add
 ```
 
 Target a single agent with `--agent`, or scope to the current project with
 `--no-global`:
 
 ```bash
-bunx smithers-orchestrator mcp add --agent cursor
-bunx smithers-orchestrator skills add --no-global   # writes .agents/skills in the repo
+bunx smthrs mcp add --agent cursor
+bunx smthrs skills add --no-global   # writes .agents/skills in the repo
 ```
 
 <Note>
@@ -51,7 +51,7 @@ bunx smithers-orchestrator skills add --no-global   # writes .agents/skills in t
 `smithers approve`, …) and installs them to the canonical `~/.agents/skills`
 directory, symlinking into each agent that uses its own path (Claude Code →
 `~/.claude/skills`, Windsurf → `~/.codeium/windsurf/skills`, …). `mcp add`
-registers `bunx smithers-orchestrator --mcp` in each agent's MCP config. Override
+registers `bunx smthrs --mcp` in each agent's MCP config. Override
 the launch command with `--command` if Smithers is a project dependency.
 </Note>
 

@@ -1,5 +1,5 @@
 {
-  "name": "@smithers-orchestrator/smithers-tui-demo",
+  "name": "@smthrs/smithers-tui-demo",
   "version": "0.21.0",
   "description": "React TUI Smithers Cerebras debate demo",
   "private": true,

@@ -5,7 +5,7 @@
  * integration that matters — the gateway bundling + serving the bundle, the app
  * embedding it in an iframe, and the `?runId=` deep-link flowing through — without
  * coupling the test to any UI library. A real UI would use
- * `smithers-orchestrator/gateway-react` here instead.
+ * `smthrs/gateway-react` here instead.
  */
 const params = new URLSearchParams(
   typeof location !== "undefined" ? location.search : "",

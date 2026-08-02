@@ -10,7 +10,7 @@ workflow clarifies it, gathers the right docs and skills, designs the graph, sca
 the files, verifies the graph renders, and writes an agent-facing skill doc.
 
 ```bash
-bunx smithers-orchestrator workflow run create-workflow \
+bunx smthrs workflow run create-workflow \
   --prompt "A workflow that watches a landing request and auto-lands it once CI is green"
 ```
 
@@ -39,10 +39,10 @@ autonomously with `--input '{"review":false}'`.
 ## Monitor it
 
 ```bash
-bunx smithers-orchestrator workflow run create-workflow --prompt "…" -d   # detach
-bunx smithers-orchestrator ps                                             # active / paused / recent
-bunx smithers-orchestrator logs <runId> -f                                # follow events
-bunx smithers-orchestrator approve <runId> --node approve-design          # clear the design gate
+bunx smthrs workflow run create-workflow --prompt "…" -d   # detach
+bunx smthrs ps                                             # active / paused / recent
+bunx smthrs logs <runId> -f                                # follow events
+bunx smthrs approve <runId> --node approve-design          # clear the design gate
 ```
 
 Use this when you want to add a new automation to your `.smithers/` pack without

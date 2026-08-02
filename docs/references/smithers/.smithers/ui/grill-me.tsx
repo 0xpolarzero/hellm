@@ -7,7 +7,7 @@ import {
   useGatewayRun,
   useGatewayRunEvents,
   useGatewayRuns,
-} from "smithers-orchestrator/gateway-react";
+} from "smthrs/gateway-react";
 
 const WORKFLOW_KEY = "grill-me";
 const GRILL_NODE_ID = "grill-me:grill";

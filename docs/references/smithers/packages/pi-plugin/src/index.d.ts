@@ -1,6 +1,6 @@
-import { SmithersAgentContract } from '@smithers-orchestrator/agents/agent-contract';
+import { SmithersAgentContract } from '@smthrs/agents/agent-contract';
 import { ExtensionAPI as ExtensionAPI$1 } from '@mariozechner/pi-coding-agent';
-import { DevToolsSnapshot, DevToolsDelta, DevToolsNode } from '@smithers-orchestrator/protocol';
+import { DevToolsSnapshot, DevToolsDelta, DevToolsNode } from '@smthrs/protocol';
 
 type ApproveArgs = {
     runId: string;

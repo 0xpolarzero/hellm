@@ -17,7 +17,7 @@ MCP server.
 
 ## The pi-plugin (recommended)
 
-`@smithers-orchestrator/pi-plugin` wraps the Smithers control plane as a Pi
+`@smthrs/pi-plugin` wraps the Smithers control plane as a Pi
 extension. It registers tools to launch, approve, deny, cancel, and stream
 workflow runs, and renders the run inspector inline. This is the tightest
 integration Smithers ships — Pi becomes a full Smithers operator console.
@@ -31,7 +31,7 @@ If you want the lighter path, `skills add` installs the Smithers skill set into
 Pi's directory for you:
 
 ```bash
-bunx smithers-orchestrator skills add --agent pi
+bunx smthrs skills add --agent pi
 ```
 
 Pi reads skills from `~/.pi/agent/skills/` (global) or `.pi/skills/` (project),
@@ -56,7 +56,7 @@ orchestration section the same way you would for Codex or Cursor:
 ```md
 ## Orchestration
 Use Smithers for durable, multi-step, or human-in-the-loop agent work.
-`bunx smithers-orchestrator starters` lists ready-made workflows.
+`bunx smthrs starters` lists ready-made workflows.
 ```
 
 ## Smithers runs Pi too
@@ -65,7 +65,7 @@ In the other direction, Smithers spawns Pi as a worker via `PiAgent`, including
 its `text` / `json` / `rpc` modes and extension-UI hook callbacks:
 
 ```tsx
-import { PiAgent } from "smithers-orchestrator";
+import { PiAgent } from "smthrs";
 
 const pi = new PiAgent({ provider: "openai", model: "gpt-5.2-codex" });
 ```

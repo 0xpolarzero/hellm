@@ -10,7 +10,7 @@ Smithers provides deterministic orchestration (workflow graph, approvals, retrie
 ### 1) PI as Workflow Agent
 
 ```tsx
-import { PiAgent } from "smithers-orchestrator";
+import { PiAgent } from "smthrs";
 
 const pi = new PiAgent({
   provider: "openai",
@@ -30,13 +30,13 @@ PI sessions are first-class hijack targets. `smithers hijack <runId> --target pi
 
 ### 2) PI Server Client
 
-Drive Smithers server APIs from a PI extension or any Node process via `@smithers-orchestrator/pi-plugin`:
+Drive Smithers server APIs from a PI extension or any Node process via `@smthrs/pi-plugin`:
 
 ```ts
-import { runWorkflow, approve, streamEvents } from "@smithers-orchestrator/pi-plugin";
+import { runWorkflow, approve, streamEvents } from "@smthrs/pi-plugin";
 ```
 
-The older `smithers-orchestrator/pi-plugin` and `smithers-orchestrator/pi-extension` subpaths were removed; use the scoped package directly.
+The older `smthrs/pi-plugin` and `smthrs/pi-extension` subpaths were removed; use the scoped package directly.
 
 ### 3) Hybrid: PI Extensibility + Smithers Orchestration
 
@@ -46,7 +46,7 @@ The older `smithers-orchestrator/pi-plugin` and `smithers-orchestrator/pi-extens
 Patterns:
 
 1. PI skill-driven coding task inside a Smithers `<Task>`.
-2. PI extension command that starts/resumes Smithers workflows via server API or `@smithers-orchestrator/pi-plugin`.
+2. PI extension command that starts/resumes Smithers workflows via server API or `@smthrs/pi-plugin`.
 3. Smithers workflow output persisted to SQLite and consumed by later PI-assisted tasks.
 
 ## Hijacking PI Sessions
@@ -69,7 +69,7 @@ Session persistence:
 1. Install PI CLI and add to `PATH`.
 2. Configure PI credentials via env/config (prefer over CLI args for API keys).
 3. Instantiate `PiAgent` with explicit options in workflows.
-4. For server-driven workflows, use `@smithers-orchestrator/pi-plugin`.
+4. For server-driven workflows, use `@smthrs/pi-plugin`.
 
 ```bash
 # Verify PI is installed
@@ -85,4 +85,4 @@ pi --version
 
 ## Limitations
 
-Smithers does not provide a chat interface for PI. Chat UI integration is the responsibility of the host application using `@smithers-orchestrator/pi-plugin`.
+Smithers does not provide a chat interface for PI. Chat UI integration is the responsibility of the host application using `@smthrs/pi-plugin`.

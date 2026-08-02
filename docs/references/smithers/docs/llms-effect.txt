@@ -23,7 +23,7 @@ you need a React-free API for generated workflow definitions.
 ## Minimal workflow
 
 ```ts
-import { Smithers } from "smithers-orchestrator";
+import { Smithers } from "smthrs";
 import { Effect, Schema } from "effect";
 
 const inputSchema = Schema.Struct({

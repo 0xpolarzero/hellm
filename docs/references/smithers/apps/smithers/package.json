@@ -1,5 +1,5 @@
 {
-  "name": "@smithers-orchestrator/smithers",
+  "name": "@smthrs/smithers",
   "version": "0.1.0",
   "description": "Smithers — Cerebras chat PWA, deployable to Cloudflare via Alchemy",
   "private": true,
@@ -22,8 +22,8 @@
     "destroy": "alchemy destroy"
   },
   "dependencies": {
-    "@smithers-orchestrator/gateway-client": "workspace:*",
-    "@smithers-orchestrator/gateway-react": "workspace:*",
+    "@smthrs/gateway-client": "^0.33.0",
+    "@smthrs/gateway-react": "^0.33.0",
     "@tanstack/ai": "^0.27.0",
     "@tanstack/ai-openai": "^0.13.0",
     "@tanstack/ai-react": "^0.15.3",

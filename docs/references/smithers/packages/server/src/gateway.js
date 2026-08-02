@@ -13,32 +13,32 @@ import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { Effect, Metric } from "effect";
 import { WebSocketServer } from "ws";
-import { runWorkflow } from "@smithers-orchestrator/engine";
-import { approveNode, denyNode } from "@smithers-orchestrator/engine/approvals";
-import { signalRun } from "@smithers-orchestrator/engine/signals";
-import { SmithersDb } from "@smithers-orchestrator/db/adapter";
-import { computeRunStateFromRow } from "@smithers-orchestrator/db/runState";
-import { ensureSmithersTables } from "@smithers-orchestrator/db/ensure";
-import { devtoolsActiveSubscribers, devtoolsBackpressureDisconnectTotal, devtoolsDeltaBuildMs, devtoolsEventBytes, devtoolsEventTotal, devtoolsSnapshotBuildMs, devtoolsSubscribeTotal, gatewayApprovalDecisionsTotal, gatewayAuthEventsTotal, gatewayConnectionsActive, gatewayConnectionsClosedTotal, gatewayConnectionsTotal, gatewayCronTriggersTotal, gatewayErrorsTotal, gatewayHeartbeatTicksTotal, gatewayMessagesReceivedTotal, gatewayMessagesSentTotal, gatewayRpcCallsTotal, gatewayRpcDuration, gatewayRunsCompletedTotal, gatewayRunsStartedTotal, gatewaySignalsTotal, gatewayWebhooksReceivedTotal, gatewayWebhooksRejectedTotal, gatewayWebhooksVerifiedTotal, } from "@smithers-orchestrator/observability/metrics";
+import { runWorkflow } from "@smthrs/engine";
+import { approveNode, denyNode } from "@smthrs/engine/approvals";
+import { signalRun } from "@smthrs/engine/signals";
+import { SmithersDb } from "@smthrs/db/adapter";
+import { computeRunStateFromRow } from "@smthrs/db/runState";
+import { ensureSmithersTables } from "@smthrs/db/ensure";
+import { devtoolsActiveSubscribers, devtoolsBackpressureDisconnectTotal, devtoolsDeltaBuildMs, devtoolsEventBytes, devtoolsEventTotal, devtoolsSnapshotBuildMs, devtoolsSubscribeTotal, gatewayApprovalDecisionsTotal, gatewayAuthEventsTotal, gatewayConnectionsActive, gatewayConnectionsClosedTotal, gatewayConnectionsTotal, gatewayCronTriggersTotal, gatewayErrorsTotal, gatewayHeartbeatTicksTotal, gatewayMessagesReceivedTotal, gatewayMessagesSentTotal, gatewayRpcCallsTotal, gatewayRpcDuration, gatewayRunsCompletedTotal, gatewayRunsStartedTotal, gatewaySignalsTotal, gatewayWebhooksReceivedTotal, gatewayWebhooksRejectedTotal, gatewayWebhooksVerifiedTotal, } from "@smthrs/observability/metrics";
 import { runFork, runPromise } from "./smithersRuntime.js";
-import { prometheusContentType, renderPrometheusMetrics } from "@smithers-orchestrator/observability";
-import { nowMs } from "@smithers-orchestrator/scheduler/nowMs";
-import { errorToJson } from "@smithers-orchestrator/errors/errorToJson";
-import { isSmithersError } from "@smithers-orchestrator/errors/isSmithersError";
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
-import { assertJsonPayloadWithinBounds, assertOptionalStringMaxLength, assertPositiveFiniteInteger, } from "@smithers-orchestrator/db/input-bounds";
-import { loadLatestSnapshot } from "@smithers-orchestrator/time-travel/snapshot";
-import { diffRawSnapshots } from "@smithers-orchestrator/time-travel/diff";
+import { prometheusContentType, renderPrometheusMetrics } from "@smthrs/observability";
+import { nowMs } from "@smthrs/scheduler/nowMs";
+import { errorToJson } from "@smthrs/errors/errorToJson";
+import { isSmithersError } from "@smthrs/errors/isSmithersError";
+import { SmithersError } from "@smthrs/errors/SmithersError";
+import { assertJsonPayloadWithinBounds, assertOptionalStringMaxLength, assertPositiveFiniteInteger, } from "@smthrs/db/input-bounds";
+import { loadLatestSnapshot } from "@smthrs/time-travel/snapshot";
+import { diffRawSnapshots } from "@smthrs/time-travel/diff";
 import { getNodeOutputRoute } from "./gatewayRoutes/getNodeOutput.js";
 import { NodeOutputRouteError } from "./gatewayRoutes/NodeOutputRouteError.js";
 import { getNodeDiffRoute } from "./gatewayRoutes/getNodeDiff.js";
 import { DevToolsRouteError, getDevToolsSnapshotRoute, validateFrameNoInput, validateFromSeqInput, validateRunId } from "./gatewayRoutes/getDevToolsSnapshot.js";
 import { streamDevToolsRoute } from "./gatewayRoutes/streamDevTools.js";
 import { jumpToFrameRoute, JumpToFrameError } from "./gatewayRoutes/jumpToFrame.js";
-import { writeRewindAuditRow } from "@smithers-orchestrator/time-travel/writeRewindAuditRow";
-import { recoverInProgressRewindAudits } from "@smithers-orchestrator/time-travel/recoverInProgressRewindAudits";
-import { GATEWAY_EVENT_WINDOW_DEFAULT, SMITHERS_API_VERSION, getRequiredScopeForGatewayMethod, } from "@smithers-orchestrator/gateway/rpc";
-import { hasGatewayScope } from "@smithers-orchestrator/gateway/auth/scopes";
+import { writeRewindAuditRow } from "@smthrs/time-travel/writeRewindAuditRow";
+import { recoverInProgressRewindAudits } from "@smthrs/time-travel/recoverInProgressRewindAudits";
+import { GATEWAY_EVENT_WINDOW_DEFAULT, SMITHERS_API_VERSION, getRequiredScopeForGatewayMethod, } from "@smthrs/gateway/rpc";
+import { hasGatewayScope } from "@smthrs/gateway/auth/scopes";
 import { EXTENSION_BACKPRESSURE_DISCONNECT_CODE, EXTENSION_METHOD_NOT_FOUND_CODE, EXTENSION_PAYLOAD_MAX_BYTES, EXTENSION_STREAM_OUTBOUND_QUEUE_LIMIT, EXTENSION_WS_BUFFERED_HIGH_WATER_BYTES, GatewayExtensions, isExtensionMethod, } from "./GatewayExtensions.js";
 import { createGatewayUiApp } from "./gatewayUi/createGatewayUiApp.js";
 import { renderDefaultConsoleClient } from "./gatewayUi/defaultConsole.js";
@@ -56,8 +56,8 @@ import { DEFAULT_OPERATOR_UI_ENTRY } from "./gatewayUi/defaultOperatorUi.js";
 /** @typedef {import("./RequestFrame.js").RequestFrame} RequestFrame */
 /** @typedef {import("./ResponseFrame.js").ResponseFrame} ResponseFrame */
 /** @typedef {import("node:http").ServerResponse} ServerResponse */
-/** @typedef {import("@smithers-orchestrator/components/SmithersWorkflow").SmithersWorkflow<unknown>} SmithersWorkflow */
-/** @typedef {import("@smithers-orchestrator/observability/SmithersEvent").SmithersEvent} SmithersEvent */
+/** @typedef {import("@smthrs/components/SmithersWorkflow").SmithersWorkflow<unknown>} SmithersWorkflow */
+/** @typedef {import("@smthrs/observability/SmithersEvent").SmithersEvent} SmithersEvent */
 /** @typedef {Record<string, string | number | null | undefined>} GatewayMetricLabels */
 /** @typedef {"ws" | "http"} GatewayTransport */
 /**
@@ -628,7 +628,7 @@ function responseError(id, code, message, details = {}) {
 /**
  * @param {string} id
  * @param {string} method
- * @param {{ requiredScopeForMethod?: (method: string) => import("@smithers-orchestrator/gateway/auth/scopes").GatewayScope | undefined }} [registry]
+ * @param {{ requiredScopeForMethod?: (method: string) => import("@smthrs/gateway/auth/scopes").GatewayScope | undefined }} [registry]
  * @returns {ResponseFrame}
  */
 function responseForbidden(id, method, registry) {
@@ -849,8 +849,8 @@ function normalizeGrantedScope(scope) {
 }
 /**
  * @param {string} method
- * @param {{ requiredScopeForMethod?: (method: string) => import("@smithers-orchestrator/gateway/auth/scopes").GatewayScope | undefined }} [registry]
- * @returns {import("@smithers-orchestrator/gateway/auth/scopes").GatewayScope}
+ * @param {{ requiredScopeForMethod?: (method: string) => import("@smthrs/gateway/auth/scopes").GatewayScope | undefined }} [registry]
+ * @returns {import("@smthrs/gateway/auth/scopes").GatewayScope}
  */
 function requiredScopeForMethod(method, registry) {
     if (method === "run:read" ||
@@ -877,7 +877,7 @@ function requiredScopeForMethod(method, registry) {
 /**
  * @param {string[]} scopes
  * @param {string} method
- * @param {{ requiredScopeForMethod?: (method: string) => import("@smithers-orchestrator/gateway/auth/scopes").GatewayScope | undefined }} [registry]
+ * @param {{ requiredScopeForMethod?: (method: string) => import("@smthrs/gateway/auth/scopes").GatewayScope | undefined }} [registry]
  * @returns {boolean}
  */
 function hasScope(scopes, method, registry) {

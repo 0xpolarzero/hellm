@@ -268,7 +268,7 @@ function readsSmithersCommand(args: unknown): boolean {
       : typeof (args as { command?: unknown }).command === "string"
         ? (args as { command: string }).command
         : "";
-  return /(?:^|[;&|]\s*)bunx\s+smithers-orchestrator(?:\s|$)/.test(commandText.trim());
+  return /(?:^|[;&|]\s*)bunx\s+smthrs(?:\s|$)/.test(commandText.trim());
 }
 
 function directToolLogDetails(

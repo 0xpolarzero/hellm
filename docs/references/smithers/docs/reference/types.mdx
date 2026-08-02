@@ -1,9 +1,9 @@
 ---
 title: Types
-description: Public TypeScript surface for smithers-orchestrator.
+description: Public TypeScript surface for smthrs.
 ---
 
-One source of truth: `tsc --emitDeclarationOnly` would produce something close to this. Import these types from `smithers-orchestrator` unless noted otherwise.
+One source of truth: `tsc --emitDeclarationOnly` would produce something close to this. Import these types from `smthrs` unless noted otherwise.
 
 Major sections at a glance:
 - **Workflow / Context** — `SmithersWorkflow`, `SmithersCtx`, `RunOptions`, `RunResult` — the entry points for defining and running workflows.
@@ -11,7 +11,7 @@ Major sections at a glance:
 - **Component props** — `WorkflowProps`, `ApprovalProps`, `SignalProps`, `LoopProps`, etc. — all JSX component interfaces.
 - **Errors** — `SmithersError`, `KnownSmithersErrorCode` — typed error codes; see [Errors](/reference/errors) for descriptions.
 - **Server / Gateway** — `ServerOptions`, `GatewayOptions`, `GatewayAuthConfig` — self-hosting configuration.
-- **Scorers / Memory / OpenAPI / Observability** — sub-path imports (`smithers-orchestrator/scorers`, `/memory`, `/openapi`, `/observability`).
+- **Scorers / Memory / OpenAPI / Observability** — sub-path imports (`smthrs/scorers`, `/memory`, `/openapi`, `/observability`).
 
 ```ts
 // =============================================================================
@@ -622,7 +622,7 @@ type GatewayOptions = {
 };
 
 // =============================================================================
-// Scorers (smithers-orchestrator/scorers)
+// Scorers (smthrs/scorers)
 // =============================================================================
 
 type ScoreResult  = { score: number; reason?: string; meta?: Record<string, unknown> };
@@ -647,7 +647,7 @@ type CreateScorerConfig = {
 };
 
 // =============================================================================
-// Memory (smithers-orchestrator/memory)
+// Memory (smthrs/memory)
 // =============================================================================
 
 type MemoryFact    = { namespace: string; key: string; valueJson: string; schemaSig?: string | null; createdAtMs: number; updatedAtMs: number; ttlMs?: number | null };
@@ -680,7 +680,7 @@ type MemoryStore = {
 };
 
 // =============================================================================
-// OpenAPI tools (smithers-orchestrator/openapi)
+// OpenAPI tools (smthrs/openapi)
 // =============================================================================
 
 type OpenApiAuth =
@@ -725,7 +725,7 @@ type CreateSmithersApi<Schema = any> = {
 };
 
 // =============================================================================
-// Observability (smithers-orchestrator/observability)
+// Observability (smthrs/observability)
 // =============================================================================
 
 type SmithersLogFormat = "json" | "pretty";
@@ -734,4 +734,4 @@ type SmithersObservabilityOptions = { service?: SmithersObservabilityService; lo
 type ResolvedSmithersObservabilityOptions = SmithersObservabilityOptions & { metricsPort?: number; metricsPath?: string };
 ```
 
-For canonical, machine-checked types, install `smithers-orchestrator` and use editor go-to-definition. For runtime errors, see [Errors](/reference/errors).
+For canonical, machine-checked types, install `smthrs` and use editor go-to-definition. For runtime errors, see [Errors](/reference/errors).

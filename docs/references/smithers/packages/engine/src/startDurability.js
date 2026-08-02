@@ -8,7 +8,7 @@
 
 import { Effect } from "effect";
 import * as BunContext from "@effect/platform-bun/BunContext";
-import { captureWorkspaceSnapshot, isJjRepo } from "@smithers-orchestrator/vcs/jj";
+import { captureWorkspaceSnapshot, isJjRepo } from "@smthrs/vcs/jj";
 import { createSnapshotService } from "./snapshotService.js";
 import { createWorkspaceWatcher } from "./workspaceWatcher.js";
 import { pruneWorkspaceDurability } from "./pruneWorkspaceDurability.js";

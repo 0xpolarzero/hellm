@@ -18,7 +18,7 @@ import {
   type SyncStreamFrame,
   type SyncStreamOptions,
   type SyncTransport,
-} from "@smithers-orchestrator/gateway-client";
+} from "@smthrs/gateway-client";
 import {
   SyncProvider,
   useGatewayQuery,

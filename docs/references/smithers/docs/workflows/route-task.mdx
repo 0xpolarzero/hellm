@@ -9,7 +9,7 @@ just do, or a durable job that belongs in a real workflow — then it either run
 or hands you the best-fit workflow to run instead.
 
 ```bash
-bunx smithers-orchestrator workflow run route-task \
+bunx smthrs workflow run route-task \
   --prompt "Summarize what changed in the last 10 commits"
 ```
 
@@ -39,10 +39,10 @@ verdict.
 ## Monitor it
 
 ```bash
-bunx smithers-orchestrator workflow run route-task --prompt "…" -d   # detach
-bunx smithers-orchestrator ps                                        # active / paused / recent
-bunx smithers-orchestrator logs <runId> -f                           # follow events
+bunx smthrs workflow run route-task --prompt "…" -d   # detach
+bunx smthrs ps                                        # active / paused / recent
+bunx smthrs logs <runId> -f                           # follow events
 ```
 
 When `route-task` recommends a durable workflow, run it directly — for example
-`bunx smithers-orchestrator workflow run implement --prompt "…"`.
+`bunx smthrs workflow run implement --prompt "…"`.

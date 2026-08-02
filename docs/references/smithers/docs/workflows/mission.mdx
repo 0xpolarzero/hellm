@@ -6,7 +6,7 @@ description: Long-horizon workflow with planning, approval, milestone validation
 `mission` is for work that is too long or broad for one agent loop. It creates a milestone plan, optionally pauses for human approval, then executes one milestone at a time. Within the active milestone it can run multiple feature workers in parallel, integrate their work, validate the checkpoint, and repair failed validation before moving on.
 
 ```bash
-bunx smithers-orchestrator workflow run mission --prompt "Migrate the dashboard to the new gateway APIs"
+bunx smthrs workflow run mission --prompt "Migrate the dashboard to the new gateway APIs"
 ```
 
 ## Inputs
@@ -24,7 +24,7 @@ bunx smithers-orchestrator workflow run mission --prompt "Migrate the dashboard 
 Example with worktree isolation:
 
 ```bash
-bunx smithers-orchestrator workflow run mission \
+bunx smthrs workflow run mission \
   --input '{"prompt":"Build import/export support","useWorktrees":true,"maxConcurrency":4}'
 ```
 

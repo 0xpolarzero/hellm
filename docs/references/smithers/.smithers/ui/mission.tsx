@@ -8,7 +8,7 @@ import {
   useGatewayRun,
   useGatewayRunEvents,
   useGatewayRuns,
-} from "smithers-orchestrator/gateway-react";
+} from "smthrs/gateway-react";
 
 const WORKFLOW_KEY = "mission";
 const MAX_MILESTONES = 6;

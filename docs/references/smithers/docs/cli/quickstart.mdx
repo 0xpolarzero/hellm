@@ -8,27 +8,27 @@ description: Short operational cheatsheet. The full catalog lives in CLI.
 **Set up**
 
 ```bash
-bunx smithers-orchestrator init                                       # scaffold .smithers/
-bunx smithers-orchestrator init --template idea-to-tickets            # scaffold with guided template next steps
-bunx smithers-orchestrator starters                                   # browse template IDs
+bunx smthrs init                                       # scaffold .smithers/
+bunx smthrs init --template idea-to-tickets            # scaffold with guided template next steps
+bunx smthrs starters                                   # browse template IDs
 ```
 
 **Run**
 
 ```bash
-bunx smithers-orchestrator workflow run implement --prompt "…"        # launch a seeded workflow
-bunx smithers-orchestrator up workflow.tsx --run-id <id> --resume true   # resume a paused run
+bunx smthrs workflow run implement --prompt "…"        # launch a seeded workflow
+bunx smthrs up workflow.tsx --run-id <id> --resume true   # resume a paused run
 ```
 
 **Observe & control**
 
 ```bash
-bunx smithers-orchestrator ps                                         # list runs
-bunx smithers-orchestrator inspect <run-id>                           # structured run state
-bunx smithers-orchestrator logs <run-id> --tail 20 --follow           # stream events
-bunx smithers-orchestrator why <run-id>                               # why is it paused?
-bunx smithers-orchestrator approve <run-id> --node <id> --by <name>   # approve a paused node
-bunx smithers-orchestrator cancel <run-id>                            # cancel a run
+bunx smthrs ps                                         # list runs
+bunx smthrs inspect <run-id>                           # structured run state
+bunx smthrs logs <run-id> --tail 20 --follow           # stream events
+bunx smthrs why <run-id>                               # why is it paused?
+bunx smthrs approve <run-id> --node <id> --by <name>   # approve a paused node
+bunx smthrs cancel <run-id>                            # cancel a run
 ```
 
 See [Tour](/tour) for a full worked example. See [CLI overview](/cli/overview) for the complete flag reference.

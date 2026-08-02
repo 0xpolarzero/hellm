@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { Effect, Metric } from "effect";
-import { approveNode, denyNode } from "@smithers-orchestrator/engine/approvals";
-import { isRunHeartbeatFresh } from "@smithers-orchestrator/engine";
-import { nowMs } from "@smithers-orchestrator/scheduler/nowMs";
-import { prometheusContentType, renderPrometheusMetrics, } from "@smithers-orchestrator/observability";
-import { logWarning } from "@smithers-orchestrator/observability/logging";
+import { approveNode, denyNode } from "@smthrs/engine/approvals";
+import { isRunHeartbeatFresh } from "@smthrs/engine";
+import { nowMs } from "@smthrs/scheduler/nowMs";
+import { prometheusContentType, renderPrometheusMetrics, } from "@smthrs/observability";
+import { logWarning } from "@smthrs/observability/logging";
 import { runPromise } from "./smithersRuntime.js";
-import { httpRequests, httpRequestDuration, trackEvent } from "@smithers-orchestrator/observability/metrics";
+import { httpRequests, httpRequestDuration, trackEvent } from "@smthrs/observability/metrics";
 /** @typedef {import("./ServeOptions.js").ServeOptions} ServeOptions */
 
 class HttpError extends Error {

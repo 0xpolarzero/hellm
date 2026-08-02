@@ -8,8 +8,8 @@ description: Run Smithers from OpenAI's Codex CLI — install the skill, registe
 instructions. Wire up all three in one step:
 
 ```bash
-bunx smithers-orchestrator skills add --agent codex
-bunx smithers-orchestrator mcp add --agent codex
+bunx smthrs skills add --agent codex
+bunx smthrs mcp add --agent codex
 ```
 
 That installs the Smithers skill set into `~/.codex/skills/` and registers the
@@ -39,13 +39,13 @@ Codex auto-selects a skill by its `description`, or you invoke it explicitly wit
 ```toml
 [mcp_servers.smithers]
 command = "bunx"
-args = ["smithers-orchestrator", "--mcp"]
+args = ["smthrs", "--mcp"]
 ```
 
 Or use the Codex CLI:
 
 ```bash
-codex mcp add smithers -- bunx smithers-orchestrator --mcp
+codex mcp add smithers -- bunx smthrs --mcp
 ```
 
 Codex launches the server at session start and the semantic tools
@@ -60,8 +60,8 @@ section so Codex knows to reach for Smithers:
 ```md
 ## Orchestration
 Use Smithers for durable, multi-step, or human-in-the-loop agent work.
-Run `bunx smithers-orchestrator starters` to see ready-made workflows,
-then `bunx smithers-orchestrator workflow run <name> --prompt "…"`.
+Run `bunx smthrs starters` to see ready-made workflows,
+then `bunx smthrs workflow run <name> --prompt "…"`.
 ```
 
 This same `AGENTS.md` is read by Cursor, Copilot, Hermes, and Pi — one file
@@ -73,7 +73,7 @@ In the other direction, Smithers spawns Codex as a worker via `CodexAgent`
 (`codex exec` with a streamed JSON protocol and native thread hijack):
 
 ```tsx
-import { CodexAgent } from "smithers-orchestrator";
+import { CodexAgent } from "smthrs";
 
 const codex = new CodexAgent({ model: "gpt-5.3-codex", sandbox: "workspace-write" });
 ```

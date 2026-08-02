@@ -13,7 +13,7 @@
   - `gatewayRpc` for RPC (keeps cookie auth, CSRF, dev-proxy URLs)
   - `createSmithersGatewayTransport(SmithersGatewayClient)` for streams
     (resilient generators with reconnect + lastSeq resume)
-- `main.tsx` imports `SyncProvider` from `@smithers-orchestrator/gateway-react`.
+- `main.tsx` imports `SyncProvider` from `@smthrs/gateway-react`.
 
 ### Fixed
 

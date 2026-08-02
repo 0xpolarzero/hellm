@@ -3,7 +3,7 @@ import { registerHappyDomForTests } from "../test/registerHappyDom";
 registerHappyDomForTests();
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { GatewayRpcError } from "@smithers-orchestrator/gateway-client";
+import { GatewayRpcError } from "@smthrs/gateway-client";
 import {
   RPC_WS_PATH,
   getGatewayClient,
@@ -21,7 +21,7 @@ import {
 import { resetAuthRedirectForTests } from "../auth/authClient";
 
 /**
- * The app's wrapper around `@smithers-orchestrator/gateway-client`. These tests
+ * The app's wrapper around `@smthrs/gateway-client`. These tests
  * pin three behaviors:
  *   - the wrapper preserves same-origin Worker/Vite proxy behavior (no base URL
  *     swap unless one is configured),

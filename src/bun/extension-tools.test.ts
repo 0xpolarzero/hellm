@@ -491,24 +491,24 @@ describe("builtin extension registry", () => {
     ]);
     expect(byId.get("smithers")?.cliRequirements).toEqual([
       {
-        id: "smithers-orchestrator",
-        package: "smithers-orchestrator",
+        id: "smthrs",
+        package: "smthrs",
         binary: "bunx",
         required: true,
         version: "0.22.0",
-        versionCommand: "bunx smithers-orchestrator --version",
+        versionCommand: "bunx smthrs --version",
       },
     ]);
     expect(byId.get("smithers")?.generatedInstructions).toEqual([
       {
         output: "instructions/full/010-smithers-core.generated.md",
         script: "scripts/generate-smithers-core.ts",
-        versionCliRequirementId: "smithers-orchestrator",
+        versionCliRequirementId: "smthrs",
       },
       {
         output: "instructions/full/040-smithers-memory.generated.md",
         script: "scripts/generate-smithers-memory.ts",
-        versionCliRequirementId: "smithers-orchestrator",
+        versionCliRequirementId: "smthrs",
       },
     ]);
     expect(byId.get("smithers")?.instructionFiles).toEqual([

@@ -16,7 +16,7 @@ export { useGatewayExtensionStream, type GatewayExtensionStreamState } from "./u
 export type { GatewayAsyncState } from "./GatewayAsyncState.ts";
 
 // Declarative sync SDK React surface. The vanilla core lives in
-// `@smithers-orchestrator/gateway-client`; this layer adds the React context,
+// `@smthrs/gateway-client`; this layer adds the React context,
 // provider, and hooks (`useSyncQuery` / `useSyncMutation` / `useSyncSubscription`
 // + typed gateway shortcuts) backed by `useSyncExternalStore`.
 export { SyncContext } from "./sync/SyncContext.ts";

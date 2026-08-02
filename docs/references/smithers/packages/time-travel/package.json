@@ -1,5 +1,5 @@
 {
-  "name": "@smithers-orchestrator/time-travel",
+  "name": "@smthrs/time-travel",
   "version": "0.23.0",
   "description": "Smithers snapshots, diffs, forks, replay, timelines, and VCS-tagged run history",
   "type": "module",
@@ -52,11 +52,11 @@
   "dependencies": {
     "@effect/platform": "^0.96.0",
     "@effect/platform-bun": "^0.89.0",
-    "@smithers-orchestrator/db": "workspace:*",
-    "@smithers-orchestrator/errors": "workspace:*",
-    "@smithers-orchestrator/observability": "workspace:*",
-    "@smithers-orchestrator/scheduler": "workspace:*",
-    "@smithers-orchestrator/vcs": "workspace:*",
+    "@smthrs/db": "^0.33.0",
+    "@smthrs/errors": "^0.33.0",
+    "@smthrs/observability": "^0.33.0",
+    "@smthrs/scheduler": "^0.33.0",
+    "@smthrs/vcs": "^0.33.0",
     "drizzle-orm": "^0.45.2",
     "effect": "^3.21.1",
     "picocolors": "^1.1.1"

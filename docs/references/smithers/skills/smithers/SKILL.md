@@ -83,17 +83,17 @@ From inside the user's project (Bun ≥ 1.3, plus a model key like
 
 ```bash
 # 1. Scaffold .smithers/ with ready-made workflows (implement, review, plan, ralph, debug…)
-bunx smithers-orchestrator init
+bunx smthrs init
 
 # 2. Browse plain-English starters and their copy-paste commands
-bunx smithers-orchestrator starters
+bunx smthrs starters
 
 # 3. Run one. This dispatches a real coding agent to do the work, durably.
-bunx smithers-orchestrator workflow run implement --prompt "Add a /health endpoint"
+bunx smthrs workflow run implement --prompt "Add a /health endpoint"
 
 # 4. Watch it
-bunx smithers-orchestrator ps                 # active / paused / recent runs
-bunx smithers-orchestrator logs <run-id> -f   # follow the event stream
+bunx smthrs ps                 # active / paused / recent runs
+bunx smthrs logs <run-id> -f   # follow the event stream
 ```
 
 That's the loop: scaffold → run a workflow → watch the run. The "aha" is step 3:
@@ -109,8 +109,8 @@ Crash mid-run and the next render picks up exactly where it left off: completed
 nodes are never re-run.
 
 ```tsx
-/** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, Task } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { createSmithers, Sequence, Task } from "smthrs";
 import { z } from "zod";
 
 const { Workflow, smithers, outputs } = createSmithers({
@@ -247,7 +247,7 @@ and `../components/Bar`.
 
 ## Operating runs
 
-Everything is a CLI verb (prefix with `bunx smithers-orchestrator` if it isn't on PATH):
+Everything is a CLI verb (prefix with `bunx smthrs` if it isn't on PATH):
 
 ```bash
 smithers up workflow.tsx --input '{"description":"Fix bug"}'   # start a run
@@ -440,7 +440,7 @@ You don't have to hand-write a workflow from scratch. The seeded pack ships a
 **`create-workflow`** workflow that builds one for you from a plain-English ask:
 
 ```bash
-bunx smithers-orchestrator workflow run create-workflow \
+bunx smthrs workflow run create-workflow \
   --prompt "Watch a landing request and auto-land it once CI is green"
 ```
 
@@ -468,8 +468,8 @@ gateway.register("my-workflow", workflow, {
 
 The bundle is one file. Two shipping shapes:
 
-- **React (recommended).** `smithers-orchestrator/gateway-react`. One call to `createGatewayReactRoot(<App />)` reads the boot config, mounts a provider, and gives the tree live hooks: `useGatewayRun`, `useGatewayRunEvents`, `useGatewayNodeOutput`, `useGatewayApprovals`, `useGatewayActions` (for `submitApproval`, `submitSignal`, `cancelRun`, `rewindRun`, etc.). The hooks are **stale-data-free by construction**: when `runId` (or any input) changes, the prior data clears synchronously and any late response from the old inputs is dropped. A custom UI that switches between runs never blinks the wrong data. It automatically manages subscriptions, pushed updates, metrics, and resilient reconnections.
-- **Vanilla.** `smithers-orchestrator/gateway-client`. One `SmithersGatewayClient` class with `getRun`, `getNodeOutput`, `getNodeDiff`, `submitApproval`, `submitSignal`, `cancelRun`, and a `streamRunEventsResilient` async generator that reconnects with backoff + jitter and resumes from the last per-run `seq`. This generator handles live pushed updates, metrics streaming, and subscriptions. Pick this when you want zero dependencies or already own your render layer.
+- **React (recommended).** `smthrs/gateway-react`. One call to `createGatewayReactRoot(<App />)` reads the boot config, mounts a provider, and gives the tree live hooks: `useGatewayRun`, `useGatewayRunEvents`, `useGatewayNodeOutput`, `useGatewayApprovals`, `useGatewayActions` (for `submitApproval`, `submitSignal`, `cancelRun`, `rewindRun`, etc.). The hooks are **stale-data-free by construction**: when `runId` (or any input) changes, the prior data clears synchronously and any late response from the old inputs is dropped. A custom UI that switches between runs never blinks the wrong data. It automatically manages subscriptions, pushed updates, metrics, and resilient reconnections.
+- **Vanilla.** `smthrs/gateway-client`. One `SmithersGatewayClient` class with `getRun`, `getNodeOutput`, `getNodeDiff`, `submitApproval`, `submitSignal`, `cancelRun`, and a `streamRunEventsResilient` async generator that reconnects with backoff + jitter and resumes from the last per-run `seq`. This generator handles live pushed updates, metrics streaming, and subscriptions. Pick this when you want zero dependencies or already own your render layer.
 
 The bundle reads `?runId=<id>` from `location.search` for the run to scope to, and optionally `__SMITHERS_GATEWAY_UI__` (a `GatewayUiBootConfig`) for the mount path, RPC path, WebSocket path, and free-form `props` you set at `gateway.register({ ui: { props } })`.
 
@@ -478,9 +478,9 @@ The bundle reads `?runId=<id>` from `location.search` for the run to scope to, a
 **Local dev.**
 
 ```bash
-bunx smithers-orchestrator up my-workflow -d         # boot the gateway with the workflow + UI
-bunx smithers-orchestrator ui                        # opens the UI for the most recent run
-bunx smithers-orchestrator ui <runId>                # specific run
+bunx smthrs up my-workflow -d         # boot the gateway with the workflow + UI
+bunx smthrs ui                        # opens the UI for the most recent run
+bunx smthrs ui <runId>                # specific run
 ```
 
 **Reference bundles in this repo:** `.smithers/ui/vcs.tsx`, `.smithers/ui/grill-me.tsx`, `.smithers/ui/ultragrill.tsx`, `.smithers/ui/workflow-skill.tsx`.
@@ -510,14 +510,14 @@ bundle to answer a focused question. Start narrow and widen only as needed:
 - **`llms-full.txt`**: everything concatenated, when you want it all in context.
 
 ```bash
-bunx smithers-orchestrator docs           # prints llms.txt (the concise index)
-bunx smithers-orchestrator docs-full      # prints llms-full.txt
-bunx smithers-orchestrator ask "How do I add a human approval gate?"
+bunx smthrs docs           # prints llms.txt (the concise index)
+bunx smthrs docs-full      # prints llms-full.txt
+bunx smthrs ask "How do I add a human approval gate?"
 ```
 
 - Docs: **https://smithers.sh**  ·  fragments at `smithers.sh/llms-*.txt`
 - Repo: **https://github.com/smithersai/smithers**
-- npm package: `smithers-orchestrator`
+- npm package: `smthrs`
 
 **When in doubt, clone the repo** (`github.com/smithersai/smithers`) and read the
 source directly; the docs and `llms-*.txt` bundles can lag the code. The

@@ -1,7 +1,7 @@
 import {
   renderSmithersAgentPromptGuidance,
   type SmithersAgentContract,
-} from "@smithers-orchestrator/agents/agent-contract";
+} from "@smthrs/agents/agent-contract";
 import type { SmithersPiRunContext } from "./SmithersPiRunContext.js";
 
 function toolRef(contract: SmithersAgentContract, name: string, prefix = "smithers_") {

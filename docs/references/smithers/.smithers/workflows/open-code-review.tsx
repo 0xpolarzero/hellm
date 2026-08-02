@@ -1,7 +1,7 @@
 // smithers-source: authored
 // smithers-display-name: Open Code Review
-/** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Parallel, Sequence, type AgentLike } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { createSmithers, Parallel, Sequence, type AgentLike } from "smthrs";
 import { agents } from "../agents";
 import {
   buildNativeReviewPrompt,

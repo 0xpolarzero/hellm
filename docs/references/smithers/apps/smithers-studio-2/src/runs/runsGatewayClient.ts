@@ -1,7 +1,7 @@
 /**
  * A minimal, self-contained Gateway RPC client for the Runs surface.
  *
- * It speaks the exact same wire protocol as @smithers-orchestrator/gateway-client
+ * It speaks the exact same wire protocol as @smthrs/gateway-client
  * (`POST {origin}/v1/rpc/<method>` with a `{type:"res",ok,payload|error}` frame),
  * but is implemented locally so the surface does not pull that package's raw
  * `.ts` sources into the app's tsc program. The result: the real network path

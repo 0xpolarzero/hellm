@@ -255,7 +255,7 @@ const rendered = `${toYaml(buildOpenApiDocument())}\n`;
 if (process.argv.includes("--check")) {
   const current = readFileSync(outPath, "utf8");
   if (current !== rendered) {
-    console.error("packages/gateway/openapi.yaml is out of date. Run `pnpm --filter @smithers-orchestrator/gateway generate:openapi`.");
+    console.error("packages/gateway/openapi.yaml is out of date. Run `pnpm --filter @smthrs/gateway generate:openapi`.");
     process.exit(1);
   }
   process.exit(0);

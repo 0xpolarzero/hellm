@@ -2,7 +2,7 @@ import {
   GatewayRpcError,
   SmithersGatewayClient,
   type GatewayStreamReconnectEvent,
-} from "@smithers-orchestrator/gateway-client";
+} from "@smthrs/gateway-client";
 import {
   getGatewayBaseUrl,
   getStoredAuthorization,
@@ -16,7 +16,7 @@ import {
 } from "../observability/uiMetrics";
 
 /**
- * The app's wrapper around `@smithers-orchestrator/gateway-client`.
+ * The app's wrapper around `@smthrs/gateway-client`.
  *
  * The SDK already speaks the gateway wire protocol (RPC + WebSocket); we layer
  * three app concerns over it without forking the transport:

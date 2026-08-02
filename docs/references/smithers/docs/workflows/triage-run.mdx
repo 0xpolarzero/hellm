@@ -9,7 +9,7 @@ rewind, retry, or escalate. Reach for it when a run failed or stalled and you
 want a grounded read plus a concrete command instead of eyeballing the logs.
 
 ```bash
-bunx smithers-orchestrator workflow run triage-run --input '{"runId":"<runId>"}'
+bunx smthrs workflow run triage-run --input '{"runId":"<runId>"}'
 ```
 
 ## Stages
@@ -29,8 +29,8 @@ It does not mutate the run — every stage is read-only, so the recommended comm
 ## Monitor it
 
 ```bash
-bunx smithers-orchestrator workflow run triage-run --input '{"runId":"<runId>"}' -d   # detach
-bunx smithers-orchestrator ps                                                          # active / paused / recent
-bunx smithers-orchestrator logs <runId> -f                                             # follow events
-bunx smithers-orchestrator output <runId> --node recommend                             # read the recommendation
+bunx smthrs workflow run triage-run --input '{"runId":"<runId>"}' -d   # detach
+bunx smthrs ps                                                          # active / paused / recent
+bunx smthrs logs <runId> -f                                             # follow events
+bunx smthrs output <runId> --node recommend                             # read the recommendation
 ```

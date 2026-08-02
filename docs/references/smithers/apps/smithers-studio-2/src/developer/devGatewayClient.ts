@@ -1,4 +1,4 @@
-import { SmithersGatewayClient } from "@smithers-orchestrator/gateway-client";
+import { SmithersGatewayClient } from "@smthrs/gateway-client";
 
 /**
  * Lazily-constructed gateway client shared by the developer surfaces. The base

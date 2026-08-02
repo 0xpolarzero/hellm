@@ -1,5 +1,5 @@
 {
-  "name": "@smithers-orchestrator/smithers-studio-2",
+  "name": "@smthrs/smithers-studio-2",
   "version": "0.1.0",
   "description": "Next Smithers Studio UI shell",
   "private": true,
@@ -15,8 +15,8 @@
     "build:desktop": "pnpm run build && electrobun build"
   },
   "dependencies": {
-    "@smithers-orchestrator/devtools": "workspace:*",
-    "@smithers-orchestrator/gateway-client": "workspace:*",
+    "@smthrs/devtools": "^0.33.0",
+    "@smthrs/gateway-client": "^0.33.0",
     "@uidotdev/usehooks": "^2.4.1",
     "@vitejs/plugin-react": "^6.0.2",
     "electrobun": "^1.18.1",

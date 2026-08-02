@@ -10,7 +10,7 @@
 
 import * as Command from "@effect/platform/Command";
 import { Duration, Effect, Fiber, Metric, Stream } from "effect";
-import { vcsDuration } from "@smithers-orchestrator/observability/metrics";
+import { vcsDuration } from "@smthrs/observability/metrics";
 import { resolveJjBinary } from "./resolveJjBinary.js";
 
 const JJ_POINTER_TIMEOUT_MS = 1_500;

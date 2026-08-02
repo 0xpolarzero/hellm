@@ -4,14 +4,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { AntigravityAgent } from "@smithers-orchestrator/agents/AntigravityAgent";
-import { ClaudeCodeAgent } from "@smithers-orchestrator/agents/ClaudeCodeAgent";
-import { CodexAgent } from "@smithers-orchestrator/agents/CodexAgent";
-import { GeminiAgent } from "@smithers-orchestrator/agents/GeminiAgent";
-import { KimiAgent } from "@smithers-orchestrator/agents/KimiAgent";
-import { PiAgent } from "@smithers-orchestrator/agents/PiAgent";
-import { SmithersError } from "@smithers-orchestrator/errors";
-import { createSmithersAgentContract, renderSmithersAgentPromptGuidance, } from "@smithers-orchestrator/agents/agent-contract";
+import { AntigravityAgent } from "@smthrs/agents/AntigravityAgent";
+import { ClaudeCodeAgent } from "@smthrs/agents/ClaudeCodeAgent";
+import { CodexAgent } from "@smthrs/agents/CodexAgent";
+import { GeminiAgent } from "@smthrs/agents/GeminiAgent";
+import { KimiAgent } from "@smthrs/agents/KimiAgent";
+import { PiAgent } from "@smthrs/agents/PiAgent";
+import { SmithersError } from "@smthrs/errors";
+import { createSmithersAgentContract, renderSmithersAgentPromptGuidance, } from "@smthrs/agents/agent-contract";
 import { describeUnavailableAgent, detectAvailableAgents, formatNoUsableAgentsMessage, } from "./agent-detection.js";
 /**
  * @typedef {typeof ASK_AGENT_IDS[number]} AskAgentId
@@ -19,7 +19,7 @@ import { describeUnavailableAgent, detectAvailableAgents, formatNoUsableAgentsMe
 /**
  * @typedef {{ agent?: AskAgentId; listAgents?: boolean; dumpPrompt?: boolean; toolSurface?: SmithersToolSurface; noMcp?: boolean; printBootstrap?: boolean; }} AskOptions
  */
-/** @typedef {import("@smithers-orchestrator/agents/agent-contract").SmithersToolSurface} SmithersToolSurface */
+/** @typedef {import("@smthrs/agents/agent-contract").SmithersToolSurface} SmithersToolSurface */
 
 const ASK_AGENT_IDS = ["claude", "codex", "kimi", "antigravity", "gemini", "pi"];
 const DEFAULT_SERVER_NAME = "smithers";

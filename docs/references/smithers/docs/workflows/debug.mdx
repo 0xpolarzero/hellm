@@ -6,7 +6,7 @@ description: Reproduce and fix a reported bug with validation.
 `debug` reuses the same `ValidationLoop` component as `implement`, but with a bug-focused default prompt. Unlike `implement`, `debug` does not pass early-exit (`done`) or prior-attempt feedback to the loop, so it runs all iterations (up to `maxIterations` = 3) rather than stopping as soon as validation passes and a reviewer approves.
 
 ```bash
-bunx smithers-orchestrator workflow run debug --prompt "Fix the intermittent gateway reconnect failure"
+bunx smthrs workflow run debug --prompt "Fix the intermittent gateway reconnect failure"
 ```
 
 ## Inputs

@@ -1,14 +1,14 @@
-// Regression test for the `bunx smithers-orchestrator init` path bug.
+// Regression test for the `bunx smthrs init` path bug.
 //
 // Before the fix, workflow-pack.js resolved `../../../package.json` relative
 // to `apps/cli/src/workflow-pack.js`. That worked inside the monorepo (it
 // landed on the root package.json) but failed in a published install, where
-// the file lives at `node_modules/@smithers-orchestrator/cli/src/` and the
+// the file lives at `node_modules/@smthrs/cli/src/` and the
 // relative path resolves to `node_modules/package.json` — which does not
 // exist. Init would throw ENOENT before writing a single file.
 //
 // This test reproduces the installed layout in a temp directory and verifies
-// `initWorkflowPack` succeeds and pins `smithers-orchestrator` to a real
+// `initWorkflowPack` succeeds and pins `smthrs` to a real
 // version range (not `"latest"`).
 
 import { expect, onTestFinished, test } from "bun:test";
@@ -49,15 +49,15 @@ function buildFakeInstallTree() {
     // Simulate how pnpm/npm/bunx lay out the published package. Intentionally
     // do NOT include a `package.json` at `node_modules/` — this is the exact
     // condition that triggered the ENOENT before the fix.
-    const smithersDir = join(nm, "smithers-orchestrator");
-    const cliDir = join(nm, "@smithers-orchestrator", "cli");
-    const errorsDir = join(nm, "@smithers-orchestrator", "errors");
-    const accountsDir = join(nm, "@smithers-orchestrator", "accounts");
+    const smithersDir = join(nm, "smthrs");
+    const cliDir = join(nm, "@smthrs", "cli");
+    const errorsDir = join(nm, "@smthrs", "errors");
+    const accountsDir = join(nm, "@smthrs", "accounts");
 
     writeFile(
         join(smithersDir, "package.json"),
         JSON.stringify({
-            name: "smithers-orchestrator",
+            name: "smthrs",
             version: "99.0.0",
             type: "module",
             bin: { smithers: "./src/bin/smithers.js" },
@@ -65,13 +65,13 @@ function buildFakeInstallTree() {
     );
     writeFile(
         join(smithersDir, "src/bin/smithers.js"),
-        "#!/usr/bin/env node\nimport \"@smithers-orchestrator/cli\";\n",
+        "#!/usr/bin/env node\nimport \"@smthrs/cli\";\n",
     );
 
     writeFile(
         join(cliDir, "package.json"),
         JSON.stringify({
-            name: "@smithers-orchestrator/cli",
+            name: "@smthrs/cli",
             version: "99.0.0",
             type: "module",
         }) + "\n",
@@ -85,7 +85,7 @@ function buildFakeInstallTree() {
     writeFile(
         join(errorsDir, "package.json"),
         JSON.stringify({
-            name: "@smithers-orchestrator/errors",
+            name: "@smthrs/errors",
             version: "99.0.0",
             type: "module",
             exports: { ".": "./src/index.js" },
@@ -107,7 +107,7 @@ function buildFakeInstallTree() {
     writeFile(
         join(accountsDir, "package.json"),
         JSON.stringify({
-            name: "@smithers-orchestrator/accounts",
+            name: "@smthrs/accounts",
             version: "99.0.0",
             type: "module",
             exports: { ".": "./src/index.js" },
@@ -194,7 +194,7 @@ test("initWorkflowPack succeeds when run from a published install layout", () =>
 
     const generated = JSON.parse(readFileSync(join(tree.cwd, ".smithers/package.json"), "utf8"));
     // The CLI's own version (99.0.0) should be pinned, not "latest".
-    expect(generated.dependencies["smithers-orchestrator"]).toBe("^99.0.0");
+    expect(generated.dependencies["smthrs"]).toBe("^99.0.0");
     // And installed dep versions should be picked up via createRequire.
     expect(generated.dependencies.zod).toBe("4.99.0");
     expect(generated.devDependencies.typescript).toBe("5.99.0");

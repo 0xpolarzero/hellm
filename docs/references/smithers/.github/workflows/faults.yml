@@ -32,4 +32,4 @@ jobs:
 
       - run: pnpm -r build
 
-      - run: pnpm --filter @smithers-orchestrator/e2e test:faults
+      - run: pnpm --filter @smthrs/e2e test:faults

@@ -1,10 +1,10 @@
 // smithers-source: seeded
 // smithers-display-name: Smoke Test
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createSmithers } from "smithers-orchestrator";
+import { createSmithers } from "smthrs";
 import { z } from "zod/v4";
 import { agents } from "../agents";
 import SmoketestPrompt from "../prompts/smoketest.mdx";
@@ -47,7 +47,7 @@ const inputSchema = z.object({
   prompt: z
     .string()
     .default(
-      "Smoke test the latest published smithers-orchestrator release against the pinned changelog entry.",
+      "Smoke test the latest published smthrs release against the pinned changelog entry.",
     ),
   version: z.string().default(CURRENT_VERSION),
   changelog: z.string().default(CURRENT_CHANGELOG),

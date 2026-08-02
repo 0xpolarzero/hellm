@@ -3,8 +3,8 @@
 // smithers-display-name: Create Skill
 // smithers-description: Author a new agent skill (SKILL.md + supporting files) from a plain-English ask.
 // smithers-tags: authoring, skills
-/** @jsxImportSource smithers-orchestrator */
-import { createSmithers } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { createSmithers } from "smthrs";
 import { z } from "zod/v4";
 import { agents } from "../agents";
 import ClarifyPrompt from "../prompts/create-skill-clarify.mdx";

@@ -8,8 +8,8 @@ description: Run Smithers from Cursor — register the MCP server, install the s
 them.
 
 ```bash
-bunx smithers-orchestrator skills add --agent cursor
-bunx smithers-orchestrator mcp add --agent cursor
+bunx smthrs skills add --agent cursor
+bunx smthrs mcp add --agent cursor
 ```
 
 That installs the skill set under `~/.cursor/skills/` and registers the MCP
@@ -26,7 +26,7 @@ note Cursor uses the `mcpServers` key:
   "mcpServers": {
     "smithers": {
       "command": "bunx",
-      "args": ["smithers-orchestrator", "--mcp"]
+      "args": ["smthrs", "--mcp"]
     }
   }
 }
@@ -61,7 +61,7 @@ globs: .smithers/**/*
 alwaysApply: false
 ---
 Smithers is a durable control plane for long-running coding agents.
-Run `bunx smithers-orchestrator starters` to list ready-made workflows.
+Run `bunx smthrs starters` to list ready-made workflows.
 ```
 
 Cursor also reads a plain `AGENTS.md` at the repo root as a simpler alternative —

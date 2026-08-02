@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { bridgeSignalResolve } from "./effect/durable-deferred-bridge.js";
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
-import { nowMs } from "@smithers-orchestrator/scheduler/nowMs";
+import { SmithersError } from "@smthrs/errors/SmithersError";
+import { nowMs } from "@smthrs/scheduler/nowMs";
 /** @typedef {import("./SignalRunOptions.ts").SignalRunOptions} SignalRunOptions */
 
 /**

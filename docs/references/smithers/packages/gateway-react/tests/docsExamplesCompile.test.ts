@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 // matching the real package types (e.g. `listApprovals` returning an array
 // instead of `{ approvals: [...] }`). We extract the first code block from the
 // MDX file, drop it into a temp project that aliases the same `paths` the docs
-// snippets import (`smithers-orchestrator/gateway-react`,
-// `smithers-orchestrator/gateway-client`), and shell out to `tsc --noEmit`.
+// snippets import (`smthrs/gateway-react`,
+// `smthrs/gateway-client`), and shell out to `tsc --noEmit`.
 //
 // If you update an example, run the test — a type error here means the snippet
 // no longer compiles against the real packages.
@@ -50,8 +50,8 @@ function compile(opts: {
       jsx: opts.jsx ? "react-jsx" : undefined,
       baseUrl: REPO_ROOT,
       paths: {
-        "smithers-orchestrator/gateway-react": ["packages/gateway-react/src/index.ts"],
-        "smithers-orchestrator/gateway-client": ["packages/gateway-client/src/index.ts"],
+        "smthrs/gateway-react": ["packages/gateway-react/src/index.ts"],
+        "smthrs/gateway-client": ["packages/gateway-client/src/index.ts"],
       },
       typeRoots: [resolve(REPO_ROOT, "node_modules", "@types")],
     },

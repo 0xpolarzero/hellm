@@ -13,7 +13,7 @@
 ## Subscribe via `onProgress`
 
 ```ts
-import { runWorkflow } from "smithers-orchestrator";
+import { runWorkflow } from "smthrs";
 import { Effect } from "effect";
 import workflow from "./workflow";
 
@@ -40,8 +40,8 @@ jq -r .type .smithers/executions/<run-id>/logs/stream.ndjson | sort | uniq -c | 
 Or with the CLI:
 
 ```bash
-bunx smithers-orchestrator events <run-id> --json
-bunx smithers-orchestrator events <run-id> --type tool-call --node analyze
+bunx smthrs events <run-id> --json
+bunx smthrs events <run-id> --type tool-call --node analyze
 ```
 
 ## Common fields
@@ -56,7 +56,7 @@ Every event includes `type`, `runId`, `timestampMs`. Node-scoped events add `nod
 
 ## Event categories
 
-Used by `bunx smithers-orchestrator events --type <category>` and the metrics layer.
+Used by `bunx smthrs events --type <category>` and the metrics layer.
 
 | Category | Events |
 |---|---|
@@ -89,7 +89,7 @@ Used by `bunx smithers-orchestrator events --type <category>` and the metrics la
 | `ApprovalGranted` / `ApprovalDenied` | Approval counters |
 | `TokenUsageReported` | Token usage counters per model/agent |
 
-`trackSmithersEvent` from `smithers-orchestrator/observability` exposes this mapping for custom integrations. See [Observability](/guides/monitoring-logs) for the full OTLP/Prometheus setup.
+`trackSmithersEvent` from `smthrs/observability` exposes this mapping for custom integrations. See [Observability](/guides/monitoring-logs) for the full OTLP/Prometheus setup.
 
 ---
 

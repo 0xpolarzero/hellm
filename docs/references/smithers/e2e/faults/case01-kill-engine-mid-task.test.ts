@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { deriveRunState } from "@smithers-orchestrator/db/runState/deriveRunState";
-import type { RunRow } from "@smithers-orchestrator/db/adapter/RunRow";
+import { deriveRunState } from "@smthrs/db/runState/deriveRunState";
+import type { RunRow } from "@smthrs/db/adapter/RunRow";
 import { corruptHeartbeat } from "../harness/corruptHeartbeat.ts";
 
 const STALE_THRESHOLD_MS = 30_000;

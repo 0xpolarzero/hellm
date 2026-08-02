@@ -29,10 +29,10 @@ approved), never decoration.
 ## Scripts
 
 - `npm run dev` from the repo root starts the Smithers Gateway and Studio 2 together.
-- `pnpm --filter @smithers-orchestrator/smithers-studio-2 dev`
-- `pnpm --filter @smithers-orchestrator/smithers-studio-2 typecheck`
-- `pnpm --filter @smithers-orchestrator/smithers-studio-2 build`
-- `pnpm --filter @smithers-orchestrator/smithers-studio-2 exec playwright test` — e2e
+- `pnpm --filter @smthrs/smithers-studio-2 dev`
+- `pnpm --filter @smthrs/smithers-studio-2 typecheck`
+- `pnpm --filter @smthrs/smithers-studio-2 build`
+- `pnpm --filter @smthrs/smithers-studio-2 exec playwright test` — e2e
 
 The root dev script probes for available ports starting at `7331` for the Gateway and
 `5190` for the UI. Override them with `SMITHERS_GATEWAY_PORT` and
@@ -43,7 +43,7 @@ The root dev script probes for available ports starting at `7331` for the Gatewa
 - **`src/workspaceApi.ts`** wraps the `/__smithers_studio/api/*` HTTP endpoints
   (issues, landings, cloud workspaces, prompts, search, memory, scores, SQL, logs,
   local recents). This is the backbone for most surfaces today.
-- **`@smithers-orchestrator/gateway-client`** drives live runs over WebSocket
+- **`@smthrs/gateway-client`** drives live runs over WebSocket
   (`listRuns`, `listWorkflows`, `listApprovals`, `launchRun`, `streamRunEvents`,
   `streamDevTools`, …). The **Runs** surface wires to this; until it lands, Runs
   reads run history/approvals over HTTP so it is never empty.

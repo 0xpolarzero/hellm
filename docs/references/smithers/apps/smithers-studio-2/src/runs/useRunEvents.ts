@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { SmithersGatewayClient } from "@smithers-orchestrator/gateway-client";
+import { SmithersGatewayClient } from "@smthrs/gateway-client";
 import type { RunEventLine } from "./runState";
 
 const MAX_LINES = 500;

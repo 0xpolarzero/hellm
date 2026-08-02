@@ -16,7 +16,7 @@ if (!output) {
 }
 
 if (version !== "0.22.0") {
-  fail(`Unsupported smithers-orchestrator version: ${version}`);
+  fail(`Unsupported smthrs version: ${version}`);
 }
 
 const docsPath = join(

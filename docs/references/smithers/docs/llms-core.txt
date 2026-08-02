@@ -1,7 +1,7 @@
 # Smithers
 
 > Smithers — durable AI workflow orchestration as a JSX runtime.
-> Repo: github.com/smithersai/smithers · Package: smithers-orchestrator (npm)
+> Repo: github.com/smithersai/smithers · Package: smthrs (npm)
 
 This file is the agent-facing core Smithers documentation. It is for Claude, Codex, and other AI harnesses operating Smithers for a human. Read top to bottom for the runtime, agent operating playbook, JSX surface, CLI, and components.
 
@@ -58,8 +58,8 @@ harnesses should operate Smithers for the human, including the `llms.txt` and
 </CardGroup>
 
 ```tsx
-/** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, Task } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { createSmithers, Sequence, Task } from "smthrs";
 import { z } from "zod";
 
 const { Workflow, smithers, outputs } = createSmithers({
@@ -78,8 +78,8 @@ export default smithers((ctx) => (
 ```
 
 ```bash
-bunx smithers-orchestrator init
-bunx smithers-orchestrator up workflow.tsx --input '{"name":"world"}'
+bunx smthrs init
+bunx smthrs up workflow.tsx --input '{"name":"world"}'
 ```
 
 Outputs are validated by Zod, persisted to SQLite, and survive crashes. Resume with
@@ -121,14 +121,14 @@ to run, and treats having your agent author new ones as a first-class path.
 
 ## Built-in workflows
 
-`bunx smithers-orchestrator init` scaffolds a `.smithers/` folder preloaded with
+`bunx smthrs init` scaffolds a `.smithers/` folder preloaded with
 production-ready workflows. Point your agent at one and go with
-`bunx smithers-orchestrator workflow run <id> --prompt "..."`:
+`bunx smthrs workflow run <id> --prompt "..."`:
 
 ```bash
 # break a request into tickets, then implement them on a board
-bunx smithers-orchestrator workflow run tickets-create --prompt "add rate limiting and audit logging"
-bunx smithers-orchestrator workflow run kanban
+bunx smthrs workflow run tickets-create --prompt "add rate limiting and audit logging"
+bunx smthrs workflow run kanban
 ```
 
 <CardGroup cols={2}>
@@ -283,24 +283,24 @@ Don't use it for a single prompt → single response. Use your model provider's 
 
 ## Installation
 
-> Install smithers-orchestrator with the workflow pack, or manually for standalone JSX workflow projects.
+> Install smthrs with the workflow pack, or manually for standalone JSX workflow projects.
 
 Most teams should start with the workflow pack. It gives you a working `.smithers/` directory with seeded workflows, prompts, and agent configuration instead of assembling the project structure by hand.
 
 ## Always Run with `bunx`
 
-Every CLI invocation in these docs is `bunx smithers-orchestrator <command>`. Do **not** install Smithers globally and do **not** use the bare `smithers` or `bunx smithers` shorthand.
+Every CLI invocation in these docs is `bunx smthrs <command>`. Do **not** install Smithers globally and do **not** use the bare `smithers` or `bunx smithers` shorthand.
 
 - `bunx` resolves the package locally if your project depends on it, otherwise it pulls and runs the latest published version.
-- The published npm package is [`smithers-orchestrator`](https://www.npmjs.com/package/smithers-orchestrator). The bare name `smithers` is a different package, so `bunx smithers` runs something else entirely.
+- The published npm package is [`smthrs`](https://www.npmjs.com/package/smthrs). The bare name `smithers` is a different package, so `bunx smithers` runs something else entirely.
 - A global install creates version-drift problems across machines, CI, and contributors. With `bunx`, every project pins Smithers through its own `package.json`.
 
-If you previously ran `npm i -g smithers-orchestrator`, uninstall it (`npm rm -g smithers-orchestrator`) and switch to `bunx`.
+If you previously ran `npm i -g smthrs`, uninstall it (`npm rm -g smthrs`) and switch to `bunx`.
 
 ## Recommended: Install the Workflow Pack
 
 ```bash
-bunx smithers-orchestrator init
+bunx smthrs init
 ```
 
 That scaffolds `.smithers/` with files such as:
@@ -310,7 +310,7 @@ That scaffolds `.smithers/` with files such as:
 | `.smithers/workflows/` | Pre-built workflows (`implement`, `review`, `plan`, `ralph`, `debug`, ...) |
 | `.smithers/prompts/` | Shared MDX prompt templates |
 | `.smithers/components/` | Reusable TSX components (`Review`, `ValidationLoop`, ...) |
-| `.smithers/package.json` | Local workflow project manifest with `smithers-orchestrator` dependency |
+| `.smithers/package.json` | Local workflow project manifest with `smthrs` dependency |
 | `.smithers/tsconfig.json` | TypeScript config for JSX workflow authoring |
 | `.smithers/bunfig.toml` | Bun preload config for MDX workflow prompts |
 | `.smithers/preload.ts` | Registers the MDX preload plugin |
@@ -324,7 +324,7 @@ That scaffolds `.smithers/` with files such as:
 To overwrite an existing scaffold:
 
 ```bash
-bunx smithers-orchestrator init --force
+bunx smthrs init --force
 ```
 
 ## Install the Agent Skill
@@ -349,8 +349,8 @@ outcome — *"orchestrate an agent to add rate limiting and keep iterating until
 tests pass"* — and the agent reaches for Smithers itself.
 
 For agents without a skills directory, point them at
-`bunx smithers-orchestrator docs-full` (prints the same bundle) or
-`bunx smithers-orchestrator ask "<question>"`.
+`bunx smthrs docs-full` (prints the same bundle) or
+`bunx smthrs ask "<question>"`.
 
 To install the skill **and** register the MCP server into every coding agent on
 your machine at once, see [Agent Support](/agents/overview) — it covers Claude
@@ -371,13 +371,13 @@ See [JSX Installation](/jsx/overview) for the package list, TypeScript configura
 
 ### Version control
 
-Smithers bundles jj. The optional `@smithers-orchestrator/jj-<platform>` package installs a vendored jj binary for your platform, so a fresh install works with no system jj. Resolution order is:
+Smithers bundles jj. The optional `@smthrs/jj-<platform>` package installs a vendored jj binary for your platform, so a fresh install works with no system jj. Resolution order is:
 
 1. `SMITHERS_JJ_PATH` — point this at a jj binary to override everything.
 2. The bundled binary for your platform.
 3. `jj` on your `PATH`.
 
-If no bundled binary installed (an unsupported platform, or `--no-optional`) and neither `jj` nor `git` is on `PATH`, runs that need a worktree fail with a message telling you to install one. Check what Smithers found with `bunx smithers-orchestrator workflow doctor` (the `vcs` section reports the resolved jj and git).
+If no bundled binary installed (an unsupported platform, or `--no-optional`) and neither `jj` nor `git` is on `PATH`, runs that need a worktree fail with a message telling you to install one. Check what Smithers found with `bunx smthrs workflow doctor` (the `vcs` section reports the resolved jj and git).
 
 ## After Installation
 
@@ -396,25 +396,25 @@ If no bundled binary installed (an unsupported platform, or `--no-optional`) and
 > Scaffold and run a Smithers workflow in two commands.
 
 ```bash
-bunx smithers-orchestrator init
-bunx smithers-orchestrator init --template idea-to-tickets
-bunx smithers-orchestrator workflow run implement --prompt "Add rate limiting"
+bunx smthrs init
+bunx smthrs init --template idea-to-tickets
+bunx smthrs workflow run implement --prompt "Add rate limiting"
 ```
 
-`init` scaffolds `.smithers/` (workflows, prompts, components, agent config). Add `--template <id>` when you want the init result to include the selected starter command and follow-up notes. Run `bunx smithers-orchestrator starters` to browse template IDs.
+`init` scaffolds `.smithers/` (workflows, prompts, components, agent config). Add `--template <id>` when you want the init result to include the selected starter command and follow-up notes. Run `bunx smthrs starters` to browse template IDs.
 
 Inspect the run:
 
 ```bash
-bunx smithers-orchestrator ps
-bunx smithers-orchestrator inspect <run-id>
-bunx smithers-orchestrator logs <run-id> --tail 20
+bunx smthrs ps
+bunx smthrs inspect <run-id>
+bunx smthrs logs <run-id> --tail 20
 ```
 
 Resume after a crash:
 
 ```bash
-bunx smithers-orchestrator up workflow.tsx --run-id <run-id> --resume true
+bunx smthrs up workflow.tsx --run-id <run-id> --resume true
 ```
 
 Prefer to let your agent drive? [Install the agent skill](/installation#install-the-agent-skill) and just ask for the outcome — your coding agent runs Smithers for you.
@@ -430,19 +430,19 @@ For a full worked example, see the [Tour](/tour). For every CLI command see the 
 Smithers ships with starter workflows for when you want a result before your agent writes any workflow code. Browse the starter gallery from any repo:
 
 ```bash
-bunx smithers-orchestrator starters
+bunx smthrs starters
 ```
 
 First-time setup:
 
 ```bash
-bunx smithers-orchestrator init --add-agents
+bunx smthrs init --add-agents
 ```
 
 Or initialize with guided next steps for one template:
 
 ```bash
-bunx smithers-orchestrator init --template idea-to-tickets
+bunx smthrs init --template idea-to-tickets
 ```
 
 Template IDs:
@@ -451,37 +451,37 @@ Pass any ID from this table to `init --template <id>` to scaffold that starter.
 
 | Starter | Best for | Workflow | Command |
 | --- | --- | --- | --- |
-| `idea-to-prd` | founders, product | `write-a-prd` | `bunx smithers-orchestrator init --template idea-to-prd` |
-| `idea-to-tickets` | founders, product, operations, engineering | `tickets-create` | `bunx smithers-orchestrator init --template idea-to-tickets` |
-| `launch-checklist` | launch owners and operators | `plan` | `bunx smithers-orchestrator init --template launch-checklist` |
-| `customer-incident` | support escalations | `debug` | `bunx smithers-orchestrator init --template customer-incident` |
-| `nontechnical-research` | before-build decisions | `research` | `bunx smithers-orchestrator init --template nontechnical-research` |
-| `requirements-interview` | vague stakeholder requests | `grill-me` | `bunx smithers-orchestrator init --template requirements-interview` |
-| `quality-audit` | release readiness | `audit` | `bunx smithers-orchestrator init --template quality-audit` |
-| `test-coverage` | regression prevention | `improve-test-coverage` | `bunx smithers-orchestrator init --template test-coverage` |
-| `ship-a-change` | focused product improvements | `research-plan-implement` | `bunx smithers-orchestrator init --template ship-a-change` |
-| `mission-mode` | larger approved milestones | `mission` | `bunx smithers-orchestrator init --template mission-mode` |
+| `idea-to-prd` | founders, product | `write-a-prd` | `bunx smthrs init --template idea-to-prd` |
+| `idea-to-tickets` | founders, product, operations, engineering | `tickets-create` | `bunx smthrs init --template idea-to-tickets` |
+| `launch-checklist` | launch owners and operators | `plan` | `bunx smthrs init --template launch-checklist` |
+| `customer-incident` | support escalations | `debug` | `bunx smthrs init --template customer-incident` |
+| `nontechnical-research` | before-build decisions | `research` | `bunx smthrs init --template nontechnical-research` |
+| `requirements-interview` | vague stakeholder requests | `grill-me` | `bunx smthrs init --template requirements-interview` |
+| `quality-audit` | release readiness | `audit` | `bunx smthrs init --template quality-audit` |
+| `test-coverage` | regression prevention | `improve-test-coverage` | `bunx smthrs init --template test-coverage` |
+| `ship-a-change` | focused product improvements | `research-plan-implement` | `bunx smthrs init --template ship-a-change` |
+| `mission-mode` | larger approved milestones | `mission` | `bunx smthrs init --template mission-mode` |
 
 Each detailed starter prints:
 
 - What outcome to expect
 - What context to gather before running
-- The exact `bunx smithers-orchestrator workflow run ...` command
+- The exact `bunx smthrs workflow run ...` command
 - Useful follow-up commands
 - When not to use that starter
 
 Filter by audience or goal:
 
 ```bash
-bunx smithers-orchestrator starters --audience product
-bunx smithers-orchestrator starters --goal quality
-bunx smithers-orchestrator starters --workflow debug
+bunx smthrs starters --audience product
+bunx smthrs starters --goal quality
+bunx smthrs starters --workflow debug
 ```
 
 Use JSON when another tool needs the catalog:
 
 ```bash
-bunx smithers-orchestrator starters --format json
+bunx smthrs starters --format json
 ```
 
 ---
@@ -495,8 +495,8 @@ A code-review workflow built one capability at a time. Each step is a diff again
 ## 1. Install and scaffold
 
 ```bash
-bunx smithers-orchestrator init
-bun add smithers-orchestrator ai @ai-sdk/anthropic zod
+bunx smthrs init
+bun add smthrs ai @ai-sdk/anthropic zod
 bun add -d typescript @types/bun
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
@@ -512,7 +512,7 @@ A minimal `tsconfig.json`:
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "jsxImportSource": "smithers-orchestrator",
+    "jsxImportSource": "smthrs",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true
@@ -525,8 +525,8 @@ A minimal `tsconfig.json`:
 ## 2. One-task workflow
 
 ```tsx
-/** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, Task } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { createSmithers, Sequence, Task } from "smthrs";
 import { z } from "zod";
 
 const { Workflow, smithers, outputs } = createSmithers({
@@ -549,14 +549,14 @@ export default smithers((ctx) => (
 This Task has no `agent`, just a literal value. Run it.
 
 ```bash
-bunx smithers-orchestrator up workflow.tsx --input '{"name":"world"}'
+bunx smthrs up workflow.tsx --input '{"name":"world"}'
 ```
 
 Inspect:
 
 ```bash
-bunx smithers-orchestrator ps                  # find the run id
-bunx smithers-orchestrator inspect <run-id>    # structured state
+bunx smthrs ps                  # find the run id
+bunx smthrs inspect <run-id>    # structured state
 sqlite3 smithers.db "SELECT * FROM greeting;"  # the persisted output
 ```
 
@@ -565,8 +565,8 @@ sqlite3 smithers.db "SELECT * FROM greeting;"  # the persisted output
 Replace the literal Task with an agent Task whose output is structured.
 
 ```tsx
-/** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, Task, AnthropicAgent } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { createSmithers, Sequence, Task, AnthropicAgent } from "smthrs";
 import { z } from "zod";
 
 const { Workflow, smithers, outputs } = createSmithers({
@@ -604,8 +604,8 @@ The runtime injects a JSON-schema description of `outputs.analysis` into the pro
 Tasks see each other's outputs through `ctx.outputMaybe(...)`. An incomplete upstream returns `undefined`; on the next render frame the upstream output appears and the downstream Task mounts.
 
 ```tsx
-/** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, Task, AnthropicAgent } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { createSmithers, Sequence, Task, AnthropicAgent } from "smthrs";
 import { z } from "zod";
 
 const AnalysisSchema = z.object({
@@ -680,7 +680,7 @@ Same shape works for branching, parallel groups, and loops:
 Pause for a human. The runtime persists the pending decision and exits cleanly; an operator approves or denies through the CLI; resume picks up from the gate.
 
 ```tsx
-import { Approval } from "smithers-orchestrator";
+import { Approval } from "smthrs";
 
 {analysis ? (
   <Approval
@@ -706,10 +706,10 @@ import { Approval } from "smithers-orchestrator";
 Operator side:
 
 ```bash
-bunx smithers-orchestrator ps --status waiting-approval     # find paused runs
-bunx smithers-orchestrator inspect <run-id>                  # see the request
-bunx smithers-orchestrator approve <run-id> --node confirm-fix --by alice
-bunx smithers-orchestrator up workflow.tsx --run-id <run-id> --resume true
+bunx smthrs ps --status waiting-approval     # find paused runs
+bunx smthrs inspect <run-id>                  # see the request
+bunx smthrs approve <run-id> --node confirm-fix --by alice
+bunx smthrs up workflow.tsx --run-id <run-id> --resume true
 ```
 
 `onDeny` controls behavior on rejection: `"fail"` aborts the run, `"continue"` proceeds without the approved branch, `"skip"` skips the gated tasks.
@@ -719,10 +719,10 @@ bunx smithers-orchestrator up workflow.tsx --run-id <run-id> --resume true
 Every completed task's output sits in SQLite. A crash, kill, or restart loses no work — the next run with `--resume true` skips finished tasks.
 
 ```bash
-bunx smithers-orchestrator up workflow.tsx --input '{"repo":"."}' --run-id review-1
+bunx smthrs up workflow.tsx --input '{"repo":"."}' --run-id review-1
 # ...analyze finishes, fix is mid-flight, you Ctrl+C
 
-bunx smithers-orchestrator up workflow.tsx --run-id review-1 --resume true
+bunx smthrs up workflow.tsx --run-id review-1 --resume true
 # analyze is skipped (already in DB), fix re-runs from scratch (was incomplete)
 ```
 
@@ -731,14 +731,14 @@ In-flight attempts are marked stale and re-tried; finished tasks are not. Resume
 For unattended recovery, run the supervisor:
 
 ```bash
-bunx smithers-orchestrator supervise --interval 30s --stale-threshold 1m
+bunx smthrs supervise --interval 30s --stale-threshold 1m
 ```
 
 It auto-resumes runs whose owner process died.
 
 ## What you skipped (and where to find it)
 
-- **Time travel** (replay a frame, fork a run, diff two runs): `bunx smithers-orchestrator replay|fork|diff|timeline` — see [How It Works → Time travel](/how-it-works#time-travel).
+- **Time travel** (replay a frame, fork a run, diff two runs): `bunx smthrs replay|fork|diff|timeline` — see [How It Works → Time travel](/how-it-works#time-travel).
 - **Scorers** (attach evaluators to Tasks): see [Recipes → Scoring tasks](/recipes#scoring-tasks).
 - **Memory** (cross-run facts and message history): see [llms-memory.txt](/llms-memory.txt).
 - **RAG**, **voice**, **OpenAPI tools**: opt-in fragments — see the index in [llms.txt](/llms.txt).
@@ -979,7 +979,7 @@ Replay with `--restore-vcs` checks out the jj revision the snapshot was taken at
 Attach evaluators to a Task. They run **after** completion and never block.
 
 ```tsx
-import { schemaAdherenceScorer, latencyScorer } from "smithers-orchestrator/scorers";
+import { schemaAdherenceScorer, latencyScorer } from "smthrs/scorers";
 
 <Task
   id="analyze"
@@ -1015,7 +1015,7 @@ Five built-in tools — `read`, `write`, `edit`, `grep`, `bash` — sandboxed to
 Least-privilege per task:
 
 ```tsx
-import { AnthropicAgent } from "smithers-orchestrator";
+import { AnthropicAgent } from "smthrs";
 const analyst     = new AnthropicAgent({ model, instructions: "..." }); // no tools
 const reviewer    = new AnthropicAgent({ model, instructions: "...", tools: { read, grep } });
 const implementer = new AnthropicAgent({ model, instructions: "...", tools: { read, write, edit, bash } });
@@ -1216,26 +1216,26 @@ If you cannot see the run, you cannot operate it well.
 For local and development work, use the CLI surfaces yourself:
 
 ```bash
-bunx smithers-orchestrator ps
-bunx smithers-orchestrator inspect <run-id> --watch
-bunx smithers-orchestrator events <run-id> --watch
-bunx smithers-orchestrator node <run-id> <node-id>
-bunx smithers-orchestrator scores <run-id>
-bunx smithers-orchestrator why <run-id>
+bunx smthrs ps
+bunx smthrs inspect <run-id> --watch
+bunx smthrs events <run-id> --watch
+bunx smthrs node <run-id> <node-id>
+bunx smthrs scores <run-id>
+bunx smthrs why <run-id>
 ```
 
 Use serve mode when you need HTTP status, SSE events, remote approvals, or
 Prometheus metrics:
 
 ```bash
-bunx smithers-orchestrator up workflow.tsx --serve --metrics --port 7331
+bunx smthrs up workflow.tsx --serve --metrics --port 7331
 ```
 
 Use the observability stack when the work needs traces, metrics, dashboards, or
 a reviewer evidence bundle:
 
 ```bash
-bunx smithers-orchestrator observability
+bunx smthrs observability
 ```
 
 Enable OpenTelemetry export when you need trace-level proof, then include the
@@ -1260,8 +1260,8 @@ plan, gates, and evidence live." Do not phrase it as homework for the human.
 Use hot mode while authoring or tuning a workflow:
 
 ```bash
-bunx smithers-orchestrator graph workflow.tsx
-bunx smithers-orchestrator up workflow.tsx --hot true --input '{"prompt":"..."}'
+bunx smthrs graph workflow.tsx
+bunx smthrs up workflow.tsx --hot true --input '{"prompt":"..."}'
 ```
 
 The graph command validates the rendered shape without executing the whole job.
@@ -1382,12 +1382,12 @@ Workflows are JSX trees. Smithers renders the tree, extracts ready tasks, execut
 
 ## Setup
 
-Most projects should use `bunx smithers-orchestrator init` — it scaffolds everything below.
+Most projects should use `bunx smthrs init` — it scaffolds everything below.
 
 To embed into an existing codebase:
 
 ```bash
-bun add smithers-orchestrator react react-dom zod
+bun add smthrs react react-dom zod
 bun add -d typescript @types/react @types/react-dom @types/node
 ```
 
@@ -1400,7 +1400,7 @@ Minimal `tsconfig.json`:
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "jsxImportSource": "smithers-orchestrator",
+    "jsxImportSource": "smthrs",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true
@@ -1408,17 +1408,17 @@ Minimal `tsconfig.json`:
 }
 ```
 
-`jsxImportSource` is the only non-standard line — it routes JSX through `smithers-orchestrator/jsx-runtime` instead of React DOM.
+`jsxImportSource` is the only non-standard line — it routes JSX through `smthrs/jsx-runtime` instead of React DOM.
 
 Optional MDX prompts: add `bun add -d @types/mdx` and a `preload.ts` that calls `mdxPlugin()`, register it in `bunfig.toml` as `preload = ["./preload.ts"]`.
 
-Verify with `bunx tsc --noEmit` and `bunx smithers-orchestrator --help`.
+Verify with `bunx tsc --noEmit` and `bunx smthrs --help`.
 
 ## A minimal workflow
 
 ```tsx
-// @jsxImportSource smithers-orchestrator — only needed if not set in tsconfig.json
-import { createSmithers, Sequence, Task } from "smithers-orchestrator";
+// @jsxImportSource smthrs — only needed if not set in tsconfig.json
+import { createSmithers, Sequence, Task } from "smthrs";
 import { z } from "zod";
 
 const { Workflow, smithers, outputs } = createSmithers({
@@ -1461,7 +1461,7 @@ The `report` Task doesn't exist in the plan until `analysis` completes. No place
 
 > Every Smithers CLI command in one structured catalog (TOON format).
 
-Always invoke as `bunx smithers-orchestrator <command>` (see [Installation](/installation) for why). Use `--help` on any command for the canonical option list.
+Always invoke as `bunx smthrs <command>` (see [Installation](/installation) for why). Use `--help` on any command for the canonical option list.
 
 ## Conventions
 
@@ -2042,27 +2042,27 @@ commands[66]:
 **Set up**
 
 ```bash
-bunx smithers-orchestrator init                                       # scaffold .smithers/
-bunx smithers-orchestrator init --template idea-to-tickets            # scaffold with guided template next steps
-bunx smithers-orchestrator starters                                   # browse template IDs
+bunx smthrs init                                       # scaffold .smithers/
+bunx smthrs init --template idea-to-tickets            # scaffold with guided template next steps
+bunx smthrs starters                                   # browse template IDs
 ```
 
 **Run**
 
 ```bash
-bunx smithers-orchestrator workflow run implement --prompt "…"        # launch a seeded workflow
-bunx smithers-orchestrator up workflow.tsx --run-id <id> --resume true   # resume a paused run
+bunx smthrs workflow run implement --prompt "…"        # launch a seeded workflow
+bunx smthrs up workflow.tsx --run-id <id> --resume true   # resume a paused run
 ```
 
 **Observe & control**
 
 ```bash
-bunx smithers-orchestrator ps                                         # list runs
-bunx smithers-orchestrator inspect <run-id>                           # structured run state
-bunx smithers-orchestrator logs <run-id> --tail 20 --follow           # stream events
-bunx smithers-orchestrator why <run-id>                               # why is it paused?
-bunx smithers-orchestrator approve <run-id> --node <id> --by <name>   # approve a paused node
-bunx smithers-orchestrator cancel <run-id>                            # cancel a run
+bunx smthrs ps                                         # list runs
+bunx smthrs inspect <run-id>                           # structured run state
+bunx smthrs logs <run-id> --tail 20 --follow           # stream events
+bunx smthrs why <run-id>                               # why is it paused?
+bunx smthrs approve <run-id> --node <id> --by <name>   # approve a paused node
+bunx smthrs cancel <run-id>                            # cancel a run
 ```
 
 See [Tour](/tour) for a full worked example. See [CLI overview](/cli/overview) for the complete flag reference.
@@ -2074,7 +2074,7 @@ See [Tour](/tour) for a full worked example. See [CLI overview](/cli/overview) f
 > Root container; sequences direct children, optionally caches for resume.
 
 ```ts
-import { Workflow } from "smithers-orchestrator";
+import { Workflow } from "smthrs";
 
 type WorkflowProps = {
   name: string;
@@ -2084,7 +2084,7 @@ type WorkflowProps = {
 ```
 
 ```tsx
-import { createSmithers } from "smithers-orchestrator";
+import { createSmithers } from "smthrs";
 import { ToolLoopAgent as Agent } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
@@ -2119,7 +2119,7 @@ export default smithers((ctx) => (
 > Executable node; runs an agent, compute callback, or emits a static value.
 
 ```ts
-import { Task } from "smithers-orchestrator";
+import { Task } from "smthrs";
 
 type TaskProps = {
   id: string;
@@ -2253,7 +2253,7 @@ const VERIFY = "verify" as const;
 > Run children in source order.
 
 ```ts
-import { Sequence } from "smithers-orchestrator";
+import { Sequence } from "smthrs";
 
 type SequenceProps = {
   key?: string;
@@ -2297,7 +2297,7 @@ type SequenceProps = {
 > Run children concurrently with an optional concurrency cap.
 
 ```ts
-import { Parallel } from "smithers-orchestrator";
+import { Parallel } from "smthrs";
 
 type ParallelProps = {
   id?: string;
@@ -2335,7 +2335,7 @@ type ParallelProps = {
 > Conditional fork; mounts `then` when `if` is true, otherwise `else`.
 
 ```ts
-import { Branch } from "smithers-orchestrator";
+import { Branch } from "smthrs";
 
 type BranchProps = {
   if: boolean;
@@ -2380,7 +2380,7 @@ type BranchProps = {
 > Re-run children until `until` is true or `maxIterations` is hit.
 
 ```ts
-import { Loop } from "smithers-orchestrator";
+import { Loop } from "smthrs";
 
 type LoopProps = {
   id?: string; // auto-generated from tree position
@@ -2430,7 +2430,7 @@ export default smithers((ctx) => {
 > Durable human approval; persists ApprovalDecision, selection, or ranking.
 
 ```ts
-import { Approval, approvalDecisionSchema } from "smithers-orchestrator";
+import { Approval, approvalDecisionSchema } from "smthrs";
 
 type ApprovalProps = {
   id: string;
@@ -2465,7 +2465,7 @@ type ApprovalProps = {
 ```
 
 ```tsx
-import { Approval, Sequence, Task, Workflow, approvalDecisionSchema, createSmithers } from "smithers-orchestrator";
+import { Approval, Sequence, Task, Workflow, approvalDecisionSchema, createSmithers } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({
@@ -2508,7 +2508,7 @@ export default smithers((ctx) => {
 > Conditional approval; pauses for human when `when` is true, else auto-approves.
 
 ```ts
-import { ApprovalGate } from "smithers-orchestrator";
+import { ApprovalGate } from "smthrs";
 
 type ApprovalGateProps = {
   id: string;
@@ -2564,7 +2564,7 @@ const risk = ctx.output(outputs.riskScore, { nodeId: "risk" });
 
 ```ts
 // Props
-import { EscalationChain } from "smithers-orchestrator";
+import { EscalationChain } from "smthrs";
 
 type EscalationChainProps = {
   id?: string; // default "escalation"
@@ -2614,7 +2614,7 @@ type EscalationLevel = {
 
 ```ts
 // Props
-import { DecisionTable } from "smithers-orchestrator";
+import { DecisionTable } from "smthrs";
 
 type DecisionTableProps = {
   id?: string;
@@ -2663,7 +2663,7 @@ type DecisionRule = {
 > Suspend until a human submits JSON matching the output schema.
 
 ```ts
-import { HumanTask } from "smithers-orchestrator";
+import { HumanTask } from "smthrs";
 
 type HumanTaskProps = {
   id: string;
@@ -2684,7 +2684,7 @@ type HumanTaskProps = {
 ```
 
 ```tsx
-import { Workflow, Sequence, Task, HumanTask, createSmithers } from "smithers-orchestrator";
+import { Workflow, Sequence, Task, HumanTask, createSmithers } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({
@@ -2732,7 +2732,7 @@ export default smithers((ctx) => {
 > Typed wrapper around &lt;WaitForEvent&gt;; signal name equals node id.
 
 ```ts
-import { Signal } from "smithers-orchestrator";
+import { Signal } from "smthrs";
 
 type SignalProps = {
   id: string; // signal name and node id
@@ -2753,7 +2753,7 @@ type SignalProps = {
 ```
 
 ```tsx
-import { Signal, Task, Workflow, createSmithers } from "smithers-orchestrator";
+import { Signal, Task, Workflow, createSmithers } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({
@@ -2786,7 +2786,7 @@ export default smithers(() => (
 > Durably suspend until a correlated external event arrives, or time out.
 
 ```ts
-import { WaitForEvent } from "smithers-orchestrator";
+import { WaitForEvent } from "smthrs";
 
 type WaitForEventProps = {
   id: string;
@@ -2838,7 +2838,7 @@ type WaitForEventProps = {
 > Durably suspend for a relative duration or until an absolute time.
 
 ```ts
-import { Timer } from "smithers-orchestrator";
+import { Timer } from "smthrs";
 
 type TimerProps = {
   id: string;
@@ -2878,7 +2878,7 @@ type TimerProps = {
 > Forward steps with compensations run in reverse on failure.
 
 ```ts
-import { Saga } from "smithers-orchestrator";
+import { Saga } from "smthrs";
 
 type SagaStepDef = {
   id: string;
@@ -2929,7 +2929,7 @@ type SagaProps = {
 > Workflow-scoped error boundary with catch handlers and guaranteed cleanup.
 
 ```ts
-import { TryCatchFinally } from "smithers-orchestrator";
+import { TryCatchFinally } from "smthrs";
 
 type TryCatchFinallyProps = {
   id?: string;
@@ -2977,8 +2977,8 @@ type TryCatchFinallyProps = {
 `<Sandbox>` is a task boundary for work that should execute outside the parent task process. The public component is provider-first: pass an injectable provider object or a registered provider id. `runtime` remains only for the built-in legacy local transports.
 
 ```ts
-import { Sandbox } from "smithers-orchestrator";
-import type { SandboxProvider } from "smithers-orchestrator/sandbox";
+import { Sandbox } from "smthrs";
+import type { SandboxProvider } from "smthrs/sandbox";
 
 type SandboxProps = {
   id: string;
@@ -3064,7 +3064,7 @@ type SandboxProvider = {
 Register reusable providers when a workflow should reference them by id:
 
 ```ts
-import { registerSandboxProvider } from "smithers-orchestrator/sandbox";
+import { registerSandboxProvider } from "smthrs/sandbox";
 
 const unregister = registerSandboxProvider(provider);
 
@@ -3152,7 +3152,7 @@ Freestyle's current VM docs show the stable package as `freestyle`, VM creation 
 > Invoke a child workflow with its own retry, cache, resume boundary.
 
 ```ts
-import { Subflow } from "smithers-orchestrator";
+import { Subflow } from "smthrs";
 
 type SubflowProps = {
   id: string;
@@ -3208,7 +3208,7 @@ type SubflowProps = {
 > Close the current run; start a fresh one with optional carried state.
 
 ```ts
-import { ContinueAsNew, continueAsNew } from "smithers-orchestrator";
+import { ContinueAsNew, continueAsNew } from "smthrs";
 
 type ContinueAsNewProps = {
   state?: unknown; // JSON-serializable; arrives as ctx.input.__smithersContinuation.payload
@@ -3257,7 +3257,7 @@ export default smithers((ctx) => {
 > Reads and modifies source code at runtime via a markdown strategy doc.
 
 ```ts
-import { SuperSmithers } from "smithers-orchestrator";
+import { SuperSmithers } from "smthrs";
 
 type SuperSmithersProps = {
   strategy: string | ReactElement; // markdown or MDX strategy document
@@ -3300,7 +3300,7 @@ type SuperSmithersProps = {
 > Propagate token, latency, and cost budgets to descendant tasks.
 
 ```ts
-import { Aspects } from "smithers-orchestrator";
+import { Aspects } from "smthrs";
 
 type TokenBudgetConfig = {
   max: number;
@@ -3360,7 +3360,7 @@ type AspectsProps = {
 > Run a subtree in an isolated worktree (git or jj) rooted at `path`.
 
 ```ts
-import { Worktree } from "smithers-orchestrator";
+import { Worktree } from "smthrs";
 
 type WorktreeProps = {
   key?: string;
@@ -3400,7 +3400,7 @@ type WorktreeProps = {
 
 ```ts
 // Props
-import { ReviewLoop } from "smithers-orchestrator";
+import { ReviewLoop } from "smthrs";
 
 type ReviewLoopProps = {
   id?: string; // default "review-loop"; task ids derived as {id}-produce, {id}-review
@@ -3444,7 +3444,7 @@ export default smithers(() => (
 
 ```ts
 // Props
-import { Optimizer } from "smithers-orchestrator";
+import { Optimizer } from "smthrs";
 
 type OptimizerProps = {
   id?: string; // default "optimizer"; task ids {id}-generate, {id}-evaluate
@@ -3490,7 +3490,7 @@ export default smithers(() => (
 
 ```ts
 // Props
-import { ContentPipeline } from "smithers-orchestrator";
+import { ContentPipeline } from "smthrs";
 
 type ContentPipelineProps = {
   id?: string;
@@ -3536,7 +3536,7 @@ export default smithers(() => (
 
 ```ts
 // Props
-import { DriftDetector } from "smithers-orchestrator";
+import { DriftDetector } from "smthrs";
 
 type DriftDetectorProps = {
   id?: string; // default "drift"; ids {id}-capture, {id}-compare
@@ -3582,7 +3582,7 @@ type DriftDetectorProps = {
 
 ```ts
 // Props
-import { ScanFixVerify } from "smithers-orchestrator";
+import { ScanFixVerify } from "smthrs";
 
 type ScanFixVerifyProps = {
   id?: string; // default "sfv"
@@ -3631,7 +3631,7 @@ type ScanFixVerifyProps = {
 
 ```ts
 // Props
-import { Poller } from "smithers-orchestrator";
+import { Poller } from "smthrs";
 
 type PollerProps = {
   id?: string; // default "poll"
@@ -3674,7 +3674,7 @@ type PollerProps = {
 
 ```ts
 // Props
-import { Runbook } from "smithers-orchestrator";
+import { Runbook } from "smthrs";
 
 type RunbookProps = {
   id?: string; // used as step-id prefix; defaults to "runbook" when omitted
@@ -3727,7 +3727,7 @@ export default smithers(() => (
 
 ```ts
 // Props
-import { Supervisor } from "smithers-orchestrator";
+import { Supervisor } from "smthrs";
 
 type SupervisorProps = {
   id?: string;                                  // default: "supervisor"
@@ -3778,7 +3778,7 @@ export default smithers(() => (
 
 ```ts
 // Props
-import { MergeQueue } from "smithers-orchestrator";
+import { MergeQueue } from "smthrs";
 
 type MergeQueueProps = {
   id?: string;
@@ -3809,7 +3809,7 @@ type MergeQueueProps = {
 
 ```ts
 // Props
-import { CheckSuite } from "smithers-orchestrator";
+import { CheckSuite } from "smthrs";
 
 type CheckConfig = { id: string; agent?: AgentLike; command?: string; label?: string };
 
@@ -3852,7 +3852,7 @@ type CheckSuiteProps = {
 
 ```ts
 // Props
-import { ClassifyAndRoute } from "smithers-orchestrator";
+import { ClassifyAndRoute } from "smthrs";
 
 type CategoryConfig = {
   agent: AgentLike;
@@ -3905,7 +3905,7 @@ const classification = ctx.outputMaybe(outputs.classification, {
 
 ```ts
 // Props
-import { GatherAndSynthesize } from "smithers-orchestrator";
+import { GatherAndSynthesize } from "smthrs";
 
 type SourceDef = {
   agent: AgentLike;
@@ -3958,7 +3958,7 @@ type GatherAndSynthesizeProps = {
 
 ```ts
 // Props
-import { Panel } from "smithers-orchestrator";
+import { Panel } from "smthrs";
 
 type PanelistConfig = { agent: AgentLike; role?: string; label?: string };
 
@@ -4007,7 +4007,7 @@ type PanelProps = {
 
 ```ts
 // Props
-import { Debate } from "smithers-orchestrator";
+import { Debate } from "smthrs";
 
 type DebateProps = {
   id?: string;                       // default: "debate"
@@ -4050,7 +4050,7 @@ type DebateProps = {
 
 ```ts
 // Props
-import { Kanban } from "smithers-orchestrator";
+import { Kanban } from "smthrs";
 
 type ColumnDef = {
   name: string;
@@ -4105,7 +4105,7 @@ const columns = [
 
 Each recipe is a working snippet plus one line of context. They compose freely.
 
-If you want a ready-to-run outcome before writing workflow code, start with [Starters](/starters) or run `bunx smithers-orchestrator starters`.
+If you want a ready-to-run outcome before writing workflow code, start with [Starters](/starters) or run `bunx smthrs starters`.
 
 ## Implement → review loop
 
@@ -4246,7 +4246,7 @@ One context boundary per logical operation, not per step. Splitting too finely l
 ## Per-agent least-privilege tools
 
 ```tsx
-import { AnthropicAgent } from "smithers-orchestrator";
+import { AnthropicAgent } from "smthrs";
 
 const analyst     = new AnthropicAgent({ model, system: "Return JSON" });               // no tools
 const reviewer    = new AnthropicAgent({ model, system: "...", tools: { read, grep } }); // read-only
@@ -4260,7 +4260,7 @@ Match the tool surface to the role.
 External mutations must mark themselves and use the runtime idempotency key.
 
 ```tsx
-import { defineTool } from "smithers-orchestrator/tools";
+import { defineTool } from "smthrs/tools";
 
 const createTicket = defineTool({
   name: "jira.create",
@@ -4345,7 +4345,7 @@ Workflow logic factors out into hooks the same way React UI logic does.
 Smithers records a jj change ID (or git SHA) per attempt. Revert any attempt to its exact workspace state:
 
 ```bash
-bunx smithers-orchestrator revert workflow.tsx --run-id <id> --node-id implement --attempt 1
+bunx smthrs revert workflow.tsx --run-id <id> --node-id implement --attempt 1
 ```
 
 Useful when an experiment leaves the worktree in a bad state.
@@ -4353,10 +4353,10 @@ Useful when an experiment leaves the worktree in a bad state.
 ## Time travel: fork, replay, diff
 
 ```bash
-bunx smithers-orchestrator timeline <run-id> --tree
-bunx smithers-orchestrator diff <run-id> <node-id>
-bunx smithers-orchestrator fork workflow.tsx --run-id <id> --frame 5 --reset-node analyze --label exp1
-bunx smithers-orchestrator replay workflow.tsx --run-id <id> --frame 5 --restore-vcs
+bunx smthrs timeline <run-id> --tree
+bunx smthrs diff <run-id> <node-id>
+bunx smthrs fork workflow.tsx --run-id <id> --frame 5 --reset-node analyze --label exp1
+bunx smthrs replay workflow.tsx --run-id <id> --frame 5 --restore-vcs
 ```
 
 Fork makes a child run without starting it (add `--run` to start immediately); replay also makes a child run but immediately resumes it. `--restore-vcs` checks out the original revision so re-execution sees the same source.
@@ -4364,7 +4364,7 @@ Fork makes a child run without starting it (add `--run` to start immediately); r
 ## Scoring tasks
 
 ```tsx
-import { schemaAdherenceScorer, latencyScorer, llmJudge } from "smithers-orchestrator/scorers";
+import { schemaAdherenceScorer, latencyScorer, llmJudge } from "smthrs/scorers";
 
 <Task
   id="analyze"
@@ -4393,7 +4393,7 @@ Scorers run after the task and never block. Sample expensive scorers with `ratio
 ```
 
 ```bash
-bunx smithers-orchestrator eval workflow.tsx --cases evals/smoke.jsonl --suite smoke --force
+bunx smthrs eval workflow.tsx --cases evals/smoke.jsonl --suite smoke --force
 ```
 
 Use eval suites when you need repeatable workflow-level checks. Assertions support `status`, `output` (exact match), and `outputContains` (partial match). Reports land in `.smithers/evals/<suite>.json`; the command exits non-zero on failures.
@@ -4411,7 +4411,7 @@ Avoids unbounded SQLite growth in long-lived loops.
 ## Hot reload while authoring
 
 ```bash
-bunx smithers-orchestrator up workflow.tsx --hot
+bunx smthrs up workflow.tsx --hot
 ```
 
 Edits to the workflow source apply on the next render frame without losing in-flight task state. Schema changes still require a fresh run.
@@ -4447,9 +4447,9 @@ Every agent task produces a reusable session snapshot. `fork` starts a new task 
 
 ## Types
 
-> Public TypeScript surface for smithers-orchestrator.
+> Public TypeScript surface for smthrs.
 
-One source of truth: `tsc --emitDeclarationOnly` would produce something close to this. Import these types from `smithers-orchestrator` unless noted otherwise.
+One source of truth: `tsc --emitDeclarationOnly` would produce something close to this. Import these types from `smthrs` unless noted otherwise.
 
 Major sections at a glance:
 - **Workflow / Context** — `SmithersWorkflow`, `SmithersCtx`, `RunOptions`, `RunResult` — the entry points for defining and running workflows.
@@ -4457,7 +4457,7 @@ Major sections at a glance:
 - **Component props** — `WorkflowProps`, `ApprovalProps`, `SignalProps`, `LoopProps`, etc. — all JSX component interfaces.
 - **Errors** — `SmithersError`, `KnownSmithersErrorCode` — typed error codes; see [Errors](/reference/errors) for descriptions.
 - **Server / Gateway** — `ServerOptions`, `GatewayOptions`, `GatewayAuthConfig` — self-hosting configuration.
-- **Scorers / Memory / OpenAPI / Observability** — sub-path imports (`smithers-orchestrator/scorers`, `/memory`, `/openapi`, `/observability`).
+- **Scorers / Memory / OpenAPI / Observability** — sub-path imports (`smthrs/scorers`, `/memory`, `/openapi`, `/observability`).
 
 ```ts
 // =============================================================================
@@ -5068,7 +5068,7 @@ type GatewayOptions = {
 };
 
 // =============================================================================
-// Scorers (smithers-orchestrator/scorers)
+// Scorers (smthrs/scorers)
 // =============================================================================
 
 type ScoreResult  = { score: number; reason?: string; meta?: Record<string, unknown> };
@@ -5093,7 +5093,7 @@ type CreateScorerConfig = {
 };
 
 // =============================================================================
-// Memory (smithers-orchestrator/memory)
+// Memory (smthrs/memory)
 // =============================================================================
 
 type MemoryFact    = { namespace: string; key: string; valueJson: string; schemaSig?: string | null; createdAtMs: number; updatedAtMs: number; ttlMs?: number | null };
@@ -5126,7 +5126,7 @@ type MemoryStore = {
 };
 
 // =============================================================================
-// OpenAPI tools (smithers-orchestrator/openapi)
+// OpenAPI tools (smthrs/openapi)
 // =============================================================================
 
 type OpenApiAuth =
@@ -5171,7 +5171,7 @@ type CreateSmithersApi<Schema = any> = {
 };
 
 // =============================================================================
-// Observability (smithers-orchestrator/observability)
+// Observability (smthrs/observability)
 // =============================================================================
 
 type SmithersLogFormat = "json" | "pretty";
@@ -5180,7 +5180,7 @@ type SmithersObservabilityOptions = { service?: SmithersObservabilityService; lo
 type ResolvedSmithersObservabilityOptions = SmithersObservabilityOptions & { metricsPort?: number; metricsPath?: string };
 ```
 
-For canonical, machine-checked types, install `smithers-orchestrator` and use editor go-to-definition. For runtime errors, see [Errors](/reference/errors).
+For canonical, machine-checked types, install `smthrs` and use editor go-to-definition. For runtime errors, see [Errors](/reference/errors).
 
 ---
 
@@ -5200,12 +5200,12 @@ import {
   isKnownSmithersErrorCode,
   isSmithersError,
   knownSmithersErrorCodes,
-} from "smithers-orchestrator";
+} from "smthrs";
 import type {
   KnownSmithersErrorCode,
   SmithersError,
   SmithersErrorCode,
-} from "smithers-orchestrator";
+} from "smthrs";
 ```
 
 Every built-in `SmithersErrorInstance` carries three pieces of documentation metadata:
@@ -5234,7 +5234,7 @@ Use `KnownSmithersErrorCode` for an exhaustive switch over built-in Smithers cod
 
 ```ts
 import { Effect } from "effect";
-import { runWorkflow } from "smithers-orchestrator";
+import { runWorkflow } from "smthrs";
 
 try {
   await Effect.runPromise(runWorkflow(workflow, { input: {} }));
@@ -5431,7 +5431,7 @@ JSON response codes, not `SmithersErrorInstance` objects.
 
 ## Package Configuration
 
-> Reference for the smithers-orchestrator package exports, TypeScript configuration, and Bun preload setup.
+> Reference for the smthrs package exports, TypeScript configuration, and Bun preload setup.
 
 This page covers: CLI binary usage, subpath export map, TypeScript compiler options, Bun preload and test config, and npm scripts.
 
@@ -5445,88 +5445,88 @@ Use the subpath form to import only the surface you need.
 
 | Import path | Entry file | Purpose |
 |---|---|---|
-| `smithers-orchestrator` | `./src/index.js` | Core API: `createSmithers`, components, `runWorkflow`, `renderMdx`, errors |
-| `smithers-orchestrator/gateway` | `./src/gateway.js` | Gateway server primitives from `@smithers-orchestrator/server/gateway` |
-| `smithers-orchestrator/gateway-client` | `./src/gateway-client.js` | Typed client helpers from `@smithers-orchestrator/gateway-client` |
-| `smithers-orchestrator/gateway-react` | `./src/gateway-react.js` | React hooks and providers for gateway-backed UIs |
-| `smithers-orchestrator/sandbox` | `./src/sandbox.js` | Sandbox provider contracts, bundles, and execution helpers |
-| `smithers-orchestrator/jsx-runtime` | `./src/jsx-runtime.js` | JSX runtime (auto-resolved by `jsxImportSource`) |
-| `smithers-orchestrator/jsx-dev-runtime` | `./src/jsx-runtime.js` | JSX dev runtime (auto-resolved in dev mode) |
-| `smithers-orchestrator/tools` | `./src/tools.js` | Tool sandbox: `defineTool`, `read`, `grep`, `bash`, `edit`, `write` |
-| `smithers-orchestrator/server` | `./src/server.js` | HTTP server for run management and event streaming |
-| `smithers-orchestrator/observability` | `./src/observability.js` | OpenTelemetry traces, metrics, and Prometheus integration |
-| `smithers-orchestrator/mdx-plugin` | `./src/mdx-plugin.js` | Bun preload plugin for `.mdx` imports |
-| `smithers-orchestrator/dom/renderer` | `./src/dom/renderer.js` | Internal renderer (advanced use) |
-| `smithers-orchestrator/serve` | `./src/serve.js` | Single-workflow HTTP server via `createServeApp` |
-| `smithers-orchestrator/scorers` | `./src/scorers.js` | Eval scorers: `createScorer`, `llmJudge`, `aggregateScores` |
-| `smithers-orchestrator/memory` | `./src/memory.js` | Cross-run facts, message history, processors, and metrics |
-| `smithers-orchestrator/openapi` | `./src/openapi.js` | Generate AI SDK tools from OpenAPI specs |
-| `smithers-orchestrator/control-plane` | `./src/control-plane.js` | Organization, project, billing, usage, secret-reference, and audit primitives |
+| `smthrs` | `./src/index.js` | Core API: `createSmithers`, components, `runWorkflow`, `renderMdx`, errors |
+| `smthrs/gateway` | `./src/gateway.js` | Gateway server primitives from `@smthrs/server/gateway` |
+| `smthrs/gateway-client` | `./src/gateway-client.js` | Typed client helpers from `@smthrs/gateway-client` |
+| `smthrs/gateway-react` | `./src/gateway-react.js` | React hooks and providers for gateway-backed UIs |
+| `smthrs/sandbox` | `./src/sandbox.js` | Sandbox provider contracts, bundles, and execution helpers |
+| `smthrs/jsx-runtime` | `./src/jsx-runtime.js` | JSX runtime (auto-resolved by `jsxImportSource`) |
+| `smthrs/jsx-dev-runtime` | `./src/jsx-runtime.js` | JSX dev runtime (auto-resolved in dev mode) |
+| `smthrs/tools` | `./src/tools.js` | Tool sandbox: `defineTool`, `read`, `grep`, `bash`, `edit`, `write` |
+| `smthrs/server` | `./src/server.js` | HTTP server for run management and event streaming |
+| `smthrs/observability` | `./src/observability.js` | OpenTelemetry traces, metrics, and Prometheus integration |
+| `smthrs/mdx-plugin` | `./src/mdx-plugin.js` | Bun preload plugin for `.mdx` imports |
+| `smthrs/dom/renderer` | `./src/dom/renderer.js` | Internal renderer (advanced use) |
+| `smthrs/serve` | `./src/serve.js` | Single-workflow HTTP server via `createServeApp` |
+| `smthrs/scorers` | `./src/scorers.js` | Eval scorers: `createScorer`, `llmJudge`, `aggregateScores` |
+| `smthrs/memory` | `./src/memory.js` | Cross-run facts, message history, processors, and metrics |
+| `smthrs/openapi` | `./src/openapi.js` | Generate AI SDK tools from OpenAPI specs |
+| `smthrs/control-plane` | `./src/control-plane.js` | Organization, project, billing, usage, secret-reference, and audit primitives |
 
-The PI plugin is published as the separate `@smithers-orchestrator/pi-plugin` package. The old `smithers-orchestrator/pi-plugin` and `smithers-orchestrator/pi-extension` subpaths are no longer exported.
+The PI plugin is published as the separate `@smthrs/pi-plugin` package. The old `smthrs/pi-plugin` and `smthrs/pi-extension` subpaths are no longer exported.
 
 ## Workspace Packages
 
-Most applications should import from `smithers-orchestrator`. The scoped workspace packages below are published for advanced integrations, custom clients, and framework development.
+Most applications should import from `smthrs`. The scoped workspace packages below are published for advanced integrations, custom clients, and framework development.
 
 | Package | Primary surface | Related docs |
 |---|---|---|
-| `smithers-orchestrator` | Public facade for workflow authoring, components, agents, tools, server helpers, memory, OpenAPI tools, scorers, and JSX runtime setup | This page, [Types](/reference/types) |
-| `@smithers-orchestrator/cli` | CLI entrypoint, MCP server, local workflow pack, account registry commands, DevTools commands, cron, alerts, and server commands | [CLI Overview](/cli/overview), [MCP Server](/integrations/mcp-server) |
-| `@smithers-orchestrator/accounts` | Subscription and API-key account registry helpers: `listAccounts`, `addAccount`, `removeAccount`, `getAccount`, `accountToProviderEnv` | [CLI Agents](/integrations/cli-agents) |
-| `@smithers-orchestrator/agents` | AI SDK and CLI agent adapters, CLI capability reports, agent contracts, and tool capability registry | [CLI Agents](/integrations/cli-agents), [SDK Agents](/integrations/sdk-agents) |
-| `@smithers-orchestrator/components` | JSX workflow components such as `Task`, `Workflow`, `Approval`, `Sandbox`, `Timer`, `Signal`, and control-flow components | [Components](/concepts/control-flow) |
-| `@smithers-orchestrator/control-plane` | Durable organization, project, team, billing, usage, secret-reference, and audit primitives for hosted deployments | [Control Plane](/deployment/control-plane) |
-| `@smithers-orchestrator/db` | SQLite/Drizzle adapter, table setup, run-state derivation, schema helpers, and output tables | [Data Model](/concepts/data-model), [Run State](/runtime/run-state) |
-| `@smithers-orchestrator/devtools` | Snapshot, tree, diff, node lookup, task collection, and DevTools run-store helpers behind the CLI inspect commands | [Debugging](/guides/debugging), [CLI Overview](/cli/overview) |
-| `@smithers-orchestrator/driver` | Runtime driver contracts: `RunOptions`, `RunResult`, `RunStatus`, `SmithersCtx`, outputs, task runtime, interop, and child process helpers | [Run Workflow](/runtime/run-workflow), [Execution Model](/concepts/execution-model) |
-| `@smithers-orchestrator/engine` | Workflow rendering/execution API: `runWorkflow`, `renderFrame`, `workflow`, `Smithers`, `fragment`, signals, and Effect versioning | [Render Frame](/runtime/render-frame), [Run Workflow](/runtime/run-workflow) |
-| `@smithers-orchestrator/errors` | Error definitions, known codes, JSON serialization, docs URLs, and type guards | [Errors](/reference/errors) |
-| `@smithers-orchestrator/gateway` | Stable Gateway RPC contracts, auth scopes, deployment metadata, and generated OpenAPI schema | [Gateway](/integrations/gateway), [RPC](/rpc/launch-run) |
-| `@smithers-orchestrator/gateway-client` | Browser/client SDK for Gateway RPC requests and event streams | [Gateway](/integrations/gateway) |
-| `@smithers-orchestrator/gateway-react` | React hooks and root helpers for Gateway-backed UIs | [Gateway](/integrations/gateway) |
-| `@smithers-orchestrator/graph` | Framework-neutral workflow graph model, XML nodes, task descriptors, and graph snapshots | [Planner Internals](/concepts/planner-internals), [Types](/reference/types) |
-| `@smithers-orchestrator/jj-darwin-arm64` | Vendored jj (Jujutsu) binary for darwin-arm64; auto-installed as an optional dependency of `@smithers-orchestrator/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
-| `@smithers-orchestrator/jj-darwin-x64` | Vendored jj (Jujutsu) binary for darwin-x64; auto-installed as an optional dependency of `@smithers-orchestrator/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
-| `@smithers-orchestrator/jj-linux-arm64` | Vendored jj (Jujutsu) binary for linux-arm64; auto-installed as an optional dependency of `@smithers-orchestrator/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
-| `@smithers-orchestrator/jj-linux-x64` | Vendored jj (Jujutsu) binary for linux-x64; auto-installed as an optional dependency of `@smithers-orchestrator/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
-| `@smithers-orchestrator/jj-win32-x64` | Vendored jj (Jujutsu) binary for win32-x64; auto-installed as an optional dependency of `@smithers-orchestrator/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
-| `@smithers-orchestrator/memory` | Cross-run facts, message history, processors, namespaces, service layer, and metrics | [Memory](/concepts/memory), [Memory Quickstart](/guides/memory-quickstart) |
-| `@smithers-orchestrator/observability` | Event types, logging, tracing, metrics, Prometheus rendering, and runtime observability layers | [Events](/runtime/events), [Event Types](/reference/event-types) |
-| `@smithers-orchestrator/openapi` | OpenAPI parsing, operation extraction, AI SDK tool generation, schema conversion, and metrics | [OpenAPI Tools](/concepts/openapi-tools), [OpenAPI Quickstart](/guides/openapi-tools-quickstart) |
-| `@smithers-orchestrator/pi-plugin` | PI extension runtime, views, API wrappers, and workflow inspection integration | [PI Integration](/integrations/pi-integration) |
-| `@smithers-orchestrator/protocol` | Shared contracts, small value types, and protocol-level errors for cross-package use | [Types](/reference/types), [Errors](/reference/errors) |
-| `@smithers-orchestrator/react-reconciler` | Custom React reconciler, host context, DOM renderer, DevTools preload, driver, and JSX runtime internals | [Why React](/why-react), [Render Frame](/runtime/render-frame) |
-| `@smithers-orchestrator/sandbox` | Sandbox bundle, execute, and transport primitives used by the `Sandbox` component | [Sandbox](/components/sandbox) |
-| `@smithers-orchestrator/scheduler` | Pure workflow state machine: task state, scheduler decisions, retry/cache policies, wait reasons, and workflow session services | [Workflow State](/concepts/workflow-state), [Suspend and Resume](/concepts/suspend-and-resume) |
-| `@smithers-orchestrator/scorers` | Scorer definitions, LLM judges, batch execution, aggregation, persistence schema, and metrics | [Evals](/concepts/evals), [Evals Quickstart](/guides/evals-quickstart) |
-| `@smithers-orchestrator/server` | HTTP, WebSocket, Gateway, cron, webhook, metrics, and single-workflow serving APIs | [Server](/integrations/server), [Serve](/integrations/serve) |
-| `@smithers-orchestrator/smithers` | Cerebras chat PWA and workflow graph demo application | [CLI Overview](/cli/overview) |
-| `@smithers-orchestrator/smithers-demo` | Interactive Smithers workflow generator demo with React Flow visualization | [CLI Overview](/cli/overview) |
-| `@smithers-orchestrator/smithers-studio-2` | Next Smithers Studio UI shell for browsing and driving workflow runs | [CLI Overview](/cli/overview) |
-| `@smithers-orchestrator/smithers-tui-demo` | Private React TUI demo app for terminal workflow interaction experiments | [CLI Overview](/cli/overview) |
-| `@smithers-orchestrator/time-travel` | Snapshots, diffs, forks, replay, timelines, VCS tags, rewind locks/audits, and time-travel metrics | [Time Travel](/concepts/time-travel), [Time Travel Quickstart](/guides/time-travel-quickstart) |
-| `@smithers-orchestrator/tool-context` | AsyncLocalStorage tool-execution context (run/node/idempotency keys, durability snapshot hook) shared by the engine and `smithers-orchestrator` without a dependency cycle | [Execution Model](/concepts/execution-model) |
-| `@smithers-orchestrator/usage` | Account quota and rate-limit usage reporting for Smithers providers | [CLI Overview](/cli/overview) |
-| `@smithers-orchestrator/vcs` | VCS discovery and jj workspace operations such as `runJj`, `workspaceAdd`, `workspaceList`, and pointer reverts | [VCS Helpers](/reference/vcs-helpers), [VCS Guide](/guides/vcs) |
+| `smthrs` | Public facade for workflow authoring, components, agents, tools, server helpers, memory, OpenAPI tools, scorers, and JSX runtime setup | This page, [Types](/reference/types) |
+| `@smthrs/cli` | CLI entrypoint, MCP server, local workflow pack, account registry commands, DevTools commands, cron, alerts, and server commands | [CLI Overview](/cli/overview), [MCP Server](/integrations/mcp-server) |
+| `@smthrs/accounts` | Subscription and API-key account registry helpers: `listAccounts`, `addAccount`, `removeAccount`, `getAccount`, `accountToProviderEnv` | [CLI Agents](/integrations/cli-agents) |
+| `@smthrs/agents` | AI SDK and CLI agent adapters, CLI capability reports, agent contracts, and tool capability registry | [CLI Agents](/integrations/cli-agents), [SDK Agents](/integrations/sdk-agents) |
+| `@smthrs/components` | JSX workflow components such as `Task`, `Workflow`, `Approval`, `Sandbox`, `Timer`, `Signal`, and control-flow components | [Components](/concepts/control-flow) |
+| `@smthrs/control-plane` | Durable organization, project, team, billing, usage, secret-reference, and audit primitives for hosted deployments | [Control Plane](/deployment/control-plane) |
+| `@smthrs/db` | SQLite/Drizzle adapter, table setup, run-state derivation, schema helpers, and output tables | [Data Model](/concepts/data-model), [Run State](/runtime/run-state) |
+| `@smthrs/devtools` | Snapshot, tree, diff, node lookup, task collection, and DevTools run-store helpers behind the CLI inspect commands | [Debugging](/guides/debugging), [CLI Overview](/cli/overview) |
+| `@smthrs/driver` | Runtime driver contracts: `RunOptions`, `RunResult`, `RunStatus`, `SmithersCtx`, outputs, task runtime, interop, and child process helpers | [Run Workflow](/runtime/run-workflow), [Execution Model](/concepts/execution-model) |
+| `@smthrs/engine` | Workflow rendering/execution API: `runWorkflow`, `renderFrame`, `workflow`, `Smithers`, `fragment`, signals, and Effect versioning | [Render Frame](/runtime/render-frame), [Run Workflow](/runtime/run-workflow) |
+| `@smthrs/errors` | Error definitions, known codes, JSON serialization, docs URLs, and type guards | [Errors](/reference/errors) |
+| `@smthrs/gateway` | Stable Gateway RPC contracts, auth scopes, deployment metadata, and generated OpenAPI schema | [Gateway](/integrations/gateway), [RPC](/rpc/launch-run) |
+| `@smthrs/gateway-client` | Browser/client SDK for Gateway RPC requests and event streams | [Gateway](/integrations/gateway) |
+| `@smthrs/gateway-react` | React hooks and root helpers for Gateway-backed UIs | [Gateway](/integrations/gateway) |
+| `@smthrs/graph` | Framework-neutral workflow graph model, XML nodes, task descriptors, and graph snapshots | [Planner Internals](/concepts/planner-internals), [Types](/reference/types) |
+| `@smthrs/jj-darwin-arm64` | Vendored jj (Jujutsu) binary for darwin-arm64; auto-installed as an optional dependency of `@smthrs/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
+| `@smthrs/jj-darwin-x64` | Vendored jj (Jujutsu) binary for darwin-x64; auto-installed as an optional dependency of `@smthrs/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
+| `@smthrs/jj-linux-arm64` | Vendored jj (Jujutsu) binary for linux-arm64; auto-installed as an optional dependency of `@smthrs/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
+| `@smthrs/jj-linux-x64` | Vendored jj (Jujutsu) binary for linux-x64; auto-installed as an optional dependency of `@smthrs/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
+| `@smthrs/jj-win32-x64` | Vendored jj (Jujutsu) binary for win32-x64; auto-installed as an optional dependency of `@smthrs/vcs`, not depended on directly | [VCS Guide](/guides/vcs) |
+| `@smthrs/memory` | Cross-run facts, message history, processors, namespaces, service layer, and metrics | [Memory](/concepts/memory), [Memory Quickstart](/guides/memory-quickstart) |
+| `@smthrs/observability` | Event types, logging, tracing, metrics, Prometheus rendering, and runtime observability layers | [Events](/runtime/events), [Event Types](/reference/event-types) |
+| `@smthrs/openapi` | OpenAPI parsing, operation extraction, AI SDK tool generation, schema conversion, and metrics | [OpenAPI Tools](/concepts/openapi-tools), [OpenAPI Quickstart](/guides/openapi-tools-quickstart) |
+| `@smthrs/pi-plugin` | PI extension runtime, views, API wrappers, and workflow inspection integration | [PI Integration](/integrations/pi-integration) |
+| `@smthrs/protocol` | Shared contracts, small value types, and protocol-level errors for cross-package use | [Types](/reference/types), [Errors](/reference/errors) |
+| `@smthrs/react-reconciler` | Custom React reconciler, host context, DOM renderer, DevTools preload, driver, and JSX runtime internals | [Why React](/why-react), [Render Frame](/runtime/render-frame) |
+| `@smthrs/sandbox` | Sandbox bundle, execute, and transport primitives used by the `Sandbox` component | [Sandbox](/components/sandbox) |
+| `@smthrs/scheduler` | Pure workflow state machine: task state, scheduler decisions, retry/cache policies, wait reasons, and workflow session services | [Workflow State](/concepts/workflow-state), [Suspend and Resume](/concepts/suspend-and-resume) |
+| `@smthrs/scorers` | Scorer definitions, LLM judges, batch execution, aggregation, persistence schema, and metrics | [Evals](/concepts/evals), [Evals Quickstart](/guides/evals-quickstart) |
+| `@smthrs/server` | HTTP, WebSocket, Gateway, cron, webhook, metrics, and single-workflow serving APIs | [Server](/integrations/server), [Serve](/integrations/serve) |
+| `@smthrs/smithers` | Cerebras chat PWA and workflow graph demo application | [CLI Overview](/cli/overview) |
+| `@smthrs/smithers-demo` | Interactive Smithers workflow generator demo with React Flow visualization | [CLI Overview](/cli/overview) |
+| `@smthrs/smithers-studio-2` | Next Smithers Studio UI shell for browsing and driving workflow runs | [CLI Overview](/cli/overview) |
+| `@smthrs/smithers-tui-demo` | Private React TUI demo app for terminal workflow interaction experiments | [CLI Overview](/cli/overview) |
+| `@smthrs/time-travel` | Snapshots, diffs, forks, replay, timelines, VCS tags, rewind locks/audits, and time-travel metrics | [Time Travel](/concepts/time-travel), [Time Travel Quickstart](/guides/time-travel-quickstart) |
+| `@smthrs/tool-context` | AsyncLocalStorage tool-execution context (run/node/idempotency keys, durability snapshot hook) shared by the engine and `smthrs` without a dependency cycle | [Execution Model](/concepts/execution-model) |
+| `@smthrs/usage` | Account quota and rate-limit usage reporting for Smithers providers | [CLI Overview](/cli/overview) |
+| `@smthrs/vcs` | VCS discovery and jj workspace operations such as `runJj`, `workspaceAdd`, `workspaceList`, and pointer reverts | [VCS Helpers](/reference/vcs-helpers), [VCS Guide](/guides/vcs) |
 
 ### Usage
 
 ```ts
 // Core API
-import { createSmithers, runWorkflow } from "smithers-orchestrator";
+import { createSmithers, runWorkflow } from "smthrs";
 
 // Tools
-import { defineTool, bash, read, write } from "smithers-orchestrator/tools";
+import { defineTool, bash, read, write } from "smthrs/tools";
 
 // Scorers
-import { createScorer, llmJudge } from "smithers-orchestrator/scorers";
+import { createScorer, llmJudge } from "smthrs/scorers";
 
 // MDX plugin (in preload.ts)
-import { mdxPlugin } from "smithers-orchestrator/mdx-plugin";
+import { mdxPlugin } from "smthrs/mdx-plugin";
 
 // Control-plane primitives
-import { ControlPlaneStore } from "smithers-orchestrator/control-plane";
+import { ControlPlaneStore } from "smthrs/control-plane";
 ```
 
 ## TypeScript Configuration
@@ -5537,42 +5537,42 @@ import { ControlPlaneStore } from "smithers-orchestrator/control-plane";
 {
   "compilerOptions": {
     "jsx": "react-jsx",
-    "jsxImportSource": "smithers-orchestrator"
+    "jsxImportSource": "smthrs"
   }
 }
 ```
 
-This tells TypeScript to resolve JSX transforms from `smithers-orchestrator/jsx-runtime` instead of `react/jsx-runtime`. The Smithers JSX runtime re-exports React's runtime, so component behavior is identical. This setting enables proper type resolution for Smithers workflow components.
+This tells TypeScript to resolve JSX transforms from `smthrs/jsx-runtime` instead of `react/jsx-runtime`. The Smithers JSX runtime re-exports React's runtime, so component behavior is identical. This setting enables proper type resolution for Smithers workflow components.
 
 See [JSX Installation](/jsx/installation) for the complete TypeScript setup.
 
 ### Path Aliases
 
-When developing inside the `smithers-orchestrator` monorepo, the root `tsconfig.json` defines path aliases so source imports resolve without a build step:
+When developing inside the `smthrs` monorepo, the root `tsconfig.json` defines path aliases so source imports resolve without a build step:
 
 ```jsonc
 "paths": {
-  "smithers-orchestrator": ["./packages/smithers/src/index.js"],
-  "smithers-orchestrator/jsx-runtime": ["./packages/smithers/src/jsx-runtime.js"],
-  "smithers-orchestrator/jsx-dev-runtime": ["./packages/smithers/src/jsx-runtime.js"],
-  "smithers-orchestrator/tools": ["./packages/smithers/src/tools.js"],
-  "smithers-orchestrator/*": [
+  "smthrs": ["./packages/smithers/src/index.js"],
+  "smthrs/jsx-runtime": ["./packages/smithers/src/jsx-runtime.js"],
+  "smthrs/jsx-dev-runtime": ["./packages/smithers/src/jsx-runtime.js"],
+  "smthrs/tools": ["./packages/smithers/src/tools.js"],
+  "smthrs/*": [
     "./packages/smithers/src/*.js",
     "./packages/smithers/src/*/index.js"
   ],
-  "smithers-orchestrator/scorers": ["./packages/scorers/src/index.js"],
-  "@smithers-orchestrator/agents": ["./packages/agents/src/index.js"],
-  "@smithers-orchestrator/gateway-client": ["./packages/gateway-client/src/index.ts"],
-  "@smithers-orchestrator/gateway-react": ["./packages/gateway-react/src/index.ts"],
-  "@smithers-orchestrator/pi-plugin": ["./packages/pi-plugin/src/index.ts"],
-  "@smithers-orchestrator/server": ["./packages/server/src/index.js"]
+  "smthrs/scorers": ["./packages/scorers/src/index.js"],
+  "@smthrs/agents": ["./packages/agents/src/index.js"],
+  "@smthrs/gateway-client": ["./packages/gateway-client/src/index.ts"],
+  "@smthrs/gateway-react": ["./packages/gateway-react/src/index.ts"],
+  "@smthrs/pi-plugin": ["./packages/pi-plugin/src/index.ts"],
+  "@smthrs/server": ["./packages/server/src/index.js"]
   // The root tsconfig includes the same style of alias for each workspace package.
 }
 ```
 
-The root package is a private `smithers-monorepo`; `smithers-orchestrator` resolves to `packages/smithers`.
+The root package is a private `smithers-monorepo`; `smthrs` resolves to `packages/smithers`.
 
-**End users do not need path aliases** — only framework developers do. Installing `smithers-orchestrator` as a dependency lets Node/Bun module resolution handle import paths automatically.
+**End users do not need path aliases** — only framework developers do. Installing `smthrs` as a dependency lets Node/Bun module resolution handle import paths automatically.
 
 ### Local Type Root Shims
 
@@ -5619,7 +5619,7 @@ Defined in the root `package.json` for development:
 | Script | Command | Purpose |
 |---|---|---|
 | `typecheck` | `tsc --noEmit` | Type-check the `src/` and `tests/` trees against `tsconfig.json` |
-| `typecheck:examples` | `tsc -p examples/tsconfig.json --noEmit` | Type-check example files against a separate config that maps `smithers-orchestrator` to `examples-entry.js` |
+| `typecheck:examples` | `tsc -p examples/tsconfig.json --noEmit` | Type-check example files against a separate config that maps `smthrs` to `examples-entry.js` |
 | `lint` | `oxlint ... packages/*/src packages/*/tests` | Lint package source and tests with oxlint |
 | `lint:fix` | `oxlint ... --fix --fix-suggestions packages/*/src packages/*/tests` | Apply supported oxlint fixes |
 | `cli` | `bun run apps/cli/src/index.js` | Run the local development CLI entrypoint |
@@ -5648,7 +5648,7 @@ See [Production Project Structure](/guides/project-structure) for a complete use
 
 ## VCS Helper Reference
 
-> Public JJ helper APIs exported by smithers-orchestrator for repo detection, snapshot inspection, and workspace management.
+> Public JJ helper APIs exported by smthrs for repo detection, snapshot inspection, and workspace management.
 
 Smithers exports a small JJ helper surface for applications that inspect or manage Jujutsu state directly.
 
@@ -5669,7 +5669,7 @@ import {
   workspaceAdd,
   workspaceList,
   workspaceClose,
-} from "smithers-orchestrator";
+} from "smthrs";
 ```
 
 ## `runJj(args, opts?)`
@@ -5827,10 +5827,10 @@ For workflow-level revert behavior, prefer the runtime and CLI docs:
 
 ## runWorkflow
 
-> Programmatic entry point. Equivalent to `bunx smithers-orchestrator up`.
+> Programmatic entry point. Equivalent to `bunx smthrs up`.
 
 ```ts
-import { runWorkflow } from "smithers-orchestrator";
+import { runWorkflow } from "smthrs";
 import { Effect } from "effect";
 
 const result = await Effect.runPromise(runWorkflow(workflow, {
@@ -5878,7 +5878,7 @@ All in-flight attempts are marked cancelled and `NodeCancelled` events are emitt
 
 ## Hijack handoff
 
-If a CLI hijack happens mid-run (`bunx smithers-orchestrator hijack <id>`), the run ends `"cancelled"` and the latest attempt metadata stores `hijackHandoff`. On `resume: true`, Smithers waits for a safe handoff point and continues with the persisted CLI session id (see [CLI Agents](/integrations/cli-agents)) or the persisted message history (SDK agents).
+If a CLI hijack happens mid-run (`bunx smthrs hijack <id>`), the run ends `"cancelled"` and the latest attempt metadata stores `hijackHandoff`. On `resume: true`, Smithers waits for a safe handoff point and continues with the persisted CLI session id (see [CLI Agents](/integrations/cli-agents)) or the persisted message history (SDK agents).
 
 ## `result.output`
 
@@ -5905,8 +5905,8 @@ const rows = db.query("SELECT * FROM page WHERE run_id = ? ORDER BY iteration DE
 Use `renderFrame` to preview the task graph — for CI validation, graph-inspection UIs, or dry-run checks — without executing or persisting anything. `runId` and `iteration` are arbitrary strings used only for snapshot identity.
 
 ```ts
-import { renderFrame } from "smithers-orchestrator";
-import { SmithersCtx } from "@smithers-orchestrator/driver";
+import { renderFrame } from "smthrs";
+import { SmithersCtx } from "@smthrs/driver";
 import { Effect } from "effect";
 
 const ctx = new SmithersCtx({ runId: "preview", iteration: 0, input: { task: "preview" }, outputs: {} });
@@ -5946,7 +5946,7 @@ bunx smithers graph workflow.tsx --input '{"task":"preview"}'
 Each successful task attempt captures the current [JJ](https://jj-vcs.github.io/jj/) change ID into `_smithers_attempts.jj_pointer`. `revert` restores the workspace to that state and discards any graph snapshots recorded after the attempt began, so the run's timeline rolls back to the point-in-time of that attempt.
 
 ```bash
-bunx smithers-orchestrator revert workflow.tsx \
+bunx smthrs revert workflow.tsx \
   --run-id <id> --node-id <node> [--attempt N=1] [--iteration N=0]
 ```
 
@@ -5961,7 +5961,7 @@ Revert restores files only — it doesn't alter JJ history; the restoration crea
 ## Programmatic
 
 ```ts
-import { revertToAttempt } from "smithers-orchestrator";
+import { revertToAttempt } from "smthrs";
 
 const result = await revertToAttempt(adapter, {
   runId: "abc123",
@@ -6065,7 +6065,7 @@ Terminal states (`succeeded`, `failed`, `cancelled`) carry neither.
 ## computeRunState
 
 ```ts
-import { computeRunState } from "@smithers-orchestrator/db/runState";
+import { computeRunState } from "@smthrs/db/runState";
 
 const view = await computeRunState(adapter, runId);
 view.state;       // "running" | ...
@@ -6081,7 +6081,7 @@ not run heuristics.
 when you already have the rows in memory:
 
 ```ts
-import { deriveRunState } from "@smithers-orchestrator/db/runState";
+import { deriveRunState } from "@smthrs/db/runState";
 
 const view = deriveRunState({
   run,
@@ -6146,7 +6146,7 @@ Historical TUI product/design material is kept for reference, but it does not de
 Run `smithers optimize` to generate improved prompts for agent tasks via GEPA, verify the improvement against your eval suite, and save the result as a reusable artifact.
 
 ```bash
-bunx smithers-orchestrator optimize workflow.tsx \
+bunx smthrs optimize workflow.tsx \
   --cases evals/smoke.jsonl \
   --suite smoke-gepa \
   --provider cerebras \
@@ -6166,7 +6166,7 @@ The command writes the artifact only when the optimized score improves by at lea
 Apply the optimized prompts to future evals with `--optimization`:
 
 ```bash
-bunx smithers-orchestrator eval workflow.tsx \
+bunx smthrs eval workflow.tsx \
   --cases evals/smoke.jsonl \
   --suite smoke-optimized \
   --optimization .smithers/optimizations/smoke-gepa.json
@@ -6179,7 +6179,7 @@ The artifact patches only agent-backed `<Task>` prompts by `nodeId`. Workflow st
 Example: the following run demonstrates a baseline failure corrected by a GEPA-generated patch. The baseline prompt did not include the required optimization token, so the eval failed. Cerebras GEPA generated a prompt patch that included the missing requirement, and the optimized eval passed.
 
 ```bash
-CEREBRAS_API_KEY=... bunx smithers-orchestrator optimize workflow.tsx \
+CEREBRAS_API_KEY=... bunx smthrs optimize workflow.tsx \
   --cases evals/opt.jsonl \
   --suite cerebras-proof \
   --provider cerebras \

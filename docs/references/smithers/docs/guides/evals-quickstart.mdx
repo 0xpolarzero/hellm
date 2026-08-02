@@ -46,7 +46,7 @@ For standard workflows, output assertions match the persisted output snapshot, k
 ## 2. Dry-run the plan
 
 ```bash
-bunx smithers-orchestrator eval workflow.tsx --cases evals/smoke.jsonl --suite smoke --dry-run
+bunx smthrs eval workflow.tsx --cases evals/smoke.jsonl --suite smoke --dry-run
 ```
 
 Dry-run mode prints the planned case IDs and run IDs without touching the database. Pass `--run-label <label>` when you want the dry-run and execution to use the same generated IDs.
@@ -54,7 +54,7 @@ Dry-run mode prints the planned case IDs and run IDs without touching the databa
 ## 3. Execute the suite
 
 ```bash
-bunx smithers-orchestrator eval workflow.tsx --cases evals/smoke.jsonl --suite smoke --force
+bunx smthrs eval workflow.tsx --cases evals/smoke.jsonl --suite smoke --force
 ```
 
 By default, the report is written to `.smithers/evals/smoke.json`. Use `--report path/to/report.json` to choose a different location.
@@ -66,7 +66,7 @@ The command exits `0` when all cases pass and `1` when any case fails. Invalid c
 ## 4. Use structured output in CI
 
 ```bash
-bunx smithers-orchestrator eval workflow.tsx \
+bunx smthrs eval workflow.tsx \
   --cases evals/smoke.jsonl \
   --suite smoke \
   --report artifacts/smoke-eval.json \

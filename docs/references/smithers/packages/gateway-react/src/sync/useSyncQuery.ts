@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
-import { syncKeyFingerprint, type SyncKey } from "@smithers-orchestrator/gateway-client";
+import { syncKeyFingerprint, type SyncKey } from "@smthrs/gateway-client";
 import { useSyncClient } from "./useSyncClient.ts";
 
 /**

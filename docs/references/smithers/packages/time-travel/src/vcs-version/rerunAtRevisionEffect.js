@@ -1,7 +1,7 @@
 import { Effect } from "effect";
-import { revertToJjPointer } from "@smithers-orchestrator/vcs/jj";
+import { revertToJjPointer } from "@smthrs/vcs/jj";
 import { loadVcsTag } from "./loadVcsTagEffect.js";
-/** @typedef {import("@smithers-orchestrator/db/adapter").SmithersDb} SmithersDb */
+/** @typedef {import("@smthrs/db/adapter").SmithersDb} SmithersDb */
 
 /**
  * @param {SmithersDb} adapter

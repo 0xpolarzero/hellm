@@ -221,7 +221,7 @@ class SmithersClient: ObservableObject {
     @Published private(set) var connectionTransport: ConnectionTransport = .none
     @Published private(set) var serverReachable: Bool = false
 
-    /// Minimum supported `smithers-orchestrator` version. Older releases
+    /// Minimum supported `smthrs` version. Older releases
     /// silently mislabel orphaned heartbeats as "continued"/"succeeded" and
     /// lack the `state`/`unhealthy` fields the dashboard now expects.
     static let minimumOrchestratorVersion = "0.16.0"
@@ -5177,8 +5177,8 @@ class SmithersClient: ObservableObject {
         isConnected = false
     }
 
-    /// Returns the smithers-orchestrator version string (e.g. "1.2.3"). Runs
-     /// `bunx smithers-orchestrator --version` out-of-band of the standard CLI
+    /// Returns the smthrs version string (e.g. "1.2.3"). Runs
+     /// `bunx smthrs --version` out-of-band of the standard CLI
      /// transport so we can surface the underlying engine version even when
      /// the `smithers` binary is a thin wrapper. Caches the result for the
      /// lifetime of the client.
@@ -5232,8 +5232,8 @@ class SmithersClient: ObservableObject {
 
     private func runOrchestratorVersionProbe() async -> String? {
         let probes: [(executable: String, args: [String])] = [
-            ("/usr/bin/env", ["bunx", "smithers-orchestrator", "--version"]),
-            ("/usr/bin/env", ["smithers-orchestrator", "--version"]),
+            ("/usr/bin/env", ["bunx", "smthrs", "--version"]),
+            ("/usr/bin/env", ["smthrs", "--version"]),
         ]
 
         for probe in probes {

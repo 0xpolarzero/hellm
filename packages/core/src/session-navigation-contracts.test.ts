@@ -18,7 +18,7 @@ const commandRollup = {
   status: "running",
   title: "Run workflow",
   summary: "Workflow is running.",
-  arguments: { cmd: "bunx smithers-orchestrator run workflow.tsx" },
+  arguments: { cmd: "bunx smthrs run workflow.tsx" },
   facts: { commandFamily: "smithers" },
   error: null,
   artifacts: [],

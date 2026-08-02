@@ -3,10 +3,10 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { deriveRunState } from "@smithers-orchestrator/db/runState/deriveRunState";
-import { RUN_STATE_HEARTBEAT_STALE_MS } from "@smithers-orchestrator/db/runState/RUN_STATE_HEARTBEAT_STALE_MS";
-import type { RunRow } from "@smithers-orchestrator/db/adapter/RunRow";
-import type { SandboxHandle } from "@smithers-orchestrator/sandbox/SandboxHandle";
+import { deriveRunState } from "@smthrs/db/runState/deriveRunState";
+import { RUN_STATE_HEARTBEAT_STALE_MS } from "@smthrs/db/runState/RUN_STATE_HEARTBEAT_STALE_MS";
+import type { RunRow } from "@smthrs/db/adapter/RunRow";
+import type { SandboxHandle } from "@smthrs/sandbox/SandboxHandle";
 import { stallSandbox } from "../harness/stallSandbox.ts";
 import { corruptHeartbeat } from "../harness/corruptHeartbeat.ts";
 

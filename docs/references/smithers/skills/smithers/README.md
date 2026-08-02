@@ -37,8 +37,8 @@ skill to one project.
 
 Any agent that loads Markdown skills works the same way — point it at this folder.
 For agents without a skills directory, just tell them to run
-`bunx smithers-orchestrator docs-full` (it prints the same `llms-full.txt`), or
-`bunx smithers-orchestrator ask "<question>"`.
+`bunx smthrs docs-full` (it prints the same `llms-full.txt`), or
+`bunx smthrs ask "<question>"`.
 
 ## Keeping it fresh
 

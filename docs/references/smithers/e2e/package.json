@@ -1,5 +1,5 @@
 {
-  "name": "@smithers-orchestrator/e2e",
+  "name": "@smthrs/e2e",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,12 +11,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@smithers-orchestrator/db": "workspace:*",
-    "@smithers-orchestrator/engine": "workspace:*",
-    "@smithers-orchestrator/gateway": "workspace:*",
-    "@smithers-orchestrator/sandbox": "workspace:*",
-    "@smithers-orchestrator/scheduler": "workspace:*",
-    "@smithers-orchestrator/server": "workspace:*",
+    "@smthrs/db": "^0.33.0",
+    "@smthrs/engine": "^0.33.0",
+    "@smthrs/gateway": "^0.33.0",
+    "@smthrs/sandbox": "^0.33.0",
+    "@smthrs/scheduler": "^0.33.0",
+    "@smthrs/server": "^0.33.0",
     "better-sqlite3": "^11.5.0",
     "drizzle-orm": "^0.45.2",
     "effect": "^3.21.1",

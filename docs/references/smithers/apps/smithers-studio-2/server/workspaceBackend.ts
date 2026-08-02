@@ -4,7 +4,7 @@ import * as pty from "node-pty";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectAvailableAgents } from "@smithers-orchestrator/cli/agent-detection";
+import { detectAvailableAgents } from "@smthrs/cli/agent-detection";
 import * as ts from "typescript";
 import { discoverPromptInputs, renderPromptPreview } from "../src/promptInputs";
 import type { WorkspaceBackendRequest, WorkspaceBackendResponse, WorkspaceStatus } from "../src/workspaceProtocol";

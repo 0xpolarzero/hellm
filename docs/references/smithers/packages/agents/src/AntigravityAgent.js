@@ -1,5 +1,5 @@
 import { BaseCliAgent, pushFlag, pushList, isRecord, asString, truncate, toolKindFromName, createSyntheticIdGenerator, } from "./BaseCliAgent/index.js";
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
+import { SmithersError } from "@smthrs/errors/SmithersError";
 import { normalizeCapabilityStringList, } from "./capability-registry/index.js";
 import { getCliAgentSurfaceManifestEntry } from "./cli-surface/index.js";
 /** @typedef {import("./capability-registry/AgentCapabilityRegistry.ts").AgentCapabilityRegistry} AgentCapabilityRegistry */

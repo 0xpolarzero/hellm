@@ -1,5 +1,5 @@
 import type { RunAuthContext } from "./RunAuthContext.ts";
-import type { SmithersEvent } from "@smithers-orchestrator/observability/SmithersEvent";
+import type { SmithersEvent } from "@smthrs/observability/SmithersEvent";
 
 export type HotReloadOptions = {
   /** Root directory to watch for changes (default: auto-detect from workflow entry) */

@@ -1,4 +1,4 @@
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 import { describe, expect, test } from "bun:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -29,7 +29,7 @@ import {
 } from "../src/components/index.js";
 import { AspectContext, createAccumulator } from "../src/aspects/AspectContext.js";
 import { zodSchemaToJsonExample } from "../src/zod-to-example.js";
-import { SmithersRenderer } from "@smithers-orchestrator/react-reconciler/dom/renderer";
+import { SmithersRenderer } from "@smthrs/react-reconciler/dom/renderer";
 
 const agent = { id: "agent", generate: async () => ({ text: "ok" }) };
 const otherAgent = { id: "other", generate: async () => ({ text: "ok" }) };

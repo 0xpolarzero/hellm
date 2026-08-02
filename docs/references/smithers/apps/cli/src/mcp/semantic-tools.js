@@ -2,8 +2,8 @@ import { basename, extname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Effect } from "effect";
 import { z } from "zod";
-import { ensureSmithersTables } from "@smithers-orchestrator/db/ensure";
-import { SmithersDb } from "@smithers-orchestrator/db/adapter";
+import { ensureSmithersTables } from "@smthrs/db/ensure";
+import { SmithersDb } from "@smthrs/db/adapter";
 import { findAndOpenDb } from "../find-db.js";
 import { aggregateNodeDetailEffect, } from "../node-detail.js";
 import { diagnoseRunEffect, } from "../why-diagnosis.js";
@@ -11,14 +11,14 @@ import { chatAttemptKey, parseChatAttemptMeta, parseNodeOutputEvent, selectChatA
 import { WATCH_MIN_INTERVAL_MS } from "../watch.js";
 import { discoverWorkflows, resolveWorkflow } from "../workflows.js";
 import { mdxPlugin } from "../mdx-plugin.js";
-import { approveNode, denyNode } from "@smithers-orchestrator/engine/approvals";
-import { buildAgentAskRequestRow, waitForHumanAnswer, } from "@smithers-orchestrator/engine/human-requests";
+import { approveNode, denyNode } from "@smthrs/engine/approvals";
+import { buildAgentAskRequestRow, waitForHumanAnswer, } from "@smthrs/engine/human-requests";
 import { buildAskKindFields, buildAskPromptText, buildAskUniqueToken, resolveAskHumanContext, } from "../ask-human.js";
-import { runWorkflow } from "@smithers-orchestrator/engine";
-import { revertToAttempt } from "@smithers-orchestrator/time-travel/revert";
+import { runWorkflow } from "@smthrs/engine";
+import { revertToAttempt } from "@smthrs/time-travel/revert";
 import { runPromise } from "../smithersRuntime.js";
-import { SmithersError } from "@smithers-orchestrator/errors";
-import { toSmithersError } from "@smithers-orchestrator/errors/toSmithersError";
+import { SmithersError } from "@smthrs/errors";
+import { toSmithersError } from "@smthrs/errors/toSmithersError";
 /**
  * @typedef {{ content: Array<{ type: "text"; text: string; }>; structuredContent: { ok: boolean; data?: unknown; error?: z.infer<typeof toolErrorSchema>; }; isError?: boolean; }} SemanticToolCallResult
  */

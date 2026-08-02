@@ -4,7 +4,7 @@ description: Durable human approval; persists ApprovalDecision, selection, or ra
 ---
 
 ```ts
-import { Approval, approvalDecisionSchema } from "smithers-orchestrator";
+import { Approval, approvalDecisionSchema } from "smthrs";
 
 type ApprovalProps = {
   id: string;
@@ -39,7 +39,7 @@ type ApprovalProps = {
 ```
 
 ```tsx
-import { Approval, Sequence, Task, Workflow, approvalDecisionSchema, createSmithers } from "smithers-orchestrator";
+import { Approval, Sequence, Task, Workflow, approvalDecisionSchema, createSmithers } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({

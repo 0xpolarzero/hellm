@@ -1,14 +1,14 @@
-export type { WorkflowDefinition as SmithersWorkflow } from "@smithers-orchestrator/driver/WorkflowDefinition";
-export type { WorkflowDriverOptions as SmithersWorkflowDriverOptions } from "@smithers-orchestrator/driver/WorkflowDriverOptions";
+export type { WorkflowDefinition as SmithersWorkflow } from "@smthrs/driver/WorkflowDefinition";
+export type { WorkflowDriverOptions as SmithersWorkflowDriverOptions } from "@smthrs/driver/WorkflowDriverOptions";
 
 export type {
   EngineDecision,
   RenderContext,
   WaitReason,
   SmithersWorkflowOptions,
-} from "@smithers-orchestrator/scheduler";
-export type { RunOptions, RunResult, SmithersCtx } from "@smithers-orchestrator/driver";
-export type { WorkflowRuntime, WorkflowSession } from "@smithers-orchestrator/driver/workflow-types";
+} from "@smthrs/scheduler";
+export type { RunOptions, RunResult, SmithersCtx } from "@smthrs/driver";
+export type { WorkflowRuntime, WorkflowSession } from "@smthrs/driver/workflow-types";
 export type {
   ExtractOptions,
   HostElement,
@@ -19,4 +19,4 @@ export type {
   XmlElement,
   XmlNode,
   XmlText,
-} from "@smithers-orchestrator/graph";
+} from "@smthrs/graph";

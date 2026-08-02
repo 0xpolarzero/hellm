@@ -36,7 +36,7 @@ const opsAgent = new Agent({
 Use this when your CLI agent already supports external integrations and Smithers should only orchestrate the task.
 
 ```ts
-import { PiAgent } from "smithers-orchestrator";
+import { PiAgent } from "smthrs";
 
 const pi = new PiAgent({
   provider: "openai",
@@ -93,7 +93,7 @@ CLI-backed agent classes wrap external AI command-line tools and implement the [
 ## Quick Start
 
 ```tsx
-import { ClaudeCodeAgent, Task, Workflow, createSmithers } from "smithers-orchestrator";
+import { ClaudeCodeAgent, Task, Workflow, createSmithers } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({
@@ -136,7 +136,7 @@ CLI binaries must be on `PATH`: `claude`, `codex`, `agy`, `pi`, `kimi`, `forge`,
 `CodexAgent` is the Smithers wrapper for OpenAI's `codex` CLI. It runs `codex exec` in non-interactive mode, sends the task prompt over stdin, forces `--json` so Smithers can stream structured progress, and captures the final assistant message via `--output-last-message`.
 
 ```tsx
-import { CodexAgent, Task, Workflow, createSmithers } from "smithers-orchestrator";
+import { CodexAgent, Task, Workflow, createSmithers } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({
@@ -163,7 +163,7 @@ export default smithers(() => (
 
 - Subscription login: run `codex login` once. For isolated accounts, pass `configDir`; Smithers sets `CODEX_HOME` for that invocation.
 - API billing: pass `apiKey` or set `OPENAI_API_KEY`; Smithers forwards it to the spawned `codex` process.
-- Account registry: `bunx smithers-orchestrator agents add --provider codex ...` registers a subscription config directory, while `--provider openai-api` registers API-key billing for Codex-compatible providers.
+- Account registry: `bunx smthrs agents add --provider codex ...` registers a subscription config directory, while `--provider openai-api` registers API-key billing for Codex-compatible providers.
 
 ### Structured output
 
@@ -205,7 +205,7 @@ await agent.generate({
 `ClaudeCodeAgent` extends the base with Claude Code-specific session and permission flags. Key additions: `permissionMode`, `sessionId`, `mcpConfig`, `resume`.
 
 ```ts
-import { ClaudeCodeAgent } from "smithers-orchestrator";
+import { ClaudeCodeAgent } from "smthrs";
 new ClaudeCodeAgent({
   permissionMode?: "acceptEdits" | "bypassPermissions" | "default" | "delegate" | "dontAsk" | "plan";
   allowedTools?: string[]; disallowedTools?: string[]; disableSlashCommands?: boolean;
@@ -226,7 +226,7 @@ new ClaudeCodeAgent({
 `CodexAgent` extends the base with OpenAI Codex-specific flags. Key additions: `sandbox`, `config`, `outputSchema`.
 
 ```ts
-import { CodexAgent } from "smithers-orchestrator";
+import { CodexAgent } from "smthrs";
 new CodexAgent({
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   fullAuto?: boolean; dangerouslyBypassApprovalsAndSandbox?: boolean;
@@ -243,7 +243,7 @@ new CodexAgent({
 `AntigravityAgent` wraps the Google `agy` CLI. Key additions: `allowedMcpServerNames`, `geminiDir`, `conversation`, `continue`, and `resume`.
 
 ```ts
-import { AntigravityAgent } from "smithers-orchestrator";
+import { AntigravityAgent } from "smthrs";
 new AntigravityAgent({
   model?: string; sandbox?: boolean;
   yolo?: boolean; dangerouslySkipPermissions?: boolean;
@@ -280,7 +280,7 @@ outside workflow launch through `agy plugin`.
 `PiAgent` wraps the Pi CLI and adds extension UI hook support. Key additions: `mode`, `onExtensionUiRequest`, `extension`, `thinking`.
 
 ```ts
-import { PiAgent, type PiExtensionUiRequest, type PiExtensionUiResponse } from "smithers-orchestrator";
+import { PiAgent, type PiExtensionUiRequest, type PiExtensionUiResponse } from "smthrs";
 new PiAgent({
   provider?: string; apiKey?: string; appendSystemPrompt?: string; mode?: "text" | "json" | "rpc";
   print?: boolean; continue?: boolean; resume?: boolean; session?: string;
@@ -298,7 +298,7 @@ new PiAgent({
 `KimiAgent` wraps the Moonshot Kimi CLI with automatic session isolation. Key additions: `thinking`, `agent`, `maxRalphIterations`.
 
 ```ts
-import { KimiAgent } from "smithers-orchestrator";
+import { KimiAgent } from "smthrs";
 new KimiAgent({
   thinking?: boolean; outputFormat?: "text" | "stream-json";
   finalMessageOnly?: boolean; quiet?: boolean;
@@ -313,7 +313,7 @@ new KimiAgent({
 `ForgeAgent` wraps the Forge CLI and supports 300+ models via provider/model strings. Key additions: `conversationId`, `provider`, `workflow`.
 
 ```ts
-import { ForgeAgent } from "smithers-orchestrator";
+import { ForgeAgent } from "smthrs";
 new ForgeAgent({
   directory?: string; provider?: string; agent?: string;
   conversationId?: string; sandbox?: string; restricted?: boolean;
@@ -324,7 +324,7 @@ new ForgeAgent({
 `AmpAgent` wraps the Amp CLI in `--execute` headless mode. Key additions: `visibility`, `mcpConfig`, `dangerouslyAllowAll`.
 
 ```ts
-import { AmpAgent } from "smithers-orchestrator";
+import { AmpAgent } from "smthrs";
 new AmpAgent({
   visibility?: "private" | "public" | "workspace" | "group";
   mcpConfig?: string; settingsFile?: string;
@@ -336,7 +336,7 @@ new AmpAgent({
 `OpenCodeAgent` wraps the OpenCode CLI via `opencode run --format json`. Key additions: `agentName`, `continueSession`, `sessionId`. Note: native hijack support is not yet shipped.
 
 ```ts
-import { OpenCodeAgent } from "smithers-orchestrator";
+import { OpenCodeAgent } from "smthrs";
 new OpenCodeAgent({
   model?: string; agentName?: string;
   attachFiles?: string[];
@@ -347,7 +347,7 @@ new OpenCodeAgent({
 
 ## Hijack handoff
 
-Most built-in CLI agents support `bunx smithers-orchestrator hijack <runId>`, which relaunches the agent in its native CLI session for interactive takeover.
+Most built-in CLI agents support `bunx smthrs hijack <runId>`, which relaunches the agent in its native CLI session for interactive takeover.
 
 Smithers persists the native session or conversation id on each task event. On hijack, it waits for a safe boundary between blocking tool calls, then reopens the session via the vendor's resume flag:
 
@@ -386,7 +386,7 @@ import {
   AnthropicAgent,
   OpenAIAgent,
   tools,
-} from "smithers-orchestrator";
+} from "smthrs";
 import { stepCountIs } from "ai";
 ```
 
@@ -477,7 +477,7 @@ Use the `createOpenAI` path when you need provider-level configuration beyond `b
 [Hermes](https://github.com/NousResearch/hermes-agent) (Nous Research) exposes an OpenAI-compatible HTTP API, so `HermesAgent` is a convenience subclass of `OpenAIAgent` that points the provider at your Hermes server and disables native structured output by default (a local Hermes server may not honor JSON-schema response formats).
 
 ```ts
-import { HermesAgent } from "smithers-orchestrator";
+import { HermesAgent } from "smthrs";
 
 const hermes = new HermesAgent({
   baseURL: "http://127.0.0.1:5123/v1", // or set HERMES_BASE_URL
@@ -545,7 +545,7 @@ export const claude = useCli
 > Sandboxed file and shell tools for AI agent tasks, with exact input schemas, security policies, and usage examples.
 
 ```ts
-import { tools, read, write, edit, grep, bash, defineTool, getDefinedToolMetadata } from "smithers-orchestrator";
+import { tools, read, write, edit, grep, bash, defineTool, getDefinedToolMetadata } from "smthrs";
 ```
 
 `tools` bundles all five tools keyed by name:
@@ -554,7 +554,7 @@ import { tools, read, write, edit, grep, bash, defineTool, getDefinedToolMetadat
 const { read, write, edit, grep, bash } = tools;
 ```
 
-The `smithers-orchestrator/tools` subpath also exports lower-level helpers for advanced integrations:
+The `smthrs/tools` subpath also exports lower-level helpers for advanced integrations:
 
 | Export | Purpose |
 |---|---|
@@ -600,7 +600,7 @@ Every invocation is logged to `_smithers_tool_calls`:
 `defineTool()` wraps custom [AI SDK](https://ai-sdk.dev) tools with Smithers runtime context, deterministic idempotency keys, and durable tool-call logging.
 
 ```ts
-import { defineTool } from "smithers-orchestrator";
+import { defineTool } from "smthrs";
 import { z } from "zod";
 
 const placeOrder = defineTool({
@@ -701,7 +701,7 @@ Returns file contents as UTF-8. Throws `"File too large"` if size exceeds `maxOu
 ```ts
 import { ToolLoopAgent as Agent } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { read, grep } from "smithers-orchestrator";
+import { read, grep } from "smthrs";
 
 const codeAgent = new Agent({
   model: anthropic("claude-sonnet-4-20250514"),
@@ -734,7 +734,7 @@ Returns `"ok"`. Throws `"Content too large"` if content exceeds `maxOutputBytes`
 ```ts
 import { ToolLoopAgent as Agent } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { write, read } from "smithers-orchestrator";
+import { write, read } from "smthrs";
 
 const writerAgent = new Agent({
   model: anthropic("claude-sonnet-4-20250514"),
@@ -821,7 +821,7 @@ Local git commands (`git status`, `git diff`, `git log`) are allowed.
 ```ts
 import { ToolLoopAgent as Agent } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { bash } from "smithers-orchestrator";
+import { bash } from "smthrs";
 
 const devAgent = new Agent({
   model: anthropic("claude-sonnet-4-20250514"),
@@ -845,7 +845,7 @@ Pass tools to an [AI SDK](https://ai-sdk.dev) agent and assign the agent to a [`
 ```tsx
 import { ToolLoopAgent as Agent } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { createSmithers, read, write, edit, grep, bash, Task } from "smithers-orchestrator";
+import { createSmithers, read, write, edit, grep, bash, Task } from "smthrs";
 import { z } from "zod";
 
 const codeAgent = new Agent({
@@ -872,7 +872,7 @@ The full bundle works too:
 ```ts
 import { ToolLoopAgent as Agent } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { tools } from "smithers-orchestrator";
+import { tools } from "smthrs";
 
 const fullAgent = new Agent({
   model: anthropic("claude-sonnet-4-20250514"),
@@ -891,7 +891,7 @@ const fullAgent = new Agent({
 
 ```ts
 import { Effect } from "effect";
-import { runWorkflow } from "smithers-orchestrator";
+import { runWorkflow } from "smthrs";
 
 const result = await Effect.runPromise(runWorkflow(workflow, {
   input: { file: "src/auth.ts" },
@@ -1025,7 +1025,7 @@ Smithers provides deterministic orchestration (workflow graph, approvals, retrie
 ### 1) PI as Workflow Agent
 
 ```tsx
-import { PiAgent } from "smithers-orchestrator";
+import { PiAgent } from "smthrs";
 
 const pi = new PiAgent({
   provider: "openai",
@@ -1045,13 +1045,13 @@ PI sessions are first-class hijack targets. `smithers hijack <runId> --target pi
 
 ### 2) PI Server Client
 
-Drive Smithers server APIs from a PI extension or any Node process via `@smithers-orchestrator/pi-plugin`:
+Drive Smithers server APIs from a PI extension or any Node process via `@smthrs/pi-plugin`:
 
 ```ts
-import { runWorkflow, approve, streamEvents } from "@smithers-orchestrator/pi-plugin";
+import { runWorkflow, approve, streamEvents } from "@smthrs/pi-plugin";
 ```
 
-The older `smithers-orchestrator/pi-plugin` and `smithers-orchestrator/pi-extension` subpaths were removed; use the scoped package directly.
+The older `smthrs/pi-plugin` and `smthrs/pi-extension` subpaths were removed; use the scoped package directly.
 
 ### 3) Hybrid: PI Extensibility + Smithers Orchestration
 
@@ -1061,7 +1061,7 @@ The older `smithers-orchestrator/pi-plugin` and `smithers-orchestrator/pi-extens
 Patterns:
 
 1. PI skill-driven coding task inside a Smithers `<Task>`.
-2. PI extension command that starts/resumes Smithers workflows via server API or `@smithers-orchestrator/pi-plugin`.
+2. PI extension command that starts/resumes Smithers workflows via server API or `@smthrs/pi-plugin`.
 3. Smithers workflow output persisted to SQLite and consumed by later PI-assisted tasks.
 
 ## Hijacking PI Sessions
@@ -1084,7 +1084,7 @@ Session persistence:
 1. Install PI CLI and add to `PATH`.
 2. Configure PI credentials via env/config (prefer over CLI args for API keys).
 3. Instantiate `PiAgent` with explicit options in workflows.
-4. For server-driven workflows, use `@smithers-orchestrator/pi-plugin`.
+4. For server-driven workflows, use `@smthrs/pi-plugin`.
 
 ```bash
 # Verify PI is installed
@@ -1100,4 +1100,4 @@ pi --version
 
 ## Limitations
 
-Smithers does not provide a chat interface for PI. Chat UI integration is the responsibility of the host application using `@smithers-orchestrator/pi-plugin`.
+Smithers does not provide a chat interface for PI. Chat UI integration is the responsibility of the host application using `@smthrs/pi-plugin`.

@@ -1,5 +1,5 @@
-import { extractTextFromJsonValue } from "@smithers-orchestrator/agents/BaseCliAgent";
-import { normalizeTokenUsage } from "@smithers-orchestrator/agents/BaseCliAgent";
+import { extractTextFromJsonValue } from "@smthrs/agents/BaseCliAgent";
+import { normalizeTokenUsage } from "@smthrs/agents/BaseCliAgent";
 
 /**
  * @typedef {import('./agentTrace.ts').AgentFamily} AgentFamily

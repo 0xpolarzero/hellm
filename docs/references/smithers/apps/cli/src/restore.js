@@ -3,7 +3,7 @@
 // the vcs revert (jj restore --from <commit_id>). DI seam on `revert` for tests.
 
 import { spawnSync } from "node:child_process";
-import { resolveJjBinary } from "@smithers-orchestrator/vcs/resolveJjBinary";
+import { resolveJjBinary } from "@smthrs/vcs/resolveJjBinary";
 
 /** @param {unknown} id */
 function short(id) {

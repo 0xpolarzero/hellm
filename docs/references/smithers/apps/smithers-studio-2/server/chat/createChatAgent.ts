@@ -7,13 +7,13 @@ import {
   OpenCodeAgent,
   PiAgent,
   type AgentLike,
-} from "@smithers-orchestrator/agents";
+} from "@smthrs/agents";
 
 type AgentFactory = (cwd: string) => AgentLike;
 
 /**
  * Map a detected agent id to the real CLI agent class from
- * `@smithers-orchestrator/agents`. Each agent shells out to the locally
+ * `@smthrs/agents`. Each agent shells out to the locally
  * installed CLI (claude, codex, …) — this is the same runtime the engine drives
  * for production runs, not a chat-specific shim.
  */

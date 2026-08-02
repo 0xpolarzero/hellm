@@ -1,6 +1,6 @@
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 
-import { Loop, Parallel, PiAgent, Sequence, Task, Worktree, openSmithersBackend } from "smithers-orchestrator";
+import { Loop, Parallel, PiAgent, Sequence, Task, Worktree, openSmithersBackend } from "smthrs";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { createCodexAgent, parsePositiveInt, type CodexSandbox } from "../components/codex";

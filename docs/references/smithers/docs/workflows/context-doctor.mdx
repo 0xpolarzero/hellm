@@ -11,7 +11,7 @@ for it before handing a contract to an agent, to catch missing inputs, ungated
 side effects, or absent acceptance criteria up front.
 
 ```bash
-bunx smithers-orchestrator workflow run context-doctor \
+bunx smthrs workflow run context-doctor \
   --input '{"contract":"{\"goal\":\"Add CSP headers\",\"acceptanceCriteria\":[{\"text\":\"headers present\",\"blocking\":true,\"verification\":\"curl -I\"}],\"inputs\":[{\"name\":\"repo\",\"required\":true,\"source\":\"arg\"}],\"sideEffects\":[{\"name\":\"deploy\",\"approval\":true}],\"outputSpec\":\"patch\",\"reportSpec\":\"summary\"}"}'
 ```
 
@@ -39,8 +39,8 @@ bunx smithers-orchestrator workflow run context-doctor \
 ## Monitor it
 
 ```bash
-bunx smithers-orchestrator workflow run context-doctor --input '{"contract":"…"}' -d   # detach
-bunx smithers-orchestrator ps                                                          # active / paused / recent
-bunx smithers-orchestrator logs <runId> -f                                             # follow events
-bunx smithers-orchestrator output <runId> --node check                                 # inspect the deterministic diagnosis
+bunx smthrs workflow run context-doctor --input '{"contract":"…"}' -d   # detach
+bunx smthrs ps                                                          # active / paused / recent
+bunx smthrs logs <runId> -f                                             # follow events
+bunx smthrs output <runId> --node check                                 # inspect the deterministic diagnosis
 ```

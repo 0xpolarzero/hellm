@@ -1,7 +1,7 @@
 import { lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
-import { assertJsonPayloadWithinBounds, assertOptionalArrayMaxLength, assertOptionalStringMaxLength, } from "@smithers-orchestrator/db/input-bounds";
+import { SmithersError } from "@smthrs/errors/SmithersError";
+import { assertJsonPayloadWithinBounds, assertOptionalArrayMaxLength, assertOptionalStringMaxLength, } from "@smthrs/db/input-bounds";
 import { resolveSandboxPath } from "./sandboxPath.js";
 /** @typedef {import("./SandboxBundleManifest.ts").SandboxBundleManifest} SandboxBundleManifest */
 /** @typedef {import("./ValidatedSandboxBundle.ts").ValidatedSandboxBundle} ValidatedSandboxBundle */

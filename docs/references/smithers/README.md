@@ -27,8 +27,8 @@ Smithers skill and register the MCP server into **every coding agent on your mac
 (Claude Code, Codex, Cursor, Copilot, Pi, Hermes, OpenClaw, and ~20 more):
 
 ```bash
-bunx smithers-orchestrator skills add   # install the skill set into every detected agent
-bunx smithers-orchestrator mcp add      # register Smithers as an MCP server everywhere
+bunx smthrs skills add   # install the skill set into every detected agent
+bunx smthrs mcp add      # register Smithers as an MCP server everywhere
 ```
 
 Then just ask:
@@ -60,10 +60,10 @@ Prefer to drive it yourself from the CLI? Start here.
 
 ```bash
 # scaffold the workflow pack into .smithers/
-bunx smithers-orchestrator init
+bunx smthrs init
 
 # turn a request into a practical implementation plan
-bunx smithers-orchestrator workflow run plan --prompt "add rate limiting, audit logging, and API key rotation"
+bunx smthrs workflow run plan --prompt "add rate limiting, audit logging, and API key rotation"
 ```
 
 `init` scaffolds a `.smithers/` folder preloaded with production-ready workflows. Once
@@ -71,13 +71,13 @@ that's in place, you can chain a request from tickets to implementation:
 
 ```bash
 # break a request into ticket files under .smithers/tickets/
-bunx smithers-orchestrator workflow run tickets-create --prompt "add rate limiting, audit logging, and API key rotation"
+bunx smthrs workflow run tickets-create --prompt "add rate limiting, audit logging, and API key rotation"
 
 # implement the tickets, each in its own worktree branch
-bunx smithers-orchestrator workflow run kanban
+bunx smthrs workflow run kanban
 ```
 
-Run `bunx smithers-orchestrator starters` to browse plain-English starters, and
+Run `bunx smthrs starters` to browse plain-English starters, and
 `smithers workflow list` to see what's installed.
 
 ## Watch your runs
@@ -125,7 +125,7 @@ for the job and switch freely:
 ## Built-in workflows
 
 `smithers init` installs a pack of ready-to-run workflows. Point your agent at one and go
-via `bunx smithers-orchestrator workflow run <id> --prompt "..."`:
+via `bunx smthrs workflow run <id> --prompt "..."`:
 
 **Build**
 
@@ -184,7 +184,7 @@ adapt them to your repo, or have it write new ones from the same primitives. A w
 is a JSX tree of tasks:
 
 ```tsx
-import { createSmithers, Sequence } from "smithers-orchestrator";
+import { createSmithers, Sequence } from "smthrs";
 import { z } from "zod";
 
 const { Workflow, Task, smithers, outputs } = createSmithers({

@@ -1,6 +1,6 @@
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 
-import { Loop, Sequence, Task, Worktree, openSmithersBackend } from "smithers-orchestrator";
+import { Loop, Sequence, Task, Worktree, openSmithersBackend } from "smthrs";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { parsePositiveInt } from "../components/codex";

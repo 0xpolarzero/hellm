@@ -1,7 +1,7 @@
 // smithers-source: seeded
 // smithers-display-name: Release
-/** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { createSmithers, Sequence } from "smthrs";
 import { z } from "zod/v4";
 
 const inputSchema = z.object({

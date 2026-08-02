@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { createSmithers, Task, Workflow } from "smithers-orchestrator";
+import { createSmithers, Task, Workflow } from "smthrs";
 import { z } from "zod";
 
 const PiOutput = z.object({ answer: z.string() });

@@ -1,5 +1,5 @@
 import { matchesKey, truncateToWidth } from "@mariozechner/pi-tui";
-import type { DevToolsNode } from "@smithers-orchestrator/protocol";
+import type { DevToolsNode } from "@smthrs/protocol";
 import type { DevToolsStore } from "../runtime/DevToolsStore.js";
 
 type Theme = {

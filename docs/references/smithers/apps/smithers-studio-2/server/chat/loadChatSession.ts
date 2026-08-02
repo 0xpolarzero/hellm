@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { detectAvailableAgents } from "@smithers-orchestrator/cli/agent-detection";
+import { detectAvailableAgents } from "@smthrs/cli/agent-detection";
 import type { ChatSession } from "./ChatSession";
 import { resolveChatWorkspaceRoot } from "./resolveChatWorkspaceRoot";
 

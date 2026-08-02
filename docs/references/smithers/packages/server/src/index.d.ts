@@ -1,23 +1,23 @@
-import * as _smithers_orchestrator_db_adapter_RunRow from '@smithers-orchestrator/db/adapter/RunRow';
+import * as _smithers_orchestrator_db_adapter_RunRow from '@smthrs/db/adapter/RunRow';
 import * as node_http from 'node:http';
-import * as _smithers_orchestrator_observability_SmithersEvent from '@smithers-orchestrator/observability/SmithersEvent';
-import * as _smithers_orchestrator_components_SmithersWorkflow from '@smithers-orchestrator/components/SmithersWorkflow';
-import { SmithersWorkflow as SmithersWorkflow$1 } from '@smithers-orchestrator/components/SmithersWorkflow';
+import * as _smithers_orchestrator_observability_SmithersEvent from '@smthrs/observability/SmithersEvent';
+import * as _smithers_orchestrator_components_SmithersWorkflow from '@smthrs/components/SmithersWorkflow';
+import { SmithersWorkflow as SmithersWorkflow$1 } from '@smthrs/components/SmithersWorkflow';
 import * as hono from 'hono';
 import { Hono } from 'hono';
 import * as hono_types from 'hono/types';
 import { Effect } from 'effect';
-import * as _smithers_orchestrator_db_adapter from '@smithers-orchestrator/db/adapter';
-import { SmithersDb as SmithersDb$4 } from '@smithers-orchestrator/db/adapter';
+import * as _smithers_orchestrator_db_adapter from '@smthrs/db/adapter';
+import { SmithersDb as SmithersDb$4 } from '@smthrs/db/adapter';
 import * as effect_Fiber from 'effect/Fiber';
-import * as _smithers_orchestrator_protocol_errors from '@smithers-orchestrator/protocol/errors';
-import * as _smithers_orchestrator_devtools_snapshotSerializer from '@smithers-orchestrator/devtools/snapshotSerializer';
-import * as _smithers_orchestrator_protocol_devtools from '@smithers-orchestrator/protocol/devtools';
-import * as _smithers_orchestrator_engine_effect_DiffBundle from '@smithers-orchestrator/engine/effect/DiffBundle';
-import { DiffBundle } from '@smithers-orchestrator/engine/effect/DiffBundle';
-import { selectOutputRow } from '@smithers-orchestrator/db/output';
-import * as _smithers_orchestrator_time_travel_jumpToFrame from '@smithers-orchestrator/time-travel/jumpToFrame';
-export { JumpToFrameError } from '@smithers-orchestrator/time-travel/jumpToFrame';
+import * as _smithers_orchestrator_protocol_errors from '@smthrs/protocol/errors';
+import * as _smithers_orchestrator_devtools_snapshotSerializer from '@smthrs/devtools/snapshotSerializer';
+import * as _smithers_orchestrator_protocol_devtools from '@smthrs/protocol/devtools';
+import * as _smithers_orchestrator_engine_effect_DiffBundle from '@smthrs/engine/effect/DiffBundle';
+import { DiffBundle } from '@smthrs/engine/effect/DiffBundle';
+import { selectOutputRow } from '@smthrs/db/output';
+import * as _smithers_orchestrator_time_travel_jumpToFrame from '@smthrs/time-travel/jumpToFrame';
+export { JumpToFrameError } from '@smthrs/time-travel/jumpToFrame';
 
 type ServerOptions$1 = {
     port?: number;
@@ -1162,7 +1162,7 @@ declare const NODE_OUTPUT_MAX_BYTES: number;
 
 declare const NODE_OUTPUT_WARN_BYTES: 1048576;
 
-/** @typedef {import("@smithers-orchestrator/protocol/errors").NodeOutputErrorCode} NodeOutputErrorCode */
+/** @typedef {import("@smthrs/protocol/errors").NodeOutputErrorCode} NodeOutputErrorCode */
 declare class NodeOutputRouteError extends Error {
     /**
      * @param {NodeOutputErrorCode} code
@@ -1240,11 +1240,11 @@ declare function getDevToolsSnapshotRoute(input: {
     frameNo?: number;
     onWarning?: (warning: SnapshotSerializerWarning$1) => void;
 }): Promise<DevToolsSnapshot>;
-/** @typedef {import("@smithers-orchestrator/db/adapter").SmithersDb} SmithersDb */
-/** @typedef {import("@smithers-orchestrator/protocol/devtools").DevToolsNode} DevToolsNode */
-/** @typedef {import("@smithers-orchestrator/protocol/devtools").DevToolsSnapshot} DevToolsSnapshot */
-/** @typedef {import("@smithers-orchestrator/protocol/devtools").DevToolsNodeType} DevToolsNodeType */
-/** @typedef {import("@smithers-orchestrator/devtools/snapshotSerializer").SnapshotSerializerWarning} SnapshotSerializerWarning */
+/** @typedef {import("@smthrs/db/adapter").SmithersDb} SmithersDb */
+/** @typedef {import("@smthrs/protocol/devtools").DevToolsNode} DevToolsNode */
+/** @typedef {import("@smthrs/protocol/devtools").DevToolsSnapshot} DevToolsSnapshot */
+/** @typedef {import("@smthrs/protocol/devtools").DevToolsNodeType} DevToolsNodeType */
+/** @typedef {import("@smthrs/devtools/snapshotSerializer").SnapshotSerializerWarning} SnapshotSerializerWarning */
 declare const DEVTOOLS_RUN_ID_PATTERN: RegExp;
 declare const DEVTOOLS_MAX_FRAME_NO: 2147483647;
 declare const DEVTOOLS_TREE_MAX_DEPTH: 256;
@@ -1300,8 +1300,8 @@ type GetNodeDiffRouteResult$1 = {
  *   iteration: unknown;
  *   resolveRun: (runId: string) => Promise<{ adapter: SmithersDb } | null>;
  *   emitEffect?: (effect: Effect.Effect<void>) => Promise<unknown>;
- *   computeDiffBundleImpl?: (baseRef: string, cwd: string, seq?: number) => Promise<import("@smithers-orchestrator/engine/effect/DiffBundle").DiffBundle>;
- *   computeDiffBundleBetweenRefsImpl?: (baseRef: string, targetRef: string, cwd: string, seq?: number) => Promise<import("@smithers-orchestrator/engine/effect/DiffBundle").DiffBundle>;
+ *   computeDiffBundleImpl?: (baseRef: string, cwd: string, seq?: number) => Promise<import("@smthrs/engine/effect/DiffBundle").DiffBundle>;
+ *   computeDiffBundleBetweenRefsImpl?: (baseRef: string, targetRef: string, cwd: string, seq?: number) => Promise<import("@smthrs/engine/effect/DiffBundle").DiffBundle>;
  *   getCurrentPointerImpl?: (cwd: string) => Promise<string | null>;
  *   resolveCommitPointerImpl?: (pointer: string, cwd: string) => Promise<string | null>;
  *   restorePointerImpl?: (pointer: string, cwd: string) => Promise<{ success: boolean; error?: string }>;
@@ -1334,8 +1334,8 @@ type AttemptRow = _smithers_orchestrator_db_adapter.AttemptRow;
 type GetNodeDiffRouteResult = GetNodeDiffRouteResult$1;
 type DiffSummary = DiffSummary$1;
 
-/** @typedef {import("@smithers-orchestrator/db/adapter").SmithersDb} SmithersDb */
-/** @typedef {import("@smithers-orchestrator/db/adapter").AttemptRow} AttemptRow */
+/** @typedef {import("@smthrs/db/adapter").SmithersDb} SmithersDb */
+/** @typedef {import("@smthrs/db/adapter").AttemptRow} AttemptRow */
 /** @typedef {import("./GetNodeDiffRouteResult.js").GetNodeDiffRouteResult} GetNodeDiffRouteResult */
 /** @typedef {import("./DiffSummary.js").DiffSummary} DiffSummary */
 declare const RUN_ID_PATTERN: RegExp;
@@ -1379,7 +1379,7 @@ type NodeOutputResponse$1 = {
  *   runId: unknown;
  *   nodeId: unknown;
  *   iteration: unknown;
- *   resolveRun: (runId: string) => Promise<{ workflow: import("@smithers-orchestrator/components/SmithersWorkflow").SmithersWorkflow<unknown>; adapter: import("@smithers-orchestrator/db/adapter").SmithersDb } | null>;
+ *   resolveRun: (runId: string) => Promise<{ workflow: import("@smthrs/components/SmithersWorkflow").SmithersWorkflow<unknown>; adapter: import("@smthrs/db/adapter").SmithersDb } | null>;
  *   selectOutputRowImpl?: typeof selectOutputRow;
  *   emitEffect?: (effect: Effect.Effect<void>) => Promise<unknown>;
  * }} params
@@ -1398,9 +1398,9 @@ declare function getNodeOutputRoute(params: {
 }): Promise<NodeOutputResponse>;
 type NodeOutputResponse = NodeOutputResponse$1;
 
-/** @typedef {import("@smithers-orchestrator/db/adapter").SmithersDb} SmithersDb */
-/** @typedef {import("@smithers-orchestrator/observability/SmithersEvent").SmithersEvent} SmithersEvent */
-/** @typedef {import("@smithers-orchestrator/time-travel/jumpToFrame").JumpResult} JumpResult */
+/** @typedef {import("@smthrs/db/adapter").SmithersDb} SmithersDb */
+/** @typedef {import("@smthrs/observability/SmithersEvent").SmithersEvent} SmithersEvent */
+/** @typedef {import("@smthrs/time-travel/jumpToFrame").JumpResult} JumpResult */
 /**
  * Gateway wrapper around time-travel jump orchestration.
  *
@@ -1485,10 +1485,10 @@ declare function streamDevToolsRoute(input: {
         errorCode?: string;
     }) => void;
 }): AsyncIterable<DevToolsEvent>;
-/** @typedef {import("@smithers-orchestrator/db/adapter").SmithersDb} SmithersDb */
-/** @typedef {import("@smithers-orchestrator/protocol/devtools").DevToolsEvent} DevToolsEvent */
-/** @typedef {import("@smithers-orchestrator/protocol/devtools").DevToolsSnapshot} DevToolsSnapshot */
-/** @typedef {import("@smithers-orchestrator/devtools/snapshotSerializer").SnapshotSerializerWarning} SnapshotSerializerWarning */
+/** @typedef {import("@smthrs/db/adapter").SmithersDb} SmithersDb */
+/** @typedef {import("@smthrs/protocol/devtools").DevToolsEvent} DevToolsEvent */
+/** @typedef {import("@smthrs/protocol/devtools").DevToolsSnapshot} DevToolsSnapshot */
+/** @typedef {import("@smthrs/devtools/snapshotSerializer").SnapshotSerializerWarning} SnapshotSerializerWarning */
 declare const DEVTOOLS_REBASELINE_INTERVAL: 50;
 declare const DEVTOOLS_BACKPRESSURE_LIMIT: 1000;
 declare const DEVTOOLS_POLL_INTERVAL_MS: 25;

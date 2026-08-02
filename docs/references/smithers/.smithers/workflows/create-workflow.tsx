@@ -3,9 +3,9 @@
 // smithers-display-name: Create Workflow
 // smithers-description: Build a new Smithers workflow from a plain-English ask — clarify, provision docs & skills, design, scaffold, verify, and document.
 // smithers-tags: authoring, workflow-pack, scaffolding
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 import { $ } from "bun";
-import { createSmithers } from "smithers-orchestrator";
+import { createSmithers } from "smthrs";
 import { z } from "zod/v4";
 import { agents } from "../agents";
 import ClarifyPrompt from "../prompts/create-workflow-clarify.mdx";
@@ -251,8 +251,8 @@ export default smithers((ctx) => {
             <Sequence>
               <Task id="verify" output={outputs.verify}>
                 {async () => {
-                  const command = `bunx smithers-orchestrator graph ${workflowFile}`;
-                  const res = await $`bunx smithers-orchestrator graph ${workflowFile}`.nothrow().quiet();
+                  const command = `bunx smthrs graph ${workflowFile}`;
+                  const res = await $`bunx smthrs graph ${workflowFile}`.nothrow().quiet();
                   const passed = res.exitCode === 0;
                   const errText = `${res.stderr?.toString() ?? ""}\n${res.stdout?.toString() ?? ""}`.trim();
                   return {

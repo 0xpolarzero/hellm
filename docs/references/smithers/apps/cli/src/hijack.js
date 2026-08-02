@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
-import { SmithersError } from "@smithers-orchestrator/errors";
+import { SmithersError } from "@smthrs/errors";
 /** @typedef {import("./HijackCandidate.ts").HijackCandidate} HijackCandidate */
 /** @typedef {import("./HijackLaunchSpec.ts").HijackLaunchSpec} HijackLaunchSpec */
 /** @typedef {import("./NativeHijackEngine.ts").NativeHijackEngine} NativeHijackEngine */
-/** @typedef {import("@smithers-orchestrator/db/adapter").SmithersDb} SmithersDb */
+/** @typedef {import("@smthrs/db/adapter").SmithersDb} SmithersDb */
 
 /**
  * @param {string | null} [metaJson]

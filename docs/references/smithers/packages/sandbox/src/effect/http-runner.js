@@ -2,9 +2,9 @@ import { HttpRunner } from "@effect/cluster";
 import { mkdir, cp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Layer } from "effect";
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
-import { spawnCaptureEffect } from "@smithers-orchestrator/driver/child-process";
-import { toSmithersError } from "@smithers-orchestrator/errors/toSmithersError";
+import { SmithersError } from "@smthrs/errors/SmithersError";
+import { spawnCaptureEffect } from "@smthrs/driver/child-process";
+import { toSmithersError } from "@smthrs/errors/toSmithersError";
 import { SandboxEntityExecutor } from "./sandbox-entity.js";
 import { dockerArgs, normalizeSandboxHandleControls, sandboxRunnerEnv, spawnSandboxCommand } from "./process-runner.js";
 /** @typedef {import("../SandboxTransportConfig.ts").SandboxTransportConfig} SandboxTransportConfig */

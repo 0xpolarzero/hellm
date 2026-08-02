@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { runDiagnostics, getDiagnosticStrategy, enrichReportWithErrorAnalysis, formatDiagnosticSummary, launchDiagnostics, } from "../src/diagnostics/index.js";
 import { BaseCliAgent } from "../src/BaseCliAgent/index.js";
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
+import { SmithersError } from "@smthrs/errors/SmithersError";
 // ---------------------------------------------------------------------------
 // runDiagnostics
 // ---------------------------------------------------------------------------

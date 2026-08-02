@@ -3,7 +3,7 @@ import { SMITHERS_MEMORY_INSTRUCTIONS } from "../../../generated/smithers-instru
 export const SMITHERS_SVVY_BOUNDARY_APPENDIX = [
   "svvy Smithers boundary for handler threads:",
   "",
-  "Work in the workspace `.smithers/` package. Use official `bunx smithers-orchestrator ...` commands through Shell. TypeScript Smithers source still imports from `smithers-orchestrator`.",
+  "Work in the workspace `.smithers/` package. Use official `bunx smthrs ...` commands through Shell. TypeScript Smithers source still imports from `smthrs`.",
   "Import reusable svvy workflow material from `@svvyx/workflows` when it exists and matches the task.",
   "Smithers `.smithers/agents/**` is workspace-local Smithers config. Reusable svvy task-agent parameters live in the app-global Workflows source library and are consumed through generated `@svvyx/workflows` `Agents.*` exports.",
   "Use `svvyx workflows models list --json` when choosing provider/model/reasoning values for saved workflow agents or reusable task-agent parameters.",
@@ -18,7 +18,7 @@ const HANDLER_WORKFLOW_AUTHORING_GUIDE_LINES = [
   "",
   "Decision flow:",
   "- Use direct tools for bounded work that does not need workflow supervision, pause/resume, fan-out, or reusable structured outputs.",
-  "- Use official `bunx smithers-orchestrator ...` commands through Shell for workflow initialization, execution, process inspection, and run inspection.",
+  "- Use official `bunx smthrs ...` commands through Shell for workflow initialization, execution, process inspection, and run inspection.",
   "- Author workspace-local Smithers source under `.smithers/` when the delegated task needs a concrete workflow.",
   "- Inspect app-global reusable workflow source with `svvyx workflows list` only when reusable source-library context is relevant.",
   "- In workspace `.smithers` TypeScript/TSX source, import reusable generated values from `@svvyx/workflows` when they exist and match the task.",
@@ -38,7 +38,7 @@ const MINIMAL_ARTIFACT_WORKFLOW_EXAMPLE = [
   "Example: minimal workspace-local Smithers workflow",
   "```ts",
   'import React from "react";',
-  'import { createSmithers } from "smithers-orchestrator";',
+  'import { createSmithers } from "smthrs";',
   'import { z } from "zod";',
   "",
   "const inputSchema = z.object({ objective: z.string().min(1) });",
@@ -59,7 +59,7 @@ const MINIMAL_ARTIFACT_WORKFLOW_EXAMPLE = [
   "  );",
   "});",
   "```",
-  'Run reusable or seeded workflows with the official Smithers CLI, for example `bunx smithers-orchestrator workflow run implement --prompt "..."`. For direct TSX files, use the current file-run form from the generated Smithers docs.',
+  'Run reusable or seeded workflows with the official Smithers CLI, for example `bunx smthrs workflow run implement --prompt "..."`. For direct TSX files, use the current file-run form from the generated Smithers docs.',
 ].join("\n");
 
 const PARALLEL_WORKFLOW_EXAMPLE = [

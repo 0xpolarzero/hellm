@@ -24,7 +24,7 @@ afterEach(() => {
   }
 });
 
-const MCP = { name: "smithers", command: "bunx", args: ["smithers-orchestrator", "--mcp"] };
+const MCP = { name: "smithers", command: "bunx", args: ["smthrs", "--mcp"] };
 
 describe("parseAgentWiringArgv", () => {
   test("recognizes `mcp add` and `skills add`", () => {
@@ -61,7 +61,7 @@ describe("registerHermesMcp", () => {
     const result = registerHermesMcp({ ...MCP, homeDir: home });
     expect(result.registered).toBe(true);
     const config = parse(readFileSync(result.path, "utf8"));
-    expect(config.mcp_servers.smithers).toEqual({ command: "bunx", args: ["smithers-orchestrator", "--mcp"] });
+    expect(config.mcp_servers.smithers).toEqual({ command: "bunx", args: ["smthrs", "--mcp"] });
   });
 
   test("preserves existing config and other servers", () => {
@@ -92,7 +92,7 @@ describe("registerOpenClawMcp", () => {
     const config = JSON.parse(readFileSync(result.path, "utf8"));
     expect(config.channels).toEqual({ slack: true });
     expect(config.mcp.servers.other).toEqual({ command: "x" });
-    expect(config.mcp.servers.smithers).toEqual({ command: "bunx", args: ["smithers-orchestrator", "--mcp"] });
+    expect(config.mcp.servers.smithers).toEqual({ command: "bunx", args: ["smthrs", "--mcp"] });
   });
 
   test("does not clobber an unparseable config", () => {

@@ -1,9 +1,9 @@
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { createSmithers } from "smithers-orchestrator";
+import { createSmithers } from "smthrs";
 import { Gateway } from "../src/gateway.js";
 
 function getPort(server) {

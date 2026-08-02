@@ -11,7 +11,7 @@
 `createOpenApiTools` parses an OpenAPI 3.x spec and returns AI SDK tools — one per operation, with Zod schemas converted from the spec's JSON schemas.
 
 ```ts
-import { createOpenApiTools } from "smithers-orchestrator/openapi";
+import { createOpenApiTools } from "smthrs/openapi";
 
 const tools = await createOpenApiTools("./petstore.json", {
   baseUrl: "https://api.petstore.example.com",
@@ -56,7 +56,7 @@ Pass the spec itself as the first argument to `createOpenApiTools(input, options
 ## CLI preview
 
 ```bash
-bunx smithers-orchestrator openapi list ./api/openapi.yaml
+bunx smthrs openapi list ./api/openapi.yaml
 ```
 
 Lists every operationId, method, path, and summary — useful for auditing what an agent will be able to call before wiring it up.
@@ -82,7 +82,7 @@ For each operation:
 
 ## Observability
 
-Each tool call emits an `OpenApiToolCalled` event with `operationId`, `method`, `path`, `durationMs`, `status`. Visible via `bunx smithers-orchestrator events <run-id> --type openapi`.
+Each tool call emits an `OpenApiToolCalled` event with `operationId`, `method`, `path`, `durationMs`, `status`. Visible via `bunx smthrs events <run-id> --type openapi`.
 
 ## Notes
 

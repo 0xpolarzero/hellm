@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { getDefinedToolMetadata } from "@smithers-orchestrator/engine/getDefinedToolMetadata";
+import { getDefinedToolMetadata } from "@smthrs/engine/getDefinedToolMetadata";
 
 type ApprovalRow = {
   run_id: string;

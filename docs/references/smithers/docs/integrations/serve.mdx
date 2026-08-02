@@ -8,7 +8,7 @@ Serve mode starts a Hono-based HTTP server alongside a running workflow. Every r
 ## CLI
 
 ```bash
-bunx smithers-orchestrator up workflow.tsx --serve --port 3000 --host 0.0.0.0
+bunx smthrs up workflow.tsx --serve --port 3000 --host 0.0.0.0
 ```
 
 | Flag | Default | Description |
@@ -24,13 +24,13 @@ The process stays alive after the workflow completes so final state remains quer
 Detached mode:
 
 ```bash
-bunx smithers-orchestrator up workflow.tsx --serve --port 8080 -d
+bunx smthrs up workflow.tsx --serve --port 8080 -d
 ```
 
 ## Programmatic
 
 ```ts
-import { createServeApp } from "smithers-orchestrator/serve";
+import { createServeApp } from "smthrs/serve";
 
 const app = createServeApp({
   workflow,
@@ -191,7 +191,7 @@ Unknown routes return `404` with code `NOT_FOUND`.
 
 ```bash
 # Start a workflow with serve mode
-bunx smithers-orchestrator up workflow.tsx --serve --port 8080 --auth-token sk-secret
+bunx smthrs up workflow.tsx --serve --port 8080 --auth-token sk-secret
 
 # Status
 curl http://localhost:8080/ -H "Authorization: Bearer sk-secret"

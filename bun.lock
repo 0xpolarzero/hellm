@@ -125,9 +125,9 @@
     },
   },
   "patchedDependencies": {
+    "electrobun@1.18.1": "patches/electrobun@1.18.1.patch",
     "@mariozechner/pi-coding-agent@0.73.1": "patches/@mariozechner%2Fpi-coding-agent@0.73.1.patch",
     "electrobun-e2e@1.0.2": "patches/electrobun-e2e@1.0.2.patch",
-    "electrobun@1.18.1": "patches/electrobun@1.18.1.patch",
     "electrobun-browser-tools@1.0.1": "patches/electrobun-browser-tools@1.0.1.patch",
   },
   "packages": {

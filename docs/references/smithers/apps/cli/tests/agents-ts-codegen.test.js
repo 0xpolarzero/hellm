@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { addAccount } from "@smithers-orchestrator/accounts";
+import { addAccount } from "@smthrs/accounts";
 import { extractGeneratedDetectionProviderIds, generateAgentsTs } from "../src/agent-detection.js";
 import { createExecutableDir, writeFakeClaudeBinary } from "../../../packages/smithers/tests/e2e-helpers.js";
 

@@ -12,7 +12,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "pnpm --filter @smithers-orchestrator/smithers-demo dev -- --port 5174",
+    command: "pnpm --filter @smthrs/smithers-demo dev -- --port 5174",
     url: "http://127.0.0.1:5174",
     reuseExistingServer: true,
     timeout: 30_000,

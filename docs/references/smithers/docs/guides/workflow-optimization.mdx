@@ -6,7 +6,7 @@ description: Optimize Smithers workflow prompts against eval suites with GEPA-st
 Run `smithers optimize` to generate improved prompts for agent tasks via GEPA, verify the improvement against your eval suite, and save the result as a reusable artifact.
 
 ```bash
-bunx smithers-orchestrator optimize workflow.tsx \
+bunx smthrs optimize workflow.tsx \
   --cases evals/smoke.jsonl \
   --suite smoke-gepa \
   --provider cerebras \
@@ -26,7 +26,7 @@ The command writes the artifact only when the optimized score improves by at lea
 Apply the optimized prompts to future evals with `--optimization`:
 
 ```bash
-bunx smithers-orchestrator eval workflow.tsx \
+bunx smthrs eval workflow.tsx \
   --cases evals/smoke.jsonl \
   --suite smoke-optimized \
   --optimization .smithers/optimizations/smoke-gepa.json
@@ -39,7 +39,7 @@ The artifact patches only agent-backed `<Task>` prompts by `nodeId`. Workflow st
 Example: the following run demonstrates a baseline failure corrected by a GEPA-generated patch. The baseline prompt did not include the required optimization token, so the eval failed. Cerebras GEPA generated a prompt patch that included the missing requirement, and the optimized eval passed.
 
 ```bash
-CEREBRAS_API_KEY=... bunx smithers-orchestrator optimize workflow.tsx \
+CEREBRAS_API_KEY=... bunx smthrs optimize workflow.tsx \
   --cases evals/opt.jsonl \
   --suite cerebras-proof \
   --provider cerebras \

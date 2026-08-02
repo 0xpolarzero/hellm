@@ -6,7 +6,7 @@ description: Stress-test a vague idea with agent-led questions.
 `grill-me` runs an interview loop. The agent asks questions using `.smithers/scripts/ask-user.ts`, records answers, and keeps iterating until the request is clear enough to act on. Answers accumulate in the run context and are available to subsequent tasks in the same run, or can be passed as input to `tickets-create`.
 
 ```bash
-bunx smithers-orchestrator workflow run grill-me --prompt "I want to improve onboarding"
+bunx smthrs workflow run grill-me --prompt "I want to improve onboarding"
 ```
 
 ## Inputs

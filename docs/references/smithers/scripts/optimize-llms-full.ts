@@ -17,7 +17,7 @@
  *   5. Compact CLI bash code blocks: keep at most 2 example invocations per
  *      command (canonical form + one combined-flag example), drop the rest.
  *   6. Strip JSX pragma comments after the first occurrence:
- *      `/** @jsxImportSource smithers-orchestrator *\/` is repeated in dozens
+ *      `/** @jsxImportSource smthrs *\/` is repeated in dozens
  *      of TSX snippets. Keep the first occurrence in the file as a reference.
  *
  * Run: bun scripts/optimize-llms-full.ts
@@ -104,7 +104,7 @@ text = text.replace(/^>\s*Source:\s*https?:\/\/[^\s]+\s*\n/gm, "");
 // reference line.
 text = text.replace(
   /^>\s*GitHub:\s*[^\n]+\n>\s*Package:\s*[^\n]+\n/m,
-  "> Repo: github.com/smithersai/smithers · Package: smithers-orchestrator (npm)\n",
+  "> Repo: github.com/smithersai/smithers · Package: smthrs (npm)\n",
 );
 
 // --- 4. Collapse adjacent / doubled separators ------------------------------
@@ -120,10 +120,10 @@ text = text.replace(/\n{4,}/g, "\n\n\n");
 // CLI reference pages emit blocks like:
 //
 //   ```bash
-//   bunx smithers-orchestrator ps
-//   bunx smithers-orchestrator ps --status waiting-approval
-//   bunx smithers-orchestrator ps --limit 50
-//   bunx smithers-orchestrator ps --watch --interval 5
+//   bunx smthrs ps
+//   bunx smthrs ps --status waiting-approval
+//   bunx smthrs ps --limit 50
+//   bunx smthrs ps --watch --interval 5
 //   ```
 //
 // Keep the first (canonical) line and at most one combined-flag variant
@@ -134,7 +134,7 @@ text = text.replace(
     const lines = body.split("\n").filter((l) => l.trim().length > 0);
     if (lines.length < 4) return full;
     // Group consecutive lines that share the same first 3 tokens (e.g.
-    // "bunx smithers-orchestrator ps").
+    // "bunx smthrs ps").
     const groups: string[][] = [];
     let cur: string[] = [];
     let curKey = "";
@@ -178,9 +178,9 @@ text = text.replace(
 
 // --- 6. Strip repeated JSX pragma comments after first occurrence -----------
 {
-  const PRAGMA = "/** @jsxImportSource smithers-orchestrator */";
+  const PRAGMA = "/** @jsxImportSource smthrs */";
   let first = true;
-  text = text.replace(/\/\*\* @jsxImportSource smithers-orchestrator \*\/\n?/g, () => {
+  text = text.replace(/\/\*\* @jsxImportSource smthrs \*\/\n?/g, () => {
     if (first) {
       first = false;
       return PRAGMA + "\n";
@@ -323,10 +323,10 @@ text = text.replace(
             "Verbatim source files for seeded workflows, plugin manifests, and CI configuration are not duplicated here.",
           );
           out.push(
-            "After `bunx smithers-orchestrator init`, browse `.smithers/` for live copies.",
+            "After `bunx smthrs init`, browse `.smithers/` for live copies.",
           );
           out.push(
-            "For repo-level files (`AGENTS.md`, `.github/workflows/ci.yml`, `~/.claude/plugins/smithers-orchestrator/`, etc.) see the source repository at github.com/smithersai/smithers.",
+            "For repo-level files (`AGENTS.md`, `.github/workflows/ci.yml`, `~/.claude/plugins/smthrs/`, etc.) see the source repository at github.com/smithersai/smithers.",
           );
           replacedOnce = true;
         }

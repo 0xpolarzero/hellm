@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { GatewayEventFrame } from "@smithers-orchestrator/gateway-client";
+import type { GatewayEventFrame } from "@smthrs/gateway-client";
 import { useSmithersGateway } from "./useSmithersGateway.ts";
 
 const DEFAULT_MAX_EVENTS = 1000;

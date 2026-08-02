@@ -1,71 +1,71 @@
-import { makeWorkflowSession, } from "@smithers-orchestrator/scheduler";
-import { ReactWorkflowDriver } from "@smithers-orchestrator/react-reconciler/driver";
-import { SmithersRenderer } from "@smithers-orchestrator/react-reconciler/dom/renderer";
-import { SmithersCtx } from "@smithers-orchestrator/driver/SmithersCtx";
-import { loadInput, loadOutputs, loadRunOutputRowsEffect } from "@smithers-orchestrator/db/snapshot";
-import { ensureSmithersTables } from "@smithers-orchestrator/db/ensure";
-import { SmithersDb } from "@smithers-orchestrator/db/adapter";
-import { selectOutputRow, validateOutput, validateExistingOutput, describeSchemaShape, buildOutputRow, stripAutoColumns, } from "@smithers-orchestrator/db/output";
-import { validateInput } from "@smithers-orchestrator/db/input";
-import { schemaSignature } from "@smithers-orchestrator/db/schema-signature";
-import { withSqliteWriteRetry } from "@smithers-orchestrator/db/write-retry";
-import { canonicalizeXml } from "@smithers-orchestrator/graph/utils/xml";
-import { nowMs } from "@smithers-orchestrator/scheduler/nowMs";
-import { errorToJson } from "@smithers-orchestrator/errors/errorToJson";
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
-import { assertJsonPayloadWithinBounds, assertOptionalStringMaxLength, assertPositiveFiniteInteger, } from "@smithers-orchestrator/db/input-bounds";
-import { retryPolicyToSchedule } from "@smithers-orchestrator/scheduler/retryPolicyToSchedule";
-import { retryScheduleDelayMs } from "@smithers-orchestrator/scheduler/retryScheduleDelayMs";
+import { makeWorkflowSession, } from "@smthrs/scheduler";
+import { ReactWorkflowDriver } from "@smthrs/react-reconciler/driver";
+import { SmithersRenderer } from "@smthrs/react-reconciler/dom/renderer";
+import { SmithersCtx } from "@smthrs/driver/SmithersCtx";
+import { loadInput, loadOutputs, loadRunOutputRowsEffect } from "@smthrs/db/snapshot";
+import { ensureSmithersTables } from "@smthrs/db/ensure";
+import { SmithersDb } from "@smthrs/db/adapter";
+import { selectOutputRow, validateOutput, validateExistingOutput, describeSchemaShape, buildOutputRow, stripAutoColumns, } from "@smthrs/db/output";
+import { validateInput } from "@smthrs/db/input";
+import { schemaSignature } from "@smthrs/db/schema-signature";
+import { withSqliteWriteRetry } from "@smthrs/db/write-retry";
+import { canonicalizeXml } from "@smthrs/graph/utils/xml";
+import { nowMs } from "@smthrs/scheduler/nowMs";
+import { errorToJson } from "@smthrs/errors/errorToJson";
+import { SmithersError } from "@smthrs/errors/SmithersError";
+import { assertJsonPayloadWithinBounds, assertOptionalStringMaxLength, assertPositiveFiniteInteger, } from "@smthrs/db/input-bounds";
+import { retryPolicyToSchedule } from "@smthrs/scheduler/retryPolicyToSchedule";
+import { retryScheduleDelayMs } from "@smthrs/scheduler/retryScheduleDelayMs";
 import { buildPlanTree, scheduleTasks, buildStateKey, } from "./scheduler.js";
 import { resolveForkSessionMessages } from "./resolveForkSessionMessages.js";
 import { getDefinedToolMetadata } from "./getDefinedToolMetadata.js";
-import { captureSnapshotEffect, loadLatestSnapshot, parseSnapshot, } from "@smithers-orchestrator/time-travel/snapshot";
+import { captureSnapshotEffect, loadLatestSnapshot, parseSnapshot, } from "@smthrs/time-travel/snapshot";
 import { EventBus } from "./events.js";
 import { AgentTraceCollector } from "./AgentTraceCollector.js";
-import { getJjPointer, runJj, workspaceAdd } from "@smithers-orchestrator/vcs/jj";
-import { findVcsRoot } from "@smithers-orchestrator/vcs/find-root";
+import { getJjPointer, runJj, workspaceAdd } from "@smthrs/vcs/jj";
+import { findVcsRoot } from "@smthrs/vcs/find-root";
 import { startDurability } from "./startDurability.js";
 import { restoreWorkspaceToLatestCheckpoint } from "./restoreWorkspace.js";
-import { runWithToolContext } from "@smithers-orchestrator/tool-context";
-import { vcsToolingStatus } from "@smithers-orchestrator/vcs/vcsToolingStatus";
+import { runWithToolContext } from "@smthrs/tool-context";
+import { vcsToolingStatus } from "@smthrs/vcs/vcsToolingStatus";
 import * as BunContext from "@effect/platform-bun/BunContext";
 import { eq, getTableName } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
 import { Cause, Chunk, Duration, Effect, Exit, Fiber, Metric, Queue, Schedule } from "effect";
-import { attemptDuration, cacheHits, cacheMisses, nodeDuration, promptSizeBytes, responseSizeBytes, runDuration, runsResumedTotal, schedulerConcurrencyUtilization, schedulerQueueDepth, schedulerWaitDuration, trackEvent, } from "@smithers-orchestrator/observability/metrics";
-import { runScorersAsync } from "@smithers-orchestrator/scorers/run-scorers";
+import { attemptDuration, cacheHits, cacheMisses, nodeDuration, promptSizeBytes, responseSizeBytes, runDuration, runsResumedTotal, schedulerConcurrencyUtilization, schedulerQueueDepth, schedulerWaitDuration, trackEvent, } from "@smthrs/observability/metrics";
+import { runScorersAsync } from "@smthrs/scorers/run-scorers";
 import { dirname, resolve } from "node:path";
 import { existsSync } from "node:fs";
-import { toSmithersError } from "@smithers-orchestrator/errors/toSmithersError";
-import { logDebug, logError, logInfo, logWarning } from "@smithers-orchestrator/observability/logging";
+import { toSmithersError } from "@smthrs/errors/toSmithersError";
+import { logDebug, logError, logInfo, logWarning } from "@smthrs/observability/logging";
 import { isPidAlive, parseRuntimeOwnerPid } from "./runtime-owner.js";
 import { HotWorkflowController } from "./hot/index.js";
 import { spawn as nodeSpawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { platform } from "node:os";
-import { annotateSmithersTrace, smithersSpanNames, withSmithersSpan, } from "@smithers-orchestrator/observability";
-import { withTaskRuntime } from "@smithers-orchestrator/driver/task-runtime";
-import { hashCapabilityRegistry } from "@smithers-orchestrator/agents/capability-registry";
+import { annotateSmithersTrace, smithersSpanNames, withSmithersSpan, } from "@smthrs/observability";
+import { withTaskRuntime } from "@smthrs/driver/task-runtime";
+import { hashCapabilityRegistry } from "@smthrs/agents/capability-registry";
 import { cancelPendingTimersBridge, executeTaskBridgeEffect, isBridgeManagedTimerTask as isTimerTask, resolveDeferredTaskStateBridge, } from "./effect/workflow-bridge.js";
 import { AlertRuntime } from "./alert-runtime.js";
 import { attachSandboxComputeFns, attachSubflowComputeFns } from "./task-compute-fns.js";
 import { buildCacheScopeIdentity, isFreshCacheRow, normalizeCacheScope } from "./cache-policy.js";
 import { runWorkflowWithMakeBridge } from "./effect/workflow-make-bridge.js";
 import { createWorkflowVersioningRuntime, getWorkflowPatchDecisions, withWorkflowVersioningRuntime, } from "./effect/versioning.js";
-import { runWithCorrelationContext, updateCurrentCorrelationContext, withCorrelationContext, } from "@smithers-orchestrator/observability/correlation";
+import { runWithCorrelationContext, updateCurrentCorrelationContext, withCorrelationContext, } from "@smthrs/observability/correlation";
 import { extractWorkflowImportSpecifiers, getWorkflowImportScanLoader, readWorkflowEntryHash, readWorkflowGraphHash, resolveWorkflowImport, sha256Hex, } from "./workflow-hash.js";
 import { applyOptimizationArtifactToTasks } from "./optimization-artifact.js";
 import { extractBalancedJson, extractLastBalancedJson } from "./json-extraction.js";
-/** @typedef {import("@smithers-orchestrator/graph/GraphSnapshot").GraphSnapshot} GraphSnapshot */
+/** @typedef {import("@smthrs/graph/GraphSnapshot").GraphSnapshot} GraphSnapshot */
 /** @typedef {import("./HijackState.ts").HijackState} HijackState */
-/** @typedef {import("@smithers-orchestrator/driver/RunOptions").RunOptions} RunOptions */
-/** @typedef {import("@smithers-orchestrator/driver/RunResult").RunResult} RunResult */
-/** @typedef {import("@smithers-orchestrator/components/SmithersWorkflow").SmithersWorkflow} SmithersWorkflow */
-/** @typedef {import("@smithers-orchestrator/graph/TaskDescriptor").TaskDescriptor} TaskDescriptor */
-/** @typedef {import("@smithers-orchestrator/scheduler").TaskStateMap} TaskStateMap */
-/** @typedef {import("@smithers-orchestrator/db/adapter/ApprovalRow").ApprovalRow} ApprovalRow */
-/** @typedef {import("@smithers-orchestrator/db/adapter/RunRow").RunRow} RunRow */
-/** @typedef {import("@smithers-orchestrator/graph/XmlNode").XmlNode} XmlNode */
+/** @typedef {import("@smthrs/driver/RunOptions").RunOptions} RunOptions */
+/** @typedef {import("@smthrs/driver/RunResult").RunResult} RunResult */
+/** @typedef {import("@smthrs/components/SmithersWorkflow").SmithersWorkflow} SmithersWorkflow */
+/** @typedef {import("@smthrs/graph/TaskDescriptor").TaskDescriptor} TaskDescriptor */
+/** @typedef {import("@smthrs/scheduler").TaskStateMap} TaskStateMap */
+/** @typedef {import("@smthrs/db/adapter/ApprovalRow").ApprovalRow} ApprovalRow */
+/** @typedef {import("@smthrs/db/adapter/RunRow").RunRow} RunRow */
+/** @typedef {import("@smthrs/graph/XmlNode").XmlNode} XmlNode */
 /** @typedef {import("drizzle-orm/bun-sqlite").BunSQLiteDatabase<Record<string, unknown>>} BunSQLiteDatabase */
 /** @typedef {import("drizzle-orm/sqlite-core").SQLiteTable} SQLiteTable */
 
@@ -596,7 +596,7 @@ async function ensureWorktree(rootDir, worktreePath, branch, baseBranch) {
         // Distinguish "no VCS tooling installed" from "tooling present, but not
         // inside a repo" so the error tells the user what to actually fix.
         if (!vcsToolingStatus().ok) {
-            throw new SmithersError("VCS_NOT_FOUND", `Cannot create worktree: no jj or git found. Smithers bundles jj via the optional @smithers-orchestrator/jj-<platform> package; if it could not install for your platform, install jj (https://github.com/jj-vcs/jj) or git, or set SMITHERS_JJ_PATH.`, { rootDir });
+            throw new SmithersError("VCS_NOT_FOUND", `Cannot create worktree: no jj or git found. Smithers bundles jj via the optional @smthrs/jj-<platform> package; if it could not install for your platform, install jj (https://github.com/jj-vcs/jj) or git, or set SMITHERS_JJ_PATH.`, { rootDir });
         }
         throw new SmithersError("VCS_NOT_FOUND", `Cannot create worktree: no git or jj repository found from ${rootDir}. Run Smithers inside a git or jj repository (or initialize one first).`, { rootDir });
     }

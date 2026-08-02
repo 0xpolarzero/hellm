@@ -21,7 +21,7 @@ Three pieces collaborate:
 
 ## Two SDKs: pick by appetite
 
-| | `smithers-orchestrator/gateway-client` | `smithers-orchestrator/gateway-react` |
+| | `smthrs/gateway-client` | `smthrs/gateway-react` |
 |---|---|---|
 | **Footprint** | One zero-dep class, no framework | React 19 + ReactDOM + hooks |
 | **Boot** | `new SmithersGatewayClient()` | `createGatewayReactRoot(<App />)` |
@@ -30,7 +30,7 @@ Three pieces collaborate:
 | **Writes** | `client.submitApproval(...)` | `useGatewayActions().submitApproval(...)` |
 | **Use when** | You want one tiny bundle, or you already own your render layer (Solid, Lit, vanilla DOM) | You are writing a React UI and want the stale-data-free model baked in |
 
-Both SDKs talk to the same Gateway and produce the same wire frames. Pick by appetite — not by capability. The vanilla SDK is published as `@smithers-orchestrator/gateway-client`; the React layer is `@smithers-orchestrator/gateway-react` and re-exports nothing the client does not.
+Both SDKs talk to the same Gateway and produce the same wire frames. Pick by appetite — not by capability. The vanilla SDK is published as `@smthrs/gateway-client`; the React layer is `@smthrs/gateway-react` and re-exports nothing the client does not.
 
 ## The boot config
 
@@ -73,7 +73,7 @@ import {
   useGatewayRunEvents,
   useGatewayNodeOutput,
   useGatewayActions,
-} from "smithers-orchestrator/gateway-react";
+} from "smthrs/gateway-react";
 
 const runId = new URLSearchParams(location.search).get("runId") ?? undefined;
 
@@ -118,7 +118,7 @@ The React hooks all live in `packages/gateway-react/src` and follow one rule: **
 The same primitives in zero-dep JS:
 
 ```ts
-import { SmithersGatewayClient } from "smithers-orchestrator/gateway-client";
+import { SmithersGatewayClient } from "smthrs/gateway-client";
 
 const runId = new URLSearchParams(location.search).get("runId");
 const client = new SmithersGatewayClient();
@@ -237,7 +237,7 @@ The `ws: true` flag goes on `/v1/rpc` — that is the path the Gateway upgrades 
 
 ```bash
 export SMITHERS_GATEWAY_PROXY_TARGET=http://127.0.0.1:7331
-bunx smithers-orchestrator up <workflow> -d            # or `bun .smithers/scripts/<workflow>.ts`
+bunx smthrs up <workflow> -d            # or `bun .smithers/scripts/<workflow>.ts`
 (cd apps/smithers && bun dev)
 ```
 
@@ -272,19 +272,19 @@ The same shape works behind any reverse proxy (Cloudflare, Cloudflare Access, Ca
 
 ```bash
 # 1. Boot the Gateway with your workflow registered.
-bunx smithers-orchestrator up <workflow> -d            # or `bun .smithers/scripts/<workflow>.ts`
+bunx smthrs up <workflow> -d            # or `bun .smithers/scripts/<workflow>.ts`
 
 # 2. Open the UI in your default browser at the most recent run.
-bunx smithers-orchestrator ui                          # picks the most recent run
-bunx smithers-orchestrator ui <runId>                  # specific run
-bunx smithers-orchestrator ui <runId> --gateway http://127.0.0.1:7331
+bunx smthrs ui                          # picks the most recent run
+bunx smthrs ui <runId>                  # specific run
+bunx smthrs ui <runId> --gateway http://127.0.0.1:7331
 
 # 3. (Optional) Boot the apps/smithers PWA against the same Gateway.
 cd apps/smithers && bun dev
 # Visit http://localhost:5173/gw/<workflowKey>/<runId>
 ```
 
-The `smithers ui` command resolves the most recent run when invoked without an id, prints the URL it opened, and exits — it does not hold the run alive. Pair it with `bunx smithers-orchestrator up <workflow>` in a separate terminal.
+The `smithers ui` command resolves the most recent run when invoked without an id, prints the URL it opened, and exits — it does not hold the run alive. Pair it with `bunx smthrs up <workflow>` in a separate terminal.
 
 ## Sample tests
 
@@ -307,8 +307,8 @@ Add your own fixture under the same folder and register it with `gateway.registe
 
 ## Reference
 
-- **Package:** [`@smithers-orchestrator/gateway-react`](/reference/package-configuration#workspace-packages) — React hooks and `createGatewayReactRoot`.
-- **Package:** [`@smithers-orchestrator/gateway-client`](/reference/package-configuration#workspace-packages) — vanilla `SmithersGatewayClient` and types.
+- **Package:** [`@smthrs/gateway-react`](/reference/package-configuration#workspace-packages) — React hooks and `createGatewayReactRoot`.
+- **Package:** [`@smthrs/gateway-client`](/reference/package-configuration#workspace-packages) — vanilla `SmithersGatewayClient` and types.
 - **Protocol:** [Gateway](/integrations/gateway) — full RPC method list, WebSocket frame shapes, error codes, scopes.
 - **CLI:** [`smithers ui`](/cli/overview#smithers-ui) — open a workflow's custom UI in your browser for a given run.
 - **Examples:** [Workflow UI (React)](/examples/workflow-ui-react), [Workflow UI (Vanilla)](/examples/workflow-ui-vanilla).

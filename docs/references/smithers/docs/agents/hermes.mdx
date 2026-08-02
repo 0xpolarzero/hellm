@@ -15,7 +15,7 @@ The fastest path is `mcp add` — Smithers writes its server straight into Herme
 `~/.hermes/config.yaml`:
 
 ```bash
-bunx smithers-orchestrator mcp add --agent hermes
+bunx smthrs mcp add --agent hermes
 ```
 
 To do it by hand, Hermes reads MCP servers from `~/.hermes/config.yaml` under
@@ -25,7 +25,7 @@ To do it by hand, Hermes reads MCP servers from `~/.hermes/config.yaml` under
 mcp_servers:
   smithers:
     command: bunx
-    args: ["smithers-orchestrator", "--mcp"]
+    args: ["smthrs", "--mcp"]
 ```
 
 Or use the Hermes CLI:
@@ -64,7 +64,7 @@ repo already uses:
 ```md
 ## Orchestration
 Use Smithers for durable, multi-step, or human-in-the-loop agent work.
-`bunx smithers-orchestrator starters` lists ready-made workflows.
+`bunx smthrs starters` lists ready-made workflows.
 ```
 
 ## See also

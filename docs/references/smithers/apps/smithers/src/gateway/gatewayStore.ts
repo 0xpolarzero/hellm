@@ -1,4 +1,4 @@
-import type { GatewayEventFrame } from "@smithers-orchestrator/gateway-client";
+import type { GatewayEventFrame } from "@smthrs/gateway-client";
 import { create } from "zustand";
 import {
   connectionStateValue,

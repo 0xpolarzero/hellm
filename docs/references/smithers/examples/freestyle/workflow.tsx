@@ -1,5 +1,5 @@
-/** @jsxImportSource smithers-orchestrator */
-import { Sandbox, Workflow } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { Sandbox, Workflow } from "smthrs";
 import { z } from "zod";
 import { createExampleSmithers } from "../_example-kit.js";
 import {
