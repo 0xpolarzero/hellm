@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { Cause, Effect, Exit, Metric } from "effect";
-import { toSmithersError } from "@smithers-orchestrator/errors/toSmithersError";
-import { logDebug, logInfo, logWarning } from "@smithers-orchestrator/observability/logging";
-import { agentDurationMs, agentErrorsTotal, agentInvocationsTotal, agentRetriesTotal, agentTokensTotal, } from "@smithers-orchestrator/observability/metrics";
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
+import { toSmithersError } from "@smthrs/errors/toSmithersError";
+import { logDebug, logInfo, logWarning } from "@smthrs/observability/logging";
+import { agentDurationMs, agentErrorsTotal, agentInvocationsTotal, agentRetriesTotal, agentTokensTotal, } from "@smthrs/observability/metrics";
+import { SmithersError } from "@smthrs/errors/SmithersError";
 import { launchDiagnostics, enrichReportWithErrorAnalysis, formatDiagnosticSummary } from "../diagnostics/index.js";
 import { extractPrompt } from "./extractPrompt.js";
 import { resolveTimeouts } from "./resolveTimeouts.js";

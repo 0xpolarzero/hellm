@@ -8,27 +8,27 @@ import { readFileSync, existsSync, openSync, statSync, writeSync } from "node:fs
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Effect, Fiber } from "effect";
 import { Cli, Mcp as IncurMcp, z } from "incur";
-import { isRunHeartbeatFresh, runWorkflow, renderFrame, resolveSchema } from "@smithers-orchestrator/engine";
+import { isRunHeartbeatFresh, runWorkflow, renderFrame, resolveSchema } from "@smthrs/engine";
 import { mdxPlugin } from "./mdx-plugin.js";
-import { approveNode, denyNode } from "@smithers-orchestrator/engine/approvals";
-import { signalRun } from "@smithers-orchestrator/engine/signals";
-import { loadInput, loadOutputs } from "@smithers-orchestrator/db/snapshot";
-import { ensureSmithersTables } from "@smithers-orchestrator/db/ensure";
-import { SmithersDb } from "@smithers-orchestrator/db/adapter";
-import { computeRunStateFromRow } from "@smithers-orchestrator/db/runState";
-import { SmithersCtx } from "@smithers-orchestrator/driver";
-import { toSmithersError } from "@smithers-orchestrator/errors/toSmithersError";
+import { approveNode, denyNode } from "@smthrs/engine/approvals";
+import { signalRun } from "@smthrs/engine/signals";
+import { loadInput, loadOutputs } from "@smthrs/db/snapshot";
+import { ensureSmithersTables } from "@smthrs/db/ensure";
+import { SmithersDb } from "@smthrs/db/adapter";
+import { computeRunStateFromRow } from "@smthrs/db/runState";
+import { SmithersCtx } from "@smthrs/driver";
+import { toSmithersError } from "@smthrs/errors/toSmithersError";
 import { runFork, runPromise } from "./smithersRuntime.js";
-import { trackEvent } from "@smithers-orchestrator/observability/metrics";
-import { vcsToolingStatus } from "@smithers-orchestrator/vcs/vcsToolingStatus";
-import { revertToAttempt } from "@smithers-orchestrator/time-travel/revert";
-import { retryTask } from "@smithers-orchestrator/time-travel/retry-task";
-import { timeTravel } from "@smithers-orchestrator/time-travel/timetravel";
+import { trackEvent } from "@smthrs/observability/metrics";
+import { vcsToolingStatus } from "@smthrs/vcs/vcsToolingStatus";
+import { revertToAttempt } from "@smthrs/time-travel/revert";
+import { retryTask } from "@smthrs/time-travel/retry-task";
+import { timeTravel } from "@smthrs/time-travel/timetravel";
 import { runSync } from "./smithersRuntime.js";
 import { spawn } from "node:child_process";
-import { buildAgentAskRequestRow, isHumanRequestPastTimeout, validateHumanRequestValue, waitForHumanAnswer, } from "@smithers-orchestrator/engine/human-requests";
-import { SmithersError } from "@smithers-orchestrator/errors";
-import { assertMaxBytes, assertMaxStringLength } from "@smithers-orchestrator/db/input-bounds";
+import { buildAgentAskRequestRow, isHumanRequestPastTimeout, validateHumanRequestValue, waitForHumanAnswer, } from "@smthrs/engine/human-requests";
+import { SmithersError } from "@smthrs/errors";
+import { assertMaxBytes, assertMaxStringLength } from "@smthrs/db/input-bounds";
 import { findAndOpenDb } from "./find-db.js";
 import { buildAskKindFields, buildAskPromptText, buildAskUniqueToken, formatAskHumanResolveHelp, parseChoices, resolveAskHumanContext, } from "./ask-human.js";
 import { chatAttemptKey, formatChatAttemptHeader, formatChatBlock, parseAgentEvent, parseChatAttemptMeta, parseNodeOutputEvent, selectChatAttempts, } from "./chat.js";
@@ -41,8 +41,8 @@ import { EVENT_CATEGORY_VALUES, eventTypesForCategory, normalizeEventCategory, }
 import { aggregateNodeDetailEffect, renderNodeDetailHuman, } from "./node-detail.js";
 import { diagnoseRunEffect, diagnosisCtaCommands, renderWhyDiagnosisHuman, } from "./why-diagnosis.js";
 import { detectAvailableAgents } from "./agent-detection.js";
-import { listAccounts, removeAccount } from "@smithers-orchestrator/accounts";
-import { getUsageForAccounts, formatUsageReports } from "@smithers-orchestrator/usage";
+import { listAccounts, removeAccount } from "@smthrs/accounts";
+import { getUsageForAccounts, formatUsageReports } from "@smthrs/usage";
 import { runAgentAdd, pingAccount } from "./agent-commands/runAgentAdd.js";
 import { agentAddWizard } from "./agent-commands/agentAddWizard.js";
 import { getWorkflowFollowUpCtas } from "./workflow-pack.js";
@@ -64,7 +64,7 @@ import { optimizeOptions, runOptimizeCommand, withOptimizationArtifactEnv } from
 import { ask } from "./ask.js";
 import { runScheduler } from "./scheduler.js";
 import { resumeRunDetached } from "./resume-detached.js";
-import { formatCliAgentCapabilityDoctorReport, getCliAgentCapabilityDoctorReport, getCliAgentCapabilityReport, } from "@smithers-orchestrator/agents/cli-capabilities";
+import { formatCliAgentCapabilityDoctorReport, getCliAgentCapabilityDoctorReport, getCliAgentCapabilityReport, } from "@smthrs/agents/cli-capabilities";
 import { parseDurationMs, supervisorLoopEffect, } from "./supervisor.js";
 import { WATCH_MIN_INTERVAL_MS, runWatchLoop, watchIntervalSecondsToMs, } from "./watch.js";
 import { createSemanticMcpServer } from "./mcp/semantic-server.js";
@@ -1066,7 +1066,7 @@ async function buildPsRows(adapter, limit, status) {
  * Older consumers (and the dashboard CTA logic) still key off `status`, so a row
  * whose owner is dead must surface as something other than "running".
  *
- * @param {import("@smithers-orchestrator/db/runState").RunStateView["state"]} state
+ * @param {import("@smthrs/db/runState").RunStateView["state"]} state
  * @returns {string}
  */
 function derivedStateToStatus(state) {
@@ -1780,7 +1780,7 @@ async function executeUpCommand(c, workflowPath, options, fail) {
                     });
                 }
             }
-            const { createServeApp } = await import("@smithers-orchestrator/server/serve");
+            const { createServeApp } = await import("@smthrs/server/serve");
             const effectiveRunId = runId ?? `run-${Date.now()}`;
             const serveApp = createServeApp({
                 workflow: workflow,
@@ -2047,7 +2047,7 @@ const workflowCli = Cli.create({
         if (!vcs.ok && c.format !== "json") {
             process.stderr.write(
                 `${pc.yellow("⚠ No jj or git found.")} Smithers needs one to snapshot and isolate agent work.\n` +
-                `  Smithers bundles jj via the optional @smithers-orchestrator/jj-<platform> package; if it could not\n` +
+                `  Smithers bundles jj via the optional @smthrs/jj-<platform> package; if it could not\n` +
                 `  install for your platform, install jj (https://github.com/jj-vcs/jj) or git, or set SMITHERS_JJ_PATH.\n`,
             );
         }
@@ -2092,8 +2092,8 @@ const memoryCli = Cli.create({
     alias: { workflow: "w" },
     async run(c) {
         try {
-            const { createMemoryStore } = await import("@smithers-orchestrator/memory/store");
-            const { parseNamespace } = await import("@smithers-orchestrator/memory/types");
+            const { createMemoryStore } = await import("@smthrs/memory/store");
+            const { parseNamespace } = await import("@smthrs/memory/types");
             const workflow = await loadWorkflowAsync(c.options.workflow);
             ensureSmithersTables(workflow.db);
             setupSqliteCleanup(workflow);
@@ -2346,7 +2346,7 @@ const openapiCli = Cli.create({
     args: openapiListArgs,
     async run(c) {
         try {
-            const { listOperations } = await import("@smithers-orchestrator/openapi/tool-factory");
+            const { listOperations } = await import("@smthrs/openapi/tool-factory");
             const ops = listOperations(c.args.specPath);
             if (ops.length === 0) {
                 console.log("  No operations found in spec.");
@@ -4913,7 +4913,7 @@ const cli = Cli.create({
         if (!existsSync(composeFile)) {
             return fail({
                 code: "COMPOSE_NOT_FOUND",
-                message: `Docker Compose file not found at ${composeFile}. Ensure the smithers-orchestrator package includes the observability/ directory.`,
+                message: `Docker Compose file not found at ${composeFile}. Ensure the smthrs package includes the observability/ directory.`,
                 exitCode: 1,
             });
         }
@@ -5030,7 +5030,7 @@ const cli = Cli.create({
             return c.error(opts);
         };
         try {
-            const { replayFromCheckpoint } = await import("@smithers-orchestrator/time-travel/replay");
+            const { replayFromCheckpoint } = await import("@smthrs/time-travel/replay");
             const { adapter, cleanup } = await loadWorkflowDb(c.args.workflow);
             try {
                 const inputOverrides = parseJsonInput(c.options.input, "input", fail);
@@ -5052,7 +5052,7 @@ const cli = Cli.create({
                 const workflow = await loadWorkflow(c.args.workflow);
                 const onProgress = buildProgressReporter();
                 const abort = setupAbortSignal();
-                const engine = await import("@smithers-orchestrator/engine");
+                const engine = await import("@smthrs/engine");
                 const runResult = await Effect.runPromise(engine.runWorkflow(workflow, {
                     input: {},
                     runId: result.runId,
@@ -5286,7 +5286,7 @@ const cli = Cli.create({
             return c.error(opts);
         };
         try {
-            const { forkRun } = await import("@smithers-orchestrator/time-travel/fork");
+            const { forkRun } = await import("@smthrs/time-travel/fork");
             const { adapter, cleanup } = await loadWorkflowDb(c.args.workflow);
             try {
                 const inputOverrides = parseJsonInput(c.options.input, "input", fail);
@@ -5304,7 +5304,7 @@ const cli = Cli.create({
                     const workflow = await loadWorkflow(c.args.workflow);
                     const onProgress = buildProgressReporter();
                     const abort = setupAbortSignal();
-                    const engine = await import("@smithers-orchestrator/engine");
+                    const engine = await import("@smthrs/engine");
                     const runResult = await Effect.runPromise(engine.runWorkflow(workflow, {
                         input: {},
                         runId: result.runId,
@@ -5355,7 +5355,7 @@ const cli = Cli.create({
             return c.error(opts);
         };
         try {
-            const { buildTimeline, buildTimelineTree, formatTimelineForTui, formatTimelineAsJson } = await import("@smithers-orchestrator/time-travel/timeline");
+            const { buildTimeline, buildTimelineTree, formatTimelineForTui, formatTimelineAsJson } = await import("@smthrs/time-travel/timeline");
             const { adapter, cleanup } = await findAndOpenDb();
             try {
                 if (c.options.tree) {
@@ -5846,14 +5846,14 @@ const CHAT_CREATE_PROMPT = [
 async function createChatAgent(agentId, cwd) {
     switch (agentId) {
         case "claude-code": {
-            const { ClaudeCodeAgent } = await import("@smithers-orchestrator/agents/ClaudeCodeAgent");
+            const { ClaudeCodeAgent } = await import("@smthrs/agents/ClaudeCodeAgent");
             return new ClaudeCodeAgent({
                 cwd,
                 model: "claude-opus-4-7",
             });
         }
         case "codex": {
-            const { CodexAgent } = await import("@smithers-orchestrator/agents/CodexAgent");
+            const { CodexAgent } = await import("@smthrs/agents/CodexAgent");
             return new CodexAgent({
                 cwd,
                 model: "gpt-5.3-codex",
@@ -5861,13 +5861,13 @@ async function createChatAgent(agentId, cwd) {
             });
         }
         case "antigravity": {
-            const { AntigravityAgent } = await import("@smithers-orchestrator/agents/AntigravityAgent");
+            const { AntigravityAgent } = await import("@smthrs/agents/AntigravityAgent");
             return new AntigravityAgent({
                 cwd,
             });
         }
         case "gemini": {
-            const { GeminiAgent } = await import("@smithers-orchestrator/agents/GeminiAgent");
+            const { GeminiAgent } = await import("@smthrs/agents/GeminiAgent");
             return new GeminiAgent({
                 cwd,
                 model: "gemini-3.1-pro-preview",
@@ -5878,7 +5878,7 @@ async function createChatAgent(agentId, cwd) {
 /**
  * @param {"claude-code" | "codex" | "antigravity" | "gemini"} agentId
  * @param {string} cwd
- * @returns {Promise<import("@smithers-orchestrator/components/SmithersWorkflow").SmithersWorkflow<any>>}
+ * @returns {Promise<import("@smthrs/components/SmithersWorkflow").SmithersWorkflow<any>>}
  */
 async function buildInlineChatWorkflow(agentId, cwd) {
     const [
@@ -5894,10 +5894,10 @@ async function buildInlineChatWorkflow(agentId, cwd) {
         import("bun:sqlite"),
         import("drizzle-orm/bun-sqlite"),
         import("drizzle-orm/sqlite-core"),
-        import("@smithers-orchestrator/components"),
-        import("@smithers-orchestrator/db/zodToTable"),
-        import("@smithers-orchestrator/db/zodToCreateTableSQL"),
-        import("@smithers-orchestrator/db/utils/camelToSnake"),
+        import("@smthrs/components"),
+        import("@smthrs/db/zodToTable"),
+        import("@smthrs/db/zodToCreateTableSQL"),
+        import("@smthrs/db/utils/camelToSnake"),
         import("zod"),
     ]);
     const agent = await createChatAgent(agentId, cwd);

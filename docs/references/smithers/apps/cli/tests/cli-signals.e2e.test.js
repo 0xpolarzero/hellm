@@ -37,8 +37,8 @@ const testIfDeps = E2E_DEPS_AVAILABLE ? test : test.skip;
  */
 function writeSlowWorkflow(repo) {
     return repo.write("workflow.tsx", [
-        '/** @jsxImportSource smithers-orchestrator */',
-        'import { createSmithers, Workflow, Task } from "smithers-orchestrator";',
+        '/** @jsxImportSource smthrs */',
+        'import { createSmithers, Workflow, Task } from "smthrs";',
         'import { z } from "zod";',
         '',
         'const { smithers, outputs } = createSmithers({',

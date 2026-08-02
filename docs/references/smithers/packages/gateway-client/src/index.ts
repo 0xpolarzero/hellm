@@ -29,7 +29,7 @@ export type {
 
 // Declarative sync SDK: typed cache keys, vanilla cache + subscription hub, and
 // the gateway-backed transport wiring. The React surface lives in
-// `@smithers-orchestrator/gateway-react` so the core stays framework-free.
+// `@smthrs/gateway-react` so the core stays framework-free.
 export { SyncCache } from "./sync/SyncCache.ts";
 export type { SyncCacheEntry, SyncCacheOptions, SyncCacheStatus } from "./sync/SyncCache.ts";
 export { SyncClient } from "./sync/SyncClient.ts";

@@ -2,12 +2,12 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Metric } from "effect";
-import { SmithersDb } from "@smithers-orchestrator/db/adapter";
-import { trackEvent, sandboxTransportDurationMs } from "@smithers-orchestrator/observability/metrics";
-import { nowMs } from "@smithers-orchestrator/scheduler/nowMs";
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
-import { errorToJson } from "@smithers-orchestrator/errors/errorToJson";
-import { requireTaskRuntime } from "@smithers-orchestrator/driver/task-runtime";
+import { SmithersDb } from "@smthrs/db/adapter";
+import { trackEvent, sandboxTransportDurationMs } from "@smthrs/observability/metrics";
+import { nowMs } from "@smthrs/scheduler/nowMs";
+import { SmithersError } from "@smthrs/errors/SmithersError";
+import { errorToJson } from "@smthrs/errors/errorToJson";
+import { requireTaskRuntime } from "@smthrs/driver/task-runtime";
 import { validateSandboxBundle, writeSandboxBundle } from "./bundle.js";
 import { SandboxTransport, layerForSandboxRuntime, resolveSandboxRuntime, } from "./transport.js";
 /** @typedef {import("./ExecuteSandboxOptions.ts").ExecuteSandboxOptions} ExecuteSandboxOptions */
@@ -17,7 +17,7 @@ import { SandboxTransport, layerForSandboxRuntime, resolveSandboxRuntime, } from
 /** @typedef {import("./SandboxProvider.ts").SandboxProvider} SandboxProvider */
 /** @typedef {import("./SandboxProvider.ts").SandboxProviderRequest} SandboxProviderRequest */
 /** @typedef {import("./SandboxProvider.ts").SandboxProviderResult} SandboxProviderResult */
-/** @typedef {import("@smithers-orchestrator/observability/SmithersEvent").SmithersEvent} SmithersEvent */
+/** @typedef {import("@smthrs/observability/SmithersEvent").SmithersEvent} SmithersEvent */
 
 const DEFAULT_MAX_CONCURRENT_SANDBOXES = 10;
 const sandboxProviderRegistry = new Map();

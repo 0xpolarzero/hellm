@@ -20,7 +20,7 @@ import {
   useGatewayActions,
   useGatewayNodeOutput,
   useGatewayRun,
-} from "smithers-orchestrator/gateway-react";
+} from "smthrs/gateway-react";
 
 function runIdFromUrl(): string | undefined {
   if (typeof location === "undefined") return undefined;

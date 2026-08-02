@@ -1,4 +1,4 @@
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 
 /**
  * Lifecycle:
@@ -10,7 +10,7 @@
  * 6. Review the result, then address findings and re-review until the reviewer approves or reports a real block.
  */
 
-import { Loop, Sequence, Task, Worktree, openSmithersBackend } from "smithers-orchestrator";
+import { Loop, Sequence, Task, Worktree, openSmithersBackend } from "smthrs";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { createCodexAgent, parsePositiveInt } from "../components/codex";

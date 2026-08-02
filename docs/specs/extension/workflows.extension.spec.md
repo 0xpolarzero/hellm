@@ -81,7 +81,7 @@ Rejected command names:
 - `svvyx workflows run ...`
 
 Running, resuming, approving, inspecting, or debugging Smithers workflows is official
-`bunx smithers-orchestrator ...` command behavior through the Shell extension, never bare `smithers`
+`bunx smthrs ...` command behavior through the Shell extension, never bare `smithers`
 or `bunx smithers`, and not Workflows extension behavior.
 
 All command results are schema-backed and contain only machine-usable facts:
@@ -311,7 +311,7 @@ instructions that teach:
 - generated agent usage:
 
 ```tsx
-import { Task } from "smithers-orchestrator";
+import { Task } from "smthrs";
 import { Agents } from "@svvyx/workflows";
 
 const reviewer = Agents.defineTaskAgent(Agents.reviewerAgent);
@@ -326,7 +326,7 @@ export default (
 - direct parameter usage:
 
 ```tsx
-import { Task } from "smithers-orchestrator";
+import { Task } from "smthrs";
 import { Agents } from "@svvyx/workflows";
 
 const reviewer = Agents.defineTaskAgent({

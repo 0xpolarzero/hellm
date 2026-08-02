@@ -8,13 +8,13 @@ description: Create or update agent-facing skill docs from local workflows.
 For deterministic, no-agent generation, use the CLI command:
 
 ```bash
-bunx smithers-orchestrator workflow skills
+bunx smthrs workflow skills
 ```
 
 To generate skill docs through the agent (with prompt-driven customization), use:
 
 ```bash
-bunx smithers-orchestrator workflow run workflow-skill --input '{"workflow":"mission"}'
+bunx smthrs workflow run workflow-skill --input '{"workflow":"mission"}'
 ```
 
 ## Inputs
@@ -37,14 +37,14 @@ bunx smithers-orchestrator workflow run workflow-skill --input '{"workflow":"mis
 Generate one skill:
 
 ```bash
-bunx smithers-orchestrator workflow run workflow-skill \
+bunx smthrs workflow run workflow-skill \
   --input '{"workflow":"mission","output":".smithers/skills/mission.md"}'
 ```
 
 Generate skills for every local workflow:
 
 ```bash
-bunx smithers-orchestrator workflow run workflow-skill \
+bunx smthrs workflow run workflow-skill \
   --input '{"workflow":"all","output":".smithers/skills"}'
 ```
 

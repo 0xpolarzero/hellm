@@ -1,5 +1,5 @@
 // smithers-display-name: RoadmapBench
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 //
 // RoadmapBench-on-smithers: a multi-agent, long-horizon software-development
 // workflow that mixes Claude Opus 4.8 and Codex 5.5 to implement a real
@@ -24,7 +24,7 @@ import {
   Task,
   createScorer,
   createSmithers,
-} from "smithers-orchestrator";
+} from "smthrs";
 import { z } from "zod/v4";
 
 const HARNESS = join(

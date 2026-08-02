@@ -5,7 +5,7 @@ import { codexWhamUsage } from "./codexWhamUsage.js";
 import { googleUsage } from "./googleUsage.js";
 import { openaiHeaderUsage } from "./openaiHeaderUsage.js";
 
-/** @typedef {import("@smithers-orchestrator/accounts").Account} Account */
+/** @typedef {import("@smthrs/accounts").Account} Account */
 /** @typedef {import("./UsageReport.ts").UsageReport} UsageReport */
 
 /**

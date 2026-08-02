@@ -1,5 +1,5 @@
 import { createElement, type ReactNode } from "react";
-import type { SyncClient } from "@smithers-orchestrator/gateway-client";
+import type { SyncClient } from "@smthrs/gateway-client";
 import { SyncContext } from "./SyncContext.ts";
 
 /**

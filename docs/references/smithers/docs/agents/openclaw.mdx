@@ -14,7 +14,7 @@ The fastest path is `mcp add` — Smithers writes its server straight into
 OpenClaw's `~/.openclaw/openclaw.json`:
 
 ```bash
-bunx smithers-orchestrator mcp add --agent openclaw
+bunx smthrs mcp add --agent openclaw
 ```
 
 To do it by hand, OpenClaw stores MCP servers in `~/.openclaw/openclaw.json` under
@@ -26,7 +26,7 @@ To do it by hand, OpenClaw stores MCP servers in `~/.openclaw/openclaw.json` und
     "servers": {
       "smithers": {
         "command": "bunx",
-        "args": ["smithers-orchestrator", "--mcp"]
+        "args": ["smthrs", "--mcp"]
       }
     }
   }
@@ -36,7 +36,7 @@ To do it by hand, OpenClaw stores MCP servers in `~/.openclaw/openclaw.json` und
 Or manage it from the CLI:
 
 ```bash
-openclaw mcp set smithers '{"command":"bunx","args":["smithers-orchestrator","--mcp"]}'
+openclaw mcp set smithers '{"command":"bunx","args":["smthrs","--mcp"]}'
 openclaw mcp list
 ```
 
@@ -50,7 +50,7 @@ OpenClaw discovers skills from `~/.agents/skills/` (among other locations), whic
 is exactly where the cross-agent command installs them:
 
 ```bash
-bunx smithers-orchestrator skills add
+bunx smthrs skills add
 ```
 
 Or place the onboarding skill there by hand:

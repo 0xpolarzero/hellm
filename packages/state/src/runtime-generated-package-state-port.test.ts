@@ -107,7 +107,7 @@ describe("runtime generated package state port", () => {
         ],
         dependencies: [
           {
-            specifier: "smithers-orchestrator",
+            specifier: "smthrs",
             importKind: "type-only",
             dependencyClass: "workspace-authoring-external",
             resolutionAuthority: "workspace-smithers-package",
@@ -130,7 +130,7 @@ describe("runtime generated package state port", () => {
       outputFingerprint: "output-fingerprint-001",
       dependencies: [
         {
-          specifier: "smithers-orchestrator",
+          specifier: "smthrs",
           importKind: "type-only",
           dependencyClass: "workspace-authoring-external",
           resolutionAuthority: "workspace-smithers-package",

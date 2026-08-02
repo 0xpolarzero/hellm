@@ -21,7 +21,7 @@ Smithers is the workflow runtime.
 
 `svvy` does not wrap Smithers workflow execution behind a parallel workflow-control abstraction in
 the agent-facing API. Agents that need to initialize, author, run, resume, inspect, approve, debug,
-or repair Smithers workflows use official `bunx smithers-orchestrator ...` commands directly
+or repair Smithers workflows use official `bunx smthrs ...` commands directly
 through the normal Shell extension.
 
 The Workflows extension is not a workflow runner. It is the app-owned `svvyx workflows ...`
@@ -147,7 +147,7 @@ export * as Workflows from "./workflows";
 Agent-facing usage should look like:
 
 ```tsx
-import { Task } from "smithers-orchestrator";
+import { Task } from "smthrs";
 import { Agents, Components, Prompts, Workflows } from "@svvyx/workflows";
 
 const reviewer = Agents.defineTaskAgent(Agents.reviewerAgent);
@@ -180,7 +180,7 @@ value intended for `<Task agent={...}>`.
 Direct parameters are valid when the workflow source owns the task-agent configuration:
 
 ```tsx
-import { Task } from "smithers-orchestrator";
+import { Task } from "smthrs";
 import { Agents } from "@svvyx/workflows";
 
 const explorer = Agents.defineTaskAgent({

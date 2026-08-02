@@ -1,7 +1,7 @@
 import type { Effect, Schema } from "effect";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
-import type { CachePolicy } from "@smithers-orchestrator/scheduler/CachePolicy";
-import type { RetryPolicy } from "@smithers-orchestrator/scheduler/RetryPolicy";
+import type { CachePolicy } from "@smthrs/scheduler/CachePolicy";
+import type { RetryPolicy } from "@smthrs/scheduler/RetryPolicy";
 
 type AnySchema = Schema.Schema<unknown, unknown, never>;
 type AnyEffect = unknown | Promise<unknown> | Effect.Effect<unknown, unknown, unknown>;

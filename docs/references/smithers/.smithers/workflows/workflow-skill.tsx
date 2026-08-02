@@ -1,9 +1,9 @@
 // smithers-source: seeded
 // smithers-display-name: Workflow Skill
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { createSmithers } from "smithers-orchestrator";
+import { createSmithers } from "smthrs";
 import { z } from "zod/v4";
 import { agents } from "../agents";
 import WorkflowSkillPrompt from "../prompts/workflow-skill.mdx";

@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { toSmithersError } from "@smithers-orchestrator/errors/toSmithersError";
+import { toSmithersError } from "@smthrs/errors/toSmithersError";
 import { makeWorkerTask, } from "./entity-worker.js";
 import { executeTaskActivity, makeTaskBridgeKey, RetriableTaskFailure, } from "./activity-bridge.js";
 import { parseAttemptMetaJson } from "./bridge-utils.js";
@@ -9,7 +9,7 @@ import { dispatchWorkerTask } from "./single-runner.js";
 /** @typedef {import("../HijackState.ts").HijackState} HijackState */
 /** @typedef {import("./LegacyExecuteTaskFn.ts").LegacyExecuteTaskFn} LegacyExecuteTaskFn */
 /** @typedef {import("./TaskBridgeToolConfig.ts").TaskBridgeToolConfig} TaskBridgeToolConfig */
-/** @typedef {import("@smithers-orchestrator/graph/TaskDescriptor").TaskDescriptor} _TaskDescriptor */
+/** @typedef {import("@smthrs/graph/TaskDescriptor").TaskDescriptor} _TaskDescriptor */
 /** @typedef {import("./TaskActivityContext.ts").TaskActivityContext} _TaskActivityContext */
 /** @typedef {import("drizzle-orm/bun-sqlite").BunSQLiteDatabase<Record<string, unknown>>} _BunSQLiteDatabase */
 /** @typedef {import("drizzle-orm/sqlite-core").SQLiteTable} SQLiteTable */
@@ -21,9 +21,9 @@ export { bridgeApprovalResolve, bridgeSignalResolve, bridgeWaitForEventResolve, 
 export { cancelPendingTimersBridge, isBridgeManagedTimerTask, isBridgeManagedWaitForEventTask, resolveDeferredTaskStateBridge, } from "./deferred-state-bridge.js";
 export { createSchedulerWakeQueue, getWorkflowMakeBridgeRuntime, runWorkflowWithMakeBridge, withWorkflowMakeBridgeRuntime, } from "./workflow-make-bridge.js";
 export { SqlMessageStorage, ensureSqlMessageStorage, ensureSqlMessageStorageEffect, getSqlMessageStorage, } from "./sql-message-storage.js";
-export { SandboxEntity, SandboxEntityExecutor, makeSandboxEntityId, makeSandboxTransportServiceEffect, } from "@smithers-orchestrator/sandbox/effect/sandbox-entity";
+export { SandboxEntity, SandboxEntityExecutor, makeSandboxEntityId, makeSandboxTransportServiceEffect, } from "@smthrs/sandbox/effect/sandbox-entity";
 export { CodeplaneSandboxExecutorLive, DockerSandboxExecutorLive, SandboxHttpRunner, } from "./http-runner.js";
-export { BubblewrapSandboxExecutorLive, SandboxSocketRunner, } from "@smithers-orchestrator/sandbox/effect/socket-runner";
+export { BubblewrapSandboxExecutorLive, SandboxSocketRunner, } from "@smthrs/sandbox/effect/socket-runner";
 export { isTaskResultFailure, makeWorkerTask, TaskResult, WorkerDispatchKind, WorkerTask, WorkerTaskKind, TaskWorkerEntity, } from "./entity-worker.js";
 export { dispatchWorkerTask, subscribeTaskWorkerDispatches, } from "./single-runner.js";
 /**
@@ -257,7 +257,7 @@ export const executeTaskBridge = (adapter, db, runId, desc, descriptorMap, input
  * @param {AbortController} [runAbortController]
  * @param {HijackState} [hijackState]
  * @param {LegacyExecuteTaskFn} [legacyExecuteTaskFn]
- * @returns {Effect.Effect<void, import("@smithers-orchestrator/errors/SmithersError").SmithersError, never>}
+ * @returns {Effect.Effect<void, import("@smthrs/errors/SmithersError").SmithersError, never>}
  */
 export const executeTaskBridgeEffect = (adapter, db, runId, desc, descriptorMap, inputTable, eventBus, toolConfig, workflowName, cacheEnabled, signal, disabledAgents, runAbortController, hijackState, legacyExecuteTaskFn) => Effect.tryPromise({
     try: () => executeTaskBridge(adapter, db, runId, desc, descriptorMap, inputTable, eventBus, toolConfig, workflowName, cacheEnabled, signal, disabledAgents, runAbortController, hijackState, legacyExecuteTaskFn),

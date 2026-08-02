@@ -1,10 +1,10 @@
 import { Effect } from "effect";
-import { spawnCaptureEffect } from "@smithers-orchestrator/driver/child-process";
+import { spawnCaptureEffect } from "@smthrs/driver/child-process";
 /**
  * @typedef {{ cwd: string; env: Record<string, string>; input?: string; timeoutMs?: number; idleTimeoutMs?: number; signal?: AbortSignal; maxOutputBytes?: number; onStdout?: (chunk: string) => void; onStderr?: (chunk: string) => void; }} RunCommandOptions
  */
 /** @typedef {import("./RunCommandResult.ts").RunCommandResult} RunCommandResult */
-/** @typedef {import("@smithers-orchestrator/errors/SmithersError").SmithersError} SmithersError */
+/** @typedef {import("@smthrs/errors/SmithersError").SmithersError} SmithersError */
 
 /**
  * @param {string} command

@@ -12,7 +12,7 @@ import {
   AnthropicAgent,
   OpenAIAgent,
   tools,
-} from "smithers-orchestrator";
+} from "smthrs";
 import { stepCountIs } from "ai";
 ```
 
@@ -103,7 +103,7 @@ Use the `createOpenAI` path when you need provider-level configuration beyond `b
 [Hermes](https://github.com/NousResearch/hermes-agent) (Nous Research) exposes an OpenAI-compatible HTTP API, so `HermesAgent` is a convenience subclass of `OpenAIAgent` that points the provider at your Hermes server and disables native structured output by default (a local Hermes server may not honor JSON-schema response formats).
 
 ```ts
-import { HermesAgent } from "smithers-orchestrator";
+import { HermesAgent } from "smthrs";
 
 const hermes = new HermesAgent({
   baseURL: "http://127.0.0.1:5123/v1", // or set HERMES_BASE_URL

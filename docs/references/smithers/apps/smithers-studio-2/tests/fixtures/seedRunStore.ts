@@ -6,7 +6,7 @@ import { DB_SEEDED_RUNS } from "./seededData";
  * from {@link ./seededData} ({@link DB_SEEDED_RUNS} — every seeded run except
  * the live approval run, which the gateway fixture EXECUTES so it has a real
  * tree + pending approval). The schema mirrors the real
- * `@smithers-orchestrator/db` table definitions exactly, so the live Gateway's
+ * `@smthrs/db` table definitions exactly, so the live Gateway's
  * `listRuns` / `getRun` RPCs read these rows verbatim — the UI then renders them
  * over the real `/v1/rpc` path with no mocking.
  *

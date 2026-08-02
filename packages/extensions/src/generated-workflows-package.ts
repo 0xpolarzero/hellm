@@ -31,7 +31,7 @@ const decodeWorkflowAgentSourceExtensionOrderEffect = Schema.decodeUnknownEffect
 );
 
 const currentGeneratedPackageTimestamp = Effect.map(DateTime.now, DateTime.formatIso);
-const SMITHERS_ORCHESTRATOR_PACKAGE_NAME = "smithers-orchestrator";
+const SMITHERS_ORCHESTRATOR_PACKAGE_NAME = "smthrs";
 const SVVY_CORE_PACKAGE_NAME = "@svvy/core";
 
 export interface GeneratedWorkflowsPackageEvidence {
@@ -177,7 +177,7 @@ export function renderGeneratedWorkflowsPackageFiles(
   ];
   const outputFiles = [
     { relativePath: "package.json", contents: packageJson },
-    { relativePath: "smithers-orchestrator.ambient.d.ts", contents: ambientTypes },
+    { relativePath: "smthrs.ambient.d.ts", contents: ambientTypes },
     { relativePath: "index.ts", contents: index },
     ...sourceFiles,
   ];
@@ -324,7 +324,7 @@ function coreTypeContractPackageDependencySpecifier(input: {
 
 function renderGeneratedWorkflowsAmbientTypes(): string {
   return [
-    'declare module "smithers-orchestrator" {',
+    'declare module "smthrs" {',
     "  export type AgentLike = {",
     "    id?: string;",
     "    tools?: Record<string, unknown>;",

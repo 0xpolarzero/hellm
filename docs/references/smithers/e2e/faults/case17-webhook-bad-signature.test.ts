@@ -445,7 +445,7 @@ describe("case 17: webhook signal with invalid signature is rejected and audited
 
   test.skip("uses production handler in packages/server/src/gateway.js (handleWebhook + computeWebhookSignature)", () => {
     // SKIP: importing the real Gateway from packages/server inside the e2e
-    // package fails on `effect` / `@smithers-orchestrator/devtools` resolution
+    // package fails on `effect` / `@smthrs/devtools` resolution
     // because workspace symlinks bypass e2e's flat node_modules (same blocker
     // documented in case14-gateway-rpc-roundtrip.test.ts). This test mirrors
     // the documented contract of `handleWebhook` at

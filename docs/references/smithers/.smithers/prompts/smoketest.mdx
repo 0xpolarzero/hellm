@@ -1,10 +1,10 @@
 # Smoke Test
 
-You are running a **release smoke test** for the `smithers-orchestrator`
+You are running a **release smoke test** for the `smthrs`
 npm package. Your job is to prove that a user who has never touched
 Smithers can install it and exercise the feature set — and that every
 claim in the changelog below actually holds against the published
-`smithers-orchestrator@{props.version}` on npm.
+`smthrs@{props.version}` on npm.
 
 ## Version under test
 
@@ -27,14 +27,14 @@ looking for it elsewhere — this text is the source of truth.
 1. Before doing anything else, clear caches so you're testing the
    registry, not a stale copy:
    - `bun pm cache rm`
-   - macOS: `rm -rf $(echo $TMPDIR)bunx-*smithers-orchestrator*`
-     (or check `/var/folders/**/T/bunx-*smithers-orchestrator*`).
-   - Linux / other: `rm -rf $TMPDIR/bunx-*smithers-orchestrator*`.
+   - macOS: `rm -rf $(echo $TMPDIR)bunx-*smthrs*`
+     (or check `/var/folders/**/T/bunx-*smthrs*`).
+   - Linux / other: `rm -rf $TMPDIR/bunx-*smthrs*`.
 2. Create a fresh scratch directory outside any existing project:
    `SMOKE_DIR=$(mktemp -d)/smoketest && mkdir -p "$SMOKE_DIR" && cd
    "$SMOKE_DIR"`. Never reuse an existing folder. Never work in the
    monorepo itself.
-3. Run `bunx smithers-orchestrator@latest init` from the scratch
+3. Run `bunx smthrs@latest init` from the scratch
    directory. Capture stdout/stderr.
 
 ## Baseline tests — run these every time
@@ -42,18 +42,18 @@ looking for it elsewhere — this text is the source of truth.
 Do each, record pass/fail with evidence (exact command, exit code,
 relevant output lines):
 
-- `bunx smithers-orchestrator@latest init` succeeds on a fresh folder.
+- `bunx smthrs@latest init` succeeds on a fresh folder.
   Confirm `.smithers/package.json` exists, `.smithers/workflows/`
   contains workflow files, and the `install` result reports
   `status: ok` (i.e. `bun install` ran inside `.smithers/`).
 - `.smithers/node_modules/skills/` exists with at least one
   `<name>/SKILL.md` inside — proving the `github:mattpocock/skills`
   dep was fetched (runtime auto-install can't do that).
-- Both `$(echo $TMPDIR)bunx-*smithers-orchestrator*/node_modules/.bin/smithers`
+- Both `$(echo $TMPDIR)bunx-*smthrs*/node_modules/.bin/smithers`
   AND `.smithers/node_modules/.bin/smithers` symlink to
-  `smithers-orchestrator/src/bin/smithers.js` (not
-  `@smithers-orchestrator/cli/src/index.js`). Use `readlink`.
-- `bunx smithers-orchestrator@latest workflow grill-me` loads without
+  `smthrs/src/bin/smithers.js` (not
+  `@smthrs/cli/src/index.js`). Use `readlink`.
+- `bunx smthrs@latest workflow grill-me` loads without
   crashing. The agent call itself is allowed to fail for unrelated
   reasons (API auth, scorer schema errors). What matters is that you
   see `workflowName=grill-me` and `→ grill-me:grill (attempt 1,
@@ -71,7 +71,7 @@ relevant output lines):
 For every bullet under `## Fixes` or `## Features` in the changelog
 embedded above, construct a minimal reproduction of the *original* bug
 and verify it no longer reproduces on
-`smithers-orchestrator@{props.version}`. Common patterns:
+`smthrs@{props.version}`. Common patterns:
 
 - Fix says a dependency was missing from a generated file → open the
   file after `init` and grep for the dep.

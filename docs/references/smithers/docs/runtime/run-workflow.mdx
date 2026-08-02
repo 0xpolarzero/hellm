@@ -1,10 +1,10 @@
 ---
 title: runWorkflow
-description: Programmatic entry point. Equivalent to `bunx smithers-orchestrator up`.
+description: Programmatic entry point. Equivalent to `bunx smthrs up`.
 ---
 
 ```ts
-import { runWorkflow } from "smithers-orchestrator";
+import { runWorkflow } from "smthrs";
 import { Effect } from "effect";
 
 const result = await Effect.runPromise(runWorkflow(workflow, {
@@ -52,7 +52,7 @@ All in-flight attempts are marked cancelled and `NodeCancelled` events are emitt
 
 ## Hijack handoff
 
-If a CLI hijack happens mid-run (`bunx smithers-orchestrator hijack <id>`), the run ends `"cancelled"` and the latest attempt metadata stores `hijackHandoff`. On `resume: true`, Smithers waits for a safe handoff point and continues with the persisted CLI session id (see [CLI Agents](/integrations/cli-agents)) or the persisted message history (SDK agents).
+If a CLI hijack happens mid-run (`bunx smthrs hijack <id>`), the run ends `"cancelled"` and the latest attempt metadata stores `hijackHandoff`. On `resume: true`, Smithers waits for a safe handoff point and continues with the persisted CLI session id (see [CLI Agents](/integrations/cli-agents)) or the persisted message history (SDK agents).
 
 ## `result.output`
 

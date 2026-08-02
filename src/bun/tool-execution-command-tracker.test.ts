@@ -426,7 +426,7 @@ describe("tool execution command tracker", () => {
     tracker.handleToolExecutionStart({
       toolCallId: "tool-call-smithers-cli",
       toolName: "exec_command",
-      args: { cmd: "bunx smithers-orchestrator ps" },
+      args: { cmd: "bunx smthrs ps" },
     });
     tracker.handleToolExecutionEnd({
       toolCallId: "tool-call-smithers-cli",
@@ -465,7 +465,7 @@ describe("tool execution command tracker", () => {
     tracker.handleToolExecutionStart({
       toolCallId: "tool-call-smithers-shell-segment",
       toolName: "exec_command",
-      args: { cmd: "cd .smithers && bunx smithers-orchestrator ps" },
+      args: { cmd: "cd .smithers && bunx smthrs ps" },
     });
     tracker.handleToolExecutionEnd({
       toolCallId: "tool-call-smithers-shell-segment",
@@ -731,7 +731,7 @@ describe("tool execution command tracker", () => {
     tracker.handleToolExecutionStart({
       toolCallId: "tool-call-smithers-failed",
       toolName: "exec_command",
-      args: { cmd: "bunx smithers-orchestrator inspect run-missing" },
+      args: { cmd: "bunx smthrs inspect run-missing" },
     });
     tracker.handleToolExecutionEnd({
       toolCallId: "tool-call-smithers-failed",

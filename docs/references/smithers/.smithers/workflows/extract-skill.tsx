@@ -3,8 +3,8 @@
 // smithers-display-name: Extract Skill
 // smithers-description: After a run, harvest a reusable skill or workflow and durable memory from the pattern.
 // smithers-tags: reuse, skills, memory
-/** @jsxImportSource smithers-orchestrator */
-import { createSmithers } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { createSmithers } from "smthrs";
 import { z } from "zod/v4";
 import { agents } from "../agents";
 import AnalyzePrompt from "../prompts/extract-skill-analyze.mdx";

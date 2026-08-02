@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { accountsRoot } from "@smithers-orchestrator/accounts";
+import { accountsRoot } from "@smthrs/accounts";
 import { generateAgentsTs } from "./agent-detection.js";
 import { WORKFLOW_UI_SOURCES } from "./workflowUiSources.js";
 // Seeded workflows authored as canonical files in .smithers/ and emitted by
@@ -91,7 +91,7 @@ function readOwnPackageVersion() {
 }
 /**
  * Pins shipped with this release for devDep-only specs that won't be in the
- * user's `node_modules` after `bunx smithers-orchestrator@latest init`. Bump
+ * user's `node_modules` after `bunx smthrs@latest init`. Bump
  * these when updating the monorepo's root devDependencies.
  */
 const BUNDLED_VERSION_PINS = {
@@ -143,7 +143,7 @@ function renderPackageJson(versions) {
         dependencies: {
             react: versions.reactVersion,
             "react-dom": versions.reactDomVersion,
-            "smithers-orchestrator": smithersSpec,
+            "smthrs": smithersSpec,
             zod: versions.zodVersion,
         },
         devDependencies: {
@@ -163,7 +163,7 @@ function renderTsconfig() {
             module: "ESNext",
             moduleDetection: "force",
             jsx: "react-jsx",
-            jsxImportSource: "smithers-orchestrator",
+            jsxImportSource: "smthrs",
             moduleResolution: "bundler",
             allowImportingTsExtensions: true,
             verbatimModuleSyntax: true,
@@ -188,7 +188,7 @@ function renderAgentScaffoldFiles() {
             path: ".smithers/agents/claude-code.ts",
             preserveExisting: true,
             contents: [
-                'import { ClaudeCodeAgent as SmithersClaudeCodeAgent } from "smithers-orchestrator";',
+                'import { ClaudeCodeAgent as SmithersClaudeCodeAgent } from "smthrs";',
                 "",
                 '// Built-in Claude Code CLI agent (cliEngine: "claude-code").',
                 "// Tweak `model`, `cwd`, or uncomment extra options below to match your setup.",
@@ -206,7 +206,7 @@ function renderAgentScaffoldFiles() {
             path: ".smithers/agents/codex.ts",
             preserveExisting: true,
             contents: [
-                'import { CodexAgent as SmithersCodexAgent } from "smithers-orchestrator";',
+                'import { CodexAgent as SmithersCodexAgent } from "smthrs";',
                 "",
                 '// Built-in Codex CLI agent (cliEngine: "codex").',
                 "// Tweak `model`, `cwd`, or uncomment extra options below to match your setup.",
@@ -225,7 +225,7 @@ function renderAgentScaffoldFiles() {
             path: ".smithers/agents/opencode.ts",
             preserveExisting: true,
             contents: [
-                'import { OpenCodeAgent as SmithersOpenCodeAgent } from "smithers-orchestrator";',
+                'import { OpenCodeAgent as SmithersOpenCodeAgent } from "smthrs";',
                 "",
                 '// Built-in OpenCode CLI agent (cliEngine: "opencode").',
                 "// Tweak `model`, `cwd`, or uncomment extra options below to match your setup.",
@@ -243,7 +243,7 @@ function renderAgentScaffoldFiles() {
             path: ".smithers/agents/antigravity.ts",
             preserveExisting: true,
             contents: [
-                'import { AntigravityAgent as SmithersAntigravityAgent } from "smithers-orchestrator";',
+                'import { AntigravityAgent as SmithersAntigravityAgent } from "smthrs";',
                 "",
                 '// Built-in Antigravity CLI agent (cliEngine: "antigravity").',
                 "// Tweak `model`, `cwd`, or uncomment extra options below to match your setup.",
@@ -1052,8 +1052,8 @@ function renderComponents() {
             path: ".smithers/components/Review.tsx",
             contents: [
                 "// smithers-source: seeded",
-                "/** @jsxImportSource smithers-orchestrator */",
-                'import { Parallel, Task, type AgentLike } from "smithers-orchestrator";',
+                "/** @jsxImportSource smthrs */",
+                'import { Parallel, Task, type AgentLike } from "smthrs";',
                 'import { z } from "zod/v4";',
                 'import ReviewPrompt from "../prompts/review.mdx";',
                 "",
@@ -1102,8 +1102,8 @@ function renderComponents() {
             path: ".smithers/components/ValidationLoop.tsx",
             contents: [
                 "// smithers-source: seeded",
-                "/** @jsxImportSource smithers-orchestrator */",
-                'import { Sequence, Loop, Task, type AgentLike } from "smithers-orchestrator";',
+                "/** @jsxImportSource smthrs */",
+                'import { Sequence, Loop, Task, type AgentLike } from "smthrs";',
                 'import { z } from "zod/v4";',
                 'import { Review } from "~/components/Review";',
                 'import ImplementPrompt from "~/prompts/implement.mdx";',
@@ -1167,8 +1167,8 @@ function renderComponents() {
             path: ".smithers/components/CommandProbe.tsx",
             contents: [
                 "// smithers-source: seeded",
-                "/** @jsxImportSource smithers-orchestrator */",
-                'import { Task } from "smithers-orchestrator";',
+                "/** @jsxImportSource smthrs */",
+                'import { Task } from "smthrs";',
                 'import { z } from "zod/v4";',
                 "",
                 "export const commandProbeOutputSchema = z.looseObject({",
@@ -1189,8 +1189,8 @@ function renderComponents() {
         {
             path: ".smithers/components/GrillMe.tsx",
             contents: [
-                "/** @jsxImportSource smithers-orchestrator */",
-                'import { Loop, Sequence, Task, type AgentLike, type OutputTarget } from "smithers-orchestrator";',
+                "/** @jsxImportSource smthrs */",
+                'import { Loop, Sequence, Task, type AgentLike, type OutputTarget } from "smthrs";',
                 'import { z } from "zod/v4";',
                 'import GrillMeSkill from "../prompts/grill-me.mdx";',
                 'import AskUserInstructions from "../prompts/ask-user-instructions.mdx";',
@@ -1255,8 +1255,8 @@ function renderComponents() {
             path: ".smithers/components/ForEachFeature.tsx",
             contents: [
                 "// smithers-source: seeded",
-                "/** @jsxImportSource smithers-orchestrator */",
-                'import { Parallel, Sequence, Task, type AgentLike } from "smithers-orchestrator";',
+                "/** @jsxImportSource smthrs */",
+                'import { Parallel, Sequence, Task, type AgentLike } from "smthrs";',
                 'import { z } from "zod/v4";',
                 'import FeatureTaskPrompt from "~/prompts/feature-task.mdx";',
                 "",
@@ -1408,8 +1408,8 @@ function renderComponents() {
             path: ".smithers/components/FeatureEnum.tsx",
             contents: [
                 "// smithers-source: seeded",
-                "/** @jsxImportSource smithers-orchestrator */",
-                'import { Sequence, Task, type AgentLike } from "smithers-orchestrator";',
+                "/** @jsxImportSource smthrs */",
+                'import { Sequence, Task, type AgentLike } from "smthrs";',
                 'import { z } from "zod/v4";',
                 'import FeatureEnumScanPrompt from "../prompts/feature-enum-scan.mdx";',
                 'import FeatureEnumRefinePrompt from "../prompts/feature-enum-refine.mdx";',
@@ -1634,7 +1634,7 @@ function renderWorkflowFile(id, displayName, body, metadata = {}) {
             ...(resolvedMetadata.description ? [`// smithers-description: ${resolvedMetadata.description}`] : []),
             ...(resolvedMetadata.tags?.length ? [`// smithers-tags: ${resolvedMetadata.tags.join(", ")}`] : []),
             ...(resolvedMetadata.aliases?.length ? [`// smithers-aliases: ${resolvedMetadata.aliases.join(", ")}`] : []),
-            "/** @jsxImportSource smithers-orchestrator */",
+            "/** @jsxImportSource smthrs */",
             ...body,
             "",
         ].join("\n"),
@@ -1694,7 +1694,7 @@ function renderGatewayFile() {
     return {
         path: ".smithers/gateway.ts",
         contents: [
-            'import { Gateway, mdxPlugin } from "smithers-orchestrator";',
+            'import { Gateway, mdxPlugin } from "smthrs";',
             'import { dirname, resolve } from "node:path";',
             'import { fileURLToPath } from "node:url";',
             "",
@@ -1748,7 +1748,7 @@ function renderKanbanUiFile() {
             "  useGatewayNodeOutput,",
             "  useGatewayRunEvents,",
             "  useGatewayRuns,",
-            '} from "smithers-orchestrator/gateway-react";',
+            '} from "smthrs/gateway-react";',
             "",
             'const WORKFLOW_KEY = "kanban";',
             "",
@@ -2172,7 +2172,7 @@ function renderPlanUiFile() {
         "  useGatewayNodeOutput,",
         "  useGatewayRunEvents,",
         "  useGatewayRuns,",
-        '} from "smithers-orchestrator/gateway-react";',
+        '} from "smthrs/gateway-react";',
     ].join("\n");
     return {
         path: ".smithers/ui/plan.tsx",
@@ -2394,7 +2394,7 @@ function renderVcsUiFile() {
             "  useGatewayNodeOutput,",
             "  useGatewayRunEvents,",
             "  useGatewayRuns,",
-            "} from \"smithers-orchestrator/gateway-react\";",
+            "} from \"smthrs/gateway-react\";",
             "",
             "const WORKFLOW_KEY = \"vcs\";",
             "const ACTIONS = [\"status\", \"log\", \"commit\", \"rebase-plan\"] as const;",
@@ -2726,13 +2726,13 @@ function renderVcsUiFile() {
 }
 function renderWorkflows() {
     const sharedImports = [
-        'import { createSmithers } from "smithers-orchestrator";',
+        'import { createSmithers } from "smthrs";',
         'import { z } from "zod/v4";',
         'import { agents } from "../agents";',
     ];
     return [
         renderWorkflowFile("vcs", "VCS", [
-            "import { createSmithers, Task, Sequence } from 'smithers-orchestrator';",
+            "import { createSmithers, Task, Sequence } from 'smthrs';",
             "import { execFileSync } from 'node:child_process';",
             "import { z } from 'zod/v4';",
             "import { agents } from '../agents';",
@@ -3943,8 +3943,8 @@ function renderWorkflows() {
                 "// smithers-display-name: Kanban",
                 "// smithers-description: Implement ticket files from `.smithers/tickets/` in worktree branches with a Kanban UI.",
                 "// smithers-tags: tickets, ui, worktrees",
-                "/** @jsxImportSource smithers-orchestrator */",
-                'import { createSmithers, Sequence, Parallel, Worktree } from "smithers-orchestrator";',
+                "/** @jsxImportSource smthrs */",
+                'import { createSmithers, Sequence, Parallel, Worktree } from "smthrs";',
                 'import { readdirSync, readFileSync } from "node:fs";',
                 'import { resolve } from "node:path";',
                 'import { z } from "zod/v4";',
@@ -4200,7 +4200,7 @@ function renderTemplateFiles(versions, env, projectRoot) {
         },
         {
             path: ".smithers/preload.ts",
-            contents: ['import { mdxPlugin } from "smithers-orchestrator";', "", "mdxPlugin();", ""].join("\n"),
+            contents: ['import { mdxPlugin } from "smthrs";', "", "mdxPlugin();", ""].join("\n"),
         },
         renderGatewayFile(),
         ...renderAgentScaffoldFiles(),

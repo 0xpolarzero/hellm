@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { SmithersDb } from "@smithers-orchestrator/db/adapter";
-import { ensureSmithersTables } from "@smithers-orchestrator/db/ensure";
-import { revertToJjPointer } from "@smithers-orchestrator/vcs/jj";
+import { SmithersDb } from "@smthrs/db/adapter";
+import { ensureSmithersTables } from "@smthrs/db/ensure";
+import { revertToJjPointer } from "@smthrs/vcs/jj";
 import * as BunContext from "@effect/platform-bun/BunContext";
 import { Effect } from "effect";
 import { revertToAttempt } from "../src/revert.js";

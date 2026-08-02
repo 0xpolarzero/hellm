@@ -1,24 +1,24 @@
 ---
 title: Installation
-description: Install smithers-orchestrator with the workflow pack, or manually for standalone JSX workflow projects.
+description: Install smthrs with the workflow pack, or manually for standalone JSX workflow projects.
 ---
 
 Most teams should start with the workflow pack. It gives you a working `.smithers/` directory with seeded workflows, prompts, and agent configuration instead of assembling the project structure by hand.
 
 ## Always Run with `bunx`
 
-Every CLI invocation in these docs is `bunx smithers-orchestrator <command>`. Do **not** install Smithers globally and do **not** use the bare `smithers` or `bunx smithers` shorthand.
+Every CLI invocation in these docs is `bunx smthrs <command>`. Do **not** install Smithers globally and do **not** use the bare `smithers` or `bunx smithers` shorthand.
 
 - `bunx` resolves the package locally if your project depends on it, otherwise it pulls and runs the latest published version.
-- The published npm package is [`smithers-orchestrator`](https://www.npmjs.com/package/smithers-orchestrator). The bare name `smithers` is a different package, so `bunx smithers` runs something else entirely.
+- The published npm package is [`smthrs`](https://www.npmjs.com/package/smthrs). The bare name `smithers` is a different package, so `bunx smithers` runs something else entirely.
 - A global install creates version-drift problems across machines, CI, and contributors. With `bunx`, every project pins Smithers through its own `package.json`.
 
-If you previously ran `npm i -g smithers-orchestrator`, uninstall it (`npm rm -g smithers-orchestrator`) and switch to `bunx`.
+If you previously ran `npm i -g smthrs`, uninstall it (`npm rm -g smthrs`) and switch to `bunx`.
 
 ## Recommended: Install the Workflow Pack
 
 ```bash
-bunx smithers-orchestrator init
+bunx smthrs init
 ```
 
 That scaffolds `.smithers/` with files such as:
@@ -28,7 +28,7 @@ That scaffolds `.smithers/` with files such as:
 | `.smithers/workflows/` | Pre-built workflows (`implement`, `review`, `plan`, `ralph`, `debug`, ...) |
 | `.smithers/prompts/` | Shared MDX prompt templates |
 | `.smithers/components/` | Reusable TSX components (`Review`, `ValidationLoop`, ...) |
-| `.smithers/package.json` | Local workflow project manifest with `smithers-orchestrator` dependency |
+| `.smithers/package.json` | Local workflow project manifest with `smthrs` dependency |
 | `.smithers/tsconfig.json` | TypeScript config for JSX workflow authoring |
 | `.smithers/bunfig.toml` | Bun preload config for MDX workflow prompts |
 | `.smithers/preload.ts` | Registers the MDX preload plugin |
@@ -42,7 +42,7 @@ That scaffolds `.smithers/` with files such as:
 To overwrite an existing scaffold:
 
 ```bash
-bunx smithers-orchestrator init --force
+bunx smthrs init --force
 ```
 
 ## Install the Agent Skill
@@ -67,8 +67,8 @@ outcome — *"orchestrate an agent to add rate limiting and keep iterating until
 tests pass"* — and the agent reaches for Smithers itself.
 
 For agents without a skills directory, point them at
-`bunx smithers-orchestrator docs-full` (prints the same bundle) or
-`bunx smithers-orchestrator ask "<question>"`.
+`bunx smthrs docs-full` (prints the same bundle) or
+`bunx smthrs ask "<question>"`.
 
 To install the skill **and** register the MCP server into every coding agent on
 your machine at once, see [Agent Support](/agents/overview) — it covers Claude
@@ -89,13 +89,13 @@ See [JSX Installation](/jsx/overview) for the package list, TypeScript configura
 
 ### Version control
 
-Smithers bundles jj. The optional `@smithers-orchestrator/jj-<platform>` package installs a vendored jj binary for your platform, so a fresh install works with no system jj. Resolution order is:
+Smithers bundles jj. The optional `@smthrs/jj-<platform>` package installs a vendored jj binary for your platform, so a fresh install works with no system jj. Resolution order is:
 
 1. `SMITHERS_JJ_PATH` — point this at a jj binary to override everything.
 2. The bundled binary for your platform.
 3. `jj` on your `PATH`.
 
-If no bundled binary installed (an unsupported platform, or `--no-optional`) and neither `jj` nor `git` is on `PATH`, runs that need a worktree fail with a message telling you to install one. Check what Smithers found with `bunx smithers-orchestrator workflow doctor` (the `vcs` section reports the resolved jj and git).
+If no bundled binary installed (an unsupported platform, or `--no-optional`) and neither `jj` nor `git` is on `PATH`, runs that need a worktree fail with a message telling you to install one. Check what Smithers found with `bunx smthrs workflow doctor` (the `vcs` section reports the resolved jj and git).
 
 ## After Installation
 

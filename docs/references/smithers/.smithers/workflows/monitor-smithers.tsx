@@ -3,9 +3,9 @@
 // smithers-display-name: Monitor Smithers
 // smithers-description: Watchdog over Smithers runs: detect stuck, blocked, failed, or over-budget runs and escalate.
 // smithers-tags: ops, monitoring
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 import { $ } from "bun";
-import { createSmithers } from "smithers-orchestrator";
+import { createSmithers } from "smthrs";
 import { z } from "zod/v4";
 import { agents } from "../agents";
 import ClassifyPrompt from "../prompts/monitor-smithers-classify.mdx";
@@ -68,7 +68,7 @@ const { Workflow, Task, Sequence, Branch, smithers, outputs } = createSmithers({
 // JSON, and normalise into the watchdog's run shape. Any failure (CLI missing,
 // non-zero exit, bad JSON) degrades to an empty list rather than throwing.
 async function pollRuns(staleMinutes: number) {
-  const res = await $`bunx smithers-orchestrator ps --format json --all`.nothrow().quiet();
+  const res = await $`bunx smthrs ps --format json --all`.nothrow().quiet();
   if (res.exitCode !== 0) {
     return { runs: [], summary: "Could not read runs from `smithers ps` (non-zero exit)." };
   }

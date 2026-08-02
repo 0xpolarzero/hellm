@@ -107,8 +107,8 @@ Attach a `schemaAdherence` scorer to confirm the shape holds run to run, and rea
 the persisted row directly:
 
 ```bash
-bunx smithers-orchestrator scores <run-id>          # did adherence hold?
-bunx smithers-orchestrator output <run-id> triage   # see the persisted row
+bunx smthrs scores <run-id>          # did adherence hold?
+bunx smthrs output <run-id> triage   # see the persisted row
 ```
 
 See `skills/smithers/SKILL.md` for the runtime/CLI surface and `docs/llms-core.txt`

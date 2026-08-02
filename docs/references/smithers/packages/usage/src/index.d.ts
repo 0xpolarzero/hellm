@@ -1,5 +1,5 @@
-import * as _smithers_orchestrator_accounts from '@smithers-orchestrator/accounts';
-import { AccountProvider } from '@smithers-orchestrator/accounts';
+import * as _smithers_orchestrator_accounts from '@smthrs/accounts';
+import { AccountProvider } from '@smthrs/accounts';
 
 /**
  * Where a usage report's numbers came from.
@@ -74,7 +74,7 @@ type UsageReport$5 = {
     error?: string;
 };
 
-/** @typedef {import("@smithers-orchestrator/accounts").Account} Account */
+/** @typedef {import("@smthrs/accounts").Account} Account */
 /** @typedef {import("./UsageReport.ts").UsageReport} UsageReport */
 /**
  * Routes an account to its usage adapter and returns a normalized report. This
@@ -108,7 +108,7 @@ declare function getUsageForAccounts(accounts: Account$1[], options?: {
 type Account$1 = _smithers_orchestrator_accounts.Account;
 type UsageReport$3 = UsageReport$5;
 
-/** @typedef {import("@smithers-orchestrator/accounts").Account} Account */
+/** @typedef {import("@smthrs/accounts").Account} Account */
 /** @typedef {import("./UsageReport.ts").UsageReport} UsageReport */
 /** @typedef {import("./UsageWindow.ts").UsageWindow} UsageWindow */
 /**

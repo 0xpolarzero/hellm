@@ -3,9 +3,9 @@
 // smithers-display-name: Triage Run
 // smithers-description: Diagnose one failed or stuck Smithers run: pull events/logs, find the root cause, propose a fix/rewind/retry.
 // smithers-tags: ops, debugging
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 import { $ } from "bun";
-import { createSmithers } from "smithers-orchestrator";
+import { createSmithers } from "smthrs";
 import { z } from "zod/v4";
 import { agents } from "../agents";
 import DiagnosePrompt from "../prompts/triage-run-diagnose.mdx";
@@ -94,10 +94,10 @@ export default smithers((ctx) => {
         {/* 1 — Deterministically pull run state + the recent event log. */}
         <Task id="gather" output={outputs.gather}>
           {async () => {
-            const inspectRes = await $`bunx smithers-orchestrator inspect ${runId} --json`
+            const inspectRes = await $`bunx smthrs inspect ${runId} --json`
               .nothrow()
               .quiet();
-            const eventsRes = await $`bunx smithers-orchestrator events ${runId}`
+            const eventsRes = await $`bunx smthrs events ${runId}`
               .nothrow()
               .quiet();
 

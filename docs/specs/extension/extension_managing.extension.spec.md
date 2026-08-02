@@ -279,7 +279,7 @@ Rules:
   is the shell command or command provider agents are instructed to run through Shell. `package`,
   when present, is the install/update package and may differ from the runnable command, for example
   package `@tiny-fish/cli` exposes binary `tinyfish`. Smithers remains a special prompt-only
-  requirement that preserves official `bunx smithers-orchestrator ...` usage and must not imply a
+  requirement that preserves official `bunx smthrs ...` usage and must not imply a
   global `smithers` binary.
 - `version` is the default target version used when no binary is installed and as the UI's baseline
   update target. It is not proof of the active installed version.

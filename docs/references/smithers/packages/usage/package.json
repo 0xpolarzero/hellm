@@ -1,5 +1,5 @@
 {
-  "name": "@smithers-orchestrator/usage",
+  "name": "@smthrs/usage",
   "version": "0.23.0",
   "description": "Report how much rate limit or subscription quota each registered Smithers account has consumed, across Claude, Codex, OpenAI, Anthropic, and Google providers.",
   "type": "module",
@@ -25,8 +25,8 @@
     "build": "tsup --dts-only"
   },
   "dependencies": {
-    "@smithers-orchestrator/accounts": "workspace:*",
-    "@smithers-orchestrator/errors": "workspace:*"
+    "@smthrs/accounts": "^0.33.0",
+    "@smthrs/errors": "^0.33.0"
   },
   "devDependencies": {
     "@types/bun": "latest",

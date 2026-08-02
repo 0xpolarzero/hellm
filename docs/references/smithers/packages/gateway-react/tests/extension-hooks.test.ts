@@ -11,7 +11,7 @@ try { GlobalRegistrator.register(); } catch { /* already registered */ }
 import { describe, expect, test } from "bun:test";
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { SmithersGatewayClient } from "@smithers-orchestrator/gateway-client";
+import type { SmithersGatewayClient } from "@smthrs/gateway-client";
 import {
   SmithersGatewayProvider,
   useGatewayExtensionAction,

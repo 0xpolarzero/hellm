@@ -10,7 +10,7 @@ lands alongside a derived `RunState` model for richer run observability.
 ## Breaking changes
 
 - **Runtime is now JavaScript, types live in `.ts` stubs.** Every runtime
-  package (`smithers-orchestrator`, `engine`, `db`, `driver`, `server`, `cli`,
+  package (`smthrs`, `engine`, `db`, `driver`, `server`, `cli`,
   `components`, `react-reconciler`, `agents`, `observability`, `time-travel`,
   `sandbox`, `scheduler`, `scorers`, `openapi`, `memory`, `vcs`, `graph`,
   `errors`, `protocol`, and `examples`) has been migrated to `.js` files with
@@ -24,8 +24,8 @@ lands alongside a derived `RunState` model for richer run observability.
   - `packages/rag` and `packages/voice` — dropped from the product surface;
     matching metrics have been removed from observability.
   - `packages/tools` — the separate workspace package is gone. Public built-in
-    helpers remain exported from `smithers-orchestrator` and
-    `smithers-orchestrator/tools`: `tools`, `read`, `write`, `edit`, `grep`,
+    helpers remain exported from `smthrs` and
+    `smthrs/tools`: `tools`, `read`, `write`, `edit`, `grep`,
     `bash`, `defineTool`, and `getDefinedToolMetadata`.
   - Python SDK, examples, and integration code — smithers is TypeScript/JS only
     now.
@@ -38,11 +38,11 @@ lands alongside a derived `RunState` model for richer run observability.
   still exists for integrations that execute Smithers tool helpers manually.
 
 - **`observability` moved to `apps/observability`.** It remains the
-  `@smithers-orchestrator/observability` workspace package, but its source now lives under
+  `@smthrs/observability` workspace package, but its source now lives under
   `apps/` with the CLI and other app-owned surfaces.
 
-- **`runtime` package renamed to `driver`.** Imports from `@smithers-orchestrator/runtime`
-  should move to `@smithers-orchestrator/driver`. Runtime-adjacent helpers have been
+- **`runtime` package renamed to `driver`.** Imports from `@smthrs/runtime`
+  should move to `@smthrs/driver`. Runtime-adjacent helpers have been
   consolidated into the driver package.
 
 - **Engine control APIs return `Effect`.** `engine.start`, `engine.stop`,
@@ -184,10 +184,10 @@ Alert policy support now has a concrete storage and operator surface:
   can be inlined without circular imports.
 
 - **Package naming corrected for publish.** The public package is
-  `smithers-orchestrator`; the private repository root is
+  `smthrs`; the private repository root is
   `smithers-monorepo`.
 
-- **Generated workflow imports now use `smithers-orchestrator`.** The CLI
+- **Generated workflow imports now use `smthrs`.** The CLI
   scaffold and E2E fixtures no longer generate stale `smithers` imports.
 
 ---

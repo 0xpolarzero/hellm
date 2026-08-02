@@ -2918,7 +2918,7 @@ describe("@svvy/extensions Effect service", () => {
           manifestDependency: "dev-type-dependency",
         },
         {
-          specifier: "smithers-orchestrator",
+          specifier: "smthrs",
           importKind: "type-only",
           dependencyClass: "workspace-authoring-external",
           resolutionAuthority: "workspace-smithers-package",
@@ -2956,11 +2956,11 @@ describe("@svvy/extensions Effect service", () => {
         },
       );
       assert.include(
-        writtenFiles.get("/generated/workflows-package/smithers-orchestrator.ambient.d.ts"),
-        'declare module "smithers-orchestrator"',
+        writtenFiles.get("/generated/workflows-package/smthrs.ambient.d.ts"),
+        'declare module "smthrs"',
       );
       assert.match(
-        writtenFiles.get("/generated/workflows-package/smithers-orchestrator.ambient.d.ts") ?? "",
+        writtenFiles.get("/generated/workflows-package/smthrs.ambient.d.ts") ?? "",
         /generate: \(args: unknown\) => Promise<unknown>/,
       );
       assert.include(

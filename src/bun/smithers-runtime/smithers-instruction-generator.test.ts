@@ -24,15 +24,15 @@ describe("Smithers instruction generator", () => {
   });
 
   it("keeps current svvy Smithers prompt boundaries while preserving official concepts", () => {
-    expect(SMITHERS_CORE_INSTRUCTIONS).toContain("bunx smithers-orchestrator init");
-    expect(SMITHERS_CORE_INSTRUCTIONS).toContain("bunx smithers-orchestrator workflow run");
-    expect(SMITHERS_CORE_INSTRUCTIONS).toContain("bunx smithers-orchestrator ps");
-    expect(SMITHERS_CORE_INSTRUCTIONS).toContain("bunx smithers-orchestrator inspect");
+    expect(SMITHERS_CORE_INSTRUCTIONS).toContain("bunx smthrs init");
+    expect(SMITHERS_CORE_INSTRUCTIONS).toContain("bunx smthrs workflow run");
+    expect(SMITHERS_CORE_INSTRUCTIONS).toContain("bunx smthrs ps");
+    expect(SMITHERS_CORE_INSTRUCTIONS).toContain("bunx smthrs inspect");
     expect(SMITHERS_CORE_INSTRUCTIONS).toContain("`.smithers/package.json`");
     expect(SMITHERS_CORE_INSTRUCTIONS).toContain("Workflows are JSX trees");
     expect(SMITHERS_CORE_INSTRUCTIONS).toContain("The render loop in detail");
     expect(SMITHERS_CORE_INSTRUCTIONS).toContain("Validated outputs");
-    expect(SMITHERS_CORE_INSTRUCTIONS).toContain("bunx smithers-orchestrator approve <run-id>");
+    expect(SMITHERS_CORE_INSTRUCTIONS).toContain("bunx smthrs approve <run-id>");
     expect(SMITHERS_CORE_INSTRUCTIONS).toContain("task IDs must be stable");
     expect(SMITHERS_MEMORY_INSTRUCTIONS).toContain("bypassed by default");
 

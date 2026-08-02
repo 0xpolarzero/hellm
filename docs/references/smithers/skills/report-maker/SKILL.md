@@ -50,11 +50,11 @@ One coherent deck, sourced field-by-field from run state. Cover, in order:
 Source every slide from the CLI rather than memory:
 
 ```bash
-bunx smithers-orchestrator inspect <run-id> --json    # full run state (runState field): nodes, outputs, approvals
-bunx smithers-orchestrator events <run-id> --json     # ordered event history (failures, retries, gates)
-bunx smithers-orchestrator scores <run-id>            # scorer results per task
-bunx smithers-orchestrator tree <run-id>              # executed graph shape
-bunx smithers-orchestrator diff <run-id> <node-id>    # a node's DiffBundle for the artifacts slide
+bunx smthrs inspect <run-id> --json    # full run state (runState field): nodes, outputs, approvals
+bunx smthrs events <run-id> --json     # ordered event history (failures, retries, gates)
+bunx smthrs scores <run-id>            # scorer results per task
+bunx smthrs tree <run-id>              # executed graph shape
+bunx smthrs diff <run-id> <node-id>    # a node's DiffBundle for the artifacts slide
 ```
 
 ## The automated path: the `report-slideshow` workflow
@@ -64,7 +64,7 @@ takes a run, reads its persisted state, and emits the self-contained HTML
 slideshow for you (it reuses the `capture:slideshow` renderer):
 
 ```bash
-bunx smithers-orchestrator workflow run report-slideshow --input '{"runId":"<run-id>"}'
+bunx smthrs workflow run report-slideshow --input '{"runId":"<run-id>"}'
 ```
 
 Reach for it to bootstrap the report, then hand-tighten the decisions and

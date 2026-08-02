@@ -1,4 +1,4 @@
-import { BaseCliAgent } from "@smithers-orchestrator/agents";
+import { BaseCliAgent } from "@smthrs/agents";
 
 export class GeminiCliAgent extends BaseCliAgent {
   readonly cliEngine = "gemini-cli";

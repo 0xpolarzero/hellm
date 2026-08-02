@@ -12,7 +12,7 @@ make it load. You have file + shell tools.
 
 ## Verify command that failed
 
-`bunx smithers-orchestrator graph {props.workflowFile}`
+`bunx smthrs graph {props.workflowFile}`
 
 ## Errors
 
@@ -35,9 +35,9 @@ make it load. You have file + shell tools.
      is duplicated, or a control-flow component is missing a required prop
      (`Loop` needs `until`; `Approval` needs `request`).
 3. Make the smallest change that fixes the error without abandoning the design.
-   If the docs would help, run `bunx smithers-orchestrator docs` or
-   `bunx smithers-orchestrator ask "<question>"`.
-4. Re-run `bunx smithers-orchestrator graph {props.workflowFile}` yourself to
+   If the docs would help, run `bunx smthrs docs` or
+   `bunx smthrs ask "<question>"`.
+4. Re-run `bunx smthrs graph {props.workflowFile}` yourself to
    confirm it now exits 0 before you finish.
 
 Do not delete the workflow or stub it out to "pass" — fix the real problem.

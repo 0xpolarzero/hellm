@@ -1,8 +1,8 @@
 import { Effect } from "effect";
-import { nowMs } from "@smithers-orchestrator/scheduler/nowMs";
-import { revertToJjPointer } from "@smithers-orchestrator/vcs/jj";
+import { nowMs } from "@smthrs/scheduler/nowMs";
+import { revertToJjPointer } from "@smthrs/vcs/jj";
 import * as BunContext from "@effect/platform-bun/BunContext";
-/** @typedef {import("@smithers-orchestrator/db/adapter").SmithersDb} SmithersDb */
+/** @typedef {import("@smthrs/db/adapter").SmithersDb} SmithersDb */
 /** @typedef {import("./TimeTravelOptions.ts").TimeTravelOptions} TimeTravelOptions */
 /** @typedef {import("./TimeTravelResult.ts").TimeTravelResult} TimeTravelResult */
 

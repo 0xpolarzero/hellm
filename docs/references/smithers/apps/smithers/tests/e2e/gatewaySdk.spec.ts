@@ -9,7 +9,7 @@ const WORKFLOW_KEY = "demo-ui";
 const RUN_ID = "demo-ui-run-1";
 
 /**
- * Live-data path through `@smithers-orchestrator/gateway-client`. The legacy
+ * Live-data path through `@smthrs/gateway-client`. The legacy
  * `gatewayRpc` fetch helper + 3s `setInterval` polls were replaced with the SDK
  * (`SmithersGatewayClient`) and its WebSocket streams (`streamRunEventsResilient`
  * / `streamDevTools`). This spec pins the boundary that change crossed:

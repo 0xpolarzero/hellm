@@ -4,7 +4,7 @@ description: Sandboxed file and shell tools for AI agent tasks, with exact input
 ---
 
 ```ts
-import { tools, read, write, edit, grep, bash, defineTool, getDefinedToolMetadata } from "smithers-orchestrator";
+import { tools, read, write, edit, grep, bash, defineTool, getDefinedToolMetadata } from "smthrs";
 ```
 
 `tools` bundles all five tools keyed by name:
@@ -13,7 +13,7 @@ import { tools, read, write, edit, grep, bash, defineTool, getDefinedToolMetadat
 const { read, write, edit, grep, bash } = tools;
 ```
 
-The `smithers-orchestrator/tools` subpath also exports lower-level helpers for advanced integrations:
+The `smthrs/tools` subpath also exports lower-level helpers for advanced integrations:
 
 | Export | Purpose |
 |---|---|
@@ -59,7 +59,7 @@ Every invocation is logged to `_smithers_tool_calls`:
 `defineTool()` wraps custom [AI SDK](https://ai-sdk.dev) tools with Smithers runtime context, deterministic idempotency keys, and durable tool-call logging.
 
 ```ts
-import { defineTool } from "smithers-orchestrator";
+import { defineTool } from "smthrs";
 import { z } from "zod";
 
 const placeOrder = defineTool({
@@ -160,7 +160,7 @@ Returns file contents as UTF-8. Throws `"File too large"` if size exceeds `maxOu
 ```ts
 import { ToolLoopAgent as Agent } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { read, grep } from "smithers-orchestrator";
+import { read, grep } from "smthrs";
 
 const codeAgent = new Agent({
   model: anthropic("claude-sonnet-4-20250514"),
@@ -193,7 +193,7 @@ Returns `"ok"`. Throws `"Content too large"` if content exceeds `maxOutputBytes`
 ```ts
 import { ToolLoopAgent as Agent } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { write, read } from "smithers-orchestrator";
+import { write, read } from "smthrs";
 
 const writerAgent = new Agent({
   model: anthropic("claude-sonnet-4-20250514"),
@@ -280,7 +280,7 @@ Local git commands (`git status`, `git diff`, `git log`) are allowed.
 ```ts
 import { ToolLoopAgent as Agent } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { bash } from "smithers-orchestrator";
+import { bash } from "smthrs";
 
 const devAgent = new Agent({
   model: anthropic("claude-sonnet-4-20250514"),
@@ -304,7 +304,7 @@ Pass tools to an [AI SDK](https://ai-sdk.dev) agent and assign the agent to a [`
 ```tsx
 import { ToolLoopAgent as Agent } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { createSmithers, read, write, edit, grep, bash, Task } from "smithers-orchestrator";
+import { createSmithers, read, write, edit, grep, bash, Task } from "smthrs";
 import { z } from "zod";
 
 const codeAgent = new Agent({
@@ -331,7 +331,7 @@ The full bundle works too:
 ```ts
 import { ToolLoopAgent as Agent } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { tools } from "smithers-orchestrator";
+import { tools } from "smthrs";
 
 const fullAgent = new Agent({
   model: anthropic("claude-sonnet-4-20250514"),
@@ -350,7 +350,7 @@ const fullAgent = new Agent({
 
 ```ts
 import { Effect } from "effect";
-import { runWorkflow } from "smithers-orchestrator";
+import { runWorkflow } from "smthrs";
 
 const result = await Effect.runPromise(runWorkflow(workflow, {
   input: { file: "src/auth.ts" },

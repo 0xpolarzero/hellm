@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { createSmithers, Gateway, SmithersDb } from "smithers-orchestrator";
-import { jsx } from "smithers-orchestrator/jsx-runtime";
+import { createSmithers, Gateway, SmithersDb } from "smthrs";
+import { jsx } from "smthrs/jsx-runtime";
 
 /**
  * Boot the REAL Smithers Gateway for the studio dev stack.

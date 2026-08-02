@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { accountsRoot } from "@smithers-orchestrator/accounts";
+import { accountsRoot } from "@smthrs/accounts";
 
 /** @typedef {import("./UsageReport.ts").UsageReport} UsageReport */
 /** @typedef {{ version: 1; entries: Record<string, { report: UsageReport }> }} UsageCacheFile */

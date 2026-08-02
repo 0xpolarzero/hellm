@@ -1,1 +1,1 @@
-export type { ScorersMap } from "@smithers-orchestrator/graph/types";
+export type { ScorersMap } from "@smthrs/graph/types";

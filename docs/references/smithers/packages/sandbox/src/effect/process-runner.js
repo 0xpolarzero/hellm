@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { spawnCaptureEffect } from "@smithers-orchestrator/driver/child-process";
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
+import { spawnCaptureEffect } from "@smthrs/driver/child-process";
+import { SmithersError } from "@smthrs/errors/SmithersError";
 import { Effect } from "effect";
 
 const DEFAULT_SANDBOX_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;

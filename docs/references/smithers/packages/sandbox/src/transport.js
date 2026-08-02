@@ -6,7 +6,7 @@
 // @smithers-type-exports-end
 
 import { Context, Effect, Layer } from "effect";
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
+import { SmithersError } from "@smthrs/errors/SmithersError";
 import { CodeplaneSandboxExecutorLive, DockerSandboxExecutorLive, } from "./effect/http-runner.js";
 import { makeSandboxTransportServiceEffect, } from "./effect/sandbox-entity.js";
 import { BubblewrapSandboxExecutorLive } from "./effect/socket-runner.js";

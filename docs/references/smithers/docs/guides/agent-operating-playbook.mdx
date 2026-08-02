@@ -174,26 +174,26 @@ If you cannot see the run, you cannot operate it well.
 For local and development work, use the CLI surfaces yourself:
 
 ```bash
-bunx smithers-orchestrator ps
-bunx smithers-orchestrator inspect <run-id> --watch
-bunx smithers-orchestrator events <run-id> --watch
-bunx smithers-orchestrator node <run-id> <node-id>
-bunx smithers-orchestrator scores <run-id>
-bunx smithers-orchestrator why <run-id>
+bunx smthrs ps
+bunx smthrs inspect <run-id> --watch
+bunx smthrs events <run-id> --watch
+bunx smthrs node <run-id> <node-id>
+bunx smthrs scores <run-id>
+bunx smthrs why <run-id>
 ```
 
 Use serve mode when you need HTTP status, SSE events, remote approvals, or
 Prometheus metrics:
 
 ```bash
-bunx smithers-orchestrator up workflow.tsx --serve --metrics --port 7331
+bunx smthrs up workflow.tsx --serve --metrics --port 7331
 ```
 
 Use the observability stack when the work needs traces, metrics, dashboards, or
 a reviewer evidence bundle:
 
 ```bash
-bunx smithers-orchestrator observability
+bunx smthrs observability
 ```
 
 Enable OpenTelemetry export when you need trace-level proof, then include the
@@ -218,8 +218,8 @@ plan, gates, and evidence live." Do not phrase it as homework for the human.
 Use hot mode while authoring or tuning a workflow:
 
 ```bash
-bunx smithers-orchestrator graph workflow.tsx
-bunx smithers-orchestrator up workflow.tsx --hot true --input '{"prompt":"..."}'
+bunx smthrs graph workflow.tsx
+bunx smthrs up workflow.tsx --hot true --input '{"prompt":"..."}'
 ```
 
 The graph command validates the rendered shape without executing the whole job.

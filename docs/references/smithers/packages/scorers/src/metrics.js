@@ -3,4 +3,4 @@ export {
     scorersFailed,
     scorersFinished,
     scorersStarted,
-} from "@smithers-orchestrator/observability/metrics";
+} from "@smthrs/observability/metrics";

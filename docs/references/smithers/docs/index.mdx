@@ -39,8 +39,8 @@ harnesses should operate Smithers for the human, including the `llms.txt` and
 </CardGroup>
 
 ```tsx
-/** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, Task } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { createSmithers, Sequence, Task } from "smthrs";
 import { z } from "zod";
 
 const { Workflow, smithers, outputs } = createSmithers({
@@ -59,8 +59,8 @@ export default smithers((ctx) => (
 ```
 
 ```bash
-bunx smithers-orchestrator init
-bunx smithers-orchestrator up workflow.tsx --input '{"name":"world"}'
+bunx smthrs init
+bunx smthrs up workflow.tsx --input '{"name":"world"}'
 ```
 
 Outputs are validated by Zod, persisted to SQLite, and survive crashes. Resume with
@@ -102,14 +102,14 @@ to run, and treats having your agent author new ones as a first-class path.
 
 ## Built-in workflows
 
-`bunx smithers-orchestrator init` scaffolds a `.smithers/` folder preloaded with
+`bunx smthrs init` scaffolds a `.smithers/` folder preloaded with
 production-ready workflows. Point your agent at one and go with
-`bunx smithers-orchestrator workflow run <id> --prompt "..."`:
+`bunx smthrs workflow run <id> --prompt "..."`:
 
 ```bash
 # break a request into tickets, then implement them on a board
-bunx smithers-orchestrator workflow run tickets-create --prompt "add rate limiting and audit logging"
-bunx smithers-orchestrator workflow run kanban
+bunx smthrs workflow run tickets-create --prompt "add rate limiting and audit logging"
+bunx smthrs workflow run kanban
 ```
 
 <CardGroup cols={2}>

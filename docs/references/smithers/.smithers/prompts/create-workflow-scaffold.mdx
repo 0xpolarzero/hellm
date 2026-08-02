@@ -20,15 +20,15 @@ own `.mdx` file, one per prompt named in the design.
 
 1. **Start from the closest example** named in the provisioning manifest — copy
    its structure, then adapt. Don't invent API; if unsure, re-read the example or
-   `bunx smithers-orchestrator docs`.
+   `bunx smthrs docs`.
 2. **Workflow file header** — begin with the two seed comments and the JSX pragma,
    exactly like the other workflows in `{props.workflowsDir}`:
    ```
    // smithers-source: seeded
    // smithers-display-name: <Title Case Name>
-   /** @jsxImportSource smithers-orchestrator */
+   /** @jsxImportSource smthrs */
    ```
-3. **Imports** — `import { createSmithers } from "smithers-orchestrator"`,
+3. **Imports** — `import { createSmithers } from "smthrs"`,
    `import { z } from "zod/v4"`, `import { agents } from "../agents"`, any
    components from `../components`, and each prompt from `../prompts/<name>.mdx`.
 4. **Schemas** — define the Zod input schema and one schema per task output.

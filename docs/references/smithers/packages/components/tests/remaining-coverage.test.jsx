@@ -1,16 +1,16 @@
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 import { describe, expect, test } from "bun:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { z } from "zod";
-import { SmithersDb } from "@smithers-orchestrator/db/adapter";
-import { ensureSmithersTables } from "@smithers-orchestrator/db/ensure";
-import { buildHumanRequestId } from "@smithers-orchestrator/db/buildHumanRequestId";
-import { withTaskRuntime } from "@smithers-orchestrator/driver/task-runtime";
-import { ClaudeCodeAgent } from "@smithers-orchestrator/agents/ClaudeCodeAgent";
-import { GeminiAgent } from "@smithers-orchestrator/agents/GeminiAgent";
-import { PiAgent } from "@smithers-orchestrator/agents/PiAgent";
-import { SmithersRenderer } from "@smithers-orchestrator/react-reconciler/dom/renderer";
+import { SmithersDb } from "@smthrs/db/adapter";
+import { ensureSmithersTables } from "@smthrs/db/ensure";
+import { buildHumanRequestId } from "@smthrs/db/buildHumanRequestId";
+import { withTaskRuntime } from "@smthrs/driver/task-runtime";
+import { ClaudeCodeAgent } from "@smthrs/agents/ClaudeCodeAgent";
+import { GeminiAgent } from "@smthrs/agents/GeminiAgent";
+import { PiAgent } from "@smthrs/agents/PiAgent";
+import { SmithersRenderer } from "@smthrs/react-reconciler/dom/renderer";
 import {
     Approval,
     Aspects,

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { gatewayKeys } from "@smithers-orchestrator/gateway-client";
+import { gatewayKeys } from "@smthrs/gateway-client";
 import { useSyncSubscription, type UseSyncSubscriptionResult } from "./useSyncSubscription.ts";
 
 /**

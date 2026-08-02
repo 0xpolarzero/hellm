@@ -1,7 +1,7 @@
 import { Effect, Metric } from "effect";
-import { toSmithersError } from "@smithers-orchestrator/errors/toSmithersError";
-import { nowMs } from "@smithers-orchestrator/scheduler/nowMs";
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
+import { toSmithersError } from "@smthrs/errors/toSmithersError";
+import { nowMs } from "@smthrs/scheduler/nowMs";
+import { SmithersError } from "@smthrs/errors/SmithersError";
 import { smithersBranches, smithersSnapshots } from "../schema.js";
 import { loadSnapshot } from "../snapshot/loadSnapshotEffect.js";
 import { parseSnapshot } from "../snapshot/parseSnapshot.js";
@@ -10,7 +10,7 @@ import { runForksCreated } from "../runForksCreated.js";
 import { expandResetSet } from "./_helpers.js";
 /** @typedef {import("../BranchInfo.ts").BranchInfo} BranchInfo */
 /** @typedef {import("../ForkParams.ts").ForkParams} ForkParams */
-/** @typedef {import("@smithers-orchestrator/db/adapter").SmithersDb} SmithersDb */
+/** @typedef {import("@smthrs/db/adapter").SmithersDb} SmithersDb */
 /** @typedef {import("../snapshot/Snapshot.ts").Snapshot} Snapshot */
 
 /**

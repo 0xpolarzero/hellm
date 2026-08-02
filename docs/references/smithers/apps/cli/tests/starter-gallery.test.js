@@ -43,7 +43,7 @@ describe("starter gallery data", () => {
             expect(starter.goals.length).toBeGreaterThan(0);
             expect(starter.workflow).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
             expect(starter.outcome.length).toBeGreaterThan(20);
-            expect(starterCommand(starter)).toStartWith(`bunx smithers-orchestrator workflow run ${starter.workflow} --`);
+            expect(starterCommand(starter)).toStartWith(`bunx smthrs workflow run ${starter.workflow} --`);
         }
         expect(STARTER_TEMPLATE_IDS).toEqual(STARTER_RECIPES.map((starter) => starter.id));
     });
@@ -73,7 +73,7 @@ describe("starter gallery data", () => {
         const rendered = renderStarterGallery(buildStarterGallery());
         expect(rendered).not.toMatch(/(^|[\s`])smithers(?:\s|$)/);
         for (const recipe of STARTER_RECIPES) {
-            expect(starterCommand(recipe)).toStartWith("bunx smithers-orchestrator ");
+            expect(starterCommand(recipe)).toStartWith("bunx smthrs ");
             for (const followUp of recipe.followUps) {
                 expect(followUp).not.toMatch(/^smithers(?:\s|$)/);
             }
@@ -97,13 +97,13 @@ describe("starter gallery data", () => {
         const overview = renderStarterGallery(buildStarterGallery({ audience: "product" }));
         expect(overview).toContain("Smithers starters");
         expect(overview).toContain("idea-to-tickets");
-        expect(overview).toContain("Use `bunx smithers-orchestrator init --template <id>`");
+        expect(overview).toContain("Use `bunx smthrs init --template <id>`");
 
         const detail = renderStarterGallery(buildStarterGallery({ id: "customer-incident" }));
         expect(detail).toContain("Turn a customer report into a fix path");
         expect(detail).toContain("Template ID: customer-incident");
         expect(detail).toContain("Before you run it:");
-        expect(detail).toContain("bunx smithers-orchestrator workflow run debug");
+        expect(detail).toContain("bunx smthrs workflow run debug");
     });
 });
 
@@ -117,7 +117,7 @@ describe("smithers starters command", () => {
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("Smithers starters");
         expect(result.stdout).toContain("idea-to-tickets");
-        expect(result.stdout).toContain("bunx smithers-orchestrator workflow run tickets-create");
+        expect(result.stdout).toContain("bunx smthrs workflow run tickets-create");
     });
 
     test("emits structured JSON for integrations", () => {
@@ -140,6 +140,6 @@ describe("smithers starters command", () => {
         });
         expect(result.exitCode).toBe(4);
         expect(result.json.code).toBe("STARTER_NOT_FOUND");
-        expect(result.json.message).toContain('Run "bunx smithers-orchestrator starters"');
+        expect(result.json.message).toContain('Run "bunx smthrs starters"');
     });
 });

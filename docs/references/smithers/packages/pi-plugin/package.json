@@ -1,5 +1,5 @@
 {
-  "name": "@smithers-orchestrator/pi-plugin",
+  "name": "@smthrs/pi-plugin",
   "version": "0.23.0",
   "description": "PI coding agent integration for Smithers workflow inspection",
   "type": "module",
@@ -49,11 +49,11 @@
     "@mariozechner/pi-tui": "^0.70.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@sinclair/typebox": "^0.34.49",
-    "@smithers-orchestrator/agents": "workspace:*",
-    "@smithers-orchestrator/cli": "workspace:*",
-    "@smithers-orchestrator/devtools": "workspace:*",
-    "@smithers-orchestrator/errors": "workspace:*",
-    "@smithers-orchestrator/protocol": "workspace:*",
+    "@smthrs/agents": "^0.33.0",
+    "@smthrs/cli": "^0.33.0",
+    "@smthrs/devtools": "^0.33.0",
+    "@smthrs/errors": "^0.33.0",
+    "@smthrs/protocol": "^0.33.0",
     "ws": "^8.20.0"
   },
   "devDependencies": {

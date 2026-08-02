@@ -1726,7 +1726,7 @@ yield*
 //           manifestDependency: "dev-type-dependency",
 //         },
 //         {
-//           specifier: "smithers-orchestrator",
+//           specifier: "smthrs",
 //           importKind: "type-only",
 //           dependencyClass: "workspace-authoring-external",
 //           resolutionAuthority: "workspace-smithers-package",
@@ -2737,7 +2737,7 @@ type ShellCommandClassification = {
 ```
 
 Commands whose accepted command vector is the official Smithers CLI form
-`bunx smithers-orchestrator ...` are still ordinary `exec_command` work, but their classification is
+`bunx smthrs ...` are still ordinary `exec_command` work, but their classification is
 `{ appLogSource: "smithers", commandFamily: "smithers-cli" }` rather than generic direct-tool output.
 This classification is a per-command fact derived from the accepted command, not static native-tool
 metadata and not a Smithers wrapper surface.

@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
-import { SmithersError } from "@smithers-orchestrator/errors";
-import { listAccounts } from "@smithers-orchestrator/accounts";
+import { SmithersError } from "@smthrs/errors";
+import { listAccounts } from "@smthrs/accounts";
 /** @typedef {import("./AgentAvailability.ts").AgentAvailability} AgentAvailability */
 /** @typedef {import("./AgentAvailabilityStatus.ts").AgentAvailabilityStatus} AgentAvailabilityStatus */
 
@@ -570,7 +570,7 @@ function pathLiteral(absPath, homeDir) {
  * `providers.<labelCamel>` entry is emitted per registered account; pools
  * group accounts by engine family.
  *
- * @param {import("@smithers-orchestrator/accounts").Account[]} accounts
+ * @param {import("@smthrs/accounts").Account[]} accounts
  * @param {NodeJS.ProcessEnv} env
  * @returns {string}
  */
@@ -606,7 +606,7 @@ function generateAccountsAgentsTs(accounts, env) {
         "// Source of truth: ~/.smithers/accounts.json (managed via `smithers agent add|list|remove`)",
         'import { homedir } from "node:os";',
         'import path from "node:path";',
-        `import { ${smithersImportSpecifiers.join(", ")} } from "smithers-orchestrator";`,
+        `import { ${smithersImportSpecifiers.join(", ")} } from "smthrs";`,
         "",
         "export const providers = {",
         ...providerLines,
@@ -623,7 +623,7 @@ function generateAccountsAgentsTs(accounts, env) {
  * Renders an account as `<labelCamel>: new SmithersFooAgent({ ... })` for
  * inclusion in the providers map.
  *
- * @param {import("@smithers-orchestrator/accounts").Account} account
+ * @param {import("@smthrs/accounts").Account} account
  * @param {string} homeDir
  * @returns {string}
  */
@@ -786,7 +786,7 @@ export function generateAgentsTs(env = process.env, options = {}) {
         "// smithers-source: generated",
         ...(hasAccounts ? ["// Account providers (camelCase labels) come from ~/.smithers/accounts.json — managed via `smithers agent add|list|remove`."] : []),
         ...(hasAccounts ? ['import { homedir } from "node:os";', 'import path from "node:path";'] : []),
-        `import { ${smithersImportSpecifiers.join(", ")} } from "smithers-orchestrator";`,
+        `import { ${smithersImportSpecifiers.join(", ")} } from "smthrs";`,
         ...scaffoldImportLines,
         "",
         ...scaffoldExportLines,

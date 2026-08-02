@@ -5,7 +5,7 @@ description: Tight, reusable patterns. Copy, paste, adapt.
 
 Each recipe is a working snippet plus one line of context. They compose freely.
 
-If you want a ready-to-run outcome before writing workflow code, start with [Starters](/starters) or run `bunx smithers-orchestrator starters`.
+If you want a ready-to-run outcome before writing workflow code, start with [Starters](/starters) or run `bunx smthrs starters`.
 
 ## Implement → review loop
 
@@ -146,7 +146,7 @@ One context boundary per logical operation, not per step. Splitting too finely l
 ## Per-agent least-privilege tools
 
 ```tsx
-import { AnthropicAgent } from "smithers-orchestrator";
+import { AnthropicAgent } from "smthrs";
 
 const analyst     = new AnthropicAgent({ model, system: "Return JSON" });               // no tools
 const reviewer    = new AnthropicAgent({ model, system: "...", tools: { read, grep } }); // read-only
@@ -160,7 +160,7 @@ Match the tool surface to the role.
 External mutations must mark themselves and use the runtime idempotency key.
 
 ```tsx
-import { defineTool } from "smithers-orchestrator/tools";
+import { defineTool } from "smthrs/tools";
 
 const createTicket = defineTool({
   name: "jira.create",
@@ -245,7 +245,7 @@ Workflow logic factors out into hooks the same way React UI logic does.
 Smithers records a jj change ID (or git SHA) per attempt. Revert any attempt to its exact workspace state:
 
 ```bash
-bunx smithers-orchestrator revert workflow.tsx --run-id <id> --node-id implement --attempt 1
+bunx smthrs revert workflow.tsx --run-id <id> --node-id implement --attempt 1
 ```
 
 Useful when an experiment leaves the worktree in a bad state.
@@ -253,10 +253,10 @@ Useful when an experiment leaves the worktree in a bad state.
 ## Time travel: fork, replay, diff
 
 ```bash
-bunx smithers-orchestrator timeline <run-id> --tree
-bunx smithers-orchestrator diff <run-id> <node-id>
-bunx smithers-orchestrator fork workflow.tsx --run-id <id> --frame 5 --reset-node analyze --label exp1
-bunx smithers-orchestrator replay workflow.tsx --run-id <id> --frame 5 --restore-vcs
+bunx smthrs timeline <run-id> --tree
+bunx smthrs diff <run-id> <node-id>
+bunx smthrs fork workflow.tsx --run-id <id> --frame 5 --reset-node analyze --label exp1
+bunx smthrs replay workflow.tsx --run-id <id> --frame 5 --restore-vcs
 ```
 
 Fork makes a child run without starting it (add `--run` to start immediately); replay also makes a child run but immediately resumes it. `--restore-vcs` checks out the original revision so re-execution sees the same source.
@@ -264,7 +264,7 @@ Fork makes a child run without starting it (add `--run` to start immediately); r
 ## Scoring tasks
 
 ```tsx
-import { schemaAdherenceScorer, latencyScorer, llmJudge } from "smithers-orchestrator/scorers";
+import { schemaAdherenceScorer, latencyScorer, llmJudge } from "smthrs/scorers";
 
 <Task
   id="analyze"
@@ -293,7 +293,7 @@ Scorers run after the task and never block. Sample expensive scorers with `ratio
 ```
 
 ```bash
-bunx smithers-orchestrator eval workflow.tsx --cases evals/smoke.jsonl --suite smoke --force
+bunx smthrs eval workflow.tsx --cases evals/smoke.jsonl --suite smoke --force
 ```
 
 Use eval suites when you need repeatable workflow-level checks. Assertions support `status`, `output` (exact match), and `outputContains` (partial match). Reports land in `.smithers/evals/<suite>.json`; the command exits non-zero on failures.
@@ -311,7 +311,7 @@ Avoids unbounded SQLite growth in long-lived loops.
 ## Hot reload while authoring
 
 ```bash
-bunx smithers-orchestrator up workflow.tsx --hot
+bunx smthrs up workflow.tsx --hot
 ```
 
 Edits to the workflow source apply on the next render frame without losing in-flight task state. Schema changes still require a fresh run.

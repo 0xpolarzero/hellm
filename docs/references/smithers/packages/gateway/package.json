@@ -1,5 +1,5 @@
 {
-  "name": "@smithers-orchestrator/gateway",
+  "name": "@smthrs/gateway",
   "version": "0.23.0",
   "description": "Stable Smithers Gateway RPC contracts, auth scopes, and deployment metadata",
   "type": "module",

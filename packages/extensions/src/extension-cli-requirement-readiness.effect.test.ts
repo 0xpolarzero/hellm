@@ -129,7 +129,7 @@ describe("extension CLI requirement readiness", () => {
             declaration("smithers", {
               binary: "bunx",
               defaultVersion: "0.22.0",
-              versionCommand: "bunx smithers-orchestrator --version",
+              versionCommand: "bunx smthrs --version",
             }),
           ]),
         });

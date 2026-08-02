@@ -2816,7 +2816,7 @@ describe("State read-model kind expansion", () => {
                 id: "smithers-cli",
                 requirementFingerprint: "sha256:smithers-cli-v1",
                 binary: "smithers",
-                package: "smithers-orchestrator",
+                package: "smthrs",
                 required: false,
                 defaultVersion: "0.22.0",
                 versionCommand: "smithers --version",

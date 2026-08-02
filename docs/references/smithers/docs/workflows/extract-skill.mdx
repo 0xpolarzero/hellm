@@ -9,7 +9,7 @@ for a new workflow, and memory facts worth keeping. Reach for it right after a r
 when you notice yourself doing the same thing again.
 
 ```bash
-bunx smithers-orchestrator workflow run extract-skill \
+bunx smthrs workflow run extract-skill \
   --input '{"runId":"<run-id>","prompt":"Harvest the way we triage flaky tests into a reusable skill"}'
 ```
 
@@ -34,10 +34,10 @@ context. When the pattern is skill-shaped, the workflow writes the skill to
 ## Monitor it
 
 ```bash
-bunx smithers-orchestrator workflow run extract-skill --input '{"runId":"<id>","prompt":"…"}' -d   # detach
-bunx smithers-orchestrator ps                                                                       # active / paused / recent
-bunx smithers-orchestrator logs <runId> -f                                                          # follow events
-bunx smithers-orchestrator inspect <runId>                                                          # full run state
+bunx smthrs workflow run extract-skill --input '{"runId":"<id>","prompt":"…"}' -d   # detach
+bunx smthrs ps                                                                       # active / paused / recent
+bunx smthrs logs <runId> -f                                                          # follow events
+bunx smthrs inspect <runId>                                                          # full run state
 ```
 
 Use this to close the loop after a run: instead of re-deriving the same approach

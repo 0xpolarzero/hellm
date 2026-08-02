@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
   createSmithersAgentContract,
   renderSmithersAgentPromptGuidance,
-} from "@smithers-orchestrator/agents/agent-contract";
+} from "@smthrs/agents/agent-contract";
 import { buildSmithersPiSystemPrompt } from "../src/buildSmithersPiSystemPrompt.js";
 
 describe("buildSmithersPiSystemPrompt", () => {
   test("standalone extension export resolves from the package path", async () => {
-    const mod = await import("@smithers-orchestrator/pi-plugin/extension");
+    const mod = await import("@smthrs/pi-plugin/extension");
 
     expect(typeof mod.extension).toBe("function");
   });

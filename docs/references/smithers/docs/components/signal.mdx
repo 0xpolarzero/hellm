@@ -4,7 +4,7 @@ description: Typed wrapper around &lt;WaitForEvent&gt;; signal name equals node 
 ---
 
 ```ts
-import { Signal } from "smithers-orchestrator";
+import { Signal } from "smthrs";
 
 type SignalProps = {
   id: string; // signal name and node id
@@ -25,7 +25,7 @@ type SignalProps = {
 ```
 
 ```tsx
-import { Signal, Task, Workflow, createSmithers } from "smithers-orchestrator";
+import { Signal, Task, Workflow, createSmithers } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({

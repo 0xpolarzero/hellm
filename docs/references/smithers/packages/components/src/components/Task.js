@@ -10,14 +10,14 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { markdownComponents } from "../markdownComponents.js";
 import { zodSchemaToJsonExample } from "../zod-to-example.js";
-import { SmithersError } from "@smithers-orchestrator/errors/SmithersError";
-import { SmithersContext } from "@smithers-orchestrator/react-reconciler/context";
+import { SmithersError } from "@smthrs/errors/SmithersError";
+import { SmithersContext } from "@smthrs/react-reconciler/context";
 import { AspectContext } from "../aspects/AspectContext.js";
-import { AntigravityAgent } from "@smithers-orchestrator/agents/AntigravityAgent";
-import { ClaudeCodeAgent } from "@smithers-orchestrator/agents/ClaudeCodeAgent";
-import { GeminiAgent } from "@smithers-orchestrator/agents/GeminiAgent";
-import { PiAgent } from "@smithers-orchestrator/agents/PiAgent";
-/** @typedef {import("@smithers-orchestrator/agents/AgentLike").AgentLike} AgentLike */
+import { AntigravityAgent } from "@smthrs/agents/AntigravityAgent";
+import { ClaudeCodeAgent } from "@smthrs/agents/ClaudeCodeAgent";
+import { GeminiAgent } from "@smthrs/agents/GeminiAgent";
+import { PiAgent } from "@smthrs/agents/PiAgent";
+/** @typedef {import("@smthrs/agents/AgentLike").AgentLike} AgentLike */
 /** @typedef {import("./DepsSpec.ts").DepsSpec} DepsSpec */
 /**
  * @template Row, Output, D

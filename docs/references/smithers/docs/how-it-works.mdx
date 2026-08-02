@@ -225,7 +225,7 @@ Replay with `--restore-vcs` checks out the jj revision the snapshot was taken at
 Attach evaluators to a Task. They run **after** completion and never block.
 
 ```tsx
-import { schemaAdherenceScorer, latencyScorer } from "smithers-orchestrator/scorers";
+import { schemaAdherenceScorer, latencyScorer } from "smthrs/scorers";
 
 <Task
   id="analyze"
@@ -261,7 +261,7 @@ Five built-in tools — `read`, `write`, `edit`, `grep`, `bash` — sandboxed to
 Least-privilege per task:
 
 ```tsx
-import { AnthropicAgent } from "smithers-orchestrator";
+import { AnthropicAgent } from "smthrs";
 const analyst     = new AnthropicAgent({ model, instructions: "..." }); // no tools
 const reviewer    = new AnthropicAgent({ model, instructions: "...", tools: { read, grep } });
 const implementer = new AnthropicAgent({ model, instructions: "...", tools: { read, write, edit, bash } });

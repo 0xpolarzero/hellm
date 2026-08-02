@@ -7,4 +7,4 @@ export {
   getToolContext,
   getToolIdempotencyKey,
   nextToolSeq,
-} from "@smithers-orchestrator/tool-context";
+} from "@smthrs/tool-context";

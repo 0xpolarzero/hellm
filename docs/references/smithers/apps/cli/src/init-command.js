@@ -1,5 +1,5 @@
 import { z } from "incur";
-import { SmithersError } from "@smithers-orchestrator/errors";
+import { SmithersError } from "@smthrs/errors";
 import { agentAddWizard } from "./agent-commands/agentAddWizard.js";
 import { runInitCeremony } from "./initCeremony.js";
 import { renderInitNextSteps } from "./renderInitNextSteps.js";
@@ -48,7 +48,7 @@ function buildInitCta(templateResult) {
         description: "Next steps",
         commands: templateResult
             ? [
-                { command: templateResult.command.replace(/^bunx smithers-orchestrator\s+/, ""), description: `Run ${templateResult.id}` },
+                { command: templateResult.command.replace(/^bunx smthrs\s+/, ""), description: `Run ${templateResult.id}` },
                 { command: "starters", description: "Browse the other templates" },
                 { command: "workflow list", description: "View all available workflows" },
             ]

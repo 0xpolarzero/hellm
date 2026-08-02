@@ -1,7 +1,7 @@
 import * as ai from 'ai';
 import { ToolLoopAgent, ToolSet, ToolLoopAgentSettings } from 'ai';
 import { Effect } from 'effect';
-import { SmithersError } from '@smithers-orchestrator/errors/SmithersError';
+import { SmithersError } from '@smthrs/errors/SmithersError';
 import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
 import * as zod_v4_core from 'zod/v4/core';

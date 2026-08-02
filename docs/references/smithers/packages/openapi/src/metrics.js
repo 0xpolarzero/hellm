@@ -2,4 +2,4 @@ export {
     openApiToolCallsTotal,
     openApiToolCallErrorsTotal,
     openApiToolDuration,
-} from "@smithers-orchestrator/observability/metrics";
+} from "@smthrs/observability/metrics";

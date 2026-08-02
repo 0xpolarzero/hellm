@@ -27,8 +27,8 @@ function writeWorkflowPackTypecheckHarness(repo) {
         "}",
         "",
     ].join("\n"));
-    repo.write(".smithers/types/smithers-orchestrator.d.ts", [
-        'declare module "smithers-orchestrator" {',
+    repo.write(".smithers/types/smthrs.d.ts", [
+        'declare module "smthrs" {',
         "  export type AgentLike = any;",
         "  export type OutputTarget = any;",
         "  export type SmithersCtx<T = any> = any;",
@@ -64,8 +64,8 @@ function writeWorkflowPackTypecheckHarness(repo) {
         "}",
         "",
     ].join("\n"));
-    repo.write(".smithers/types/smithers-orchestrator-jsx-runtime.d.ts", [
-        'declare module "smithers-orchestrator/jsx-runtime" {',
+    repo.write(".smithers/types/smthrs-jsx-runtime.d.ts", [
+        'declare module "smthrs/jsx-runtime" {',
         "  export const Fragment: any;",
         "  export function jsx(type: any, props: any, key?: any): any;",
         "  export function jsxs(type: any, props: any, key?: any): any;",
@@ -73,8 +73,8 @@ function writeWorkflowPackTypecheckHarness(repo) {
         "}",
         "",
     ].join("\n"));
-    repo.write(".smithers/types/smithers-orchestrator-gateway-react.d.ts", [
-        'declare module "smithers-orchestrator/gateway-react" {',
+    repo.write(".smithers/types/smthrs-gateway-react.d.ts", [
+        'declare module "smthrs/gateway-react" {',
         "  export const createGatewayReactRoot: any;",
         "  export function useGatewayActions(): any;",
         "  export function useGatewayApprovals(...args: any[]): any;",
@@ -93,9 +93,9 @@ function writeWorkflowPackTypecheckHarness(repo) {
             types: ["node", "react", "react-dom", "mdx"],
             paths: {
                 "~/*": ["./*"],
-                "smithers-orchestrator": ["./types/smithers-orchestrator.d.ts"],
-                "smithers-orchestrator/gateway-react": ["./types/smithers-orchestrator-gateway-react.d.ts"],
-                "smithers-orchestrator/jsx-runtime": ["./types/smithers-orchestrator-jsx-runtime.d.ts"],
+                "smthrs": ["./types/smthrs.d.ts"],
+                "smthrs/gateway-react": ["./types/smthrs-gateway-react.d.ts"],
+                "smthrs/jsx-runtime": ["./types/smthrs-jsx-runtime.d.ts"],
             },
         },
         include: [
@@ -236,7 +236,7 @@ test("smithers init --template preserves the default scaffold and returns the se
     expect(repo.exists(".smithers/workflows/implement.tsx")).toBe(true);
     expect(result.json.template.id).toBe("idea-to-tickets");
     expect(result.json.template.workflow).toBe("tickets-create");
-    expect(result.json.template.command).toStartWith("bunx smithers-orchestrator workflow run tickets-create --");
+    expect(result.json.template.command).toStartWith("bunx smthrs workflow run tickets-create --");
     expect(result.json.install).toMatchObject({
         reason: "skip-install",
         status: "skipped",

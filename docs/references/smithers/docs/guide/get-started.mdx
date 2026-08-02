@@ -16,8 +16,8 @@ Three steps. Each is one line your agent runs under the hood, then a sentence yo
 Two commands wire Smithers into every coding agent on your machine (Claude Code, Codex, Cursor, Copilot, and ~20 more), no per-agent config by hand.
 
 ```bash
-bunx smithers-orchestrator skills add   # one skill per CLI verb, so the agent can run any command
-bunx smithers-orchestrator mcp add      # register Smithers as an MCP server in each one
+bunx smthrs skills add   # one skill per CLI verb, so the agent can run any command
+bunx smthrs mcp add      # register Smithers as an MCP server in each one
 ```
 
 `skills add` drops a skill for each Smithers command (`smithers ps`, `smithers up`, `smithers inspect`, …) so the agent runs any verb without reading `--help` first; `mcp add` wires in the Smithers MCP server. Together they make the agent *able* to operate Smithers.
@@ -45,7 +45,7 @@ The full per-agent matrix and this curated onboarding skill are covered in [Inst
 From inside your project, scaffold the local workflow pack.
 
 ```bash
-bunx smithers-orchestrator init
+bunx smthrs init
 ```
 
 This drops a `.smithers/` folder with task-specific and project-specific workflows already built: `implement`, `plan`, `research-plan-implement`, `review`, `debug`, `ralph`, and more. These are the recipes your agent will pick from. Nothing to author yet.

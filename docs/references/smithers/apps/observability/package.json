@@ -1,5 +1,5 @@
 {
-  "name": "@smithers-orchestrator/observability",
+  "name": "@smthrs/observability",
   "version": "0.23.0",
   "description": "Concrete Smithers metrics, logging, tracing, and observability integrations",
   "type": "module",
@@ -33,7 +33,7 @@
     "@effect/opentelemetry": "^0.63.0",
     "@effect/platform": "^0.96.0",
     "@effect/platform-bun": "^0.89.0",
-    "@smithers-orchestrator/agents": "workspace:*",
+    "@smthrs/agents": "^0.33.0",
     "effect": "^3.21.1"
   },
   "devDependencies": {

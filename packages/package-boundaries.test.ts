@@ -7826,7 +7826,7 @@ describe("package boundaries", () => {
       Array.from(markerSource.matchAll(/"([^"]+)"/g), (match) => match[1] ?? ""),
     );
     const officialMarkers = requiredMarkers.filter((marker) =>
-      marker.startsWith("bunx smithers-orchestrator "),
+      marker.startsWith("bunx smthrs "),
     );
 
     expect(officialMarkers.length).toBeGreaterThan(0);
@@ -8449,7 +8449,7 @@ describe("package boundaries", () => {
           sourcePath: "/workflows/workflows/review.tsx" as AbsolutePath,
           relativeGeneratedPath: "workflows/reviewWorkflow.tsx",
           sourceText:
-            'import { Task } from "smithers-orchestrator";\n' +
+            'import { Task } from "smthrs";\n' +
             'import { Extensions } from "@svvyx/extensions";\n' +
             "export const reviewWorkflow = Task;\n",
         },
@@ -10786,7 +10786,7 @@ describe("package boundaries", () => {
     ].filter(
       (name) =>
         name.startsWith("@svvyx/") ||
-        name === "smithers-orchestrator" ||
+        name === "smthrs" ||
         name === "@smithers/orchestrator",
     );
 

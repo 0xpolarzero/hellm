@@ -74,7 +74,7 @@ describe("generated workflows package", () => {
       files.find((file) => file.relativePath === "package.json")?.contents ?? "",
     );
     const smithersAmbientTypes = files.find(
-      (file) => file.relativePath === "smithers-orchestrator.ambient.d.ts",
+      (file) => file.relativePath === "smthrs.ambient.d.ts",
     );
     const manifest = JSON.parse(
       files.find((file) => file.relativePath === ".svvy-generated-package.json")?.contents ?? "",
@@ -117,12 +117,12 @@ describe("generated workflows package", () => {
       ),
       [],
     );
-    assert.match(smithersAmbientTypes?.contents ?? "", /declare module "smithers-orchestrator"/);
+    assert.match(smithersAmbientTypes?.contents ?? "", /declare module "smthrs"/);
     assert.match(
       smithersAmbientTypes?.contents ?? "",
       /generate: \(args: unknown\) => Promise<unknown>/,
     );
-    assert.strictEqual(JSON.stringify(packageJson).includes("smithers-orchestrator"), false);
+    assert.strictEqual(JSON.stringify(packageJson).includes("smthrs"), false);
     assert.deepStrictEqual(
       manifest.dependencies.filter(
         (dependency: Record<string, unknown>) =>
@@ -210,7 +210,7 @@ describe("generated workflows package", () => {
           sourcePath: "/workflows/workflows/review.tsx" as AbsolutePath,
           relativeGeneratedPath: "workflows/reviewWorkflow.tsx",
           sourceText: [
-            `${moduleLoadWord} { Task } from "smithers-orchestrator";`,
+            `${moduleLoadWord} { Task } from "smthrs";`,
             "export const reviewWorkflow = Task;",
             "",
           ].join("\n"),
@@ -229,11 +229,11 @@ describe("generated workflows package", () => {
 
     assert.deepStrictEqual(
       manifest.dependencies.filter(
-        (dependency: Record<string, unknown>) => dependency.specifier === "smithers-orchestrator",
+        (dependency: Record<string, unknown>) => dependency.specifier === "smthrs",
       ),
       [
         {
-          specifier: "smithers-orchestrator",
+          specifier: "smthrs",
           importKind: "runtime",
           dependencyClass: "workspace-authoring-external",
           resolutionAuthority: "workspace-smithers-package",
@@ -674,7 +674,7 @@ describe("generated workflows package", () => {
                 moduleLoadWord,
                 " { Task } ",
                 "from ",
-                JSON.stringify("smithers-orchestrator"),
+                JSON.stringify("smthrs"),
                 ";",
               ].join(""),
               [

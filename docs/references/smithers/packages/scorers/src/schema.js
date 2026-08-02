@@ -1,1 +1,1 @@
-export { smithersScorers } from "@smithers-orchestrator/db/internal-schema";
+export { smithersScorers } from "@smthrs/db/internal-schema";

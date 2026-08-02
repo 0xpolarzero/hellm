@@ -4,25 +4,25 @@ description: Scaffold and run a Smithers workflow in two commands.
 ---
 
 ```bash
-bunx smithers-orchestrator init
-bunx smithers-orchestrator init --template idea-to-tickets
-bunx smithers-orchestrator workflow run implement --prompt "Add rate limiting"
+bunx smthrs init
+bunx smthrs init --template idea-to-tickets
+bunx smthrs workflow run implement --prompt "Add rate limiting"
 ```
 
-`init` scaffolds `.smithers/` (workflows, prompts, components, agent config). Add `--template <id>` when you want the init result to include the selected starter command and follow-up notes. Run `bunx smithers-orchestrator starters` to browse template IDs.
+`init` scaffolds `.smithers/` (workflows, prompts, components, agent config). Add `--template <id>` when you want the init result to include the selected starter command and follow-up notes. Run `bunx smthrs starters` to browse template IDs.
 
 Inspect the run:
 
 ```bash
-bunx smithers-orchestrator ps
-bunx smithers-orchestrator inspect <run-id>
-bunx smithers-orchestrator logs <run-id> --tail 20
+bunx smthrs ps
+bunx smthrs inspect <run-id>
+bunx smthrs logs <run-id> --tail 20
 ```
 
 Resume after a crash:
 
 ```bash
-bunx smithers-orchestrator up workflow.tsx --run-id <run-id> --resume true
+bunx smthrs up workflow.tsx --run-id <run-id> --resume true
 ```
 
 Prefer to let your agent drive? [Install the agent skill](/installation#install-the-agent-skill) and just ask for the outcome — your coding agent runs Smithers for you.

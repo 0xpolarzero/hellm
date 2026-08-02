@@ -2,7 +2,7 @@ import type {
 	SandboxProvider,
 	SandboxProviderRequest,
 	SandboxProviderResult,
-} from "smithers-orchestrator/sandbox";
+} from "smthrs/sandbox";
 
 type FreestyleFile = {
 	content: string;

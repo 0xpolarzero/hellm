@@ -1690,11 +1690,11 @@ This section is governed by `docs/specs/extension/smithers.extension.spec.md`.
       for handler threads, with no native Smithers tools, generated TypeScript facades, or bundled app
       Smithers runtime dependencies. Commit(s): `673837a`, `118fd39c9f`.
 - [x] Generate the Smithers instruction fragment from the Extension Managing-selected
-      `smithers-orchestrator` documentation version while excluding GUI, Gateway, MCP, HTTP server,
+      `smthrs` documentation version while excluding GUI, Gateway, MCP, HTTP server,
       OpenTelemetry, DevTools, event-streaming, OpenAPI, Effect, and wrapper-oriented fragments that
       are not current `svvy` product surfaces. Commit(s): `c91f88d377`, `dcc79bb073`.
 - [x] Keep the svvy Smithers boundary instruction focused on workspace `.smithers/`, official
-      `bunx smithers-orchestrator ...` CLI usage through Shell, official Smithers CLI operations, and
+      `bunx smthrs ...` CLI usage through Shell, official Smithers CLI operations, and
       reusable svvy workflow assets as Workflows-extension material. Commit(s): `c91f88d377`,
       `a02bd48`.
 - [x] Keep orchestrators aware that workflow action normally delegates into handler threads, while

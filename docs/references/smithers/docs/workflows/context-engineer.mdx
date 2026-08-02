@@ -11,7 +11,7 @@ the right skills or durable workflow, builds a backpressure gate matrix, execute
 (or dispatches) the work, and writes a self-contained HTML report of the whole run.
 
 ```bash
-bunx smithers-orchestrator workflow run context-engineer \
+bunx smthrs workflow run context-engineer \
   --prompt "Clean up the flaky e2e tests and make CI green again"
 ```
 
@@ -40,10 +40,10 @@ or run autonomously with `--input '{"review":false}'`.
 ## Monitor it
 
 ```bash
-bunx smithers-orchestrator workflow run context-engineer --prompt "…" -d   # detach
-bunx smithers-orchestrator ps                                              # active / paused / recent
-bunx smithers-orchestrator logs <runId> -f                                 # follow events
-bunx smithers-orchestrator approve <runId> --node approve-contract         # clear the contract gate
+bunx smthrs workflow run context-engineer --prompt "…" -d   # detach
+bunx smthrs ps                                              # active / paused / recent
+bunx smthrs logs <runId> -f                                 # follow events
+bunx smthrs approve <runId> --node approve-contract         # clear the contract gate
 ```
 
 Use this when you have a fuzzy ask and want Smithers to do the context

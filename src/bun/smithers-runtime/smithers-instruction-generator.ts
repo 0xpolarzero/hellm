@@ -60,9 +60,9 @@ export function generateSmithersCoreInstructions(upstreamFullDocs: string): stri
     .trim();
   assertGeneratedSmithersPrompt(body, "core");
   return [
-    "Generated Smithers core instructions from smithers-orchestrator@0.22.0 official docs.",
+    "Generated Smithers core instructions from smthrs@0.22.0 official docs.",
     "",
-    "svvy uses official `bunx smithers-orchestrator ...` commands through Shell. TypeScript workflow source still imports from `smithers-orchestrator`.",
+    "svvy uses official `bunx smthrs ...` commands through Shell. TypeScript workflow source still imports from `smthrs`.",
     "",
     body,
     "",
@@ -81,7 +81,7 @@ export function generateSmithersMemoryInstructions(upstreamFullDocs: string): st
   ).trim();
   assertGeneratedSmithersPrompt(body, "memory");
   return [
-    "Generated Smithers memory instructions from smithers-orchestrator@0.22.0 official docs.",
+    "Generated Smithers memory instructions from smthrs@0.22.0 official docs.",
     "",
     "This fragment is generated and inspectable but bypassed by default in svvy.",
     "",
@@ -103,7 +103,7 @@ function extractMarkdownRange(markdown: string, startHeading: string, endHeading
 }
 
 function rewriteSmithersCliExamples(markdown: string): string {
-  return markdown.replace(/\bbunx\s+smithers(?!-orchestrator)\b/g, "bunx smithers-orchestrator");
+  return markdown.replace(/\bbunx\s+smithers(?!-orchestrator)\b/g, "bunx smthrs");
 }
 
 function removeForbiddenPromptLines(markdown: string): string {

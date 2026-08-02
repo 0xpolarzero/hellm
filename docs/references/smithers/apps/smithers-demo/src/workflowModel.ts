@@ -329,7 +329,7 @@ export function generateSmithersCode(spec: WorkflowSpec) {
     })
     .join("\n\n");
 
-  return `import { createSmithers, Sequence, Task, Workflow } from "smithers-orchestrator";
+  return `import { createSmithers, Sequence, Task, Workflow } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({
@@ -349,7 +349,7 @@ ${taskCode}
 function generateDebateSmithersCode(spec: WorkflowSpec) {
   const outputs = spec.nodes.map((node) => `  ${node.output}: ${outputSchemaFor(node)},`).join("\n");
 
-  return `import { createSmithers, Ralph, Sequence, Task, Workflow } from "smithers-orchestrator";
+  return `import { createSmithers, Ralph, Sequence, Task, Workflow } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({

@@ -2,7 +2,7 @@ import {
   SyncClient,
   createSmithersGatewayTransport,
   type SyncTransport,
-} from "@smithers-orchestrator/gateway-client";
+} from "@smthrs/gateway-client";
 import { handleAuthRequired } from "../auth/authClient";
 import { getGatewayClient } from "../gateway/gatewayClient";
 

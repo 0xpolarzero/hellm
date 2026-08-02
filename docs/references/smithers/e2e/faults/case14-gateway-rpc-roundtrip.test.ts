@@ -852,7 +852,7 @@ describe("case 14: gateway authenticated RPC roundtrip", () => {
 
   test.skip("real engine workflow drives launch -> approve -> finished round-trip", () => {
     // SKIP: booting the real Gateway from packages/server inside the e2e
-    // package fails on `effect` / `@smithers-orchestrator/devtools` resolution
+    // package fails on `effect` / `@smthrs/devtools` resolution
     // because workspace symlinks bypass e2e's flat node_modules. The
     // packages/server gateway tests cover the engine-driven path; this case
     // exercises the auth + RPC dispatch + DB write contract over a real

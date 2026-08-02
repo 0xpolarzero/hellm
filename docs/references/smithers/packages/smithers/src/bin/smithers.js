@@ -57,7 +57,7 @@ function getExplicitWorkflowPath(args) {
 }
 
 /**
- * Resolve the local `smithers-orchestrator` package's bin JS file under
+ * Resolve the local `smthrs` package's bin JS file under
  * `<directory>/node_modules/`. Going through `package.json` (instead of the
  * `.bin/smithers` shell shim npm/pnpm generate) is the whole point: the shim
  * is `#!/bin/sh` and re-execing it with `process.execPath` (bun) makes bun
@@ -67,7 +67,7 @@ function getExplicitWorkflowPath(args) {
  * @param {string} directory
  */
 function resolveLocalSmithersBinJs(directory) {
-    const pkgJsonPath = resolve(directory, "node_modules/smithers-orchestrator/package.json");
+    const pkgJsonPath = resolve(directory, "node_modules/smthrs/package.json");
     if (!existsSync(pkgJsonPath))
         return null;
     let pkg;
@@ -135,5 +135,5 @@ function delegateToLocalCliIfPresent() {
 }
 
 if (!delegateToLocalCliIfPresent()) {
-    await import("@smithers-orchestrator/cli");
+    await import("@smthrs/cli");
 }

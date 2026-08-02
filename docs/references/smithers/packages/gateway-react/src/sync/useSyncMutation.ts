@@ -1,5 +1,5 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
-import type { SyncMutationOptions } from "@smithers-orchestrator/gateway-client";
+import type { SyncMutationOptions } from "@smthrs/gateway-client";
 import { useSyncClient } from "./useSyncClient.ts";
 
 /**

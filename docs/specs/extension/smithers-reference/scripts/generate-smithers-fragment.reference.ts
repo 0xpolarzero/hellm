@@ -45,11 +45,11 @@ const outputFragments: Record<string, FragmentSpec> = {
       "## How It Works",
       "## JSX API",
       "## CLI",
-      "bunx smithers-orchestrator init",
-      "bunx smithers-orchestrator up",
-      "bunx smithers-orchestrator inspect",
-      "bunx smithers-orchestrator logs",
-      "bunx smithers-orchestrator approve",
+      "bunx smthrs init",
+      "bunx smthrs up",
+      "bunx smthrs inspect",
+      "bunx smthrs logs",
+      "bunx smthrs approve",
       "docs-full",
     ],
   },
@@ -78,12 +78,12 @@ const forbiddenMarkers = [
   "Do **not** install Smithers globally",
   "do **not** use the bare `smithers`",
   "bare name `smithers` is a different package",
-  "npm rm -g smithers-orchestrator",
+  "npm rm -g smthrs",
   "Install the Agent Skill",
   "~/.claude/skills/smithers",
   "curl -fsSL https://smithers.sh/llms-full.txt",
   "smithers ask",
-  "smithers-orchestrator/tools",
+  "smthrs/tools",
   "defineTool",
   "getDefinedToolMetadata",
   "Five built-in tools",
@@ -104,7 +104,7 @@ const forbiddenMarkers = [
   "Ecosystem",
   "Publishing Workflow Packs",
   "PI Integration",
-  "@smithers-orchestrator/pi-plugin",
+  "@smthrs/pi-plugin",
   "PI as Workflow Agent",
   "PI Server Client",
   "Hybrid: PI Extensibility + Smithers Orchestration",
@@ -287,8 +287,8 @@ const main = async (): Promise<void> => {
 
   const detectedVersion = (
     await run(
-      ["bunx", "smithers-orchestrator", "--version"],
-      "bunx smithers-orchestrator --version",
+      ["bunx", "smthrs", "--version"],
+      "bunx smthrs --version",
     )
   ).trim();
   if (detectedVersion !== args.version) {
@@ -296,8 +296,8 @@ const main = async (): Promise<void> => {
   }
 
   const jsonText = await run(
-    ["bunx", "smithers-orchestrator", "docs-full", "--json"],
-    "bunx smithers-orchestrator docs-full --json",
+    ["bunx", "smthrs", "docs-full", "--json"],
+    "bunx smthrs docs-full --json",
   );
   const parsed = JSON.parse(jsonText) as Partial<SmithersDocsFullJson>;
   if (typeof parsed.url !== "string" || typeof parsed.content !== "string") {

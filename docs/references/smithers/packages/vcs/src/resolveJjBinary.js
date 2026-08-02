@@ -13,16 +13,16 @@ const require = createRequire(import.meta.url);
  * `bin/jj` (`bin/jj.exe` on Windows).
  *
  * Kept in sync with the platform packages under `packages/jj-binaries/` and the
- * `optionalDependencies` of `@smithers-orchestrator/vcs`.
+ * `optionalDependencies` of `@smthrs/vcs`.
  *
  * @type {Record<string, string>}
  */
 const BUNDLED_PACKAGES = {
-	"darwin-arm64": "@smithers-orchestrator/jj-darwin-arm64",
-	"darwin-x64": "@smithers-orchestrator/jj-darwin-x64",
-	"linux-arm64": "@smithers-orchestrator/jj-linux-arm64",
-	"linux-x64": "@smithers-orchestrator/jj-linux-x64",
-	"win32-x64": "@smithers-orchestrator/jj-win32-x64",
+	"darwin-arm64": "@smthrs/jj-darwin-arm64",
+	"darwin-x64": "@smthrs/jj-darwin-x64",
+	"linux-arm64": "@smthrs/jj-linux-arm64",
+	"linux-x64": "@smthrs/jj-linux-x64",
+	"win32-x64": "@smthrs/jj-win32-x64",
 };
 
 /**
@@ -51,7 +51,7 @@ function bundledJjPath() {
  *
  * Order of preference:
  *   1. `SMITHERS_JJ_PATH` — an explicit override pointing at a real file.
- *   2. A binary bundled via `@smithers-orchestrator/jj-<platform>`.
+ *   2. A binary bundled via `@smthrs/jj-<platform>`.
  *   3. The bare `"jj"`, left for the OS to resolve against `PATH`.
  *
  * Always returns a spawnable command. When jj is genuinely absent the bare

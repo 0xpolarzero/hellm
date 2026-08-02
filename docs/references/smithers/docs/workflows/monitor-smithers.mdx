@@ -10,7 +10,7 @@ which to cancel). Reach for it on a schedule or whenever you want a quick
 "is anything stuck?" sweep of in-flight runs.
 
 ```bash
-bunx smithers-orchestrator workflow run monitor-smithers --input '{"staleMinutes":15}'
+bunx smthrs workflow run monitor-smithers --input '{"staleMinutes":15}'
 ```
 
 ## Stages
@@ -33,10 +33,10 @@ bunx smithers-orchestrator workflow run monitor-smithers --input '{"staleMinutes
 ## Monitor it
 
 ```bash
-bunx smithers-orchestrator workflow run monitor-smithers -d   # detach
-bunx smithers-orchestrator ps                                 # active / paused / recent
-bunx smithers-orchestrator logs <runId> -f                    # follow events
-bunx smithers-orchestrator inspect <runId>                    # full run state + outputs
+bunx smthrs workflow run monitor-smithers -d   # detach
+bunx smthrs ps                                 # active / paused / recent
+bunx smthrs logs <runId> -f                    # follow events
+bunx smthrs inspect <runId>                    # full run state + outputs
 ```
 
 A healthy fleet short-circuits before the expensive triage step, so a clean

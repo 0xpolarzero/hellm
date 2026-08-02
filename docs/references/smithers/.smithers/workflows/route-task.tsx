@@ -3,8 +3,8 @@
 // smithers-display-name: Route Task
 // smithers-description: Classify a plain-English script and either run it as a single task or recommend the right durable workflow.
 // smithers-tags: concierge, routing
-/** @jsxImportSource smithers-orchestrator */
-import { createSmithers } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { createSmithers } from "smthrs";
 import { z } from "zod/v4";
 import { agents } from "../agents";
 import ClassifyPrompt from "../prompts/route-task-classify.mdx";

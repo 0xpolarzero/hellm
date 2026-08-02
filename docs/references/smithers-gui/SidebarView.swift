@@ -841,7 +841,7 @@ struct SmithersVersionWarningBanner: View {
                 Text("Smithers \(installed) is too old — update to ≥ \(required)")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.white)
-                Text("Run lifecycle and heartbeat status will be inaccurate until you upgrade smithers-orchestrator.")
+                Text("Run lifecycle and heartbeat status will be inaccurate until you upgrade smthrs.")
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.85))
             }

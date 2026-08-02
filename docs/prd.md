@@ -478,7 +478,7 @@ Reusable values are accessed through those namespaces, for example `Agents.defau
 Smithers task usage passes the generated parameter record into `Agents.defineTaskAgent`, which returns the Smithers-compatible `AgentLike` value intended for `<Task agent={...}>`:
 
 ```tsx
-import { Task } from "smithers-orchestrator";
+import { Task } from "smthrs";
 import { Agents } from "@svvyx/workflows";
 
 const reviewer = Agents.defineTaskAgent(Agents.reviewerAgent);
@@ -493,7 +493,7 @@ export default (
 Direct parameters are also valid when the workflow source owns the task-agent configuration:
 
 ```tsx
-import { Task } from "smithers-orchestrator";
+import { Task } from "smthrs";
 import { Agents } from "@svvyx/workflows";
 
 const explorer = Agents.defineTaskAgent({

@@ -1,5 +1,5 @@
 // smithers-display-name: Smithers Studio Parity Swarm
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 import {
   AntigravityAgent,
   ClaudeCodeAgent,
@@ -13,7 +13,7 @@ import {
   Worktree,
   createSmithers,
   type AgentLike,
-} from "smithers-orchestrator";
+} from "smthrs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { z } from "zod/v4";

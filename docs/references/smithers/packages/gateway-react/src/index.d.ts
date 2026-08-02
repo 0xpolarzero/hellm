@@ -1,9 +1,9 @@
 import * as react from 'react';
 import { ReactNode, ReactElement } from 'react';
-import * as _smithers_orchestrator_gateway_client from '@smithers-orchestrator/gateway-client';
-import { SmithersGatewayClient, SmithersGatewayClientOptions, GatewayRpcParams, GatewayRpcPayload, GatewayEventFrame } from '@smithers-orchestrator/gateway-client';
-import * as _smithers_orchestrator_gateway_rpc from '@smithers-orchestrator/gateway/rpc';
-import { ListApprovalsRequest, GatewayRpcMethod, ListRunsRequest, ListWorkflowsRequest } from '@smithers-orchestrator/gateway/rpc';
+import * as _smithers_orchestrator_gateway_client from '@smthrs/gateway-client';
+import { SmithersGatewayClient, SmithersGatewayClientOptions, GatewayRpcParams, GatewayRpcPayload, GatewayEventFrame } from '@smthrs/gateway-client';
+import * as _smithers_orchestrator_gateway_rpc from '@smthrs/gateway/rpc';
+import { ListApprovalsRequest, GatewayRpcMethod, ListRunsRequest, ListWorkflowsRequest } from '@smthrs/gateway/rpc';
 
 declare function createGatewayReactRoot(element: ReactElement, options?: SmithersGatewayClientOptions & {
     rootId?: string;

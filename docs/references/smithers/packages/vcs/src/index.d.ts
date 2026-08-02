@@ -120,7 +120,7 @@ type WorkspaceResult = WorkspaceResult$1;
  * A resolved VCS executable plus where Smithers found it.
  *
  * - `env`: an explicit override (e.g. `SMITHERS_JJ_PATH`)
- * - `bundled`: a binary shipped inside a `@smithers-orchestrator/jj-<platform>` package
+ * - `bundled`: a binary shipped inside a `@smthrs/jj-<platform>` package
  * - `path`: the bare command name, left for the OS to resolve against `PATH`
  */
 type ResolvedBinary$3 = {
@@ -149,7 +149,7 @@ type ResolvedBinary$2 = ResolvedBinary$3;
  *
  * Order of preference:
  *   1. `SMITHERS_JJ_PATH` — an explicit override pointing at a real file.
- *   2. A binary bundled via `@smithers-orchestrator/jj-<platform>`.
+ *   2. A binary bundled via `@smthrs/jj-<platform>`.
  *   3. The bare `"jj"`, left for the OS to resolve against `PATH`.
  *
  * Always returns a spawnable command. When jj is genuinely absent the bare

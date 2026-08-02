@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import crypto from "node:crypto";
-import { SmithersError } from "@smithers-orchestrator/errors";
+import { SmithersError } from "@smthrs/errors";
 
 export const EVAL_CASE_STATUSES = [
     "finished",

@@ -16,7 +16,7 @@ function kebabCase(name) {
 test("component reference docs cover exported components", () => {
     const smithersIndex = readRepoFile("packages/smithers/src/index.js");
     const componentExportBlock = smithersIndex.match(
-        /export \{([^}]+)\} from "@smithers-orchestrator\/components";/s,
+        /export \{([^}]+)\} from "@smthrs\/components";/s,
     )?.[1];
     expect(componentExportBlock).toBeTruthy();
 
@@ -89,14 +89,14 @@ test("package configuration docs cover current explicit package exports", () => 
     const packageJson = JSON.parse(readRepoFile("packages/smithers/package.json"));
     const explicitImportPaths = Object.keys(packageJson.exports)
         .filter((subpath) => subpath !== "./*")
-        .map((subpath) => (subpath === "." ? "smithers-orchestrator" : `smithers-orchestrator/${subpath.slice(2)}`));
+        .map((subpath) => (subpath === "." ? "smthrs" : `smthrs/${subpath.slice(2)}`));
 
     for (const importPath of explicitImportPaths) {
         expect(packageConfigDoc).toContain(`| \`${importPath}\``);
     }
 
-    expect(packageConfigDoc).not.toContain("| `smithers-orchestrator/pi-plugin`");
-    expect(packageConfigDoc).not.toContain("| `smithers-orchestrator/pi-extension`");
+    expect(packageConfigDoc).not.toContain("| `smthrs/pi-plugin`");
+    expect(packageConfigDoc).not.toContain("| `smthrs/pi-extension`");
 });
 
 test("package configuration docs cover published workspace packages", () => {

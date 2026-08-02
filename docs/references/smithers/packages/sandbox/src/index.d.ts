@@ -1,6 +1,6 @@
-import * as _smithers_observability_SmithersEvent from '@smithers-orchestrator/observability/SmithersEvent';
+import * as _smithers_observability_SmithersEvent from '@smthrs/observability/SmithersEvent';
 import { Context, Effect, Layer } from 'effect';
-import { SmithersError } from '@smithers-orchestrator/errors/SmithersError';
+import { SmithersError } from '@smthrs/errors/SmithersError';
 
 type SandboxBundleManifest$1 = {
     outputs: unknown;

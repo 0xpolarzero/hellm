@@ -100,7 +100,7 @@ Smithers owns workflow authoring concepts and workflow graph, run, node, iterati
 resume semantics. `svvy` owns Shell command tracking, app approval/sandbox execution, pi-backed
 workflow task-agent attempt surfaces, durable observed Smithers facts, and the narrow runtime-owned
 `runTaskAgent` bridge. Agents use official Smithers CLI commands through Shell, such as
-`bunx smithers-orchestrator ...`, according to Smithers documentation and the active
+`bunx smthrs ...`, according to Smithers documentation and the active
 sandbox/approval policy. `svvy` does not expose `workflow.*`, `svvyx smithers`, or loopback
 Smithers runtime-control tools as product surfaces.
 

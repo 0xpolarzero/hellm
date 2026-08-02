@@ -1,6 +1,6 @@
 // smithers-display-name: Sync Features
-/** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { createSmithers, Sequence } from "smthrs";
 import { z } from "zod/v4";
 import { agents } from "../agents";
 import SyncFeaturesScanPrompt from "../prompts/sync-features-scan.mdx";

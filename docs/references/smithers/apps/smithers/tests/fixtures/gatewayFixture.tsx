@@ -1,9 +1,9 @@
-/** @jsxImportSource smithers-orchestrator */
+/** @jsxImportSource smthrs */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { createSmithers, Gateway } from "smithers-orchestrator";
+import { createSmithers, Gateway } from "smthrs";
 import { z } from "zod";
 
 /**

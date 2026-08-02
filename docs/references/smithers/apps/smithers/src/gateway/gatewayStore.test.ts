@@ -3,7 +3,7 @@ import { registerHappyDomForTests } from "../test/registerHappyDom";
 registerHappyDomForTests();
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { GatewayRpcError } from "@smithers-orchestrator/gateway-client";
+import { GatewayRpcError } from "@smthrs/gateway-client";
 import { resetGatewayClient, setGatewayClientForTests } from "./gatewayClient";
 import { __test_stopRunStreams, useGatewayStore } from "./gatewayStore";
 

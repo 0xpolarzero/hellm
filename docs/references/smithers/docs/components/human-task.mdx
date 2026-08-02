@@ -4,7 +4,7 @@ description: Suspend until a human submits JSON matching the output schema.
 ---
 
 ```ts
-import { HumanTask } from "smithers-orchestrator";
+import { HumanTask } from "smthrs";
 
 type HumanTaskProps = {
   id: string;
@@ -25,7 +25,7 @@ type HumanTaskProps = {
 ```
 
 ```tsx
-import { Workflow, Sequence, Task, HumanTask, createSmithers } from "smithers-orchestrator";
+import { Workflow, Sequence, Task, HumanTask, createSmithers } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({

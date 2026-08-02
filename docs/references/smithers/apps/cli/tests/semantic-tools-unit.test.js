@@ -327,8 +327,8 @@ describe("semantic tool definitions", () => {
         expect(missingDefault.structuredContent.error.code).toBe("INTERNAL_ERROR");
 
         writeFileSync(join(harness.cwd, ".smithers", "workflows", "quick.tsx"), [
-            "/** @jsxImportSource smithers-orchestrator */",
-            'import { createSmithers, Workflow, Task } from "smithers-orchestrator";',
+            "/** @jsxImportSource smthrs */",
+            'import { createSmithers, Workflow, Task } from "smthrs";',
             'import { z } from "zod";',
             "const { smithers, outputs } = createSmithers({ result: z.object({ value: z.number() }) });",
             "export default smithers(() => (",

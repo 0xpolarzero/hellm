@@ -1,6 +1,6 @@
 import { createElement, type ReactElement } from "react";
 import { createRoot } from "react-dom/client";
-import { SmithersGatewayClient, type SmithersGatewayClientOptions } from "@smithers-orchestrator/gateway-client";
+import { SmithersGatewayClient, type SmithersGatewayClientOptions } from "@smthrs/gateway-client";
 import { SmithersGatewayProvider } from "./SmithersGatewayProvider.ts";
 
 export function createGatewayReactRoot(

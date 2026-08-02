@@ -8,7 +8,7 @@ CLI-backed agent classes wrap external AI command-line tools and implement the [
 ## Quick Start
 
 ```tsx
-import { ClaudeCodeAgent, Task, Workflow, createSmithers } from "smithers-orchestrator";
+import { ClaudeCodeAgent, Task, Workflow, createSmithers } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({
@@ -51,7 +51,7 @@ CLI binaries must be on `PATH`: `claude`, `codex`, `agy`, `pi`, `kimi`, `forge`,
 `CodexAgent` is the Smithers wrapper for OpenAI's `codex` CLI. It runs `codex exec` in non-interactive mode, sends the task prompt over stdin, forces `--json` so Smithers can stream structured progress, and captures the final assistant message via `--output-last-message`.
 
 ```tsx
-import { CodexAgent, Task, Workflow, createSmithers } from "smithers-orchestrator";
+import { CodexAgent, Task, Workflow, createSmithers } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({
@@ -78,7 +78,7 @@ export default smithers(() => (
 
 - Subscription login: run `codex login` once. For isolated accounts, pass `configDir`; Smithers sets `CODEX_HOME` for that invocation.
 - API billing: pass `apiKey` or set `OPENAI_API_KEY`; Smithers forwards it to the spawned `codex` process.
-- Account registry: `bunx smithers-orchestrator agents add --provider codex ...` registers a subscription config directory, while `--provider openai-api` registers API-key billing for Codex-compatible providers.
+- Account registry: `bunx smthrs agents add --provider codex ...` registers a subscription config directory, while `--provider openai-api` registers API-key billing for Codex-compatible providers.
 
 ### Structured output
 
@@ -120,7 +120,7 @@ await agent.generate({
 `ClaudeCodeAgent` extends the base with Claude Code-specific session and permission flags. Key additions: `permissionMode`, `sessionId`, `mcpConfig`, `resume`.
 
 ```ts
-import { ClaudeCodeAgent } from "smithers-orchestrator";
+import { ClaudeCodeAgent } from "smthrs";
 new ClaudeCodeAgent({
   permissionMode?: "acceptEdits" | "bypassPermissions" | "default" | "delegate" | "dontAsk" | "plan";
   allowedTools?: string[]; disallowedTools?: string[]; disableSlashCommands?: boolean;
@@ -141,7 +141,7 @@ new ClaudeCodeAgent({
 `CodexAgent` extends the base with OpenAI Codex-specific flags. Key additions: `sandbox`, `config`, `outputSchema`.
 
 ```ts
-import { CodexAgent } from "smithers-orchestrator";
+import { CodexAgent } from "smthrs";
 new CodexAgent({
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   fullAuto?: boolean; dangerouslyBypassApprovalsAndSandbox?: boolean;
@@ -158,7 +158,7 @@ new CodexAgent({
 `AntigravityAgent` wraps the Google `agy` CLI. Key additions: `allowedMcpServerNames`, `geminiDir`, `conversation`, `continue`, and `resume`.
 
 ```ts
-import { AntigravityAgent } from "smithers-orchestrator";
+import { AntigravityAgent } from "smthrs";
 new AntigravityAgent({
   model?: string; sandbox?: boolean;
   yolo?: boolean; dangerouslySkipPermissions?: boolean;
@@ -195,7 +195,7 @@ outside workflow launch through `agy plugin`.
 `PiAgent` wraps the Pi CLI and adds extension UI hook support. Key additions: `mode`, `onExtensionUiRequest`, `extension`, `thinking`.
 
 ```ts
-import { PiAgent, type PiExtensionUiRequest, type PiExtensionUiResponse } from "smithers-orchestrator";
+import { PiAgent, type PiExtensionUiRequest, type PiExtensionUiResponse } from "smthrs";
 new PiAgent({
   provider?: string; apiKey?: string; appendSystemPrompt?: string; mode?: "text" | "json" | "rpc";
   print?: boolean; continue?: boolean; resume?: boolean; session?: string;
@@ -213,7 +213,7 @@ new PiAgent({
 `KimiAgent` wraps the Moonshot Kimi CLI with automatic session isolation. Key additions: `thinking`, `agent`, `maxRalphIterations`.
 
 ```ts
-import { KimiAgent } from "smithers-orchestrator";
+import { KimiAgent } from "smthrs";
 new KimiAgent({
   thinking?: boolean; outputFormat?: "text" | "stream-json";
   finalMessageOnly?: boolean; quiet?: boolean;
@@ -228,7 +228,7 @@ new KimiAgent({
 `ForgeAgent` wraps the Forge CLI and supports 300+ models via provider/model strings. Key additions: `conversationId`, `provider`, `workflow`.
 
 ```ts
-import { ForgeAgent } from "smithers-orchestrator";
+import { ForgeAgent } from "smthrs";
 new ForgeAgent({
   directory?: string; provider?: string; agent?: string;
   conversationId?: string; sandbox?: string; restricted?: boolean;
@@ -239,7 +239,7 @@ new ForgeAgent({
 `AmpAgent` wraps the Amp CLI in `--execute` headless mode. Key additions: `visibility`, `mcpConfig`, `dangerouslyAllowAll`.
 
 ```ts
-import { AmpAgent } from "smithers-orchestrator";
+import { AmpAgent } from "smthrs";
 new AmpAgent({
   visibility?: "private" | "public" | "workspace" | "group";
   mcpConfig?: string; settingsFile?: string;
@@ -251,7 +251,7 @@ new AmpAgent({
 `OpenCodeAgent` wraps the OpenCode CLI via `opencode run --format json`. Key additions: `agentName`, `continueSession`, `sessionId`. Note: native hijack support is not yet shipped.
 
 ```ts
-import { OpenCodeAgent } from "smithers-orchestrator";
+import { OpenCodeAgent } from "smthrs";
 new OpenCodeAgent({
   model?: string; agentName?: string;
   attachFiles?: string[];
@@ -262,7 +262,7 @@ new OpenCodeAgent({
 
 ## Hijack handoff
 
-Most built-in CLI agents support `bunx smithers-orchestrator hijack <runId>`, which relaunches the agent in its native CLI session for interactive takeover.
+Most built-in CLI agents support `bunx smthrs hijack <runId>`, which relaunches the agent in its native CLI session for interactive takeover.
 
 Smithers persists the native session or conversation id on each task event. On hijack, it waits for a safe boundary between blocking tool calls, then reopens the session via the vendor's resume flag:
 

@@ -8,7 +8,7 @@ description: "Run Smithers as an HTTP server: REST routes for runs, approvals, t
 ## Quick start
 
 ```ts
-import { startServer } from "smithers-orchestrator";
+import { startServer } from "smthrs";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 
 const server = startServer({
@@ -73,8 +73,8 @@ Errors use the envelope `{ "error": { "code", "message", "details" } }`. Common 
 Tools resolve relative to `rootDir`. The example below exposes a workflow that uses the built-in `bash` tool through the server; clients call it via `POST /v1/runs`.
 
 ```tsx
-/** @jsxImportSource smithers-orchestrator */
-import { Task, Workflow, createSmithers, bash } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { Task, Workflow, createSmithers, bash } from "smthrs";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers({

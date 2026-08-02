@@ -1,5 +1,5 @@
 import React from "react";
-import { DEFAULT_MERGE_QUEUE_CONCURRENCY } from "@smithers-orchestrator/graph/constants";
+import { DEFAULT_MERGE_QUEUE_CONCURRENCY } from "@smthrs/graph/constants";
 /** @typedef {import("./MergeQueueProps.ts").MergeQueueProps} MergeQueueProps */
 
 /**

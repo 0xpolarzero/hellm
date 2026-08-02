@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import React from "react";
 import { z } from "zod";
 import { Approval, ApprovalGate, Aspects, Branch, CheckSuite, ClassifyAndRoute, ContentPipeline, ContinueAsNew, Debate, DecisionTable, DriftDetector, EscalationChain, GatherAndSynthesize, HumanTask, Kanban, Loop, MergeQueue, Optimizer, Panel, Parallel, Poller, Ralph, ReviewLoop, Runbook, Saga, Sandbox, ScanFixVerify, Sequence, Signal, Subflow, SuperSmithers, Supervisor, Task, Timer, TryCatchFinally, WaitForEvent, Workflow, Worktree, } from "../src/components/index.js";
-import { SmithersRenderer } from "@smithers-orchestrator/react-reconciler";
+import { SmithersRenderer } from "@smthrs/react-reconciler";
 /**
  * @param {HostNode | null} root
  * @returns {WorkflowGraph}
@@ -117,7 +117,7 @@ describe("components", () => {
         expect(tags).not.toContain("smithers:parallel");
         expect(tags).toContain("smithers:timer");
     });
-    it("passes task props through to @smithers-orchestrator/graph extraction", async () => {
+    it("passes task props through to @smthrs/graph extraction", async () => {
         const outputSchema = z.object({ value: z.number() });
         const primary = { generate: async () => ({ value: 1 }) };
         const fallback = { generate: async () => ({ value: 2 }) };

@@ -26,7 +26,7 @@ import type {
   SubmitApprovalResponse,
   SubmitSignalRequest,
   GetRunRequest,
-} from "@smithers-orchestrator/gateway/rpc";
+} from "@smthrs/gateway/rpc";
 
 export type GatewayRpcRequestMap = {
   launchRun: LaunchRunRequest;

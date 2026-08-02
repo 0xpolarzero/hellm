@@ -15,12 +15,12 @@ import {
   isKnownSmithersErrorCode,
   isSmithersError,
   knownSmithersErrorCodes,
-} from "smithers-orchestrator";
+} from "smthrs";
 import type {
   KnownSmithersErrorCode,
   SmithersError,
   SmithersErrorCode,
-} from "smithers-orchestrator";
+} from "smthrs";
 ```
 
 Every built-in `SmithersErrorInstance` carries three pieces of documentation metadata:
@@ -49,7 +49,7 @@ Use `KnownSmithersErrorCode` for an exhaustive switch over built-in Smithers cod
 
 ```ts
 import { Effect } from "effect";
-import { runWorkflow } from "smithers-orchestrator";
+import { runWorkflow } from "smthrs";
 
 try {
   await Effect.runPromise(runWorkflow(workflow, { input: {} }));

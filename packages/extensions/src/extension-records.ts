@@ -382,24 +382,24 @@ export const BUILTIN_EXTENSIONS = [
     dependencyReadiness: "ready",
     cliRequirements: [
       {
-        id: "smithers-orchestrator",
-        package: "smithers-orchestrator",
+        id: "smthrs",
+        package: "smthrs",
         binary: "bunx",
         required: true,
         version: "0.22.0",
-        versionCommand: "bunx smithers-orchestrator --version",
+        versionCommand: "bunx smthrs --version",
       },
     ],
     generatedInstructions: [
       {
         output: "instructions/full/010-smithers-core.generated.md",
         script: "scripts/generate-smithers-core.ts",
-        versionCliRequirementId: "smithers-orchestrator",
+        versionCliRequirementId: "smthrs",
       },
       {
         output: "instructions/full/040-smithers-memory.generated.md",
         script: "scripts/generate-smithers-memory.ts",
-        versionCliRequirementId: "smithers-orchestrator",
+        versionCliRequirementId: "smthrs",
       },
     ],
     instructionFiles: [

@@ -53,7 +53,7 @@ bun "$SMITHERS_CLI" up workflow.tsx --input '{}' --root "$ROOT_DIR"
     "@ai-sdk/anthropic": "^3.0.71",
     "@ai-sdk/openai": "^3.0.53",
     "ai": "^6.0.168",
-    "smithers-orchestrator": "file:../../",
+    "smthrs": "file:../../",
     "zod": "^4.3.6"
   }
 }
@@ -75,7 +75,7 @@ export const STEPS_PER_ROUND = 4;
 
 ```ts
 // scripts/worktree-feature/preload.ts
-import { mdxPlugin } from "smithers-orchestrator/mdx-plugin";
+import { mdxPlugin } from "smthrs/mdx-plugin";
 
 mdxPlugin();
 ```
@@ -83,7 +83,7 @@ mdxPlugin();
 ## Key Details
 
 - `USE_CLI_AGENTS=1` selects CLI agents (Claude Code / Codex CLI) over API agents. `SMITHERS_UNSAFE=1` enables `dangerouslySkipPermissions` for unattended execution — this bypasses Claude Code's permission prompts so the workflow can run headlessly. Only use it in a sandboxed environment; the agent will have unrestricted filesystem and shell access.
-- `"smithers-orchestrator": "file:../../"` links to the local package for co-development.
+- `"smthrs": "file:../../"` links to the local package for co-development.
 - `preload.ts` registers the MDX plugin, enabling `.mdx` imports as JSX components.
 - `--root` passes the repository root so agents access the full codebase, not just the workflow directory.
 - `smithers up workflow.tsx --run-id <run-id> --resume true` resumes from the last checkpoint.

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
-import { SmithersGatewayClient } from "@smithers-orchestrator/gateway-client";
+import { SmithersGatewayClient } from "@smthrs/gateway-client";
 import { SmithersGatewayProvider, useSmithersGateway } from "../src/index.ts";
 
 function Probe() {

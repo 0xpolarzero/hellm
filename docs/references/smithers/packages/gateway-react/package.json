@@ -1,5 +1,5 @@
 {
-  "name": "@smithers-orchestrator/gateway-react",
+  "name": "@smthrs/gateway-react",
   "version": "0.23.0",
   "description": "React hooks and root helpers for Smithers Gateway UIs",
   "type": "module",
@@ -25,8 +25,8 @@
     "test": "bun test tests"
   },
   "dependencies": {
-    "@smithers-orchestrator/gateway": "workspace:*",
-    "@smithers-orchestrator/gateway-client": "workspace:*"
+    "@smthrs/gateway": "^0.33.0",
+    "@smthrs/gateway-client": "^0.33.0"
   },
   "peerDependencies": {
     "react": "^19.0.0",

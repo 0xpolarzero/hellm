@@ -6,7 +6,7 @@ description: Research, plan, implement, validate, and review in one run.
 `research-plan-implement` is a full pipeline for changes that need context before code. It asks one agent to research, another to plan, then passes the enriched prompt into the same `ValidationLoop` used by `implement`.
 
 ```bash
-bunx smithers-orchestrator workflow run research-plan-implement --prompt "Replace the auth cookie format"
+bunx smthrs workflow run research-plan-implement --prompt "Replace the auth cookie format"
 ```
 
 ## Inputs
@@ -21,7 +21,7 @@ When `tdd` is `true`, the planning task is instructed to start with test steps b
 Pass structured input when you want test-first planning:
 
 ```bash
-bunx smithers-orchestrator workflow run research-plan-implement \
+bunx smthrs workflow run research-plan-implement \
   --input '{"prompt":"Add invite-only signup","tdd":true}'
 ```
 
