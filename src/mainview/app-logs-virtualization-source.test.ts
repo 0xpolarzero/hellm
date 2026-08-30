@@ -27,6 +27,8 @@ describe("AppLogsPane virtualized log list contract", () => {
     expect(paneSource).toContain("instance.getDistanceFromEnd()");
     expect(paneSource).toContain("get(virtualizer).scrollToOffset(scrollOffset)");
     expect(paneSource).toContain("runtime.setAppLogsViewPreferences(preferences)");
+    expect(paneSource).toContain("createAppLogViewPreferencesWriter");
+    expect(paneSource).toContain("flushPendingViewPreferenceSave();");
     expect(paneSource).toContain("next.persistedView.followTail");
     expect(paneSource).not.toContain("LOG_SCROLL_OFFSET_BY_PANEL");
     expect(paneSource).toContain("followOnAppend: false");

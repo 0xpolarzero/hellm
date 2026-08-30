@@ -1,5 +1,6 @@
 <script lang="ts">
   import CheckIcon from "@lucide/svelte/icons/check";
+  import type { AppLogViewPreferences } from "@svvy/core";
   import CopyIcon from "@lucide/svelte/icons/copy";
   import { createVirtualizer } from "@tanstack/svelte-virtual";
   import { onMount, tick, untrack } from "svelte";
@@ -17,6 +18,7 @@
     formatAppLogCount,
     mergeAppLogEntries,
   } from "./app-logs";
+  import { createAppLogViewPreferencesWriter } from "./app-log-view-preferences";
   import ExtensionListRow from "./ExtensionListRow.svelte";
   import Button from "./ui/Button.svelte";
   import CompactSelect from "./ui/CompactSelect.svelte";
@@ -100,7 +102,9 @@
   let copyResetTimer: number | null = null;
   let scrollStateFrame: number | null = null;
   let viewSaveTimer: number | null = null;
+  let pendingViewPreferences: AppLogViewPreferences | null = null;
   let lastSavedViewKey: string | null = null;
+  let disposed = false;
   let unsubscribeLogUpdate: (() => void) | null = null;
   let unsubscribeRuntime: (() => void) | null = null;
 
@@ -111,6 +115,9 @@
   const COPY_ALL_WARNING_STORAGE_KEY = "svvy.appLogs.copyAllWarningDismissed";
   const LOG_ROW_ESTIMATE_PX = 72;
   const APP_LOG_TAIL_THRESHOLD_PX = 40;
+  const viewPreferencesWriter = createAppLogViewPreferencesWriter((preferences) =>
+    runtime.setAppLogsViewPreferences(preferences),
+  );
 
   function syncRuntimeSnapshot(): void {
     const snapshot = runtime.appLogsSnapshot;
@@ -279,23 +286,33 @@
     };
     const key = JSON.stringify(preferences);
     if (key === lastSavedViewKey) return;
+    pendingViewPreferences = preferences;
     if (viewSaveTimer !== null) {
       window.clearTimeout(viewSaveTimer);
     }
     viewSaveTimer = window.setTimeout(() => {
       viewSaveTimer = null;
-      lastSavedViewKey = key;
-      void runtime.setAppLogsViewPreferences(preferences).then(
-        () => {
-          if (readModel) {
-            readModel = { ...readModel, persistedView: preferences };
-          }
-        },
-        (cause) => {
-          error = cause instanceof Error ? cause.message : "Unable to save app log view.";
-        },
-      );
+      flushPendingViewPreferenceSave();
     }, 200);
+  }
+
+  function flushPendingViewPreferenceSave(): void {
+    const preferences = pendingViewPreferences;
+    if (!preferences) return;
+    pendingViewPreferences = null;
+    lastSavedViewKey = JSON.stringify(preferences);
+    void viewPreferencesWriter.write(preferences).then(
+      () => {
+        if (!disposed && readModel) {
+          readModel = { ...readModel, persistedView: preferences };
+        }
+      },
+      (cause) => {
+        if (!disposed) {
+          error = cause instanceof Error ? cause.message : "Unable to save app log view.";
+        }
+      },
+    );
   }
 
   function handleListScroll() {
@@ -549,6 +566,7 @@
       syncRuntimeSnapshot();
     });
     return () => {
+      disposed = true;
       if (scrollStateFrame !== null) {
         cancelAnimationFrame(scrollStateFrame);
       }
@@ -557,7 +575,9 @@
       }
       if (viewSaveTimer !== null) {
         window.clearTimeout(viewSaveTimer);
+        viewSaveTimer = null;
       }
+      flushPendingViewPreferenceSave();
       unsubscribeLogUpdate?.();
       unsubscribeRuntime?.();
     };

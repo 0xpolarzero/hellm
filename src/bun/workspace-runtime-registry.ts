@@ -71,7 +71,11 @@ import type {
 } from "@svvy/extensions";
 import type { WorkspaceInfoResponse, WorkspaceKind } from "../shared/workspace-contract";
 import { appendAppLoggerEvent, createAppLogger, type BridgeLogLevel } from "./app-logger";
-import { createStateAppLogsFacade, type StateAppLogsFacade } from "@svvy/state";
+import {
+  APP_LOG_DATABASE_FILENAME,
+  createStateAppLogsFacade,
+  type StateAppLogsFacade,
+} from "@svvy/state";
 import {
   markPersistedWorkspaceGeneratedPackageLinksRepairNeeded,
   recordPersistedWorkspaceGeneratedPackageLinkStatus,
@@ -3335,7 +3339,7 @@ export class WorkspaceRuntimeRegistry {
       sanitizeWorkspaceRuntimeStorageKey(cwd),
     );
     const appLogs = createStateAppLogsFacade({
-      databasePath: join(runtimeDir, "app-logs-v1.sqlite"),
+      databasePath: join(runtimeDir, APP_LOG_DATABASE_FILENAME),
       digest: stateDigest,
       workspaceId,
       now: () => new Date().toISOString(),
@@ -3350,7 +3354,7 @@ export class WorkspaceRuntimeRegistry {
   private acquireAppGlobalAppLogFacade(): StateAppLogsFacade {
     if (this.appGlobalAppLogFacade) return this.appGlobalAppLogFacade;
     this.appGlobalAppLogFacade = createStateAppLogsFacade({
-      databasePath: join(this.agentDir, "app-logs-v1.sqlite"),
+      databasePath: join(this.agentDir, APP_LOG_DATABASE_FILENAME),
       digest: stateDigest,
       now: () => new Date().toISOString(),
     });

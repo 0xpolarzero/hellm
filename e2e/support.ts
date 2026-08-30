@@ -18,7 +18,11 @@ import type { WorkspaceId } from "@svvy/core";
 import { createStructuredSessionStateStore } from "@svvy/state/structured-session-state";
 import { resolveElectrobunWorkspaceDir } from "electrobun-e2e";
 import { DEFAULT_AGENT_SETTINGS } from "../src/shared/agent-settings";
-import { createAppLogStore, type AppendAppLogEntry } from "../packages/state/src/app-log-store";
+import {
+  APP_LOG_DATABASE_FILENAME,
+  createAppLogStore,
+  type AppendAppLogEntry,
+} from "../packages/state/src/app-log-store";
 
 export function resolveAppWorkspaceDir(rootDir = process.cwd()): string {
   return resolveElectrobunWorkspaceDir(rootDir);
@@ -198,7 +202,7 @@ export async function seedAppLogs(
 ): Promise<void> {
   const runtimeDir = getTestWorkspaceRuntimeDir(homeDir, workspaceDir);
   const store = createAppLogStore({
-    databasePath: join(runtimeDir, "app-logs-v1.sqlite"),
+    databasePath: join(runtimeDir, APP_LOG_DATABASE_FILENAME),
     digest: testDigest,
     now: () => new Date().toISOString(),
   });

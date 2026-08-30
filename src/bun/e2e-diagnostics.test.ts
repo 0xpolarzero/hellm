@@ -391,7 +391,7 @@ describe("e2e failure diagnostics", () => {
     const evidenceRoot = join(root, "evidence");
     const runtimesRoot = join(homeDir, ".config", "svvy", "workspace-runtimes");
     const secret = "abcdefghijklmnopqrstuvwxyzABCDEF1234567890-secret";
-    await createAppLogDatabase(join(runtimesRoot, "runtime-a", "app-logs-v1.sqlite"), [
+    await createAppLogDatabase(join(runtimesRoot, "runtime-a", "app-logs-v2.sqlite"), [
       {
         id: "app-log-a1",
         seq: 1,
@@ -400,7 +400,7 @@ describe("e2e failure diagnostics", () => {
         detailsJson: JSON.stringify({ apiKey: secret, reason: "context-refresh" }),
       },
     ]);
-    await createAppLogDatabase(join(runtimesRoot, "runtime-b", "app-logs-v1.sqlite"), [
+    await createAppLogDatabase(join(runtimesRoot, "runtime-b", "app-logs-v2.sqlite"), [
       {
         id: "app-log-b1",
         seq: 1,
@@ -442,12 +442,12 @@ describe("e2e failure diagnostics", () => {
     expect(merged.schemaVersion).toBe(1);
     expect(merged.databases).toEqual([
       {
-        databasePath: "home/.config/svvy/workspace-runtimes/runtime-a/app-logs-v1.sqlite",
+        databasePath: "home/.config/svvy/workspace-runtimes/runtime-a/app-logs-v2.sqlite",
         entryCount: 1,
         workspaceRuntime: "runtime-a",
       },
       {
-        databasePath: "home/.config/svvy/workspace-runtimes/runtime-b/app-logs-v1.sqlite",
+        databasePath: "home/.config/svvy/workspace-runtimes/runtime-b/app-logs-v2.sqlite",
         entryCount: 2,
         workspaceRuntime: "runtime-b",
       },
@@ -458,7 +458,7 @@ describe("e2e failure diagnostics", () => {
       "same-time runtime B",
     ]);
     expect(merged.entries[0]?.origin).toEqual({
-      databasePath: "home/.config/svvy/workspace-runtimes/runtime-b/app-logs-v1.sqlite",
+      databasePath: "home/.config/svvy/workspace-runtimes/runtime-b/app-logs-v2.sqlite",
       workspaceRuntime: "runtime-b",
     });
     expect(merged.entries[0]?.error).toEqual({
@@ -473,7 +473,7 @@ describe("e2e failure diagnostics", () => {
     expect(mergedText).not.toContain(secret);
     expect(
       await readFile(
-        join(evidenceDir, "home/.config/svvy/workspace-runtimes/runtime-a/app-logs-v1.sqlite"),
+        join(evidenceDir, "home/.config/svvy/workspace-runtimes/runtime-a/app-logs-v2.sqlite"),
       ),
     ).not.toHaveLength(0);
   });
@@ -488,7 +488,7 @@ describe("e2e failure diagnostics", () => {
       "svvy",
       "workspace-runtimes",
       "broken-runtime",
-      "app-logs-v1.sqlite",
+      "app-logs-v2.sqlite",
     );
     await mkdir(join(invalidDatabasePath, ".."), { recursive: true });
     await writeFile(invalidDatabasePath, "not a sqlite database");
@@ -517,7 +517,7 @@ describe("e2e failure diagnostics", () => {
     ).toContain("not a database");
     expect(
       await readFile(
-        join(evidenceDir, "home/.config/svvy/workspace-runtimes/broken-runtime/app-logs-v1.sqlite"),
+        join(evidenceDir, "home/.config/svvy/workspace-runtimes/broken-runtime/app-logs-v2.sqlite"),
         "utf8",
       ),
     ).toBe("not a sqlite database");

@@ -1,4 +1,5 @@
 export { layerAppLogWritePort } from "./app-log-write-port";
+export { APP_LOG_DATABASE_FILENAME } from "./app-log-store";
 export { layerExtensionStatePort } from "./extension-state-port";
 export { layerExtensionSnapshotStatePort } from "./extension-snapshot-state-port";
 export { layerExtensionSnapshotSettingsStatePort } from "./extension-snapshot-settings-state-port";

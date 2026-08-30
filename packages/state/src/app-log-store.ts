@@ -729,7 +729,9 @@ function prepareAppLogDatabasePath(
     .pipe(Effect.mapError((cause) => appLogStoreError("app-log.open.prepare-directory", cause)));
 }
 
-const APP_LOG_SCHEMA_VERSION = 1;
+export const APP_LOG_DATABASE_FILENAME = "app-logs-v2.sqlite";
+
+const APP_LOG_SCHEMA_VERSION = 2;
 const APP_LOG_SCHEMA_SQL = `
   CREATE TABLE app_log (
     id TEXT PRIMARY KEY,

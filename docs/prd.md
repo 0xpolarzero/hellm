@@ -1712,7 +1712,7 @@ Projection ownership is equally simple:
 - `@svvy/state` owns persisted layout JSON, panel metadata, and panel-to-surface bindings
 - `@svvy/desktop` holds renderer-local non-authoritative warm caches of those read models so panes can render synchronously and then refetch after app-bridged typed invalidations
 - Dockview panes synchronously render from those warm read-model caches when they open, refresh through the runtime facade plus state read/command facades in the background, and update immediately when another open pane or app-bridged runtime notification invalidates the same read model
-- the renderer owns transient Dockview projection, focus, drag/drop, scroll, and panel-local view state such as selected rows, filters, and expanded sections
+- the renderer owns transient Dockview projection, focus, drag/drop, scroll, and panel-local view state such as selected rows, filters, and expanded sections, except the Logs pane's state-owned workspace scroll and follow-tail preferences
 - the renderer listens for app-bridged typed read-model invalidation notifications and `surface.stream` patches, then joins them locally through read-model caches and panel bindings
 - the renderer does not poll read APIs on every pane open, inspect transcript files, or infer lifecycle changes from transcript mutations
 - workspace-scoped runtime requests and sync events route by explicit `workspaceId`, never by active workspace, focused panel, or current tab

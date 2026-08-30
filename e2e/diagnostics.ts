@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import type { Driver, Page } from "electrobun-browser-tools";
-import { redactAppLogValue } from "../packages/state/src/app-log-store";
+import { APP_LOG_DATABASE_FILENAME, redactAppLogValue } from "../packages/state/src/app-log-store";
 
 const DEFAULT_EVIDENCE_DIRNAME = "e2e-results";
 const NATIVE_SESSION_METADATA_FILENAME = ".svvy-e2e-native-session";
@@ -652,7 +652,7 @@ async function collectCopiedAppLogs(evidenceDir: string): Promise<{
   entries: AppLogEvidenceEntry[];
   schemaVersion: 1;
 }> {
-  const databasePaths = await findFilesNamed(join(evidenceDir, "home"), "app-logs-v1.sqlite");
+  const databasePaths = await findFilesNamed(join(evidenceDir, "home"), APP_LOG_DATABASE_FILENAME);
   const databases: AppLogDatabaseEvidence[] = [];
   const entries: AppLogEvidenceEntry[] = [];
 

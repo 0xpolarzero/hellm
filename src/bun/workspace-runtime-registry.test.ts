@@ -44,6 +44,7 @@ import { createStructuredSessionStateStore } from "@svvy/state/structured-sessio
 import { getDefaultWorkspaceCwd } from "./workspace-context";
 import { createTestSandboxHostSupport } from "./sandbox-host-support.test-support";
 import { defaultRuntimeLayerConfig } from "@svvy/runtime/bootstrap";
+import { APP_LOG_DATABASE_FILENAME } from "@svvy/state";
 import type { LiveCommandStdinRegistry } from "./live-command-stdin-registry";
 import { successfulExtensionBuildProcessTestService } from "./extension-build-process.test-support";
 
@@ -1468,6 +1469,29 @@ describe("WorkspaceRuntimeRegistry", () => {
       followComposer: true,
       extensionUsage: { smithers: "loaded" },
     });
+  });
+
+  it("opens the current app-log database identity without converting a legacy database", async () => {
+    const cwd = tempWorkspace("current-app-log-database");
+    const agentDir = tempAgentDir();
+    const canonicalCwd = realpathSync.native(cwd);
+    const runtimeDir = join(
+      agentDir,
+      "workspace-runtimes",
+      canonicalCwd.replace(/^[/\\]/, "").replace(/[/\\:#]/g, "-"),
+    );
+    mkdirSync(runtimeDir, { recursive: true });
+    const legacyDatabasePath = join(runtimeDir, "app-logs-v1.sqlite");
+    writeFileSync(legacyDatabasePath, "legacy app-log database remains recoverable");
+
+    const registry = createRegistry(cwd, agentDir);
+    const runtime = await registry.acquireWorkspace(cwd);
+
+    expect(runtime.appLogs.summary().latestSeq).toBeGreaterThan(0);
+    expect(existsSync(join(runtimeDir, APP_LOG_DATABASE_FILENAME))).toBeTrue();
+    expect(readFileSync(legacyDatabasePath, "utf8")).toBe(
+      "legacy app-log database remains recoverable",
+    );
   });
 
   it("shares app logs and read models across duplicate tabs for the same cwd", async () => {

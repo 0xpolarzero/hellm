@@ -2025,7 +2025,7 @@ This section is governed by `docs/specs/app-logs.spec.md`.
 - [x] Emit targeted app logs for app lifecycle, provider auth, RPC failures, sessions, title generation, surfaces, prompts, handler threads, Smithers CLI guidance, Workflows build validation, direct tools, `execute_typescript`, artifacts, external editor handoff, and renderer bridge issues. Commit(s): `dab04ac`.
 - [x] Add a `Logs` sidebar button directly above the workflow library entry with compact action-worthy unread badges for warning and error app logs, without surfacing info-only unread logs as sidebar badges. Commit(s): `dab04ac`.
 - [x] Render a dense app logs pane with level filters, grouped source filtering, search, viewport-based read marking during unfiltered browsing, expandable details, stack traces, and links to related sessions, threads, commands, and artifacts where available. Commit(s): `dab04ac`.
-- [x] Render the app logs row list with TanStack Virtual, preserving variable-height expanded rows, stable row identity, persisted scroll position during live updates, older-page loading, and the explicit `New logs` affordance across filtering, search, expansion, and live updates. Commit(s): `ed7e6ea88e`.
+- [x] Render the app logs row list with TanStack Virtual, preserving variable-height expanded rows, stable row identity, workspace-durable scroll and follow-tail preferences across live updates and pane remounts, ordered preference writes that flush during unmount, older-page loading, and the explicit `New logs` affordance across filtering, search, expansion, and live updates. Commit(s): `ed7e6ea88e`, `d20752e83`.
 - [ ] Add representative mounted/integration coverage for the app logs pane, sidebar badges, and live-update read model.
 
 ## 20. Testing And Live Inspection
