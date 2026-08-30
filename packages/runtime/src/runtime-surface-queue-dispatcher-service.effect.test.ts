@@ -46,6 +46,7 @@ import {
   RuntimeShutdownAdmission,
   layerRuntimeShutdownAdmission,
 } from "./runtime-shutdown-admission";
+import { layerRuntimeQueueWakeBroker } from "./runtime-queue-wake-broker";
 
 const workspaceId = "workspace_runtime_queue_dispatcher" as WorkspaceId;
 const workspaceSessionId = "wsess_runtime_queue_dispatcher" as WorkspaceSessionId;
@@ -200,6 +201,7 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
         Effect.provide(
           layerRuntimeSurfaceQueueDispatcherService.pipe(
             Layer.provideMerge(layerRuntimeShutdownAdmission),
+            Layer.provideMerge(layerRuntimeQueueWakeBroker),
           ),
         ),
         Effect.provide(

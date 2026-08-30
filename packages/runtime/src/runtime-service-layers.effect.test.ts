@@ -69,12 +69,12 @@ import {
   layerRuntimeQueueWakeService,
   RuntimeQueueWakeService,
 } from "./runtime-queue-wake-service";
+import { layerRuntimeQueueWakeBroker, RuntimeQueueWakeBroker } from "./runtime-queue-wake-broker";
 import { layerStateCommandPostCommitNotificationPort } from "./state-command-post-commit-notification";
 import {
   layerRuntimeAppLogCommitNotification,
   RuntimeAppLogCommitNotification,
 } from "./runtime-app-log-commit-notification";
-import { RuntimeSurfaceQueueDispatcherService } from "./runtime-surface-queue-dispatcher-service";
 import {
   RuntimeWorkflowAgentSourceIndex,
   type RuntimeWorkflowAgentSourceIndexReconcileResult,
@@ -214,8 +214,15 @@ describe("runtime promoted service layers", () => {
     const calls: unknown[] = [];
 
     return Effect.gen(function* () {
+      const broker = yield* RuntimeQueueWakeBroker;
       const service = yield* RuntimeQueueWakeService;
       const shutdown = yield* RuntimeShutdownAdmission;
+      yield* broker.register({
+        acceptWakeHint: (input) =>
+          Effect.sync(() => {
+            calls.push(input);
+          }),
+      });
 
       yield* service.wakeSurface({ target, reason: "message-submitted" });
 
@@ -236,27 +243,11 @@ describe("runtime promoted service layers", () => {
       assert.strictEqual(calls.length, 1);
     }).pipe(
       Effect.provide(
-        layerRuntimeQueueWakeService.pipe(Layer.provideMerge(layerRuntimeShutdownAdmission)),
+        layerRuntimeQueueWakeService.pipe(
+          Layer.provideMerge(layerRuntimeShutdownAdmission),
+          Layer.provideMerge(layerRuntimeQueueWakeBroker),
+        ),
       ),
-      Effect.provideService(RuntimeSurfaceQueueDispatcherService, {
-        acceptWakeHint: (input) => {
-          calls.push({
-            workspaceId: input.workspaceId,
-            target: input.target,
-            reason: input.reason,
-          });
-          return Effect.void;
-        },
-        drain: () => Effect.succeed(false),
-        drainForQueueItem: () =>
-          Effect.fail(
-            new RuntimeContractError({
-              operation: "test.runtimeSurfaceQueueDispatcher.drainForQueueItem",
-              reason: "target-not-ready",
-              message: "unused",
-            }),
-          ),
-      }),
       Effect.provideService(RuntimeWorkspaceStatePort, {
         resolvePromptTargetWorkspaceId: () => Effect.succeed(workspaceId),
         acquireWorkspace: () => Effect.die("unused"),

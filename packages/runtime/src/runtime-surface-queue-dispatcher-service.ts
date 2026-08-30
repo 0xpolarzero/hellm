@@ -66,6 +66,7 @@ import {
   type RuntimeAcceptedNativeToolExecutionService,
 } from "./accepted-native-tool-execution-service";
 import { RuntimeShutdownAdmission } from "./runtime-shutdown-admission";
+import { RuntimeQueueWakeBroker } from "./runtime-queue-wake-broker";
 
 const decodeCommittedUserMessageEditQueuePayload = Schema.decodeUnknownEffect(
   CommittedUserMessageEditQueuePayloadSchema,
@@ -251,6 +252,7 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
     const toolExecutionPolicyState = yield* RuntimeToolExecutionPolicyStatePort;
     const acceptedNativeTools = yield* RuntimeAcceptedNativeToolExecution;
     const shutdownAdmission = yield* RuntimeShutdownAdmission;
+    const queueWakeBroker = yield* RuntimeQueueWakeBroker;
     const completedPromptResults = new Map<string, RuntimePromptExecutionResult>();
     const requestedPromptResults = new Set<string>();
 
@@ -367,7 +369,7 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
         persistRuntimeQueueDrainFailure({ request, error, appLog, eventBus }),
     });
 
-    return RuntimeSurfaceQueueDispatcherService.of({
+    const service = RuntimeSurfaceQueueDispatcherService.of({
       acceptWakeHint: (input) =>
         shutdownAdmission
           .assertAccepting("runtime.queue.dispatch.acceptWakeHint")
@@ -405,6 +407,8 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
           ),
         ),
     });
+    yield* queueWakeBroker.register({ acceptWakeHint: service.acceptWakeHint });
+    return service;
   }),
 );
 

@@ -104,8 +104,7 @@ export const layerRuntimeAcceptedNativeToolExecution = Layer.effect(
     const actorExtensionBindingState = yield* RuntimeActorExtensionBindingStatePort;
     const threadState = yield* RuntimeThreadStatePort;
     const eventBus = yield* RuntimeEventBus;
-    const queueWakeOption = yield* Effect.serviceOption(RuntimeQueueWakeService);
-    const queueWake = Option.getOrElse(queueWakeOption, () => missingRuntimeQueueWakeService);
+    const queueWake = yield* RuntimeQueueWakeService;
     const approvalWaitService = yield* RuntimeApprovalWaitService;
     const requestInputWaitService = yield* RuntimeRequestInputWaitService;
     const launchPolicy = yield* RuntimeLaunchPolicyService;
@@ -224,15 +223,6 @@ const missingHandlerThreadStartPreparationHost = RuntimeHandlerThreadStartPrepar
     Effect.die(
       new Error(
         "RuntimeAcceptedNativeToolExecution requires RuntimeHandlerThreadStartPreparationHost composition.",
-      ),
-    ),
-});
-
-const missingRuntimeQueueWakeService = RuntimeQueueWakeService.of({
-  wakeSurface: () =>
-    Effect.die(
-      new Error(
-        "RuntimeAcceptedNativeToolExecution requires RuntimeQueueWakeService for thread_start.",
       ),
     ),
 });

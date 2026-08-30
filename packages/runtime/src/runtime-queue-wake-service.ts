@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { RuntimeContractError, RuntimeWorkspaceStatePort } from "@svvy/core";
 import { RuntimeQueueWakeService } from "./runtime-queue-wake-port";
-import { RuntimeSurfaceQueueDispatcherService } from "./runtime-surface-queue-dispatcher-service";
+import { RuntimeQueueWakeBroker } from "./runtime-queue-wake-broker";
 import { RuntimeShutdownAdmission } from "./runtime-shutdown-admission";
 
 export { RuntimeQueueWakeService } from "./runtime-queue-wake-port";
@@ -11,7 +11,7 @@ export type { RuntimeQueueWakeServiceService } from "./runtime-queue-wake-port";
 export const layerRuntimeQueueWakeService = Layer.effect(
   RuntimeQueueWakeService,
   Effect.gen(function* () {
-    const dispatcher = yield* RuntimeSurfaceQueueDispatcherService;
+    const broker = yield* RuntimeQueueWakeBroker;
     const workspaceState = yield* RuntimeWorkspaceStatePort;
     const shutdownAdmission = yield* RuntimeShutdownAdmission;
     return RuntimeQueueWakeService.of({
@@ -19,7 +19,7 @@ export const layerRuntimeQueueWakeService = Layer.effect(
         shutdownAdmission.assertAccepting("runtime.queueWake.wakeSurface").pipe(
           Effect.andThen(workspaceState.resolvePromptTargetWorkspaceId({ target: input.target })),
           Effect.flatMap((workspaceId) =>
-            dispatcher.acceptWakeHint({
+            broker.wakeSurface({
               workspaceId,
               target: input.target,
               reason: input.reason,

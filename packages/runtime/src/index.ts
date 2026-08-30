@@ -301,6 +301,7 @@ import {
 } from "./runtime-layer-config";
 import { layerRuntimeRequestInputWaitService } from "./runtime-request-input-wait-service";
 import { layerRuntimeQueueWakeService } from "./runtime-queue-wake-service";
+import { layerRuntimeQueueWakeBroker } from "./runtime-queue-wake-broker";
 import { layerRuntimeGeneratedContextRefreshService } from "./runtime-generated-context-refresh-service";
 import { layerRuntimeGeneratedPackageRefreshService } from "./runtime-generated-package-refresh-service";
 import { layerRuntimeExtensionStartupReconcileService } from "./runtime-extension-startup-reconcile-service";
@@ -531,12 +532,18 @@ const runtimeSurfaceScopeLayer = layerRuntimeSurfaceScopeService;
 const runtimeRequestInputWaitLayer = layerRuntimeRequestInputWaitService.pipe(
   Layer.provideMerge(layerRuntimeEventBus),
 );
+const runtimeQueueWakeBrokerLayer = layerRuntimeQueueWakeBroker;
+const runtimeQueueWakeLayer = layerRuntimeQueueWakeService.pipe(
+  Layer.provideMerge(runtimeShutdownAdmissionLayer),
+  Layer.provideMerge(runtimeQueueWakeBrokerLayer),
+);
 const runtimeAcceptedNativeToolExecutionLayer = layerRuntimeAcceptedNativeToolExecution.pipe(
   Layer.provideMerge(runtimeRequestInputWaitLayer),
   Layer.provideMerge(runtimeApprovalWaitLayer),
   Layer.provideMerge(runtimeLaunchPolicyLayer),
   Layer.provideMerge(runtimeSourceInvalidationLayer),
   Layer.provideMerge(layerRuntimeEventBus),
+  Layer.provideMerge(runtimeQueueWakeLayer),
   Layer.provide(runtimeShutdownAdmissionLayer),
 );
 const runtimeSurfaceQueueDispatcherLayer = layerRuntimeSurfaceQueueDispatcherService.pipe(
@@ -547,6 +554,7 @@ const runtimeSurfaceQueueDispatcherLayer = layerRuntimeSurfaceQueueDispatcherSer
   Layer.provideMerge(runtimeGeneratedContextBindingLayer),
   Layer.provideMerge(layerRuntimePromptDefaultsService),
   Layer.provideMerge(runtimeAcceptedNativeToolExecutionLayer),
+  Layer.provideMerge(runtimeQueueWakeBrokerLayer),
   Layer.provideMerge(runtimeShutdownAdmissionLayer),
 );
 const runtimeWorkflowTaskAgentBridgeLayer = layerRuntimeWorkflowTaskAgentBridgeService.pipe(
@@ -555,10 +563,6 @@ const runtimeWorkflowTaskAgentBridgeLayer = layerRuntimeWorkflowTaskAgentBridgeS
   Layer.provideMerge(layerRuntimeGeneratedContextRefreshService),
   Layer.provideMerge(runtimeSurfaceScopeLayer),
   Layer.provideMerge(layerRuntimeEventBus),
-);
-const runtimeQueueWakeLayer = layerRuntimeQueueWakeService.pipe(
-  Layer.provideMerge(runtimeShutdownAdmissionLayer),
-  Layer.provideMerge(runtimeSurfaceQueueDispatcherLayer),
 );
 const runtimeInternalServicesLayer = Layer.mergeAll(
   runtimeShutdownAdmissionLayer,
@@ -580,6 +584,7 @@ const runtimeInternalServicesLayer = Layer.mergeAll(
   runtimePromptExecutionLayer,
   runtimeSurfaceQueueDispatcherLayer,
   runtimeWorkflowTaskAgentBridgeLayer,
+  runtimeQueueWakeBrokerLayer,
   runtimeQueueWakeLayer,
   layerRuntimeWorkspaceScopeService,
   layerRuntimePromptDefaultsService,
