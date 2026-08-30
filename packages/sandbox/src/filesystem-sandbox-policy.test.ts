@@ -148,16 +148,12 @@ describe("filesystem sandbox policy", () => {
     const profile = buildMacOsSeatbeltProfile(policy, cwd, { networkAccess: false });
 
     expect(profile.profile).toContain("(version 1)");
-    expect(profile.profile).toContain("(allow default)");
-    expect(profile.profile).toContain("(deny file-read*");
-    expect(profile.profile).toContain('(literal (param "UNREADABLE_ROOT_0"))');
-    expect(profile.profile).toContain('(subpath (param "UNREADABLE_ROOT_0"))');
+    expect(profile.profile).toContain("(deny default)");
+    expect(profile.profile).toContain("(allow file-read*");
+    expect(profile.profile).toContain('(subpath (param "READABLE_ROOT_0"))');
     expect(profile.profile).toContain("(deny file-write*)");
     expect(profile.profile).toContain("(allow file-write*");
     expect(profile.profile).toContain('(subpath (param "WRITABLE_ROOT_0"))');
-    expect(profile.profile).toContain(
-      '(require-not (literal (param "WRITABLE_ROOT_0_EXCLUDED_0")))',
-    );
     expect(profile.profile).toContain(
       '(require-not (subpath (param "WRITABLE_ROOT_0_EXCLUDED_0")))',
     );
@@ -166,10 +162,40 @@ describe("filesystem sandbox policy", () => {
     expect(profile.profile).toContain('(require-not (regex #"^/repo/\\.codex(/.*)?$"))');
     expect(profile.profile).toContain("(deny network*)");
     expect(profile.parameters).toMatchObject({
-      UNREADABLE_ROOT_0: join(cwd, "readonly", "secret"),
+      READABLE_ROOT_0: "/",
       WRITABLE_ROOT_0: cwd,
       WRITABLE_ROOT_0_EXCLUDED_0: join(cwd, "readonly"),
     });
+  });
+
+  it("keeps protected-metadata regexes valid for quoted paths and rejects controls", () => {
+    const quotedRoot = '/repo/quote"\\workspace';
+    const policy = {
+      kind: "restricted" as const,
+      defaultAccess: "none" as const,
+      entries: [
+        {
+          path: quotedRoot,
+          access: "write" as const,
+          recursive: true,
+          source: "workspace" as const,
+          protectedMetadataNames: ['.git"\\hook'],
+        },
+      ],
+    };
+    const profile = buildMacOsSeatbeltProfile(policy, quotedRoot, { networkAccess: false });
+    expect(profile.profile).toContain('regex #"');
+    expect(profile.profile).toContain('\\"');
+    expect(() =>
+      buildMacOsSeatbeltProfile(
+        {
+          ...policy,
+          entries: [{ ...policy.entries[0]!, protectedMetadataNames: [".git\nattack"] }],
+        },
+        quotedRoot,
+        { networkAccess: false },
+      ),
+    ).toThrow(/control characters/);
   });
 
   it("reopens readable child roots inside unreadable Seatbelt roots", () => {
@@ -190,24 +216,23 @@ describe("filesystem sandbox policy", () => {
     expect(canReadFileSystemPath(policy, join(cwd, "sealed", "secret.txt"), cwd)).toBe(false);
     expect(canReadFileSystemPath(policy, join(readableChild, "notes.md"), cwd)).toBe(true);
     expect(canReadFileSystemPath(policy, join(writableChild, "state.json"), cwd)).toBe(true);
-    expect(profile.profile).toContain('(param "UNREADABLE_ROOT_0_EXCLUDED_0")');
-    expect(profile.profile).toContain('(param "UNREADABLE_ROOT_0_EXCLUDED_1")');
+    expect(profile.profile).toContain('(param "READABLE_ROOT_0_EXCLUDED_0")');
+    expect(profile.profile).toContain('(param "READABLE_ROOT_0_EXCLUDED_0")');
     expect(profile.parameters).toMatchObject({
-      UNREADABLE_ROOT_0: join(cwd, "sealed"),
-      UNREADABLE_ROOT_0_EXCLUDED_0: writableChild,
-      UNREADABLE_ROOT_0_EXCLUDED_1: readableChild,
+      READABLE_ROOT_0: cwd,
+      READABLE_ROOT_0_EXCLUDED_0: join(cwd, "sealed"),
     });
   });
 
-  it("omits managed write and network restrictions for unrestricted network-enabled profiles", () => {
+  it("keeps unrestricted profiles free of managed filesystem restrictions", () => {
     const profile = buildMacOsSeatbeltProfile(unrestrictedFileSystemPolicy(), "/repo", {
       networkAccess: true,
     });
 
     expect(profile.profile).toContain("(version 1)");
-    expect(profile.profile).toContain("(allow default)");
-    expect(profile.profile).not.toContain("file-write");
-    expect(profile.profile).not.toContain("network");
+    expect(profile.profile).toContain("(deny default)");
+    expect(profile.profile).not.toContain("(allow file-write*\n(require-all");
+    expect(profile.profile).toContain("network-outbound");
     expect(profile.parameters).toEqual({});
   });
 
@@ -217,9 +242,9 @@ describe("filesystem sandbox policy", () => {
     });
 
     expect(profile.profile).toContain("(version 1)");
-    expect(profile.profile).toContain("(allow default)");
+    expect(profile.profile).toContain("(deny default)");
     expect(profile.profile).toContain("(deny network*)");
-    expect(profile.profile).not.toContain("file-write");
+    expect(profile.profile).not.toContain("(allow file-write*\n(require-all");
     expect(profile.parameters).toEqual({});
   });
 });
