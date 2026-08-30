@@ -17,6 +17,7 @@ import {
   RuntimeSourceStatePort,
   RuntimeSurfaceLifecycleStatePort,
   RuntimeThreadStatePort,
+  RuntimeToolExecutionPolicyStatePort,
   RuntimeTranscriptStatePort,
   RuntimeTurnStatePort,
   RuntimeWorkspaceStatePort,
@@ -554,7 +555,37 @@ describe("workspace state router", () => {
     }
   });
 
-  it("wires each of the fifteen runtime-facing port tags to its router service", async () => {
+  it("resolves tool execution policy from app-global preferences and the addressed workspace", async () => {
+    const { registry, cleanup } = createRegistry();
+    const appGlobal = makeStore(registry, "workspace_app_global", "appglobal");
+    const workspaceA = makeStore(registry, "workspace_a", "a");
+    const router = createWorkspaceStateRouter({
+      appGlobalStore: appGlobal.store,
+      workspaceStores: [{ store: workspaceA.store }],
+    });
+
+    try {
+      appGlobal.store.updateAppPreferences({ approvalMode: "user" });
+      await expect(
+        runTestEffect(
+          router.toolExecutionPolicy.readPolicy({
+            workspaceId: workspaceA.store.workspaceId as WorkspaceId,
+          }),
+        ),
+      ).resolves.toEqual({ approvalMode: "user", cwd: workspaceA.cwd as AbsolutePath });
+      await expect(
+        runTestEffect(
+          router.toolExecutionPolicy.readPolicy({
+            workspaceId: "workspace_unregistered" as WorkspaceId,
+          }),
+        ),
+      ).rejects.toMatchObject({ reason: "not-found" });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("wires each of the sixteen runtime-facing port tags to its router service", async () => {
     const { registry, cleanup } = createRegistry();
     const appGlobal = makeStore(registry, "workspace_app_global", "appglobal");
     const workspaceA = makeStore(registry, "workspace_a", "a");
@@ -581,6 +612,7 @@ describe("workspace state router", () => {
       const observed = await runTestEffect(
         Effect.gen(function* () {
           const workspace = yield* RuntimeWorkspaceStatePort;
+          const toolExecutionPolicy = yield* RuntimeToolExecutionPolicyStatePort;
           const surfaceLifecycle = yield* RuntimeSurfaceLifecycleStatePort;
           const promptDefaults = yield* RuntimePromptDefaultsStatePort;
           const source = yield* RuntimeSourceStatePort;
@@ -598,6 +630,7 @@ describe("workspace state router", () => {
 
           const identities = {
             workspace: workspace === router.workspace,
+            toolExecutionPolicy: toolExecutionPolicy === router.toolExecutionPolicy,
             surfaceLifecycle: surfaceLifecycle === router.surfaceLifecycle,
             promptDefaults: promptDefaults === router.promptDefaults,
             source: source === router.source,
@@ -620,6 +653,11 @@ describe("workspace state router", () => {
                 workspaceId: "workspace_unregistered" as WorkspaceId,
                 owner: { ownerId: "owner-wiring" as RuntimeOwnerId, kind: "test" },
                 releaseReason: "test",
+              }),
+            ),
+            toolExecutionPolicy: yield* tolerate(
+              toolExecutionPolicy.readPolicy({
+                workspaceId: "workspace_unregistered" as WorkspaceId,
               }),
             ),
             surfaceLifecycle: yield* tolerate(
@@ -685,6 +723,7 @@ describe("workspace state router", () => {
 
       expect(observed.identities).toEqual({
         workspace: true,
+        toolExecutionPolicy: true,
         surfaceLifecycle: true,
         promptDefaults: true,
         source: true,
@@ -700,7 +739,7 @@ describe("workspace state router", () => {
         turn: true,
         episode: true,
       });
-      expect(Object.keys(observed.dispatched)).toHaveLength(15);
+      expect(Object.keys(observed.dispatched)).toHaveLength(16);
       expect(
         Object.values(observed.dispatched).every(
           (outcome) => outcome === "ok" || outcome === "typed-failure",

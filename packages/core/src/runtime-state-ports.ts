@@ -181,6 +181,28 @@ export interface RuntimeWorkspaceStatePortService {
   ): Effect.Effect<StateMutationResult<ReleaseWorkspaceResult>, StateContractError>;
 }
 
+export type RuntimeToolExecutionApprovalMode = "auto-review" | "user" | "full-access";
+
+export type RuntimeToolExecutionPolicy = {
+  readonly approvalMode: RuntimeToolExecutionApprovalMode;
+  readonly cwd: AbsolutePath;
+};
+
+export interface RuntimeToolExecutionPolicyStatePortService {
+  readPolicy(input: {
+    readonly workspaceId: WorkspaceId;
+  }): Effect.Effect<RuntimeToolExecutionPolicy, StateContractError>;
+}
+
+export interface RuntimeToolExecutionPolicyStatePort {
+  readonly _tag: "RuntimeToolExecutionPolicyStatePort";
+}
+
+export const RuntimeToolExecutionPolicyStatePort = Context.Service<
+  RuntimeToolExecutionPolicyStatePort,
+  RuntimeToolExecutionPolicyStatePortService
+>("@svvy/core/RuntimeToolExecutionPolicyStatePort");
+
 export interface RuntimeWorkspaceStatePort {
   readonly _tag: "RuntimeWorkspaceStatePort";
 }

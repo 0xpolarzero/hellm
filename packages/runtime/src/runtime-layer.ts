@@ -36,6 +36,7 @@ import {
   RuntimeTurnStatePort,
   RuntimeWorkflowTaskStatePort,
   RuntimeWorkspaceStatePort,
+  RuntimeToolExecutionPolicyStatePort,
   RuntimePromptDefaultsStatePort,
   PiRuntimePathsPort,
   PiSessionReferencePort,
@@ -307,6 +308,7 @@ export type RuntimeLayerRequirements =
   | SandboxHelperCandidatesPort
   | HostProcessReferencePort
   | RuntimeWorkspaceStatePort
+  | RuntimeToolExecutionPolicyStatePort
   | RuntimeSurfaceLifecycleStatePort
   | RuntimeSourceStatePort
   | RuntimeExternalInstructionStatePort

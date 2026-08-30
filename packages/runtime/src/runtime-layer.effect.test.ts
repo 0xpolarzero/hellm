@@ -40,6 +40,7 @@ import {
   RuntimeTurnStatePort,
   RuntimeWorkflowTaskStatePort,
   RuntimeWorkspaceStatePort,
+  RuntimeToolExecutionPolicyStatePort,
   RuntimePromptDefaultsStatePort,
   PiRuntimePathsPort,
   PiSessionReferencePort,
@@ -2810,6 +2811,13 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
               };
             }),
         }),
+        Layer.succeed(RuntimeToolExecutionPolicyStatePort, {
+          readPolicy: () =>
+            Effect.succeed({
+              approvalMode: "auto-review",
+              cwd: "/tmp/svvy-runtime-layer-effect" as AbsolutePath,
+            }),
+        }),
         Layer.succeed(RuntimeSurfaceLifecycleStatePort, {
           createOrchestratorSurface: (input) =>
             Effect.sync(() => ({
@@ -3145,6 +3153,10 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
         }),
         testPiAdapterHostLayer(),
         Layer.succeed(RuntimeWorkspaceStatePort, unusedPort("RuntimeWorkspaceStatePort")),
+        Layer.succeed(
+          RuntimeToolExecutionPolicyStatePort,
+          unusedPort("RuntimeToolExecutionPolicyStatePort"),
+        ),
         Layer.succeed(
           RuntimeSurfaceLifecycleStatePort,
           unusedPort("RuntimeSurfaceLifecycleStatePort"),

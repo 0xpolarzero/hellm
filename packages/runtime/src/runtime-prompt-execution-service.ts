@@ -46,6 +46,7 @@ import {
   type ToolItemId,
   type TurnId,
   type WorkspaceId,
+  type RuntimeToolExecutionPolicy,
 } from "@svvy/core";
 import {
   decodeRequestUserInputInputEffect,
@@ -331,6 +332,7 @@ export function buildRuntimeToolExecutor(input: {
   readonly queueState: RuntimeQueueStatePortService;
   readonly eventBus: RuntimeEventBus["Service"];
   readonly sourceInvalidation: RuntimeSourceInvalidationService["Service"];
+  readonly executionPolicy: RuntimeToolExecutionPolicy;
 }): RunPiTurnInput["toolExecutor"] {
   return (toolInput) =>
     Effect.gen(function* () {
@@ -376,6 +378,8 @@ export function buildRuntimeToolExecutor(input: {
             typescriptCode,
             promptContext: input.promptContext,
             actorBinding: input.actorBinding,
+            approvalMode: input.executionPolicy.approvalMode,
+            cwd: input.executionPolicy.cwd,
           })
           .pipe(
             Effect.mapError((cause) =>
@@ -397,9 +401,9 @@ export function buildRuntimeToolExecutor(input: {
           commandId: command.id as CommandId,
           target: input.target,
           turnId: toolInput.turnId,
-          approvalMode: "auto-review" as const,
+          approvalMode: input.executionPolicy.approvalMode,
           sandbox: { snapshot: {} },
-          cwd: "",
+          cwd: input.executionPolicy.cwd,
           baseEnv: {},
         };
         const requestArguments = yield* decodeRequestUserInputInputEffect(args).pipe(
@@ -428,9 +432,9 @@ export function buildRuntimeToolExecutor(input: {
         commandId: command.id as CommandId,
         target: input.target,
         turnId: toolInput.turnId,
-        approvalMode: "auto-review",
+        approvalMode: input.executionPolicy.approvalMode,
         sandbox: { snapshot: {} },
-        cwd: "",
+        cwd: input.executionPolicy.cwd,
         baseEnv: {},
       };
       const handler = yield* input.extensions.nativeTools

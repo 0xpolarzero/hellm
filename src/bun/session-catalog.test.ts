@@ -1092,6 +1092,8 @@ describe("WorkspaceSessionCatalog", () => {
         toolCallId: toolCallId as ToolCallId,
         commandId: command.value.id as CommandId,
         typescriptCode: "return { answer: 42 };",
+        approvalMode: "auto-review",
+        cwd: cwd as AbsolutePath,
         promptContext: createPromptExecutionContext({
           workspaceSessionId: created.target.workspaceSessionId,
           turnId: turn.id,
@@ -1160,6 +1162,8 @@ describe("WorkspaceSessionCatalog", () => {
         toolCallId: failureToolCallId as ToolCallId,
         commandId: failedCommand.value.id as CommandId,
         typescriptCode: "return missingIdentifier;",
+        approvalMode: "auto-review",
+        cwd: cwd as AbsolutePath,
         promptContext: createPromptExecutionContext({
           workspaceSessionId: created.target.workspaceSessionId,
           turnId: turn.id,

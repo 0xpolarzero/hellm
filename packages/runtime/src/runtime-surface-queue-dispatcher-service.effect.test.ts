@@ -11,6 +11,7 @@ import {
   RuntimeQueueStatePort,
   RuntimeRequestStatePort,
   RuntimeThreadStatePort,
+  RuntimeToolExecutionPolicyStatePort,
   RuntimeTurnStatePort,
   type CommandId,
   type ExtensionId,
@@ -138,6 +139,7 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
     () => {
       const calls: string[] = [];
       const handlerTurnIds: TurnId[] = [];
+      const handlerPolicies: Array<{ approvalMode: string; cwd: string }> = [];
       const declarationVariants: string[] = [];
       const titlePublications: Array<readonly StateInvalidationDescriptor[]> = [];
       let claimed = false;
@@ -165,6 +167,9 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
         yield* installedPromptDone!;
 
         assert.deepStrictEqual(handlerTurnIds, [turnId]);
+        assert.deepStrictEqual(handlerPolicies, [
+          { approvalMode: "user", cwd: "/workspace/runtime-queue-dispatcher" },
+        ]);
         assert.strictEqual(promptExecutions, 1);
         assert.strictEqual(generatedContextRefreshes, 1);
         assert.deepStrictEqual(declarationVariants, ["blocking"]);
@@ -298,6 +303,10 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
                       Effect.sync(() => {
                         calls.push(`toolHandler:${input.command.turnId}`);
                         handlerTurnIds.push(input.command.turnId);
+                        handlerPolicies.push({
+                          approvalMode: input.command.approvalMode,
+                          cwd: input.command.cwd,
+                        });
                         return {
                           result: { content: [{ type: "text" as const, text: "ok" }] },
                           operations: [],
@@ -414,6 +423,13 @@ describe("@svvy/runtime surface queue dispatcher service", () => {
             } as never),
             Layer.succeed(RuntimeEpisodeStatePort, {} as never),
             Layer.succeed(RuntimeThreadStatePort, {} as never),
+            Layer.succeed(RuntimeToolExecutionPolicyStatePort, {
+              readPolicy: () =>
+                Effect.succeed({
+                  approvalMode: "user",
+                  cwd: "/workspace/runtime-queue-dispatcher" as never,
+                }),
+            }),
             Layer.succeed(AppLogWritePort, {
               append: () => Effect.die("unused"),
             }),

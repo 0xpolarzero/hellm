@@ -161,6 +161,7 @@ import type {
   RuntimeTurnStatePort,
   RuntimeWorkflowTaskStatePort,
   RuntimeWorkspaceStatePort,
+  RuntimeToolExecutionPolicyStatePort,
   RuntimeSurfacesApiEffect,
   RuntimeWorkspacesApiEffect,
   SandboxPolicySource,
@@ -625,6 +626,7 @@ export namespace Runtime {
     | SandboxHelperCandidatesPort
     | HostProcessReferencePort
     | RuntimeWorkspaceStatePort
+    | RuntimeToolExecutionPolicyStatePort
     | RuntimeSurfaceLifecycleStatePort
     | RuntimeSourceStatePort
     | RuntimeExtensionStatePort

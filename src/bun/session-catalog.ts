@@ -850,7 +850,7 @@ export class WorkspaceSessionCatalog {
     let result: Awaited<ReturnType<typeof runExecuteTypescript>> | undefined;
     try {
       result = await runExecuteTypescript({
-        cwd: this.cwd,
+        cwd: input.cwd,
         workspaceId: input.workspaceId,
         artifactState: this.runtimeArtifactStatePort,
         commandState: this.runtimeCommandStatePort,
@@ -886,7 +886,7 @@ export class WorkspaceSessionCatalog {
           this.agentSettingsStore.getState().extensionEnv.nonSecretOverrides,
         onAppLog: this.emitAppLog.bind(this),
         approvalBoundary: this.approvalBoundary,
-        approvalMode: () => this.agentSettingsStore.getState().appPreferences.approvalMode,
+        approvalMode: () => input.approvalMode,
         acquireExecuteTypescriptLaunch: requiredExecuteTypescriptLaunchAcquisition(
           this.recoveryOptions.acquireExecuteTypescriptLaunch,
         ),

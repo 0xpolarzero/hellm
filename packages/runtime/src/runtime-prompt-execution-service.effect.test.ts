@@ -267,6 +267,7 @@ describe("@svvy/runtime prompt execution service", () => {
           refreshGeneratedContext: () => Effect.void,
           refreshGeneratedPackages: () => Effect.die("Unexpected generated package refresh."),
         }),
+        executionPolicy: { approvalMode: "user", cwd: "/workspace" as never },
       });
 
       return toolExecutor({
@@ -385,6 +386,7 @@ describe("@svvy/runtime prompt execution service", () => {
         queueState: {} as RuntimeQueueStatePortService,
         eventBus,
         sourceInvalidation: {} as RuntimeSourceInvalidationService["Service"],
+        executionPolicy: { approvalMode: "user", cwd: "/workspace" as never },
       });
 
       return toolExecutor({
@@ -412,6 +414,13 @@ describe("@svvy/runtime prompt execution service", () => {
               (acceptedInputs[0] as { commandRecord: RuntimeCommandRecord }).commandRecord.status,
               "running",
             );
+            const acceptedCommand = (
+              acceptedInputs[0] as {
+                command: { approvalMode: string; cwd: string };
+              }
+            ).command;
+            assert.strictEqual(acceptedCommand.approvalMode, "user");
+            assert.strictEqual(acceptedCommand.cwd, "/workspace");
           }),
         ),
       );
@@ -486,6 +495,7 @@ describe("@svvy/runtime prompt execution service", () => {
           subscribe: () => Effect.die("Unexpected subscription."),
         }),
         sourceInvalidation: {} as RuntimeSourceInvalidationService["Service"],
+        executionPolicy: { approvalMode: "user", cwd: "/workspace" as never },
       });
 
       return toolExecutor({
@@ -508,6 +518,8 @@ describe("@svvy/runtime prompt execution service", () => {
                 toolCallId,
                 commandId,
                 typescriptCode: "return 40 + 2;",
+                approvalMode: "user",
+                cwd: "/workspace",
                 promptContext,
                 actorBinding: {
                   actorKind: "orchestrator",

@@ -14,6 +14,7 @@ import type {
   WriteCommandStdinInput,
   WriteCommandStdinResult,
   WorkspaceId,
+  AbsolutePath,
 } from "@svvy/core";
 
 type RuntimeExecuteTypescriptCommandHostInput = {
@@ -25,6 +26,8 @@ type RuntimeExecuteTypescriptCommandHostInput = {
   readonly typescriptCode: string;
   readonly promptContext: PromptExecutionContext;
   readonly actorBinding: ActorBinding;
+  readonly approvalMode: "auto-review" | "user" | "full-access";
+  readonly cwd: AbsolutePath;
 };
 
 export interface RuntimeLayerCommandStdinPortService {

@@ -128,6 +128,7 @@ import {
   type RuntimeSourceStatePort,
   type RuntimeSurfaceLifecycleStatePort,
   type RuntimeThreadStatePort,
+  type RuntimeToolExecutionPolicyStatePort,
   type RuntimeTurnStatePort,
   type RuntimeWorkspaceStatePort,
   type BuildLaunchPolicyInput,
@@ -213,6 +214,7 @@ export namespace Runtime {
     | SandboxHelperCandidatesPort
     | HostProcessReferencePort
     | RuntimeWorkspaceStatePort
+    | RuntimeToolExecutionPolicyStatePort
     | RuntimeSurfaceLifecycleStatePort
     | RuntimeSourceStatePort
     | RuntimeGeneratedPackageStatePort
@@ -1369,6 +1371,9 @@ dispatcher `QueueWakeup` hints. It claims work only with
 opted-in generated-context refresh, prepares the exact `StartRuntimeTurnInput`, then creates and
 commits the durable turn with
 `RuntimeTurnStatePort.startTurn(input: StartRuntimeTurnInput)` before pi delivery.
+Before constructing the pi tool executor, it reads `RuntimeToolExecutionPolicyStatePort.readPolicy`
+for the addressed workspace and carries that exact durable approval mode and workspace cwd through
+native tool execution and extension command contexts.
 
 The queue/turn state contract names these methods as the prompt-bearing claim lifecycle:
 `claimNextQueuedSurfaceMessage`, `releaseExpiredSurfaceMessageClaims`, `startTurn`,
@@ -1384,6 +1389,8 @@ Before calling pi, runtime composes dispatch input from:
 
 - `RuntimePromptDefaultsStatePort.resolvePromptDefaults(input)` for DB/product-state-backed
   provider, model, and reasoning only.
+- `RuntimeToolExecutionPolicyStatePort.readPolicy(input)` for the durable approval mode and the
+  addressed workspace cwd used by native tool execution.
 - `RuntimeActorExtensionBindingStatePort.readRuntimePromptBinding(input)` for the committed
   DB/product-state-backed prompt binding facts for an already-bound target.
 - `Extensions.generatedContext.build(input)` when a refresh is required.

@@ -22,6 +22,7 @@ import {
   RuntimeTurnStatePort,
   RuntimeWorkflowTaskStatePort,
   RuntimeWorkspaceStatePort,
+  RuntimeToolExecutionPolicyStatePort,
   StateContractError,
   type PromptTarget,
   type RuntimeSurfaceTarget,
@@ -48,6 +49,7 @@ import {
   type RuntimeTurnStatePortService,
   type RuntimeWorkflowTaskStatePortService,
   type RuntimeWorkspaceStatePortService,
+  type RuntimeToolExecutionPolicyStatePortService,
   type PiSessionReferencePortService,
   type SourceInvalidationScope,
   type StateMutationResult,
@@ -94,6 +96,7 @@ export interface WorkspaceStateRouter {
   registerWorkspaceState(registration: WorkspaceStateRegistration): void;
   unregisterWorkspaceState(workspaceId: WorkspaceId): boolean;
   readonly workspace: RuntimeWorkspaceStatePortService;
+  readonly toolExecutionPolicy: RuntimeToolExecutionPolicyStatePortService;
   readonly surfaceLifecycle: RuntimeSurfaceLifecycleStatePortService;
   readonly promptDefaults: RuntimePromptDefaultsStatePortService;
   readonly composerProfile: RuntimeComposerProfileStatePortService;
@@ -480,6 +483,20 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
     releaseWorkspace: (request) =>
       via(resolveWorkspace("releaseWorkspace", request.workspaceId), (registered) =>
         registered.ports.workspace.releaseWorkspace(request),
+      ),
+  };
+
+  const toolExecutionPolicy: RuntimeToolExecutionPolicyStatePortService = {
+    readPolicy: ({ workspaceId }) =>
+      resolveWorkspace("readToolExecutionPolicy", workspaceId).pipe(
+        Effect.flatMap((registered) =>
+          appGlobal.structuredSession.readAppPreferences().pipe(
+            Effect.map((preferences) => ({
+              approvalMode: preferences.approvalMode,
+              cwd: registered.cwd as import("@svvy/core").AbsolutePath,
+            })),
+          ),
+        ),
       ),
   };
 
@@ -1206,6 +1223,7 @@ export function createWorkspaceStateRouter(input: WorkspaceStateRouterInput): Wo
       return deleted;
     },
     workspace,
+    toolExecutionPolicy,
     surfaceLifecycle,
     promptDefaults,
     composerProfile,
@@ -1241,6 +1259,7 @@ export function layerWorkspaceStateRouter(
   router: WorkspaceStateRouter,
 ): Layer.Layer<
   | RuntimeWorkspaceStatePort
+  | RuntimeToolExecutionPolicyStatePort
   | RuntimeSurfaceLifecycleStatePort
   | RuntimePromptDefaultsStatePort
   | RuntimeComposerProfileStatePort
@@ -1263,6 +1282,7 @@ export function layerWorkspaceStateRouter(
 > {
   return Layer.mergeAll(
     Layer.succeed(RuntimeWorkspaceStatePort, router.workspace),
+    Layer.succeed(RuntimeToolExecutionPolicyStatePort, router.toolExecutionPolicy),
     Layer.succeed(RuntimeSurfaceLifecycleStatePort, router.surfaceLifecycle),
     Layer.succeed(RuntimePromptDefaultsStatePort, router.promptDefaults),
     Layer.succeed(RuntimeComposerProfileStatePort, router.composerProfile),

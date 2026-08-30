@@ -15,6 +15,7 @@ import {
   RuntimeQueueStatePort,
   RuntimeRequestStatePort,
   RuntimeThreadStatePort,
+  RuntimeToolExecutionPolicyStatePort,
   RuntimeTurnStatePort,
   type PromptTarget,
   type AppLogWritePortService,
@@ -29,6 +30,7 @@ import {
   type RuntimeTurnRecord,
   type RuntimeCommandStatePortService,
   type RuntimeThreadStatePortService,
+  type RuntimeToolExecutionPolicyStatePortService,
   type RuntimeTurnStatePortService,
   type StartRuntimeTurnInput,
   type WorkspaceId,
@@ -246,6 +248,7 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
     const appLog = yield* AppLogWritePort;
     const eventBus = yield* RuntimeEventBus;
     const sourceInvalidation = yield* RuntimeSourceInvalidationService;
+    const toolExecutionPolicyState = yield* RuntimeToolExecutionPolicyStatePort;
     const acceptedNativeTools = yield* RuntimeAcceptedNativeToolExecution;
     const shutdownAdmission = yield* RuntimeShutdownAdmission;
     const completedPromptResults = new Map<string, RuntimePromptExecutionResult>();
@@ -326,6 +329,7 @@ export const layerRuntimeSurfaceQueueDispatcherService = Layer.effect(
               eventBus,
               sourceInvalidation,
               acceptedNativeTools,
+              toolExecutionPolicyState,
               completedPromptResults,
               requestedPromptResults,
             }),
@@ -521,8 +525,22 @@ function startRuntimePrompt(input: {
   >;
   readonly completedPromptResults: Map<string, RuntimePromptExecutionResult>;
   readonly requestedPromptResults: Set<string>;
+  readonly toolExecutionPolicyState: RuntimeToolExecutionPolicyStatePortService;
 }): Effect.Effect<SurfaceQueueStartedPrompt, RuntimeContractError> {
   return Effect.gen(function* () {
+    const executionPolicy = yield* input.toolExecutionPolicyState
+      .readPolicy({ workspaceId: input.workspaceId })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new RuntimeContractError({
+              operation: "runtime.queue.dispatch.readToolExecutionPolicy",
+              reason: "state-conflict",
+              message: cause.message,
+              cause,
+            }),
+        ),
+      );
     const promptContext = buildRuntimePromptExecutionContext({
       target: input.target,
       turn: input.turn,
@@ -585,6 +603,7 @@ function startRuntimePrompt(input: {
         queueState: input.queueState,
         eventBus: input.eventBus,
         sourceInvalidation: input.sourceInvalidation,
+        executionPolicy,
       }),
     });
     const execute = input.promptExecution
