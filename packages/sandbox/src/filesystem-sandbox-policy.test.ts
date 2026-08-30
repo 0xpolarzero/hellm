@@ -231,6 +231,7 @@ describe("filesystem sandbox policy", () => {
 
     expect(profile.profile).toContain("(version 1)");
     expect(profile.profile).toContain("(deny default)");
+    expect(profile.profile).toContain("(allow file-write*)");
     expect(profile.profile).not.toContain("(allow file-write*\n(require-all");
     expect(profile.profile).toContain("network-outbound");
     expect(profile.parameters).toEqual({});
@@ -243,6 +244,7 @@ describe("filesystem sandbox policy", () => {
 
     expect(profile.profile).toContain("(version 1)");
     expect(profile.profile).toContain("(deny default)");
+    expect(profile.profile).toContain("(allow file-write*)");
     expect(profile.profile).toContain("(deny network*)");
     expect(profile.profile).not.toContain("(allow file-write*\n(require-all");
     expect(profile.parameters).toEqual({});

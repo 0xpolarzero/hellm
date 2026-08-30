@@ -488,7 +488,7 @@ function buildSeatbeltFileWritePolicy(
   parameters: Record<string, string>,
 ): string {
   if (policy.kind === "unrestricted") {
-    return "";
+    return "(allow file-write*)";
   }
   const writableRoots = policy.entries
     .map(normalizeEntry)
