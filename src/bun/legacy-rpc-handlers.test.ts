@@ -13,6 +13,7 @@ const FACADE_BACKED_REQUESTS = [
   "refetchStateReadModelInvalidation",
   "rebaselineStateReadModels",
   "stateAppLogsMarkRead",
+  "stateAppLogsSetViewPreferences",
   "stateWorkspaceChromeSetTabs",
   "stateWorkspaceChromeSelectTab",
   "stateWorkspaceChromeSelectLayoutSlot",

@@ -197,6 +197,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 describe("State app-log facade slice", () => {
   it("adapts app-bootstrap app logs and the write port over one state-owned store", async () => {
     const appLogs = createStateAppLogsFacade({
+      digest: testDigest,
       now: () => "2026-06-21T12:00:00.000Z",
     });
     try {
@@ -1347,7 +1348,10 @@ describe("State extension env secret commands", () => {
         artifactDir: "/tmp/svvy-secret-state-artifacts" as typeof AbsolutePath.Type,
       },
     });
-    const appLogStore = createAppLogStore({ now: () => "2026-07-12T10:00:00.000Z" });
+    const appLogStore = createAppLogStore({
+      digest: testDigest,
+      now: () => "2026-07-12T10:00:00.000Z",
+    });
     const material = new Set<string>();
     const calls: string[] = [];
     let nextMaterial = 0;
@@ -2221,6 +2225,7 @@ describe("State read-model kind expansion", () => {
         workspaceStores: [{ store }],
       });
       const appLogStore = createAppLogStore({
+        digest: testDigest,
         now: () => "2026-06-21T12:00:00.000Z",
       });
       const readModels = stateReadModelsFromRouter({
@@ -3456,7 +3461,10 @@ describe("State read-model kind expansion", () => {
         artifactDir: "/tmp/svvy-actor-extension-defaults-artifacts" as typeof AbsolutePath.Type,
       },
     });
-    const appLogStore = createAppLogStore({ now: () => "2026-07-11T10:00:00.000Z" });
+    const appLogStore = createAppLogStore({
+      digest: testDigest,
+      now: () => "2026-07-11T10:00:00.000Z",
+    });
     const router = createWorkspaceStateRouter({
       appGlobalStore: store,
       workspaceStores: [{ store }],
@@ -3552,7 +3560,10 @@ describe("State read-model kind expansion", () => {
       orchestratorStateInput(workspaceId, "Session navigation commands"),
     );
     const workspaceSessionId = created.workspaceSessionId as WorkspaceSessionId;
-    const appLogStore = createAppLogStore({ now: () => "2026-07-11T10:00:00.000Z" });
+    const appLogStore = createAppLogStore({
+      digest: testDigest,
+      now: () => "2026-07-11T10:00:00.000Z",
+    });
     const router = createWorkspaceStateRouter({
       appGlobalStore: store,
       workspaceStores: [{ store }],
@@ -3714,7 +3725,10 @@ describe("State read-model kind expansion", () => {
     const appGlobalStore = makeStore("workspace_snippets_app_global" as WorkspaceId);
     const workspaceId = "workspace_snippets_routed" as WorkspaceId;
     const workspaceStore = makeStore(workspaceId);
-    const appLogStore = createAppLogStore({ now: () => "2026-06-21T12:00:00.000Z" });
+    const appLogStore = createAppLogStore({
+      digest: testDigest,
+      now: () => "2026-06-21T12:00:00.000Z",
+    });
 
     try {
       const router = createWorkspaceStateRouter({
@@ -3829,7 +3843,10 @@ describe("State read-model kind expansion", () => {
     const appGlobalStore = makeStore("workspace_rebaseline_app_global" as WorkspaceId);
     const workspaceId = "workspace_rebaseline_routed" as WorkspaceId;
     const workspaceStore = makeStore(workspaceId);
-    const appLogStore = createAppLogStore({ now: () => "2026-06-21T12:00:00.000Z" });
+    const appLogStore = createAppLogStore({
+      digest: testDigest,
+      now: () => "2026-06-21T12:00:00.000Z",
+    });
 
     try {
       appGlobalStore.updateAppPreferences({ appearance: "dark" });
@@ -4141,7 +4158,10 @@ describe("State read-model kind expansion", () => {
         artifactDir: "/tmp/workspace-surface-latest-status-artifacts" as typeof AbsolutePath.Type,
       },
     });
-    const appLogStore = createAppLogStore({ now: () => new Date(clock++).toISOString() });
+    const appLogStore = createAppLogStore({
+      digest: testDigest,
+      now: () => new Date(clock++).toISOString(),
+    });
 
     try {
       const surface = store.createOrchestratorSurface(
@@ -4201,7 +4221,10 @@ describe("State read-model kind expansion", () => {
     const appGlobalStore = makeStore("workspace_surface_app_global" as WorkspaceId);
     const workspaceId = "workspace_surface_routed" as WorkspaceId;
     const workspaceStore = makeStore(workspaceId);
-    const appLogStore = createAppLogStore({ now: () => "2026-06-21T12:00:00.000Z" });
+    const appLogStore = createAppLogStore({
+      digest: testDigest,
+      now: () => "2026-06-21T12:00:00.000Z",
+    });
 
     try {
       const surface = workspaceStore.createOrchestratorSurface(
@@ -4260,7 +4283,10 @@ describe("State read-model kind expansion", () => {
     const appGlobalStore = makeStore("workspace_inspector_app_global" as WorkspaceId);
     const workspaceId = "workspace_inspector_routed" as WorkspaceId;
     const workspaceStore = makeStore(workspaceId);
-    const appLogStore = createAppLogStore({ now: () => "2026-06-21T12:00:00.000Z" });
+    const appLogStore = createAppLogStore({
+      digest: testDigest,
+      now: () => "2026-06-21T12:00:00.000Z",
+    });
 
     try {
       const surface = workspaceStore.createOrchestratorSurface(

@@ -199,6 +199,7 @@ export async function seedAppLogs(
   const runtimeDir = getTestWorkspaceRuntimeDir(homeDir, workspaceDir);
   const store = createAppLogStore({
     databasePath: join(runtimeDir, "app-logs-v1.sqlite"),
+    digest: testDigest,
     now: () => new Date().toISOString(),
   });
   try {

@@ -276,7 +276,10 @@ describe("runtime external instruction state port", () => {
   it("routes fetch, invalidation refetch, and rebaseline through the workspace projection", async () => {
     const appStore = createStore(":memory:", "workspace_external_app" as WorkspaceId);
     const workspaceStore = createStore();
-    const appLogs = createAppLogStore({ now: () => "2026-07-12T10:00:00.000Z" });
+    const appLogs = createAppLogStore({
+      digest: testDigest,
+      now: () => "2026-07-12T10:00:00.000Z",
+    });
     try {
       const scanResult = scan([
         {

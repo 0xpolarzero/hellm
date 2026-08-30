@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { AppLogEntry, AppLogSummary } from "../shared/workspace-contract";
+import type { AppLogEntry, AppLogReadModel, AppLogSummary } from "../shared/workspace-contract";
 import {
   APP_LOG_SOURCES,
   applyAppLogLiveUpdate,
@@ -28,6 +28,26 @@ function appLogSummary(overrides: Partial<AppLogSummary> = {}): AppLogSummary {
     unread: { total: 1, debug: 0, info: 1, warn: 0, error: 0 },
     totals: { total: 1, debug: 0, info: 1, warn: 0, error: 0 },
     ...overrides,
+  };
+}
+
+function appLogReadModel(
+  entries: AppLogEntry[],
+  summary: AppLogSummary = appLogSummary(),
+): AppLogReadModel {
+  return {
+    query: {},
+    entries,
+    pageInfo: {
+      returned: entries.length,
+      total: entries.length,
+      hasMore: false,
+      oldestSeq: entries[0]?.seq ?? null,
+      newestSeq: entries.at(-1)?.seq ?? null,
+    },
+    summary,
+    persistedView: { scrollTop: 0, followTail: false },
+    readState: { seenSeq: summary.seenSeq, unread: summary.unread },
   };
 }
 
@@ -124,7 +144,7 @@ describe("applyAppLogLiveUpdate", () => {
 
   it("appends matching logs without requesting automatic tail follow", () => {
     const result = applyAppLogLiveUpdate({
-      current: { entries: [currentEntry], summary: appLogSummary() },
+      current: appLogReadModel([currentEntry]),
       incomingEntries: [nextEntry],
       incomingSummary: nextSummary,
       filters: { level: "all", query: "" },
@@ -140,7 +160,7 @@ describe("applyAppLogLiveUpdate", () => {
 
   it("keeps entries updating while the reader is away from the tail and counts the new logs", () => {
     const result = applyAppLogLiveUpdate({
-      current: { entries: [currentEntry], summary: appLogSummary() },
+      current: appLogReadModel([currentEntry]),
       incomingEntries: [nextEntry],
       incomingSummary: nextSummary,
       filters: { level: "all", query: "" },
@@ -155,7 +175,7 @@ describe("applyAppLogLiveUpdate", () => {
 
   it("ignores duplicate and filtered-out update entries for viewport and New logs counts", () => {
     const result = applyAppLogLiveUpdate({
-      current: { entries: [currentEntry], summary: appLogSummary() },
+      current: appLogReadModel([currentEntry]),
       incomingEntries: [
         currentEntry,
         entry({ id: "3", seq: 3, level: "info", source: "workspace", message: "Background info" }),

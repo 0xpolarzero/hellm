@@ -192,6 +192,9 @@ type FakeRpcHarness = {
     rendererReady: number;
   };
   appLogSeenRequests: number[];
+  appLogViewPreferenceRequests: Array<
+    Parameters<ChatRuntimeRpcClient["request"]["stateAppLogsSetViewPreferences"]>[0]
+  >;
   branchListRequests: string[];
   branchSwitchRequests: Array<{ workspaceId: string; branch: string }>;
   pickWorkspaceAttachmentRequests: Array<
@@ -1106,12 +1109,25 @@ function saveLayoutFixtureSlot(
 
 function emptyAppLogReadModel(): AppLogReadModel {
   return {
+    query: {},
     entries: [],
+    pageInfo: {
+      returned: 0,
+      total: 0,
+      hasMore: false,
+      oldestSeq: null,
+      newestSeq: null,
+    },
     summary: {
       latestSeq: 0,
       seenSeq: 0,
       unread: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
       totals: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
+    },
+    persistedView: { scrollTop: 0, followTail: false },
+    readState: {
+      seenSeq: 0,
+      unread: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
     },
   };
 }
@@ -1212,6 +1228,7 @@ function createFakeRpc(input: {
   );
   const openSessionHandlers = new Map<string, () => Promise<void>>();
   const appLogSeenRequests: number[] = [];
+  const appLogViewPreferenceRequests: FakeRpcHarness["appLogViewPreferenceRequests"] = [];
   const branchListRequests: string[] = [];
   const branchSwitchRequests: Array<{ workspaceId: string; branch: string }> = [];
   const pickWorkspaceAttachmentRequests: Array<
@@ -1517,7 +1534,21 @@ function createFakeRpc(input: {
       if (query?.sources?.length && !query.sources.includes(entry.source)) return false;
       return true;
     });
-    return { entries: structuredClone(entries), summary: summarizeAppLogs() };
+    const summary = summarizeAppLogs();
+    return {
+      ...emptyAppLogReadModel(),
+      query: structuredClone(query ?? {}),
+      entries: structuredClone(entries),
+      pageInfo: {
+        returned: entries.length,
+        total: entries.length,
+        hasMore: false,
+        oldestSeq: entries[0]?.seq ?? null,
+        newestSeq: entries.at(-1)?.seq ?? null,
+      },
+      summary,
+      readState: { seenSeq: summary.seenSeq, unread: summary.unread },
+    };
   };
 
   const emitAppLogUpdate = (payload: AppLogUpdateMessage): void => {
@@ -2262,6 +2293,17 @@ function createFakeRpc(input: {
           }, 0);
           appLogSeenRequests.push(throughSeq);
           appLogSeenSeq = Math.max(appLogSeenSeq, throughSeq);
+          return {
+            receipt: {
+              clientRequestId: request.clientSubmission.clientRequestId ?? null,
+              outcome: "applied",
+              committedAt: request.readAt,
+              stateRevision: 1 as StateRevision,
+            },
+          };
+        },
+        stateAppLogsSetViewPreferences: async (request) => {
+          appLogViewPreferenceRequests.push(structuredClone(request));
           return {
             receipt: {
               clientRequestId: request.clientSubmission.clientRequestId ?? null,
@@ -3375,6 +3417,7 @@ function createFakeRpc(input: {
     openExternalInstructionSourceRequests,
     workspaceLayoutSaveRequests,
     appLogSeenRequests,
+    appLogViewPreferenceRequests,
     branchListRequests,
     pickWorkspaceAttachmentRequests,
     branchSwitchRequests,
@@ -8995,6 +9038,14 @@ describe("createChatRuntime", () => {
     expect(harness.appLogSeenRequests).toEqual([1]);
     expect(runtime.appLogSummary.unread.total).toBe(0);
 
+    await runtime.setAppLogsViewPreferences({ scrollTop: 128, followTail: false });
+    expect(harness.appLogViewPreferenceRequests).toHaveLength(1);
+    expect(harness.appLogViewPreferenceRequests[0]).toMatchObject({
+      workspaceId: TEST_WORKSPACE_INFO.workspaceId,
+      preferences: { scrollTop: 128, followTail: false },
+      clientSubmission: { source: "desktop" },
+    });
+
     runtime.dispose();
   });
 
@@ -9026,12 +9077,25 @@ describe("createChatRuntime", () => {
       message: "Global lifecycle warning",
     };
     harness.setAppGlobalLogs({
+      query: {},
       entries: [appGlobalEntry],
+      pageInfo: {
+        returned: 1,
+        total: 1,
+        hasMore: false,
+        oldestSeq: 7,
+        newestSeq: 7,
+      },
       summary: {
         latestSeq: 7,
         seenSeq: 0,
         unread: { total: 1, debug: 0, info: 0, warn: 1, error: 0 },
         totals: { total: 1, debug: 0, info: 0, warn: 1, error: 0 },
+      },
+      persistedView: { scrollTop: 0, followTail: false },
+      readState: {
+        seenSeq: 0,
+        unread: { total: 1, debug: 0, info: 0, warn: 1, error: 0 },
       },
     });
 

@@ -1,4 +1,5 @@
 import { mkdtempSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
@@ -9,12 +10,22 @@ import { StateContractError } from "@svvy/core";
 import {
   AppLogState,
   appLogStateFromStore,
-  createAppLogStore,
+  createAppLogStore as createRawAppLogStore,
   layerAppLogState,
   type AppLogStore,
 } from "./app-log-store";
 import { runTestEffect } from "./effect.test-support";
 import { testPlatformLayer } from "./platform-test-support";
+
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
+
+function createAppLogStore(
+  options: Omit<Parameters<typeof createRawAppLogStore>[0], "digest">,
+): ReturnType<typeof createRawAppLogStore> {
+  return createRawAppLogStore({ ...options, digest: testDigest });
+}
 
 function clock() {
   let tick = 0;
@@ -58,7 +69,11 @@ describe("app log store", () => {
         const summary = yield* appLogs.summary();
         return { entry, readModel, summary };
       }).pipe(
-        Effect.provide(layerAppLogState({ now: clock() }).pipe(Layer.provide(testPlatformLayer()))),
+        Effect.provide(
+          layerAppLogState({ digest: testDigest, now: clock() }).pipe(
+            Layer.provide(testPlatformLayer()),
+          ),
+        ),
       ),
     );
 
@@ -83,6 +98,15 @@ describe("app log store", () => {
         throw failure;
       },
       markSeen: () => {
+        throw failure;
+      },
+      markSeenWithResult: () => {
+        throw failure;
+      },
+      markSeenForEntryIdsWithResult: () => {
+        throw failure;
+      },
+      setViewPreferences: () => {
         throw failure;
       },
       subscribe: () => {
@@ -198,6 +222,33 @@ describe("app log store", () => {
     store.close();
   });
 
+  it("redacts token-shaped error messages and stacks before persistence and live delivery", () => {
+    const store = createAppLogStore({ now: clock() });
+    const delivered: unknown[] = [];
+    store.subscribe((entries) => delivered.push(entries[0]));
+    const token = "abcdefghijklmnopqrstuvwxyzABCDEF1234567890";
+
+    const entry = store.append({
+      level: "error",
+      source: "auth.provider",
+      message: "provider request failed",
+      error: {
+        name: "ProviderError",
+        message: `Provider rejected ${token}`,
+        stack: `ProviderError: ${token}\n    at request (provider.ts:1:1)`,
+      },
+    });
+
+    for (const value of [entry.error, store.query().entries[0]?.error, delivered[0]]) {
+      expect(JSON.stringify(value)).not.toContain(token);
+    }
+    expect(entry.error).toMatchObject({
+      message: "Provider rejected [REDACTED]",
+      stack: "ProviderError: [REDACTED]\n    at request (provider.ts:1:1)",
+    });
+    store.close();
+  });
+
   it("keeps ordinary workspace paths visible while redacting token-shaped provider values", () => {
     const store = createAppLogStore({ now: clock() });
     const cwd = "/var/folders/bq/fnyn1bq95d37b4q3lrwc_f600000gn/T/svvy-dev-workspace-3qI4YM";
@@ -238,6 +289,146 @@ describe("app log store", () => {
       "three",
     ]);
     secondStore.close();
+  });
+
+  it("allocates sequences atomically across real SQLite connections", async () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-app-logs-concurrent-append-"));
+    const databasePath = join(root, "logs.sqlite");
+    const now = clock();
+    const firstStore = createAppLogStore({ databasePath, busyTimeoutMs: 5_000, now });
+    const secondStore = createAppLogStore({ databasePath, busyTimeoutMs: 5_000, now });
+
+    const entries = await Promise.all([
+      Promise.resolve().then(() =>
+        firstStore.append({ level: "info", source: "workspace", message: "first writer" }),
+      ),
+      Promise.resolve().then(() =>
+        secondStore.append({ level: "info", source: "workspace", message: "second writer" }),
+      ),
+    ]);
+
+    expect(entries.map((entry) => entry.seq).toSorted()).toEqual([1, 2]);
+    expect(firstStore.query({}, null).entries.map((entry) => entry.seq)).toEqual([1, 2]);
+    firstStore.close();
+    secondStore.close();
+  });
+
+  it("persists scoped view preferences across reopen and refetch", () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-app-log-view-preferences-"));
+    const databasePath = join(root, "logs.sqlite");
+    const now = clock();
+    const firstStore = createAppLogStore({ databasePath, now });
+
+    expect(firstStore.query({}, null).persistedView).toEqual({
+      scrollTop: 0,
+      followTail: false,
+    });
+    expect(firstStore.setViewPreferences({ scrollTop: 184.5, followTail: true }, null)).toEqual({
+      preferences: { scrollTop: 184.5, followTail: true },
+      changed: true,
+    });
+    expect(
+      firstStore.setViewPreferences({ scrollTop: 12, followTail: false }, "workspace-a"),
+    ).toEqual({
+      preferences: { scrollTop: 12, followTail: false },
+      changed: true,
+    });
+    firstStore.close();
+
+    const secondStore = createAppLogStore({ databasePath, now });
+    expect(secondStore.query({}, null).persistedView).toEqual({
+      scrollTop: 184.5,
+      followTail: true,
+    });
+    expect(secondStore.query({}, "workspace-a").persistedView).toEqual({
+      scrollTop: 12,
+      followTail: false,
+    });
+    expect(secondStore.query({}, "workspace-b").persistedView).toEqual({
+      scrollTop: 0,
+      followTail: false,
+    });
+    expect(
+      secondStore.setViewPreferences({ scrollTop: 12, followTail: false }, "workspace-a"),
+    ).toEqual({
+      preferences: { scrollTop: 12, followTail: false },
+      changed: false,
+    });
+    secondStore.close();
+  });
+
+  it("wins one concurrent app-log read-state transition and emits one invalidation", () => {
+    const root = mkdtempSync(join(tmpdir(), "svvy-app-log-read-state-cas-"));
+    const databasePath = join(root, "logs.sqlite");
+    const now = clock();
+    const firstStore = createAppLogStore({ databasePath, now });
+    const secondStore = createAppLogStore({ databasePath, now });
+    firstStore.append({ level: "info", source: "workspace", message: "read once" });
+
+    let firstEmits = 0;
+    let secondEmits = 0;
+    firstStore.subscribe(() => {
+      firstEmits += 1;
+    });
+    secondStore.subscribe(() => {
+      secondEmits += 1;
+    });
+
+    type TransactionFactory = (
+      callback: (...args: never[]) => unknown,
+    ) => (...args: never[]) => unknown;
+    const firstDb = (firstStore as unknown as { db: Database }).db;
+    const mutableDb = firstDb as unknown as { transaction: TransactionFactory };
+    const originalTransaction = mutableDb.transaction.bind(firstDb);
+    let pending = true;
+    let concurrentTransition: ReturnType<AppLogStore["markSeenWithResult"]> | undefined;
+    mutableDb.transaction = (callback) => {
+      if (pending) {
+        pending = false;
+        concurrentTransition = secondStore.markSeenWithResult(1);
+      }
+      return originalTransaction(callback);
+    };
+
+    const firstTransition = firstStore.markSeenWithResult(1);
+
+    expect(concurrentTransition).toMatchObject({ changed: true, summary: { seenSeq: 1 } });
+    expect(firstTransition).toMatchObject({ changed: false, summary: { seenSeq: 1 } });
+    expect(firstEmits).toBe(0);
+    expect(secondEmits).toBe(1);
+
+    firstStore.close();
+    secondStore.close();
+  });
+
+  it("resolves read entry ids in the requested scope before advancing the cursor", () => {
+    const store = createAppLogStore({ now: clock() });
+    const workspaceEntry = store.append({
+      workspaceId: "workspace-a",
+      level: "info",
+      source: "workspace",
+      message: "workspace A",
+    });
+    const otherWorkspaceEntry = store.append({
+      workspaceId: "workspace-b",
+      level: "info",
+      source: "workspace",
+      message: "workspace B",
+    });
+
+    expect(() => store.markSeenForEntryIdsWithResult(["app-log-999"], "workspace-a")).toThrow(
+      StateContractError,
+    );
+    expect(() =>
+      store.markSeenForEntryIdsWithResult([otherWorkspaceEntry.id], "workspace-a"),
+    ).toThrow(StateContractError);
+    expect(store.summary("workspace-a")).toMatchObject({ seenSeq: 0 });
+
+    expect(store.markSeenForEntryIdsWithResult([workspaceEntry.id], "workspace-a")).toMatchObject({
+      changed: true,
+      summary: { seenSeq: workspaceEntry.seq },
+    });
+    store.close();
   });
 
   it("applies configured SQLite busy timeout on open", () => {

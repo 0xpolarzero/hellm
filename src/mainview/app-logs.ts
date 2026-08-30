@@ -115,9 +115,22 @@ export function applyAppLogLiveUpdate({
   const appendedEntries = incomingEntries.filter((entry) => !knownIds.has(entry.id));
   const matchingNewEntries = filterAppLogEntries(appendedEntries, filters);
   const shouldFollowTail = false;
+  const entries = mergeAppLogEntries(current.entries, matchingNewEntries).slice(-maxLoaded);
   const readModel = {
-    entries: mergeAppLogEntries(current.entries, matchingNewEntries).slice(-maxLoaded),
+    ...current,
+    entries,
     summary: incomingSummary,
+    pageInfo: {
+      ...current.pageInfo,
+      returned: entries.length,
+      total: Math.max(current.pageInfo.total, entries.length),
+      newestSeq: entries.at(-1)?.seq ?? current.pageInfo.newestSeq,
+    },
+    readState: {
+      ...current.readState,
+      seenSeq: incomingSummary.seenSeq,
+      unread: incomingSummary.unread,
+    },
   };
 
   return {

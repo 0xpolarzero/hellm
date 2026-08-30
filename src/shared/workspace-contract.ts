@@ -128,6 +128,7 @@ import type {
   DeleteManagedSnippetCommandInput,
   GeneratedContextPreviewReadModelRecord as StateGeneratedContextPreviewReadModelRecord,
   MarkAppLogReadCommandInput,
+  SetAppLogViewPreferencesCommandInput,
   MarkSessionReadCommandInput,
   MarkSessionUnreadCommandInput,
   PromptHistoryReadModel as StatePromptHistoryReadModel,
@@ -1552,6 +1553,10 @@ export interface ChatRPCSchema {
       };
       stateAppLogsMarkRead: {
         params: MarkAppLogReadCommandInput;
+        response: StateCommandResult;
+      };
+      stateAppLogsSetViewPreferences: {
+        params: SetAppLogViewPreferencesCommandInput;
         response: StateCommandResult;
       };
       stateAppPreferencesUpdate: {

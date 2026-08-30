@@ -786,6 +786,8 @@ function buildDesktopRpcHandlers(
       rebaselineStateReadModels: async (request) =>
         desktopStateReadModelBaseline(await facades.state.readModels.rebaseline(request)),
       stateAppLogsMarkRead: (request) => facades.commands.state.appLogs.markRead(request),
+      stateAppLogsSetViewPreferences: (request) =>
+        facades.commands.state.appLogs.setViewPreferences(request),
       stateSessionNavigationSetPinned: async (request) =>
         (await workspaceRuntimeRegistry.getStateCommandsFacade()).sessionNavigation.setPinned(
           request,

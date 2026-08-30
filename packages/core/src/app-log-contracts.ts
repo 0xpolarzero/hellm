@@ -107,6 +107,7 @@ export const AppLogEntrySchema = Schema.Struct({
   message: Schema.String,
   details: Schema.optionalKey(JsonObject),
   error: Schema.optionalKey(AppLogErrorSchema),
+  workspaceId: Schema.optionalKey(WorkspaceId),
   workspaceSessionId: Schema.optionalKey(WorkspaceSessionId),
   surfacePiSessionId: Schema.optionalKey(SurfacePiSessionId),
   threadId: Schema.optionalKey(ThreadId),
@@ -124,6 +125,7 @@ export interface AppLogEntry {
   message: string;
   details?: Record<string, unknown>;
   error?: AppLogError;
+  workspaceId?: string;
   workspaceSessionId?: string;
   surfacePiSessionId?: string;
   threadId?: string;
@@ -178,13 +180,63 @@ export interface AppLogQuery {
   limit?: number;
 }
 
+export const AppLogPageInfoSchema = Schema.Struct({
+  returned: Schema.Number,
+  total: Schema.Number,
+  hasMore: Schema.Boolean,
+  oldestSeq: Schema.NullOr(Schema.Number),
+  newestSeq: Schema.NullOr(Schema.Number),
+});
+export interface AppLogPageInfo {
+  returned: number;
+  total: number;
+  hasMore: boolean;
+  oldestSeq: number | null;
+  newestSeq: number | null;
+}
+
+export const AppLogViewPreferencesSchema = Schema.Struct({
+  scrollTop: Schema.Number,
+  followTail: Schema.Boolean,
+});
+export interface AppLogViewPreferences {
+  scrollTop: number;
+  followTail: boolean;
+}
+
+export const AppLogReadStateSchema = Schema.Struct({
+  seenSeq: Schema.Number,
+  unread: AppLogCountsSchema,
+});
+export interface AppLogReadState {
+  seenSeq: number;
+  unread: AppLogCounts;
+}
+
 export const AppLogReadModelSchema = Schema.Struct({
+  workspaceId: Schema.optionalKey(WorkspaceId),
+  query: Schema.Struct({
+    levels: Schema.optionalKey(Schema.Array(AppLogLevelSchema)),
+    sources: Schema.optionalKey(Schema.Array(AppLogSourceSchema)),
+    query: Schema.optionalKey(Schema.String),
+    afterSeq: Schema.optionalKey(Schema.Number),
+    beforeSeq: Schema.optionalKey(Schema.Number),
+    limit: Schema.optionalKey(Schema.Number),
+  }),
   entries: Schema.Array(AppLogEntrySchema),
+  pageInfo: AppLogPageInfoSchema,
   summary: AppLogSummarySchema,
+  persistedView: AppLogViewPreferencesSchema,
+  readState: AppLogReadStateSchema,
 });
 export interface AppLogReadModel {
+  workspaceId?: string;
+  query: AppLogQuery;
   entries: AppLogEntry[];
+  pageInfo: AppLogPageInfo;
   summary: AppLogSummary;
+  persistedView: AppLogViewPreferences;
+  readState: AppLogReadState;
 }
 
 export const AppLogUpdateMessageSchema = Schema.Struct({

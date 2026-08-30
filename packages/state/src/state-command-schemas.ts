@@ -4,6 +4,7 @@ import {
   AgentProfileId,
   AppLogEntryId,
   AppLogQuerySchema,
+  AppLogViewPreferencesSchema,
   ExternalInstructionSourceId,
   ExternalInstructionsSettingsSchema,
   ExtensionEnvName,
@@ -56,6 +57,13 @@ export type MarkVisibleAppLogRangeReadCommandInput =
 export const ClearWorkspaceAppLogUnreadCommandInputSchema = BaseAppLogReadCommandInputSchema;
 export type ClearWorkspaceAppLogUnreadCommandInput =
   typeof ClearWorkspaceAppLogUnreadCommandInputSchema.Type;
+
+export const SetAppLogViewPreferencesCommandInputSchema = Schema.Struct({
+  ...BaseAppLogReadCommandInputSchema.fields,
+  preferences: AppLogViewPreferencesSchema,
+});
+export type SetAppLogViewPreferencesCommandInput =
+  typeof SetAppLogViewPreferencesCommandInputSchema.Type;
 
 export const AppPreferenceAppearanceSchema = Schema.Literals(["system", "light", "dark"]);
 export type AppPreferenceAppearance = typeof AppPreferenceAppearanceSchema.Type;
@@ -408,6 +416,23 @@ export const encodeMarkAppLogReadCommandInputExit = Schema.encodeExit(
 );
 export const encodeMarkAppLogReadCommandInputEffect = Schema.encodeEffect(
   MarkAppLogReadCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+
+export const decodeUnknownSetAppLogViewPreferencesCommandInputExit = Schema.decodeUnknownExit(
+  SetAppLogViewPreferencesCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const decodeUnknownSetAppLogViewPreferencesCommandInputEffect = Schema.decodeUnknownEffect(
+  SetAppLogViewPreferencesCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeSetAppLogViewPreferencesCommandInputExit = Schema.encodeExit(
+  SetAppLogViewPreferencesCommandInputSchema,
+  strictBoundaryParseOptions,
+);
+export const encodeSetAppLogViewPreferencesCommandInputEffect = Schema.encodeEffect(
+  SetAppLogViewPreferencesCommandInputSchema,
   strictBoundaryParseOptions,
 );
 

@@ -6,6 +6,7 @@ import type {
   AppLogSource,
   AppLogSummary,
 } from "@svvy/core";
+import type { StateDigestHelper } from "./structured-session-state";
 import { createAppLogStore } from "./app-log-store";
 
 export interface AppLogAppendInput {
@@ -15,6 +16,7 @@ export interface AppLogAppendInput {
   message: string;
   details?: Record<string, unknown>;
   error?: unknown;
+  workspaceId?: string;
   workspaceSessionId?: string;
   surfacePiSessionId?: string;
   threadId?: string;
@@ -30,14 +32,16 @@ export interface AppLogAppender {
 }
 
 export interface AppLogFacade extends AppLogAppender {
-  query(query?: AppLogQuery): AppLogReadModel;
-  summary(): AppLogSummary;
-  markSeen(throughSeq: number): AppLogSummary;
+  query(query?: AppLogQuery, scope?: string | null): AppLogReadModel;
+  summary(scope?: string | null): AppLogSummary;
+  markSeen(throughSeq: number, scope?: string | null): AppLogSummary;
   close(): void;
 }
 
 export interface CreateAppLogFacadeOptions {
   databasePath?: string;
+  digest: StateDigestHelper;
+  workspaceId?: string;
   now: () => string;
   memoryLimit?: number;
   persistedLimit?: number;
@@ -48,9 +52,9 @@ export function createAppLogFacade(options: CreateAppLogFacadeOptions): AppLogFa
   const store = createAppLogStore(options);
   return {
     append: (entry) => store.append(entry),
-    query: (query) => store.query(query),
-    summary: () => store.summary(),
-    markSeen: (throughSeq) => store.markSeen(throughSeq),
+    query: (query, scope) => store.query(query, scope),
+    summary: (scope) => store.summary(scope),
+    markSeen: (throughSeq, scope) => store.markSeen(throughSeq, scope),
     subscribe: (listener) => store.subscribe(listener),
     close: () => store.close(),
   };

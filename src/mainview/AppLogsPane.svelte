@@ -1,7 +1,3 @@
-<script module lang="ts">
-  const LOG_SCROLL_OFFSET_BY_PANEL = new Map<string, number>();
-</script>
-
 <script lang="ts">
   import CheckIcon from "@lucide/svelte/icons/check";
   import CopyIcon from "@lucide/svelte/icons/copy";
@@ -32,10 +28,10 @@
 
   type Props = {
     runtime: ChatRuntime;
-    panelId: string;
+    panelId?: string;
   };
 
-  let { runtime, panelId }: Props = $props();
+  let { runtime }: Props = $props();
 
   const LEVEL_FILTERS: Array<{ level: AppLogLevel | "all"; label: string; shortLabel: string }> = [
     { level: "all", label: "All levels", shortLabel: "All" },
@@ -103,6 +99,8 @@
   let lastMarkedVisibleSeq = $state(0);
   let copyResetTimer: number | null = null;
   let scrollStateFrame: number | null = null;
+  let viewSaveTimer: number | null = null;
+  let lastSavedViewKey: string | null = null;
   let unsubscribeLogUpdate: (() => void) | null = null;
   let unsubscribeRuntime: (() => void) | null = null;
 
@@ -118,6 +116,7 @@
     const snapshot = runtime.appLogsSnapshot;
     if (snapshot && levelFilter === "all" && sourceFilter === "all" && !query.trim()) {
       readModel = snapshot;
+      lastSavedViewKey = JSON.stringify(snapshot.persistedView);
       loading = false;
     }
   }
@@ -266,10 +265,37 @@
     if (!listElement) return;
     const instance = get(virtualizer);
     bottomPinned = instance.isAtEnd(APP_LOG_TAIL_THRESHOLD_PX);
-    LOG_SCROLL_OFFSET_BY_PANEL.set(panelId, listElement.scrollTop);
+    scheduleViewPreferenceSave();
     if (bottomPinned || instance.getDistanceFromEnd() <= 0) {
       newLogsWhileAway = 0;
     }
+  }
+
+  function scheduleViewPreferenceSave() {
+    if (!listElement) return;
+    const preferences = {
+      scrollTop: Math.max(0, listElement.scrollTop),
+      followTail: bottomPinned,
+    };
+    const key = JSON.stringify(preferences);
+    if (key === lastSavedViewKey) return;
+    if (viewSaveTimer !== null) {
+      window.clearTimeout(viewSaveTimer);
+    }
+    viewSaveTimer = window.setTimeout(() => {
+      viewSaveTimer = null;
+      lastSavedViewKey = key;
+      void runtime.setAppLogsViewPreferences(preferences).then(
+        () => {
+          if (readModel) {
+            readModel = { ...readModel, persistedView: preferences };
+          }
+        },
+        (cause) => {
+          error = cause instanceof Error ? cause.message : "Unable to save app log view.";
+        },
+      );
+    }, 200);
   }
 
   function handleListScroll() {
@@ -298,7 +324,7 @@
       newLogsWhileAway = 0;
       const behavior: ScrollBehavior = smooth && !prefersReducedMotion() ? "smooth" : "auto";
       get(virtualizer).scrollToEnd({ behavior });
-      LOG_SCROLL_OFFSET_BY_PANEL.set(panelId, listElement.scrollTop);
+      scheduleViewPreferenceSave();
       if (markRead) {
         void markVisibleLogsRead();
       }
@@ -346,8 +372,8 @@
   }
 
   async function loadLogs(options: { forceTail?: boolean; smoothTail?: boolean } = {}) {
-    const shouldFollowTail = options.forceTail === true;
-    const scrollOffset = listElement?.scrollTop ?? LOG_SCROLL_OFFSET_BY_PANEL.get(panelId) ?? 0;
+    const currentView = readModel?.persistedView ?? runtime.appLogsSnapshot?.persistedView;
+    const scrollOffset = listElement?.scrollTop ?? currentView?.scrollTop ?? 0;
     loading = !readModel;
     error = null;
     try {
@@ -359,10 +385,11 @@
       });
       readModel = next;
       hasOlderLogs = next.entries.length >= LOG_LIST_LIMIT;
-      if (shouldFollowTail) {
+      lastSavedViewKey = JSON.stringify(next.persistedView);
+      if (options.forceTail === true || next.persistedView.followTail) {
         scrollToTail({ smooth: options.smoothTail });
       } else {
-        restoreScrollOffset(scrollOffset);
+        restoreScrollOffset(next.persistedView.scrollTop ?? scrollOffset);
       }
     } catch (err) {
       error = err instanceof Error ? err.message : "Unable to load app logs.";
@@ -403,8 +430,10 @@
       hasOlderLogs = older.entries.length >= LOG_PAGE_LIMIT;
       if (older.entries.length === 0) return;
       readModel = {
+        ...readModel,
         entries: mergeAppLogEntries(readModel.entries, older.entries).slice(-LOG_MAX_LOADED),
         summary: older.summary,
+        persistedView: readModel.persistedView,
       };
     } catch (err) {
       error = err instanceof Error ? err.message : "Unable to load older app logs.";
@@ -502,7 +531,7 @@
   }
 
   onMount(() => {
-    void loadLogs({ forceTail: !LOG_SCROLL_OFFSET_BY_PANEL.has(panelId) });
+    void loadLogs({ forceTail: runtime.appLogsSnapshot?.persistedView.followTail ?? false });
     unsubscribeLogUpdate = runtime.subscribeAppLogUpdate((payload) => {
       if (!readModel) return;
       const next = applyAppLogLiveUpdate({
@@ -525,6 +554,9 @@
       }
       if (copyResetTimer !== null) {
         window.clearTimeout(copyResetTimer);
+      }
+      if (viewSaveTimer !== null) {
+        window.clearTimeout(viewSaveTimer);
       }
       unsubscribeLogUpdate?.();
       unsubscribeRuntime?.();

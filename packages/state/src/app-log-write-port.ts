@@ -12,6 +12,7 @@ import {
   type AppLogWriteResult,
   type AppLogWritePortService,
   type StateInvalidationDescriptor,
+  type WorkspaceId,
 } from "@svvy/core";
 import { AppLogState, type AppendAppLogEntry } from "./app-log-store";
 import { mutationResult } from "./state-mutation-result";
@@ -23,6 +24,7 @@ const decodeAppendAppLogInput = Schema.decodeUnknownEffect(
 
 export function appLogWritePortFromAppLogState(
   appLogs: AppLogState["Service"],
+  ownerWorkspaceId?: string,
 ): AppLogWritePortService {
   return {
     append: (input) =>
@@ -38,10 +40,22 @@ export function appLogWritePortFromAppLogState(
               }),
           ),
         );
-        const entry = yield* appLogs.append(appendInputToStoreEntry(decoded));
+        if (ownerWorkspaceId && decoded.workspaceId && decoded.workspaceId !== ownerWorkspaceId) {
+          return yield* Effect.fail(
+            new StateContractError({
+              operation: "app-log.write.append",
+              reason: "invalid-input",
+              message: `App log write targets workspace ${decoded.workspaceId}, not ${ownerWorkspaceId}.`,
+            }),
+          );
+        }
+        const scoped = ownerWorkspaceId
+          ? { ...decoded, workspaceId: ownerWorkspaceId as WorkspaceId }
+          : decoded;
+        const entry = yield* appLogs.append(appendInputToStoreEntry(scoped));
         return mutationResult(
           { appLogEntryId: entry.id as AppLogEntryId },
-          appLogWriteInvalidations(decoded),
+          appLogWriteInvalidations(scoped),
         ) satisfies AppLogWriteResult;
       }),
   };
@@ -61,6 +75,7 @@ function appendInputToStoreEntry(input: AppendAppLogInput): AppendAppLogEntry {
     level: input.level,
     source: input.source,
     message: input.message,
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
     ...(input.details ? { details: input.details } : {}),
     ...(input.normalizedError ? { error: input.normalizedError } : {}),
     ...related,

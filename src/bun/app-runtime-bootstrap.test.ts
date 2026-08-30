@@ -534,6 +534,15 @@ describe("app runtime bootstrap", () => {
           source: "test" as RuntimeClientSubmissionSource,
         },
       });
+      await bootstrap.stateCommands.appLogs.setViewPreferences({
+        workspaceId: harness.workspaceAId,
+        preferences: { scrollTop: 96, followTail: false },
+        readAt: "2026-05-01T09:01:01.000Z" as typeof IsoDateTimeStringSchema.Type,
+        clientSubmission: {
+          clientRequestId: "workspace-a-app-log-view" as RuntimeClientRequestId,
+          source: "test" as RuntimeClientSubmissionSource,
+        },
+      });
 
       const workspaceSummary = await bootstrap.rendererState.readModels.fetch({
         kind: "appLogSummary",
@@ -547,6 +556,18 @@ describe("app runtime bootstrap", () => {
       }
       expect(workspaceSummary.value.seenSeq).toBe(1);
       expect(appSummary.value.seenSeq).toBe(0);
+      expect(workspaceSummary.value).toMatchObject({
+        seenSeq: 1,
+      });
+      const workspaceLogsAfterView = await bootstrap.rendererState.readModels.fetch({
+        kind: "appLogs",
+        workspaceId: harness.workspaceAId,
+        query: { limit: 10 },
+      });
+      expect(workspaceLogsAfterView).toMatchObject({
+        kind: "appLogs",
+        value: { persistedView: { scrollTop: 96, followTail: false } },
+      });
     } finally {
       await bootstrap.dispose();
     }
@@ -900,9 +921,17 @@ function createBootstrapHarness() {
     coreTypeContractPackageRoot: mkdtempTracked("generated-core") as AbsolutePath,
   };
   const sourceCalls: string[] = [];
-  const appLogs = createStateAppLogsFacade({ now: deterministicClock() });
-  const workspaceAAppLogs = createStateAppLogsFacade({ now: deterministicClock() });
-  const workspaceBAppLogs = createStateAppLogsFacade({ now: deterministicClock() });
+  const appLogs = createStateAppLogsFacade({ digest: testDigest, now: deterministicClock() });
+  const workspaceAAppLogs = createStateAppLogsFacade({
+    digest: testDigest,
+    workspaceId: workspaceAId,
+    now: deterministicClock(),
+  });
+  const workspaceBAppLogs = createStateAppLogsFacade({
+    digest: testDigest,
+    workspaceId: workspaceBId,
+    now: deterministicClock(),
+  });
   openAppLogs.push(appLogs);
   openAppLogs.push(workspaceAAppLogs);
   openAppLogs.push(workspaceBAppLogs);

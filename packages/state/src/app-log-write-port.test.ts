@@ -1,14 +1,75 @@
 import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { AppendAppLogInputSchema, AppLogWritePort, StateContractError } from "@svvy/core";
+import {
+  AppendAppLogInputSchema,
+  AppLogWritePort,
+  StateContractError,
+  type WorkspaceId,
+} from "@svvy/core";
 import { AppLogState, layerAppLogState } from "./app-log-store";
 import { appLogWritePortFromAppLogState, layerAppLogWritePort } from "./app-log-write-port";
+import { createStateAppLogsFacade } from "./state-facade";
 import { runTestEffect } from "./effect.test-support";
 import { testPlatformLayer } from "./platform-test-support";
 
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
+
 describe("AppLogWritePort", () => {
+  it("binds omitted workspace scope through a workspace-owned facade", async () => {
+    const databaseRoot = mkdtempSync(join(tmpdir(), "svvy-app-log-write-facade-"));
+    const workspaceId = "workspace-owned-app-log-facade" as WorkspaceId;
+    const facade = createStateAppLogsFacade({
+      databasePath: join(databaseRoot, "state.sqlite"),
+      digest: testDigest,
+      workspaceId,
+      now: () => "2026-06-21T12:35:00.000Z",
+    });
+    try {
+      const result = await runTestEffect(
+        facade.writePort.append({
+          level: "info",
+          source: "workspace",
+          message: "Workspace-owned write",
+          occurredAt: "2026-06-21T12:34:56.789Z" as never,
+        }),
+      );
+
+      expect(result.afterCommit).toEqual([
+        {
+          scope: "workspace",
+          workspaceId,
+          invalidation: { model: "appLogs" },
+        },
+      ]);
+      expect(facade.query({}, workspaceId).entries[0]).toMatchObject({ workspaceId });
+      await expect(
+        runTestEffect(
+          facade.writePort.append({
+            workspaceId: "another-workspace" as never,
+            level: "info",
+            source: "workspace",
+            message: "Conflicting workspace",
+            occurredAt: "2026-06-21T12:34:57.789Z" as never,
+          }),
+        ),
+      ).rejects.toMatchObject({
+        operation: "app-log.write.append",
+        reason: "invalid-input",
+      });
+    } finally {
+      facade.close();
+      rmSync(databaseRoot, { recursive: true, force: true });
+    }
+  });
+
   it("validates and persists app-log writes through the core port", async () => {
     const result = await runTestEffect(
       Effect.gen(function* () {
@@ -43,7 +104,7 @@ describe("AppLogWritePort", () => {
         return { write, entry: readModel.entries[0] };
       }).pipe(
         Effect.provide(
-          layerAppLogState({ now: () => "2026-06-21T12:35:00.000Z" }).pipe(
+          layerAppLogState({ digest: testDigest, now: () => "2026-06-21T12:35:00.000Z" }).pipe(
             Layer.provide(testPlatformLayer()),
           ),
         ),
@@ -98,6 +159,7 @@ describe("AppLogWritePort", () => {
           layerAppLogWritePort.pipe(
             Layer.provideMerge(
               layerAppLogState({
+                digest: testDigest,
                 now: () => "2026-06-21T12:35:00.000Z",
               }).pipe(Layer.provide(testPlatformLayer())),
             ),
@@ -132,6 +194,7 @@ describe("AppLogWritePort", () => {
           layerAppLogWritePort.pipe(
             Layer.provideMerge(
               layerAppLogState({
+                digest: testDigest,
                 now: () => "2026-06-21T12:35:00.000Z",
               }).pipe(Layer.provide(testPlatformLayer())),
             ),

@@ -1,12 +1,16 @@
 import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { createAppLogger } from "./app-logger";
 import { createStateAppLogsFacade } from "@svvy/state";
 
 const testClock = () => "2026-06-21T12:00:00.000Z";
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 describe("bun app logger", () => {
   it("forwards the same redacted entry shape used by app logs to the bridge", () => {
-    const appLogs = createStateAppLogsFacade({ now: testClock });
+    const appLogs = createStateAppLogsFacade({ digest: testDigest, now: testClock });
     const forwarded: unknown[] = [];
     const logger = createAppLogger({
       appLogs,
@@ -44,7 +48,7 @@ describe("bun app logger", () => {
   });
 
   it("uses warn as the bridge level for warning producer calls", () => {
-    const appLogs = createStateAppLogsFacade({ now: testClock });
+    const appLogs = createStateAppLogsFacade({ digest: testDigest, now: testClock });
     const forwarded: unknown[] = [];
     const logger = createAppLogger({
       appLogs,

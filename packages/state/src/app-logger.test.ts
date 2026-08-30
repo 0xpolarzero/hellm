@@ -1,12 +1,16 @@
 import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { createAppLogFacade } from "./app-log-facade";
 import { appendAppLoggerEvent, createAppLogger } from "./app-logger";
 
 const testClock = () => "2026-06-21T12:00:00.000Z";
+const testDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
 
 describe("app logger", () => {
   it("stores redacted entry details and errors", () => {
-    const appLogs = createAppLogFacade({ now: testClock });
+    const appLogs = createAppLogFacade({ digest: testDigest, now: testClock });
     const logger = createAppLogger({ appLogs });
 
     logger.error(
@@ -35,7 +39,7 @@ describe("app logger", () => {
   });
 
   it("keeps readable warning producer calls on the warn storage contract", () => {
-    const appLogs = createAppLogFacade({ now: testClock });
+    const appLogs = createAppLogFacade({ digest: testDigest, now: testClock });
     const logger = createAppLogger({ appLogs });
 
     const entry = logger.warning("workspace", "Workspace warning.");
@@ -49,7 +53,7 @@ describe("app logger", () => {
   });
 
   it("persists typed app log events with related ids outside redacted details", () => {
-    const appLogs = createAppLogFacade({ now: testClock });
+    const appLogs = createAppLogFacade({ digest: testDigest, now: testClock });
     const logger = createAppLogger({ appLogs });
 
     appendAppLoggerEvent(logger, {

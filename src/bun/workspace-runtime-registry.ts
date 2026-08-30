@@ -130,6 +130,10 @@ type WorkspaceGeneratedPackageBoundaryHost = RuntimeGeneratedPackageRefreshBound
   generatedPackageLinkPath(input: GeneratedPackageWorkspaceLinkRepairInput): Promise<AbsolutePath>;
 };
 
+const stateDigest = {
+  sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
+};
+
 export async function applyExtensionManagementRuntimeRequest(
   runtime: AppRuntimeBootstrap,
   request: SvvyxExtensionManagementRuntimeRequest,
@@ -887,6 +891,7 @@ export class WorkspaceRuntimeRegistry {
       refCount: number;
     }
   >();
+  private appGlobalAppLogFacade: StateAppLogsFacade | null = null;
   private readonly agentDir: string;
   private readonly appDataDir: string;
   private readonly sourceInvalidationHost: RuntimeSourceInvalidationHost;
@@ -1933,7 +1938,7 @@ export class WorkspaceRuntimeRegistry {
       const agentSettingsStore = createAgentSettingsStore({
         agentDir: this.agentDir,
       });
-      appLogs = this.acquireAppLogFacade(cwd);
+      appLogs = this.acquireAppLogFacade(workspaceId, cwd);
       appLog = createAppLogger({
         appLogs,
         forwardBridgeLog: (level, message, source, details, error) => {
@@ -2719,7 +2724,7 @@ export class WorkspaceRuntimeRegistry {
     const agentSettingsStore = createAgentSettingsStore({
       agentDir: this.agentDir,
     });
-    const appLogs = this.acquireAppLogFacade(cwd);
+    const appLogs = this.acquireAppGlobalAppLogFacade();
     const appLog = createAppLogger({
       appLogs,
       forwardBridgeLog: (level, message, source, details, error) => {
@@ -2753,7 +2758,7 @@ export class WorkspaceRuntimeRegistry {
         catalog.setWorkflowsGeneratedPackageLogListener(null);
         catalog.setAppLogListener(null);
         await catalog.dispose();
-        this.releaseAppLogFacade(cwd);
+        this.releaseAppGlobalAppLogFacade();
       },
     };
   }
@@ -3298,9 +3303,7 @@ export class WorkspaceRuntimeRegistry {
       this.stateOwnedAppPreferences ??
       createAgentSettingsStore({ agentDir: this.agentDir }).getState().appPreferences;
     return {
-      digest: {
-        sha256Hex: (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex"),
-      },
+      digest: stateDigest,
       idFactory: (prefix: string) => `${prefix}-${randomUUID()}`,
       now: () => new Date().toISOString(),
       workspace: {
@@ -3319,7 +3322,7 @@ export class WorkspaceRuntimeRegistry {
     };
   }
 
-  private acquireAppLogFacade(cwd: string): StateAppLogsFacade {
+  private acquireAppLogFacade(workspaceId: string, cwd: string): StateAppLogsFacade {
     const existing = this.sharedAppLogFacades.get(cwd);
     if (existing) {
       existing.refCount += 1;
@@ -3333,6 +3336,8 @@ export class WorkspaceRuntimeRegistry {
     );
     const appLogs = createStateAppLogsFacade({
       databasePath: join(runtimeDir, "app-logs-v1.sqlite"),
+      digest: stateDigest,
+      workspaceId,
       now: () => new Date().toISOString(),
     });
     this.sharedAppLogFacades.set(cwd, {
@@ -3342,6 +3347,16 @@ export class WorkspaceRuntimeRegistry {
     return appLogs;
   }
 
+  private acquireAppGlobalAppLogFacade(): StateAppLogsFacade {
+    if (this.appGlobalAppLogFacade) return this.appGlobalAppLogFacade;
+    this.appGlobalAppLogFacade = createStateAppLogsFacade({
+      databasePath: join(this.agentDir, "app-logs-v1.sqlite"),
+      digest: stateDigest,
+      now: () => new Date().toISOString(),
+    });
+    return this.appGlobalAppLogFacade;
+  }
+
   private releaseAppLogFacade(cwd: string): void {
     const existing = this.sharedAppLogFacades.get(cwd);
     if (!existing) return;
@@ -3349,6 +3364,11 @@ export class WorkspaceRuntimeRegistry {
     if (existing.refCount > 0) return;
     this.sharedAppLogFacades.delete(cwd);
     existing.appLogs.close();
+  }
+
+  private releaseAppGlobalAppLogFacade(): void {
+    this.appGlobalAppLogFacade?.close();
+    this.appGlobalAppLogFacade = null;
   }
 }
 

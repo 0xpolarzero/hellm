@@ -26,6 +26,7 @@ import {
   type AppLogReadModel,
   type AppLogSource,
   type AppLogSummary,
+  type AppLogViewPreferences,
   type AppLogWritePort,
   type AppLogWritePortService,
   type ExtensionId,
@@ -168,6 +169,7 @@ import {
   decodeUnknownMarkSessionReadCommandInputEffect,
   decodeUnknownMarkSessionUnreadCommandInputEffect,
   decodeUnknownMarkVisibleAppLogRangeReadCommandInputEffect,
+  decodeUnknownSetAppLogViewPreferencesCommandInputEffect,
   decodeUnknownPromoteProfileExtensionDefaultCommandInputEffect,
   decodeUnknownRecordProviderAuthStatusCommandInputEffect,
   decodeUnknownRemoveExtensionEnvOverrideCommandInputEffect,
@@ -201,6 +203,7 @@ import {
   type MarkSessionReadCommandInput,
   type MarkSessionUnreadCommandInput,
   type MarkVisibleAppLogRangeReadCommandInput,
+  type SetAppLogViewPreferencesCommandInput,
   type PromoteProfileExtensionDefaultCommandInput,
   type RecordProviderAuthStatusCommandInput,
   type RemoveExtensionEnvOverrideCommandInput,
@@ -929,6 +932,9 @@ export interface AppLogReadStateCommands {
   clearWorkspaceUnread(
     input: ClearWorkspaceAppLogUnreadCommandInput,
   ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
+  setViewPreferences(
+    input: SetAppLogViewPreferencesCommandInput,
+  ): Effect.Effect<StateMutationResult<StateCommandResult>, StateContractError>;
 }
 
 export interface AppPreferencesStateCommands {
@@ -1138,6 +1144,10 @@ export interface StateCommandsFacade {
       input: ClearWorkspaceAppLogUnreadCommandInput,
       options?: StateFacadeCallOptions,
     ): Promise<StateCommandResult>;
+    setViewPreferences(
+      input: SetAppLogViewPreferencesCommandInput,
+      options?: StateFacadeCallOptions,
+    ): Promise<StateCommandResult>;
   };
   appPreferences: {
     update(
@@ -1235,6 +1245,7 @@ export interface StateAppLogAppendInput {
   message: string;
   details?: Record<string, unknown>;
   error?: unknown;
+  workspaceId?: string;
   workspaceSessionId?: string;
   surfacePiSessionId?: string;
   threadId?: string;
@@ -1246,9 +1257,21 @@ export interface StateAppLogAppendInput {
 
 export interface StateAppLogsFacade {
   append(entry: StateAppLogAppendInput): AppLogEntry;
-  query(query?: AppLogQuery): AppLogReadModel;
-  summary(): AppLogSummary;
-  markSeen(throughSeq: number): AppLogSummary;
+  query(query?: AppLogQuery, scope?: string | null): AppLogReadModel;
+  summary(scope?: string | null): AppLogSummary;
+  markSeen(throughSeq: number, scope?: string | null): AppLogSummary;
+  markSeenWithResult(
+    throughSeq: number,
+    scope?: string | null,
+  ): { summary: AppLogSummary; changed: boolean };
+  markSeenForEntryIdsWithResult(
+    entryIds: readonly AppLogEntryId[],
+    scope?: string | null,
+  ): { summary: AppLogSummary; changed: boolean };
+  setViewPreferences(
+    preferences: AppLogViewPreferences,
+    scope?: string | null,
+  ): { preferences: AppLogViewPreferences; changed: boolean };
   subscribe(listener: (entries: AppLogEntry[], summary: AppLogSummary) => void): () => void;
   writePort: AppLogWritePortService;
   close(): void;
@@ -1256,6 +1279,8 @@ export interface StateAppLogsFacade {
 
 export interface CreateStateAppLogsFacadeOptions {
   databasePath?: string;
+  digest: StateDigestHelper;
+  workspaceId?: string;
   now: () => string;
   memoryLimit?: number;
   persistedLimit?: number;
@@ -1264,7 +1289,7 @@ export interface CreateStateAppLogsFacadeOptions {
 
 type StateLayerConfigInput = {
   readonly config: StateLayerConfig;
-  readonly digest?: StateDigestHelper;
+  readonly digest: StateDigestHelper;
 };
 
 type StateLayerProvidedPortServices =
@@ -1516,6 +1541,16 @@ export function createStateCommandsFacade(
           input.clientSubmission,
           callOptions,
         ),
+      setViewPreferences: (input, callOptions) =>
+        run(
+          "stateCommands.appLogs.setViewPreferences",
+          Effect.gen(function* () {
+            const commands = yield* StateCommands;
+            return yield* commands.appLogs.setViewPreferences(input);
+          }),
+          input.clientSubmission,
+          callOptions,
+        ),
     },
     appPreferences: {
       update: (input, callOptions) =>
@@ -1730,11 +1765,15 @@ export function createStateAppLogsFacade(
   const appLogState = appLogStateFromStore(store);
   return {
     append: (entry) => store.append(entry),
-    query: (query) => store.query(query),
-    summary: () => store.summary(),
-    markSeen: (throughSeq) => store.markSeen(throughSeq),
+    query: (query, scope) => store.query(query, scope),
+    summary: (scope) => store.summary(scope),
+    markSeen: (throughSeq, scope) => store.markSeen(throughSeq, scope),
+    markSeenWithResult: (throughSeq, scope) => store.markSeenWithResult(throughSeq, scope),
+    markSeenForEntryIdsWithResult: (entryIds, scope) =>
+      store.markSeenForEntryIdsWithResult(entryIds, scope),
+    setViewPreferences: (preferences, scope) => store.setViewPreferences(preferences, scope),
     subscribe: (listener) => store.subscribe(listener),
-    writePort: appLogWritePortFromAppLogState(appLogState),
+    writePort: appLogWritePortFromAppLogState(appLogState, options.workspaceId),
     close: () => store.close(),
   };
 }
@@ -1820,6 +1859,7 @@ export const layer = (
     layerAppLogState({
       databasePath: input.config.databasePath,
       busyTimeoutMs: input.config.busyTimeoutMs,
+      digest: input.digest,
       now: stateLayerNow,
     }),
     structuredSessionLayer,
@@ -1860,7 +1900,7 @@ function layerRootStructuredSessionState(
               databasePath: input.config.databasePath,
               busyTimeoutMs: input.config.busyTimeoutMs,
               filesystemSetup: "caller",
-              ...(input.digest ? { digest: input.digest } : {}),
+              digest: input.digest,
               workspace: {
                 id: "workspace_state_root" as WorkspaceIdType,
                 label: "State root",
@@ -1898,6 +1938,11 @@ type AppLogStateResolver = (
   workspaceId: WorkspaceIdType | undefined,
 ) => Effect.Effect<AppLogState["Service"], StateContractError>;
 
+type AppLogCommandCommit = {
+  readonly summary: AppLogSummary;
+  readonly changed: boolean;
+};
+
 type StructuredSessionStateResolver = (
   workspaceId: WorkspaceIdType | undefined,
 ) => Effect.Effect<StructuredSessionState["Service"], StateContractError>;
@@ -1925,11 +1970,17 @@ function stateReadModelsFromState(state: {
         switch (request.kind) {
           case "appLogs": {
             const appLogs = yield* state.appLogs(request.workspaceId);
-            return { kind: "appLogs", value: yield* appLogs.query(request.query) };
+            return {
+              kind: "appLogs",
+              value: yield* appLogs.query(request.query, request.workspaceId ?? null),
+            };
           }
           case "appLogSummary": {
             const appLogs = yield* state.appLogs(request.workspaceId);
-            return { kind: "appLogSummary", value: yield* appLogs.summary() };
+            return {
+              kind: "appLogSummary",
+              value: yield* appLogs.summary(request.workspaceId ?? null),
+            };
           }
           case "appPreferences": {
             const record = yield* structuredSession.readAppPreferences();
@@ -2067,7 +2118,12 @@ function stateReadModelsFromState(state: {
             const appLogs = yield* state.appLogs(
               request.descriptor.scope === "workspace" ? request.descriptor.workspaceId : undefined,
             );
-            const [logs, summary] = yield* Effect.all([appLogs.query(), appLogs.summary()]);
+            const scope =
+              request.descriptor.scope === "workspace" ? request.descriptor.workspaceId : null;
+            const [logs, summary] = yield* Effect.all([
+              appLogs.query({}, scope),
+              appLogs.summary(scope),
+            ]);
             return [
               { kind: "appLogs", value: logs },
               { kind: "appLogSummary", value: summary },
@@ -2242,7 +2298,7 @@ function stateReadModelsFromState(state: {
         const appLogs = yield* state.appLogs(undefined);
         const appState = yield* state.structuredSession(undefined);
         const [summary, appStateRevision, record, requestInput] = yield* Effect.all([
-          appLogs.summary(),
+          appLogs.summary(null),
           appState.readCurrentStateRevision(),
           appState.readAppPreferences(),
           appState.readRequestInputSettings(),
@@ -2254,7 +2310,7 @@ function stateReadModelsFromState(state: {
               const workspaceLogs = yield* state.appLogs(workspaceId);
               const workspaceState = yield* state.structuredSession(workspaceId);
               const [logs, workspaceStateRevision] = yield* Effect.all([
-                workspaceLogs.query(),
+                workspaceLogs.query({}, workspaceId),
                 workspaceState.readCurrentStateRevision(),
               ]);
               return {
@@ -3567,7 +3623,7 @@ function stateCommandsFromState(state: {
     Input extends { clientSubmission: RuntimeClientSubmissionInput; readAt: IsoDateTimeString },
   >(
     input: Input,
-    commit: () => Effect.Effect<AppLogSummary, StateContractError>,
+    commit: () => Effect.Effect<AppLogCommandCommit, StateContractError>,
   ) =>
     Effect.gen(function* () {
       const clientRequestId = input.clientSubmission.clientRequestId;
@@ -3575,18 +3631,20 @@ function stateCommandsFromState(state: {
         const existing = receipts.get(clientRequestId);
         if (existing) return duplicateMutationResult(existing);
       }
-      const summary = yield* commit();
+      const committed = yield* commit();
       const value: StateCommandResult = {
         receipt: {
           clientRequestId: clientRequestId ?? null,
           outcome: "applied",
           committedAt: input.readAt as StateCommandReceipt["committedAt"],
-          stateRevision: summary.latestSeq as StateRevision,
+          stateRevision: committed.summary.latestSeq as StateRevision,
         },
       };
       const result = mutationResult(
         value,
-        appLogReadStateInvalidations((input as { workspaceId?: WorkspaceIdType }).workspaceId),
+        committed.changed
+          ? appLogReadStateInvalidations((input as { workspaceId?: WorkspaceIdType }).workspaceId)
+          : [],
       );
       if (clientRequestId) receipts.set(clientRequestId, result);
       return result;
@@ -3750,17 +3808,20 @@ function stateCommandsFromState(state: {
         Effect.gen(function* () {
           const decoded = yield* decodeMarkAppLogReadInput(commandInput);
           const appLogs = yield* state.appLogs(decoded.workspaceId);
-          return yield* runCommand(decoded, () => markAppLogEntriesRead(appLogs, decoded.entryIds));
+          return yield* runCommand(decoded, () =>
+            markAppLogEntriesRead(appLogs, decoded.entryIds, decoded.workspaceId ?? null),
+          );
         }),
       markVisibleRangeRead: (commandInput) =>
         Effect.gen(function* () {
           const decoded = yield* decodeMarkVisibleAppLogRangeReadInput(commandInput);
           const appLogs = yield* state.appLogs(decoded.workspaceId);
           return yield* runCommand(decoded, () =>
-            markAppLogEntriesRead(appLogs, [
-              decoded.newestVisibleEntryId,
-              decoded.oldestVisibleEntryId,
-            ]),
+            markAppLogEntriesRead(
+              appLogs,
+              [decoded.newestVisibleEntryId, decoded.oldestVisibleEntryId],
+              decoded.workspaceId ?? null,
+            ),
           );
         }),
       clearWorkspaceUnread: (commandInput) =>
@@ -3769,9 +3830,24 @@ function stateCommandsFromState(state: {
           const appLogs = yield* state.appLogs(decoded.workspaceId);
           return yield* runCommand(decoded, () =>
             Effect.gen(function* () {
-              const summary = yield* appLogs.summary();
-              return yield* appLogs.markSeen(summary.latestSeq);
+              const scope = decoded.workspaceId ?? null;
+              return yield* markAppLogEntriesRead(appLogs, [], scope, true);
             }),
+          );
+        }),
+      setViewPreferences: (commandInput) =>
+        Effect.gen(function* () {
+          const decoded = yield* decodeSetAppLogViewPreferencesInput(commandInput);
+          const appLogs = yield* state.appLogs(decoded.workspaceId);
+          return yield* runCommand(decoded, () =>
+            Effect.flatMap(
+              appLogs.setViewPreferences(decoded.preferences, decoded.workspaceId ?? null),
+              ({ changed }) =>
+                Effect.map(appLogs.summary(decoded.workspaceId ?? null), (summary) => ({
+                  summary,
+                  changed,
+                })),
+            ),
           );
         }),
     },
@@ -4216,15 +4292,15 @@ function commitStructuredCommand<
 function markAppLogEntriesRead(
   appLogs: AppLogState["Service"],
   entryIds: readonly AppLogEntryId[],
-): Effect.Effect<AppLogSummary, StateContractError> {
-  if (entryIds.length === 0) return appLogs.summary();
-  const maxSeq = entryIds.reduce((max, entryId) => Math.max(max, appLogEntrySeq(entryId)), 0);
-  return appLogs.markSeen(maxSeq);
-}
-
-function appLogEntrySeq(entryId: AppLogEntryId): number {
-  const match = /^app-log-(\d+)$/.exec(entryId);
-  return match ? Number(match[1]) : 0;
+  scope: string | null,
+  clearToLatest = false,
+): Effect.Effect<AppLogCommandCommit, StateContractError> {
+  if (entryIds.length === 0 && !clearToLatest) {
+    return Effect.map(appLogs.summary(scope), (summary) => ({ summary, changed: false }));
+  }
+  return clearToLatest
+    ? appLogs.markSeenWithResult(Number.MAX_SAFE_INTEGER, scope)
+    : appLogs.markSeenForEntryIdsWithResult(entryIds, scope);
 }
 
 function duplicateMutationResult<T extends StateCommandResult>(
@@ -4621,6 +4697,11 @@ const decodeMarkVisibleAppLogRangeReadInput = (input: unknown) =>
 const decodeClearWorkspaceAppLogUnreadInput = (input: unknown) =>
   decodeUnknownClearWorkspaceAppLogUnreadCommandInputEffect(input).pipe(
     Effect.mapError(commandDecodeError("stateCommands.appLogs.clearWorkspaceUnread")),
+  );
+
+const decodeSetAppLogViewPreferencesInput = (input: unknown) =>
+  decodeUnknownSetAppLogViewPreferencesCommandInputEffect(input).pipe(
+    Effect.mapError(commandDecodeError("stateCommands.appLogs.setViewPreferences")),
   );
 
 const decodeSetSessionPinnedInput = (input: unknown) =>

@@ -7,6 +7,7 @@ import type {
 import type {
   AbsolutePath,
   AppLogEntryId,
+  AppLogViewPreferences,
   AttachmentDisplayName,
   Base64String,
   BuildRuntimeExtensionInput,
@@ -538,9 +539,29 @@ function mergeRendererAppLogs(
     appLogEntryMatchesQuery(entry, query),
   );
   const limit = query?.limit ?? 600;
+  const entries = mergeAppLogEntries(backendReadModel.entries, matchingRendererEntries).slice(
+    -limit,
+  );
+  const summary = summarizeRendererAppLogs(
+    backendReadModel.summary,
+    rendererEntries,
+    rendererSeenSeq,
+  );
   return {
-    entries: mergeAppLogEntries(backendReadModel.entries, matchingRendererEntries).slice(-limit),
-    summary: summarizeRendererAppLogs(backendReadModel.summary, rendererEntries, rendererSeenSeq),
+    ...backendReadModel,
+    entries,
+    pageInfo: {
+      ...backendReadModel.pageInfo,
+      returned: entries.length,
+      total: Math.max(backendReadModel.pageInfo.total, entries.length),
+      newestSeq: entries.at(-1)?.seq ?? backendReadModel.pageInfo.newestSeq,
+    },
+    summary,
+    readState: {
+      ...backendReadModel.readState,
+      seenSeq: summary.seenSeq,
+      unread: summary.unread,
+    },
   };
 }
 
@@ -826,6 +847,7 @@ export interface ChatRuntimeRpcClient {
     refetchStateReadModelInvalidation: typeof rpc.request.refetchStateReadModelInvalidation;
     rebaselineStateReadModels: typeof rpc.request.rebaselineStateReadModels;
     stateAppLogsMarkRead: typeof rpc.request.stateAppLogsMarkRead;
+    stateAppLogsSetViewPreferences: typeof rpc.request.stateAppLogsSetViewPreferences;
     saveExtensionSnapshot: typeof rpc.request.saveExtensionSnapshot;
     renameExtensionSnapshot: typeof rpc.request.renameExtensionSnapshot;
     deleteExtensionSnapshot: typeof rpc.request.deleteExtensionSnapshot;
@@ -997,6 +1019,7 @@ export interface ChatRuntime {
   getAppLogs: (query?: AppLogQuery) => Promise<AppLogReadModel>;
   getAppLogSummary: () => Promise<AppLogSummary>;
   markAppLogsSeen: (throughSeq: number) => Promise<AppLogSummary>;
+  setAppLogsViewPreferences: (preferences: AppLogViewPreferences) => Promise<void>;
   recordRendererTelemetry: (event: RendererTelemetryEvent) => void;
   writeClipboardText: (text: string) => Promise<void>;
   createSession: (
@@ -2749,8 +2772,31 @@ export async function createChatRuntime(
         case "appLogSummary":
           if (appScopedLogs) {
             setAppCache("appLogs", {
+              ...(appReadModelCache.appLogs ?? {
+                query: {},
+                pageInfo: {
+                  returned: 0,
+                  total: 0,
+                  hasMore: false,
+                  oldestSeq: null,
+                  newestSeq: null,
+                },
+                persistedView: { scrollTop: 0, followTail: false },
+                readState: {
+                  seenSeq: 0,
+                  unread: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
+                },
+              }),
               entries: appReadModelCache.appLogs?.entries ?? [],
               summary: result.value,
+              readState: {
+                ...(appReadModelCache.appLogs?.readState ?? {
+                  seenSeq: 0,
+                  unread: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
+                }),
+                seenSeq: result.value.seenSeq,
+                unread: result.value.unread,
+              },
             });
             break;
           }
@@ -4041,6 +4087,7 @@ export async function createChatRuntime(
       level: event.level,
       source: event.source ?? "renderer",
       message: event.message,
+      workspaceId: workspaceInfo.workspaceId,
       details: {
         eventName: event.eventName,
         correlationId: event.correlationId,
@@ -4059,11 +4106,25 @@ export async function createChatRuntime(
     );
     const cache = workspaceReadModelCache(workspaceInfo.workspaceId);
     const currentReadModel = cache.appLogs ?? {
+      query: {},
       entries: [],
+      pageInfo: {
+        returned: 0,
+        total: 0,
+        hasMore: false,
+        oldestSeq: null,
+        newestSeq: null,
+      },
+      persistedView: { scrollTop: 0, followTail: false },
+      readState: {
+        seenSeq: 0,
+        unread: { total: 0, debug: 0, info: 0, warn: 0, error: 0 },
+      },
       summary: backendAppLogSummary,
     };
     cache.appLogs = mergeRendererAppLogs(
       {
+        ...currentReadModel,
         entries: mergeAppLogEntries(currentReadModel.entries, [entry]).slice(-600),
         summary: backendAppLogSummary,
       },
@@ -4415,6 +4476,23 @@ export async function createChatRuntime(
       }
       emit();
       return structuredClone(appLogSummary);
+    },
+    setAppLogsViewPreferences: async (preferences) => {
+      const readAt = new Date().toISOString() as typeof IsoDateTimeStringSchema.Type;
+      await rpcClient.request.stateAppLogsSetViewPreferences({
+        workspaceId: workspaceInfo.workspaceId as WorkspaceId,
+        preferences,
+        readAt,
+        clientSubmission: {
+          clientRequestId: createDesktopClientRequestId() as RuntimeClientRequestId,
+          source: "desktop" as RuntimeClientSubmissionSource,
+        },
+      });
+      const cache = workspaceReadModelCache(workspaceInfo.workspaceId);
+      if (cache.appLogs) {
+        cache.appLogs = { ...cache.appLogs, persistedView: structuredClone(preferences) };
+        emit();
+      }
     },
     recordRendererTelemetry,
     writeClipboardText: async (text) => {

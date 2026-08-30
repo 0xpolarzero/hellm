@@ -26,7 +26,9 @@ describe("AppLogsPane virtualized log list contract", () => {
     expect(paneSource).toContain("bottomPinned = instance.isAtEnd(APP_LOG_TAIL_THRESHOLD_PX)");
     expect(paneSource).toContain("instance.getDistanceFromEnd()");
     expect(paneSource).toContain("get(virtualizer).scrollToOffset(scrollOffset)");
-    expect(paneSource).toContain("LOG_SCROLL_OFFSET_BY_PANEL.set(panelId, listElement.scrollTop)");
+    expect(paneSource).toContain("runtime.setAppLogsViewPreferences(preferences)");
+    expect(paneSource).toContain("next.persistedView.followTail");
+    expect(paneSource).not.toContain("LOG_SCROLL_OFFSET_BY_PANEL");
     expect(paneSource).toContain("followOnAppend: false");
     expect(paneSource).not.toContain("scrollHeight");
     expect(paneSource).not.toContain("previousTotalSize");

@@ -31,6 +31,7 @@ import {
   StateContractError,
   SandboxPolicySource,
   type AbsolutePath,
+  type AppLogEntryId,
   type AuthenticatedRunTaskAgentInput,
   type AppLogWritePortService,
   type BuildLaunchPolicyInput,
@@ -202,11 +203,32 @@ export interface AppRuntimeBootstrapInput {
   readonly sandboxPolicySource: SandboxPolicySourceService;
   readonly appLogs: Pick<
     StateAppLogsFacade,
-    "append" | "query" | "summary" | "markSeen" | "subscribe"
+    | "append"
+    | "query"
+    | "summary"
+    | "markSeen"
+    | "markSeenWithResult"
+    | "markSeenForEntryIdsWithResult"
+    | "setViewPreferences"
+    | "subscribe"
+    | "writePort"
   >;
   readonly resolveWorkspaceAppLogs?: (
     workspaceId: WorkspaceId,
-  ) => Promise<Pick<StateAppLogsFacade, "append" | "query" | "summary" | "markSeen" | "subscribe">>;
+  ) => Promise<
+    Pick<
+      StateAppLogsFacade,
+      | "append"
+      | "query"
+      | "summary"
+      | "markSeen"
+      | "markSeenWithResult"
+      | "markSeenForEntryIdsWithResult"
+      | "setViewPreferences"
+      | "subscribe"
+      | "writePort"
+    >
+  >;
   readonly onAppLogCommitNotificationError?: (
     error: unknown,
     scope: { readonly workspaceId?: WorkspaceId },
@@ -538,7 +560,10 @@ export async function createAppRuntimeBootstrap(
     }
     return Effect.tryPromise({
       try: async () =>
-        appLogStateServiceFromFacade(await input.resolveWorkspaceAppLogs!(workspaceId)),
+        appLogStateServiceFromFacade(
+          await input.resolveWorkspaceAppLogs!(workspaceId),
+          workspaceId,
+        ),
       catch: (cause) =>
         new StateContractError({
           operation: "app-runtime-bootstrap.resolveWorkspaceAppLogs",
@@ -808,7 +833,7 @@ export async function createAppRuntimeBootstrap(
           catch: (cause) => runtimeBootstrapError("runtime.model.resolve", cause),
         }),
     }),
-    Layer.succeed(AppLogWritePort, input.appLogWritePort),
+    Layer.succeed(AppLogWritePort, appLogWritePortFromBootstrap(input)),
     Layer.succeed(RuntimeGeneratedContextRefreshHostPort, input.generatedContextRefresh),
     Layer.succeed(RuntimeGeneratedPackageRefreshHostPort, input.generatedPackageRefresh),
     Layer.succeed(RuntimeExternalInstructionScanInputPort, input.externalInstructionScanInput),
@@ -1033,7 +1058,21 @@ export async function createAppRuntimeBootstrap(
 
 function appLogStateServiceFromFacade(
   appLogs: AppRuntimeBootstrapInput["appLogs"],
+  ownerWorkspaceId?: WorkspaceId,
 ): Parameters<typeof stateReadModelsFromRouter>[0]["appLogs"] {
+  const scopeForFacade = (scope: string | null | undefined): string | null | undefined =>
+    ownerWorkspaceId ? undefined : scope;
+  const readOwnedModel = (readModel: ReturnType<typeof appLogs.query>) => {
+    if (!ownerWorkspaceId) return readModel;
+    return {
+      ...readModel,
+      workspaceId: ownerWorkspaceId,
+      entries: readModel.entries.map((entry) => ({
+        ...entry,
+        workspaceId: entry.workspaceId ?? ownerWorkspaceId,
+      })),
+    };
+  };
   return {
     append: (entry) =>
       Effect.try({
@@ -1046,9 +1085,9 @@ function appLogStateServiceFromFacade(
             cause,
           }),
       }),
-    query: (query) =>
+    query: (query, scope) =>
       Effect.try({
-        try: () => appLogs.query(query),
+        try: () => readOwnedModel(appLogs.query(query, scopeForFacade(scope))),
         catch: (cause) =>
           new StateContractError({
             operation: "app-runtime-bootstrap.appLogs.query",
@@ -1057,9 +1096,9 @@ function appLogStateServiceFromFacade(
             cause,
           }),
       }),
-    summary: () =>
+    summary: (scope) =>
       Effect.try({
-        try: () => appLogs.summary(),
+        try: () => appLogs.summary(scopeForFacade(scope)),
         catch: (cause) =>
           new StateContractError({
             operation: "app-runtime-bootstrap.appLogs.summary",
@@ -1068,14 +1107,54 @@ function appLogStateServiceFromFacade(
             cause,
           }),
       }),
-    markSeen: (throughSeq) =>
+    markSeen: (throughSeq, scope) =>
       Effect.try({
-        try: () => appLogs.markSeen(throughSeq),
+        try: () => appLogs.markSeen(throughSeq, scopeForFacade(scope)),
         catch: (cause) =>
           new StateContractError({
             operation: "app-runtime-bootstrap.appLogs.markSeen",
             reason: "transaction-failed",
             message: cause instanceof Error ? cause.message : "App log mark seen failed.",
+            cause,
+          }),
+      }),
+    markSeenWithResult: (throughSeq, scope) =>
+      Effect.try({
+        try: () => appLogs.markSeenWithResult(throughSeq, scopeForFacade(scope)),
+        catch: (cause) =>
+          new StateContractError({
+            operation: "app-runtime-bootstrap.appLogs.markSeenWithResult",
+            reason: "transaction-failed",
+            message:
+              cause instanceof Error ? cause.message : "App log read-state transition failed.",
+            cause,
+          }),
+      }),
+    markSeenForEntryIdsWithResult: (entryIds, scope) =>
+      Effect.try({
+        try: () =>
+          appLogs.markSeenForEntryIdsWithResult(
+            entryIds as readonly AppLogEntryId[],
+            scopeForFacade(scope),
+          ),
+        catch: (cause) =>
+          new StateContractError({
+            operation: "app-runtime-bootstrap.appLogs.markSeenForEntryIdsWithResult",
+            reason: "transaction-failed",
+            message:
+              cause instanceof Error ? cause.message : "App log read-state transition failed.",
+            cause,
+          }),
+      }),
+    setViewPreferences: (preferences, scope) =>
+      Effect.try({
+        try: () => appLogs.setViewPreferences(preferences, scopeForFacade(scope)),
+        catch: (cause) =>
+          new StateContractError({
+            operation: "app-runtime-bootstrap.appLogs.setViewPreferences",
+            reason: "transaction-failed",
+            message:
+              cause instanceof Error ? cause.message : "App log view preference update failed.",
             cause,
           }),
       }),
@@ -1090,6 +1169,26 @@ function appLogStateServiceFromFacade(
             cause,
           }),
       }),
+  };
+}
+
+function appLogWritePortFromBootstrap(input: AppRuntimeBootstrapInput): AppLogWritePortService {
+  return {
+    append: (entry) => {
+      if (!entry.workspaceId || !input.resolveWorkspaceAppLogs) {
+        return input.appLogWritePort.append(entry);
+      }
+      return Effect.tryPromise({
+        try: () => input.resolveWorkspaceAppLogs!(entry.workspaceId!),
+        catch: (cause) =>
+          new StateContractError({
+            operation: "app-runtime-bootstrap.resolveWorkspaceAppLogWriter",
+            reason: "not-found",
+            message: `App runtime bootstrap could not resolve app-log writer for workspace ${entry.workspaceId}.`,
+            cause,
+          }),
+      }).pipe(Effect.flatMap((appLogs) => appLogs.writePort.append(entry)));
+    },
   };
 }
 
