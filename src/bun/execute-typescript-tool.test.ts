@@ -1016,7 +1016,7 @@ describe("execute_typescript tool", () => {
       toolName: "execute_typescript",
       status: "succeeded",
     });
-    expect(parentCommand?.arguments).toEqual({
+    expect(parentCommand?.arguments).toMatchObject({
       typescriptCode: [
         "const values = [1, 2, 3];",
         "const total = values.reduce((sum, value) => sum + value, 0);",
@@ -1024,6 +1024,14 @@ describe("execute_typescript tool", () => {
         'console.warn("check", "warnings");',
         "return { total, extensionKeys: Object.keys(extensions) };",
       ].join("\n"),
+      cwd: workspaceCwd,
+      launchCommand: [
+        process.execPath,
+        expect.stringMatching(/execute-typescript-runtime.*runtime\.js$/),
+      ],
+      envFacts: expect.arrayContaining([
+        expect.objectContaining({ key: "PATH", redactionLabel: "execute_typescript_runtime_env" }),
+      ]),
     });
     expect(parentCommand?.summary).toBe('{"total":6,"extensionKeys":["artifacts","workflows"]}');
     expect(parentCommand?.facts).toMatchObject({

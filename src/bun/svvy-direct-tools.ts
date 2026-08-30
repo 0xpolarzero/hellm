@@ -387,9 +387,20 @@ function createApplyPatchTool(options: DirectToolOptions): NativeToolDefinition<
         toolCallId,
         toolName: "apply_patch",
       });
+      const patchLaunchCommand = ["patch", "-p0", "--forward"];
+      persistCanonicalDirectToolArguments({
+        activeCommand,
+        arguments: {
+          patch: params.patch,
+          cwd: options.cwd,
+          launchCommand: patchLaunchCommand,
+          envFacts: [],
+        },
+        options,
+      });
       const launchHandle = await acquireRuntimeDirectToolLaunchFacts({
         activeCommand,
-        command: ["patch", "-p0", "--forward"],
+        command: patchLaunchCommand,
         cwd: options.cwd,
         envFacts: [],
         options,
@@ -582,11 +593,23 @@ function createExecCommandTool(options: DirectToolOptions): NativeToolDefinition
         options,
       });
       const env = { ...runTaskAgentBridgeEnv, ...svvyxSubprocess?.env };
+      const launchCommand = [getShell(), "-lc", params.cmd];
+      const envFacts = environmentFactsForEnv(env);
+      persistCanonicalDirectToolArguments({
+        activeCommand,
+        arguments: {
+          command: params.cmd,
+          cwd: commandCwd,
+          launchCommand,
+          envFacts,
+        },
+        options,
+      });
       const launchHandle = await acquireRuntimeDirectToolLaunchFacts({
         activeCommand,
-        command: [getShell(), "-lc", params.cmd],
+        command: launchCommand,
         cwd: commandCwd,
-        envFacts: environmentFactsForEnv(env),
+        envFacts,
         options,
         toolName: "exec_command",
       });
@@ -2530,6 +2553,32 @@ function findActiveDirectToolCommand(input: {
     return null;
   }
   return command;
+}
+
+function persistCanonicalDirectToolArguments(input: {
+  readonly activeCommand: RuntimeCommandRecord | null;
+  readonly arguments:
+    | {
+        readonly command: string;
+        readonly cwd: string;
+        readonly launchCommand: readonly string[];
+        readonly envFacts: BuildLaunchPolicyInput["envFacts"];
+      }
+    | {
+        readonly patch: string;
+        readonly cwd: string;
+        readonly launchCommand: readonly string[];
+        readonly envFacts: BuildLaunchPolicyInput["envFacts"];
+      };
+  readonly options: DirectToolOptions;
+}): void {
+  if (!input.activeCommand || !input.options.commandState || !input.options.runState) return;
+  input.options.runState(
+    input.options.commandState.updateCommandArguments({
+      commandId: input.activeCommand.id as CommandId,
+      arguments: input.arguments,
+    }),
+  );
 }
 
 async function acquireRuntimeDirectToolLaunchFacts(input: {

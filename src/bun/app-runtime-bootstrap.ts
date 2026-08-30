@@ -101,6 +101,7 @@ import {
   RuntimeLayerCommandStdinPort,
   RuntimeLayerModelResolverPort,
   RuntimeLayerProviderAuthPort,
+  RuntimePrimitiveToolHostPort,
   RuntimeSourceInvalidationScanPort,
   RuntimeWorkflowTaskAgentBridgeBearerVerifier,
   type RuntimeGeneratedPackageRefreshHostPortService,
@@ -108,6 +109,7 @@ import {
   type RuntimeLayerCommandControlPortService,
   type RuntimeLayerCommandStdinPortService,
   type RuntimeLayerConfig,
+  type RuntimePrimitiveToolHostPortService,
   type RuntimePrepareShutdownReason,
   type RuntimeSourceInvalidationEvent,
   type RuntimeSourceInvalidationScanPortService,
@@ -242,6 +244,7 @@ export interface AppRuntimeBootstrapInput {
     RuntimeLayerCommandControlPortService,
     "runExecuteTypescript"
   >;
+  readonly primitiveToolHost: RuntimePrimitiveToolHostPortService;
   readonly providerAuth: {
     ensureUsableProviderAuth(provider: string): Promise<string | undefined>;
     getProviderAuthUnavailableMessage(provider: string): string;
@@ -844,6 +847,7 @@ export async function createAppRuntimeBootstrap(
       cancel: input.commandRegistry.cancel,
       runExecuteTypescript: input.executeTypescriptHost.runExecuteTypescript,
     }),
+    Layer.succeed(RuntimePrimitiveToolHostPort, input.primitiveToolHost),
     Layer.succeed(RuntimeWorkflowTaskAgentBridgeBearerVerifier, {
       verify: (request) =>
         Effect.tryPromise({

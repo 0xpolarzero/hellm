@@ -617,6 +617,14 @@ export async function runExecuteTypescript(input: {
       extensions,
       runtimeProcessSpawner: input.runtimeProcessSpawner,
       acquireExecuteTypescriptLaunch: input.acquireExecuteTypescriptLaunch,
+      typescriptCode: input.typescriptCode,
+      updateCommandArguments: (argumentsValue) =>
+        input.runState(
+          input.commandState.updateCommandArguments({
+            commandId: parentCommand.id,
+            arguments: argumentsValue as never,
+          }),
+        ),
       onLaunchFacts: (facts) => {
         launchFacts = facts;
       },
@@ -1216,6 +1224,8 @@ async function runCompiledSnippetInRuntimeProcess(
     acquireExecuteTypescriptLaunch(
       input: Omit<BuildLaunchPolicyInput, "launchKind">,
     ): Promise<ExecuteTypescriptLaunchHandle>;
+    typescriptCode: string;
+    updateCommandArguments?(argumentsValue: Record<string, unknown>): void;
     onLaunchFacts?: (facts: SandboxLaunchFacts) => void;
   },
 ): Promise<unknown> {
@@ -1231,6 +1241,12 @@ async function runCompiledSnippetInRuntimeProcess(
     }),
   );
   const launchCommand = [process.execPath, runtimePath];
+  runtime.updateCommandArguments?.({
+    typescriptCode: runtime.typescriptCode,
+    cwd: runtime.cwd,
+    launchCommand,
+    envFacts: runtime.launchInput.envFacts,
+  });
   launchHandle = await runtime.acquireExecuteTypescriptLaunch({
     ...runtime.launchInput,
     command: launchCommand,

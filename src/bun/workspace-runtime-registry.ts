@@ -2827,6 +2827,36 @@ export class WorkspaceRuntimeRegistry {
       sandboxHostSupport: this.options.sandboxHostSupport,
       runtimeLayerConfig: this.options.runtimeLayerConfig,
       commandRegistry,
+      primitiveToolHost: {
+        runDirectNativeTool: (request) =>
+          Effect.tryPromise({
+            try: async (signal) => {
+              const runtime =
+                this.getWorkspaceHostRecord(request.workspaceId) ??
+                (appGlobal.workspaceId === request.workspaceId ? appGlobal : undefined);
+              if (!runtime) {
+                throw new RuntimeContractError({
+                  operation: "workspace-runtime-registry.directNativeTool",
+                  reason: "target-not-found",
+                  message: `Direct ${request.toolName} execution requires an open workspace runtime for ${request.workspaceId}.`,
+                });
+              }
+              return runtime.catalog.runPrimitiveDirectTool(request, signal);
+            },
+            catch: (cause) =>
+              cause instanceof RuntimeContractError
+                ? cause
+                : new RuntimeContractError({
+                    operation: "workspace-runtime-registry.directNativeTool",
+                    reason: "state-conflict",
+                    message:
+                      cause instanceof Error
+                        ? cause.message
+                        : "Direct native tool execution failed.",
+                    cause,
+                  }),
+          }),
+      },
       executeTypescriptHost: {
         runExecuteTypescript: (request) =>
           Effect.tryPromise({

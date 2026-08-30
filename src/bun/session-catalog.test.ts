@@ -1316,6 +1316,69 @@ describe("WorkspaceSessionCatalog", () => {
     }
   });
 
+  it("runs every primitive direct tool through the runtime host seam", async () => {
+    const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
+    const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);
+
+    try {
+      const created = await catalog.createSession({ title: "Runtime direct tools" }, DEFAULTS);
+      const store = getStructuredSessionStore(catalog);
+      const turn = store.startTurn({
+        sessionId: created.target.workspaceSessionId,
+        surfacePiSessionId: created.target.surfacePiSessionId,
+        requestSummary: "Run runtime direct tools",
+      });
+      const run = async (
+        toolName: "exec_command" | "write_stdin" | "apply_patch",
+        argumentsValue: unknown,
+      ) => {
+        const toolCallId = `tool-runtime-host-${toolName}-${crypto.randomUUID()}` as ToolCallId;
+        const command = store.createCommand({
+          turnId: turn.id,
+          surfacePiSessionId: created.target.surfacePiSessionId,
+          toolName,
+          executor: "orchestrator",
+          visibility: "surface",
+          title: `Run ${toolName}`,
+          summary: toolName,
+          facts: { toolCallId },
+        });
+        store.startCommand(command.id);
+        return catalog.runPrimitiveDirectTool({
+          workspaceId: cwd as WorkspaceId,
+          target: created.target as RuntimeSurfaceTarget,
+          turnId: turn.id as TurnId,
+          toolCallId,
+          commandId: command.id as CommandId,
+          toolName,
+          arguments: argumentsValue,
+          approvalMode: "full-access",
+          cwd: cwd as AbsolutePath,
+        });
+      };
+
+      const execResult = await run("exec_command", { cmd: "printf runtime-direct-host" });
+      expect(JSON.stringify(execResult)).toContain("runtime-direct-host");
+
+      const patchedPath = join(cwd, "runtime-host-patch.txt");
+      writeFileSync(patchedPath, "before\n");
+      await run("apply_patch", {
+        patch:
+          "--- runtime-host-patch.txt\n+++ runtime-host-patch.txt\n@@ -1 +1 @@\n-before\n+after\n",
+      });
+      expect(readFileSync(patchedPath, "utf8")).toBe("after\n");
+
+      await expect(
+        run("write_stdin", {
+          session_id: "exec_missing_runtime_host_session",
+          input: "delivered\n",
+        }),
+      ).rejects.toThrow("exec_command session not found");
+    } finally {
+      await catalog.dispose();
+    }
+  });
+
   it("denies unsafe auto-review requests through the production runtime boundary", async () => {
     const { cwd, agentDir, sessionDir } = createWorkspaceFixture();
     const catalog = createWorkspaceSessionCatalog(cwd, agentDir, sessionDir);

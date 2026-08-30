@@ -232,6 +232,7 @@ describe("@svvy/runtime prompt execution service", () => {
       const toolExecutor = buildRuntimeToolExecutor({
         workspaceId: "workspace-runtime-tool-executor" as WorkspaceId,
         acceptedNativeTools: {
+          runDirectNativeTool: () => Effect.die("Unexpected direct native-tool execution."),
           runExecuteTypescript: () => Effect.die("Unexpected execute_typescript execution."),
           runRequestUserInput: () => Effect.die("Unexpected accepted request input execution."),
         },
@@ -355,6 +356,7 @@ describe("@svvy/runtime prompt execution service", () => {
       const toolExecutor = buildRuntimeToolExecutor({
         workspaceId: "workspace-runtime-tool-executor" as WorkspaceId,
         acceptedNativeTools: {
+          runDirectNativeTool: () => Effect.die("Unexpected direct native-tool execution."),
           runExecuteTypescript: () => Effect.die("Unexpected execute_typescript execution."),
           runRequestUserInput: (input) =>
             Effect.sync(() => {
@@ -460,6 +462,7 @@ describe("@svvy/runtime prompt execution service", () => {
       const toolExecutor = buildRuntimeToolExecutor({
         workspaceId,
         acceptedNativeTools: {
+          runDirectNativeTool: () => Effect.die("Unexpected direct native-tool execution."),
           runExecuteTypescript: (input) =>
             Effect.sync(() => {
               calls.push("accepted:execute-typescript");
@@ -536,4 +539,95 @@ describe("@svvy/runtime prompt execution service", () => {
       );
     },
   );
+
+  it.effect("routes every direct native tool through the accepted runtime lane", () => {
+    const acceptedInputs: unknown[] = [];
+    const commandState = {
+      createOrReuseStreamingCommand: () =>
+        Effect.succeed({ value: commandRecord({ status: "requested" }), afterCommit: [] }),
+      startCommand: () =>
+        Effect.succeed({ value: commandRecord({ status: "running" }), afterCommit: [] }),
+      finishCommand: () => Effect.die("Generic command settlement was not expected."),
+      createCommand: () => Effect.die("Unexpected command create."),
+      findCommandByToolCallId: () => Effect.die("Unexpected command lookup."),
+      findCommandById: () => Effect.die("Unexpected command lookup."),
+      updateCommandArguments: () => Effect.die("Unexpected argument update."),
+      recordCommandEvent: () => Effect.die("Unexpected command event."),
+      recordStdinWrite: () => Effect.die("Unexpected stdin write."),
+      hasCommandOutputEvent: () => Effect.die("Unexpected command output query."),
+    } satisfies RuntimeCommandStatePortService;
+    const toolResult = {
+      content: [{ type: "text" as const, text: "direct result" }],
+      details: { commandFacts: { direct: true } },
+    };
+    const toolExecutor = buildRuntimeToolExecutor({
+      workspaceId,
+      acceptedNativeTools: {
+        runDirectNativeTool: (input) =>
+          Effect.sync(() => {
+            acceptedInputs.push(input);
+            return toolResult;
+          }),
+        runExecuteTypescript: () => Effect.die("Unexpected execute_typescript execution."),
+        runRequestUserInput: () => Effect.die("Unexpected request_user_input execution."),
+      },
+      extensions: Extensions.of({
+        nativeTools: {
+          handler: () => Effect.die("Direct tools must not reach extension handlers."),
+        },
+      } as unknown as ExtensionsService),
+      target,
+      actorBinding: {
+        actorKind: "orchestrator",
+        loadedExtensionIds: [],
+        availableExtensionIds: [],
+        unavailableExtensionIds: [],
+        instructionOrder: [],
+        source: "surface-binding",
+      },
+      promptContext,
+      commandState,
+      requestState: {} as RuntimeRequestStatePortService,
+      actorBindingState: {} as RuntimeActorExtensionBindingStatePortService,
+      episodeState: {} as RuntimeEpisodeStatePortService,
+      threadState: {} as RuntimeThreadStatePortService,
+      queueState: {} as RuntimeQueueStatePortService,
+      eventBus: RuntimeEventBus.of({
+        publishLive: () => Effect.die("Unexpected live publication."),
+        publishStateInvalidations: () => Effect.succeed([]),
+        subscribe: () => Effect.die("Unexpected subscription."),
+      }),
+      sourceInvalidation: {} as RuntimeSourceInvalidationService["Service"],
+      executionPolicy: { approvalMode: "user", cwd: "/workspace" as never },
+    });
+    const cases = [
+      { toolName: "exec_command", arguments: { cmd: "printf direct" } },
+      { toolName: "write_stdin", arguments: { session_id: "exec_1", input: "next\n" } },
+      { toolName: "apply_patch", arguments: { patch: "*** Begin Patch\n*** End Patch" } },
+    ] as const;
+
+    return Effect.forEach(cases, (directTool) =>
+      toolExecutor({
+        turnId,
+        surfacePiSessionId,
+        piToolCallId: toolCallId,
+        toolName: directTool.toolName,
+        argumentsJson: JSON.stringify(directTool.arguments),
+        emit: () => Effect.void,
+      }),
+    ).pipe(
+      Effect.tap((results) =>
+        Effect.sync(() => {
+          assert.deepStrictEqual(results, [toolResult, toolResult, toolResult]);
+          assert.deepStrictEqual(
+            acceptedInputs.map((input) => ({
+              toolName: (input as { toolName: string }).toolName,
+              arguments: (input as { arguments: unknown }).arguments,
+            })),
+            cases.map((input) => ({ ...input })),
+          );
+        }),
+      ),
+    );
+  });
 });

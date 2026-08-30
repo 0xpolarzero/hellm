@@ -60,5 +60,10 @@ export type {
   SourceWatchInput as RuntimeSourceWatchInput,
 } from "./source-invalidation-coordinator";
 export type { RuntimeSurfaceQueueWakeReason } from "./runtime-surface-queue-wake-port";
+export { RuntimePrimitiveToolHostPort } from "./runtime-native-tool-host";
+export type {
+  RuntimeDirectNativeToolHostInput,
+  RuntimePrimitiveToolHostPortService,
+} from "./runtime-native-tool-host";
 export { RuntimeWorkflowTaskAgentBridgeBearerVerifier } from "./workflow-task-agent-bridge-service";
 export type { RuntimeWorkflowTaskAgentBridgeBearerVerifierService } from "./workflow-task-agent-bridge-service";

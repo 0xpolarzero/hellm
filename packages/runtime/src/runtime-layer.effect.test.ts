@@ -128,6 +128,7 @@ import {
 import { HostProcessReferencePort, SandboxHelperCandidatesPort } from "@svvy/sandbox";
 import { Runtime } from "./index";
 import { layerRuntimeBunPlatform } from "./bun-platform";
+import { RuntimePrimitiveToolHostPort } from "./runtime-native-tool-host";
 import {
   RuntimeLayerCommandControlPort,
   RuntimeLayerCommandStdinPort,
@@ -2763,6 +2764,9 @@ function testRuntimeLayer(overrides: TestLayerOverrides) {
             ),
           runExecuteTypescript: () => Effect.die("Unexpected execute_typescript host execution."),
         }),
+        Layer.succeed(RuntimePrimitiveToolHostPort, {
+          runDirectNativeTool: () => Effect.die("Unexpected direct native-tool host execution."),
+        }),
         Layer.succeed(RuntimeWorkspaceScopeService, {
           acquire: (input) =>
             Effect.sync(() => {
@@ -3150,6 +3154,9 @@ function testRuntimeRootLayer(overrides: TestRootLayerOverrides = {}) {
               status: "already_terminal" as const,
             }),
           runExecuteTypescript: () => Effect.die("Unexpected execute_typescript host execution."),
+        }),
+        Layer.succeed(RuntimePrimitiveToolHostPort, {
+          runDirectNativeTool: () => Effect.die("Unexpected direct native-tool host execution."),
         }),
         testPiAdapterHostLayer(),
         Layer.succeed(RuntimeWorkspaceStatePort, unusedPort("RuntimeWorkspaceStatePort")),

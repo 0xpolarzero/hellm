@@ -47,6 +47,7 @@ import {
   layerRuntimeAcceptedNativeToolExecution,
   RuntimeAcceptedNativeToolExecution,
 } from "./accepted-native-tool-execution-service";
+import { RuntimePrimitiveToolHostPort } from "./runtime-native-tool-host";
 import {
   RuntimeHandlerThreadStartPreparationHost,
   RuntimeQueueInsertPostCommitLane,
@@ -118,19 +119,23 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
       {
         toolName: "exec_command" as const,
         command: ["/bin/zsh", "-lc", "git status --short"],
+        payload: { command: "git status --short" },
         launchKind: "direct_shell" as const,
       },
       {
         toolName: "apply_patch" as const,
         command: ["/usr/bin/patch", "-p0"],
+        payload: { patch: "--- a\n+++ b" },
         launchKind: "direct_apply_patch" as const,
       },
       {
         toolName: "execute_typescript" as const,
         command: ["/usr/local/bin/bun", "/tmp/svvy-execute-typescript.js"],
+        payload: { typescriptCode: "return 42;" },
         launchKind: "execute_typescript_runtime" as const,
       },
     ];
+    let commandReadIndex = 0;
 
     return Effect.gen(function* () {
       const service = yield* RuntimeAcceptedNativeToolExecution;
@@ -187,11 +192,30 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
     }).pipe(
       Effect.provide(layerRuntimeAcceptedNativeToolExecution),
       Effect.provideService(RuntimeLayerCommandControlPort, unusedCommandControl),
+      Effect.provideService(RuntimePrimitiveToolHostPort, unusedPrimitiveToolHost()),
       Effect.provide(layerRuntimeShutdownAdmission),
       Effect.provideService(RuntimeRequestStatePort, requestStatePort({ createCalls: [] })),
       Effect.provideService(
         RuntimeCommandStatePort,
-        commandStatePort({ progressCalls: [], finishCalls: [] }),
+        commandStatePort({
+          progressCalls: [],
+          finishCalls: [],
+          findCommandById: () => {
+            const directToolCase = cases[commandReadIndex++];
+            if (!directToolCase) return Effect.die("Unexpected direct-tool command read.");
+            return Effect.succeed(
+              runtimeCommandRecord("running", {
+                toolName: directToolCase.toolName,
+                arguments: {
+                  ...directToolCase.payload,
+                  cwd: launchCwd,
+                  launchCommand: directToolCase.command,
+                  envFacts: launchEnvFacts,
+                },
+              }),
+            );
+          },
+        }),
       ),
       Effect.provideService(RuntimeEventBus, eventBus([])),
       Effect.provideService(RuntimeQueueWakeService, unusedQueueWakeService()),
@@ -289,6 +313,7 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
       }).pipe(
         Effect.provide(layerRuntimeAcceptedNativeToolExecution),
         Effect.provideService(RuntimeLayerCommandControlPort, unusedCommandControl),
+        Effect.provideService(RuntimePrimitiveToolHostPort, unusedPrimitiveToolHost()),
         Effect.provide(layerRuntimeShutdownAdmission),
         Effect.provideService(
           RuntimeRequestStatePort,
@@ -377,6 +402,7 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
     }).pipe(
       Effect.provide(layerRuntimeAcceptedNativeToolExecution),
       Effect.provideService(RuntimeLayerCommandControlPort, unusedCommandControl),
+      Effect.provideService(RuntimePrimitiveToolHostPort, unusedPrimitiveToolHost()),
       Effect.provide(layerRuntimeShutdownAdmission),
       Effect.provideService(
         RuntimeCommandStatePort,
@@ -514,6 +540,7 @@ describe("RuntimeAcceptedNativeToolExecution", () => {
       }).pipe(
         Effect.provide(layerRuntimeAcceptedNativeToolExecution),
         Effect.provideService(RuntimeLayerCommandControlPort, unusedCommandControl),
+        Effect.provideService(RuntimePrimitiveToolHostPort, unusedPrimitiveToolHost()),
         Effect.provide(layerRuntimeShutdownAdmission),
         Effect.provideService(RuntimeApprovalStatePort, unusedApprovalStatePort()),
         Effect.provideService(RuntimeSessionWaitStatePort, unusedSessionWaitStatePort()),
@@ -676,7 +703,10 @@ function startHandlerThreadsResult(): StartRuntimeHandlerThreadsResult {
   };
 }
 
-function runtimeCommandRecord(status: RuntimeCommandRecord["status"]): RuntimeCommandRecord {
+function runtimeCommandRecord(
+  status: RuntimeCommandRecord["status"],
+  overrides: Partial<Pick<RuntimeCommandRecord, "arguments" | "toolName">> = {},
+): RuntimeCommandRecord {
   return {
     id: commandId,
     sessionId: target.workspaceSessionId,
@@ -686,14 +716,14 @@ function runtimeCommandRecord(status: RuntimeCommandRecord["status"]): RuntimeCo
     threadId: null,
     workflowRunId: null,
     parentCommandId: null,
-    toolName: "request_user_input",
+    toolName: overrides.toolName ?? "request_user_input",
     executor: "orchestrator",
     visibility: "surface",
     status,
     attempts: 1,
     title: "Ask user",
     summary: "",
-    arguments: null,
+    arguments: overrides.arguments ?? null,
     facts: null,
     error: null,
     startedAt: "2026-04-18T09:00:00.000Z",
@@ -828,12 +858,14 @@ function requestStatePort(input: {
 function commandStatePort(input: {
   progressCalls: Parameters<RuntimeCommandStatePortService["recordCommandEvent"]>[0][];
   finishCalls: Parameters<RuntimeCommandStatePortService["finishCommand"]>[0][];
+  findCommandById?: RuntimeCommandStatePortService["findCommandById"];
 }): RuntimeCommandStatePortService {
   return {
     createCommand: () => Effect.die("Unexpected command create."),
     createOrReuseStreamingCommand: () => Effect.die("Unexpected streaming command create."),
     findCommandByToolCallId: () => Effect.die("Unexpected command lookup by tool call."),
-    findCommandById: () => Effect.die("Unexpected command lookup by id."),
+    findCommandById:
+      input.findCommandById ?? (() => Effect.die("Unexpected command lookup by id.")),
     updateCommandArguments: () => Effect.die("Unexpected command argument update."),
     startCommand: () => Effect.die("Unexpected command start."),
     finishCommand: (request) => {
@@ -912,6 +944,12 @@ function unusedLaunchPolicyService(): RuntimeLaunchPolicyService["Service"] {
 function unusedQueueWakeService(): RuntimeQueueWakeService["Service"] {
   return RuntimeQueueWakeService.of({
     wakeSurface: () => Effect.die("Unexpected queue wake."),
+  });
+}
+
+function unusedPrimitiveToolHost(): RuntimePrimitiveToolHostPort["Service"] {
+  return RuntimePrimitiveToolHostPort.of({
+    runDirectNativeTool: () => Effect.die("Unexpected direct native-tool host execution."),
   });
 }
 

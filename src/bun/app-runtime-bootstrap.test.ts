@@ -1043,6 +1043,9 @@ function createBootstrapHarness() {
     executeTypescriptHost: {
       runExecuteTypescript: () => Effect.die("Unexpected execute_typescript host execution."),
     },
+    primitiveToolHost: {
+      runDirectNativeTool: () => Effect.die("Unexpected direct native-tool host execution."),
+    },
     providerAuth: {
       ensureUsableProviderAuth: async () => "test-api-key",
       getProviderAuthUnavailableMessage: (provider: string) => `${provider} auth unavailable.`,

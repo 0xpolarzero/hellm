@@ -318,7 +318,7 @@ export function buildRuntimeToolExecutor(input: {
   readonly workspaceId: WorkspaceId;
   readonly acceptedNativeTools: Pick<
     RuntimeAcceptedNativeToolExecutionService,
-    "runExecuteTypescript" | "runRequestUserInput"
+    "runDirectNativeTool" | "runExecuteTypescript" | "runRequestUserInput"
   >;
   readonly extensions: Extensions["Service"];
   readonly target: RuntimeSurfaceTarget;
@@ -427,6 +427,30 @@ export function buildRuntimeToolExecutor(input: {
             ),
           );
         return executed.toolResult;
+      }
+      if (
+        toolInput.toolName === "exec_command" ||
+        toolInput.toolName === "write_stdin" ||
+        toolInput.toolName === "apply_patch"
+      ) {
+        return yield* input.acceptedNativeTools
+          .runDirectNativeTool({
+            workspaceId: input.workspaceId,
+            target: input.target,
+            turnId: toolInput.turnId,
+            toolCallId: toolInput.piToolCallId,
+            commandId: command.id as CommandId,
+            actorBinding: input.actorBinding,
+            toolName: toolInput.toolName,
+            arguments: decodeDirectNativeToolArguments(toolInput, args),
+            approvalMode: input.executionPolicy.approvalMode,
+            cwd: input.executionPolicy.cwd,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              runtimeToolExecutionError(toolInput, "runtime-effect-failed", cause.message, cause),
+            ),
+          );
       }
       const commandContext: CommandInvocationContext = {
         commandId: command.id as CommandId,
@@ -1496,6 +1520,78 @@ function toolResultFacts(result: NativeToolResult | undefined) {
 
 function parseToolArguments(argumentsJson: string): unknown {
   return JSON.parse(argumentsJson);
+}
+
+type RuntimeDirectNativeToolArguments =
+  | { readonly cmd: string; readonly workdir?: string; readonly timeout?: number }
+  | { readonly session_id: string; readonly input: string }
+  | { readonly patch: string };
+
+function decodeDirectNativeToolArguments(
+  toolInput: {
+    readonly turnId: TurnId;
+    readonly surfacePiSessionId: string;
+    readonly piToolCallId: ToolCallId;
+    readonly toolName: string;
+  },
+  value: unknown,
+): RuntimeDirectNativeToolArguments {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw runtimeToolExecutionError(
+      toolInput,
+      "invalid-arguments",
+      `${toolInput.toolName} arguments must be an object.`,
+    );
+  }
+  const record = value as Record<string, unknown>;
+  const fail = (message: string): never => {
+    throw runtimeToolExecutionError(toolInput, "invalid-arguments", message);
+  };
+  const keys = Object.keys(record);
+  if (toolInput.toolName === "exec_command") {
+    if (typeof record.cmd !== "string" || record.cmd.length === 0) {
+      return fail("exec_command requires a non-empty cmd string.");
+    }
+    if (record.workdir !== undefined && typeof record.workdir !== "string") {
+      return fail("exec_command workdir must be a string when provided.");
+    }
+    if (
+      record.timeout !== undefined &&
+      (typeof record.timeout !== "number" || !Number.isFinite(record.timeout))
+    ) {
+      return fail("exec_command timeout must be a finite number when provided.");
+    }
+    if (keys.some((key) => !["cmd", "workdir", "timeout"].includes(key))) {
+      return fail("exec_command arguments contain unsupported fields.");
+    }
+    return {
+      cmd: record.cmd,
+      ...(record.workdir === undefined ? {} : { workdir: record.workdir }),
+      ...(record.timeout === undefined ? {} : { timeout: record.timeout }),
+    };
+  }
+  if (toolInput.toolName === "write_stdin") {
+    if (typeof record.session_id !== "string" || record.session_id.length === 0) {
+      return fail("write_stdin requires a non-empty session_id string.");
+    }
+    if (typeof record.input !== "string") {
+      return fail("write_stdin requires an input string.");
+    }
+    if (keys.some((key) => key !== "session_id" && key !== "input")) {
+      return fail("write_stdin arguments contain unsupported fields.");
+    }
+    return { session_id: record.session_id, input: record.input };
+  }
+  if (toolInput.toolName === "apply_patch") {
+    if (typeof record.patch !== "string" || record.patch.length === 0) {
+      return fail("apply_patch requires a non-empty patch string.");
+    }
+    if (keys.some((key) => key !== "patch")) {
+      return fail("apply_patch arguments contain unsupported fields.");
+    }
+    return { patch: record.patch };
+  }
+  return fail(`Unsupported direct native tool ${toolInput.toolName}.`);
 }
 
 function decodeExecuteTypescriptCode(

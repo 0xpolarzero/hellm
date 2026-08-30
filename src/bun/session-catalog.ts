@@ -24,6 +24,7 @@ import {
   type RunTaskAgentResult,
   summarizeRuntimePromptMessagesForTelemetry,
   type NativeToolResult,
+  type CommandId,
   type PiToolExecutor,
   type EnqueueRuntimeSurfaceMessageInput,
   type GetRuntimeSurfaceMessageInput,
@@ -39,6 +40,7 @@ import {
   type RuntimeSessionWaitStatePortService,
   type RuntimeSourceStatePortService,
   type RuntimeSurfaceLifecycleStatePortService,
+  type RuntimeSurfaceTarget,
   type RuntimeSurfaceMessageRecord,
   type RuntimeThreadStatePortService,
   type RuntimeTurnStatePortService,
@@ -105,7 +107,10 @@ import {
   type RuntimeLayerCommandControlPortService,
   type RuntimeLayerConfig,
 } from "@svvy/runtime/bootstrap";
-import { type PromptExecutionRuntimeHandle } from "@svvy/runtime/prompt-execution-context";
+import {
+  createPromptExecutionContext,
+  type PromptExecutionRuntimeHandle,
+} from "@svvy/runtime/prompt-execution-context";
 
 type RuntimeExecuteTypescriptHostInput = Parameters<
   RuntimeLayerCommandControlPortService["runExecuteTypescript"]
@@ -910,6 +915,83 @@ export class WorkspaceSessionCatalog {
         commandFacts: result as unknown as import("@svvy/core").CommandFactsPayload,
       },
     };
+  }
+
+  async runPrimitiveDirectTool(
+    input: {
+      readonly workspaceId: WorkspaceId;
+      readonly target: RuntimeSurfaceTarget;
+      readonly turnId: TurnId;
+      readonly toolCallId: string;
+      readonly commandId: CommandId;
+      readonly toolName: "exec_command" | "write_stdin" | "apply_patch";
+      readonly arguments: unknown;
+      readonly approvalMode: "auto-review" | "user" | "full-access";
+      readonly cwd: AbsolutePath;
+      readonly signal?: AbortSignal;
+    },
+    signal?: AbortSignal,
+  ): Promise<NativeToolResult> {
+    const runtime: PromptExecutionRuntimeHandle = {
+      current: createPromptExecutionContext({
+        workspaceSessionId: input.target.workspaceSessionId,
+        turnId: input.turnId,
+        surfacePiSessionId: input.target.surfacePiSessionId,
+        surfaceKind: input.target.surface,
+        threadId: input.target.surface === "handler" ? input.target.threadId : null,
+        workflowTaskAttemptId:
+          input.target.surface === "workflow-task" ? input.target.workflowTaskAttemptId : null,
+        generatedAgentContextFingerprint: "",
+        generatedAgentContextRevision: "1",
+      }),
+    };
+    const tool = createSvvyDirectTools({
+      cwd: input.cwd,
+      workspaceId: input.workspaceId,
+      runtime,
+      artifactState: this.runtimeArtifactStatePort,
+      commandState: this.runtimeCommandStatePort,
+      readArtifactRootForSession: (sessionId) =>
+        this.structuredSessionStore.getSessionState(sessionId).workspace.artifactDir,
+      runState: <A>(effect: Effect.Effect<A, StateContractError>) => this.runRuntimeState(effect),
+      onWorkflowsGeneratedPackageChanged: this.emitWorkflowsGeneratedPackageLog.bind(this),
+      workflowsExtensionsGeneratedPackagePath:
+        this.recoveryOptions.workflowsExtensionsGeneratedPackagePath,
+      workflowsGeneratedPackagePath: this.recoveryOptions.workflowsGeneratedPackagePath,
+      workflowsSourceRoot: this.recoveryOptions.workflowsSourceRoot,
+      applyExtensionManagementRuntimeRequest:
+        this.recoveryOptions.applyExtensionManagementRuntimeRequest,
+      applyWorkflowsRuntimeRequest: this.recoveryOptions.applyWorkflowsRuntimeRequest,
+      extensionsRoot: this.extensionsRoot,
+      agentSettingsStore: this.agentSettingsStore,
+      agentProfileSnapshot: this.agentProfileAuthoritySnapshot
+        ? (this.agentProfileAuthoritySnapshot as AgentProfileAuthoritySnapshot)
+        : undefined,
+      applyAgentProfileMutations: this.applyAgentProfileMutations.bind(this),
+      approvalBoundary: this.approvalBoundary,
+      approvalMode: () => input.approvalMode,
+      managedSandbox: this.managedSandbox,
+      networkAccess: () => this.agentSettingsStore.getState().appPreferences.networkAccess,
+      acquireDirectToolLaunch: this.recoveryOptions.acquireDirectToolLaunch,
+      onAppLog: this.emitAppLog.bind(this),
+      runTaskAgentBridge: this.runTaskAgentBridgeEnv.bind(this),
+      runtimeCommandStdin: this.runtimeCommandStdin,
+      extensionsRuntimePlans: () => this.readSvvyxRuntimeExtensionPlans(),
+    }).codingTools.find((candidate) => candidate.name === input.toolName);
+    if (!tool) {
+      throw new RuntimeContractError({
+        operation: "workspace.sessionCatalog.runPrimitiveDirectTool",
+        reason: "target-not-ready",
+        message: `Primitive ${input.toolName} execution is not available for this workspace.`,
+      });
+    }
+    return await (
+      tool.execute as unknown as (
+        toolCallId: string,
+        params: unknown,
+        signal?: AbortSignal,
+      ) => Promise<NativeToolResult>
+    )(input.toolCallId, input.arguments, signal ?? input.signal);
   }
 
   getSandboxPolicySource(): SandboxPolicySourceService {

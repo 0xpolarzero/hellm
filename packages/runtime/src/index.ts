@@ -302,6 +302,7 @@ import {
 import { layerRuntimeRequestInputWaitService } from "./runtime-request-input-wait-service";
 import { layerRuntimeQueueWakeService } from "./runtime-queue-wake-service";
 import { layerRuntimeQueueWakeBroker } from "./runtime-queue-wake-broker";
+import { RuntimePrimitiveToolHostPort } from "./runtime-native-tool-host";
 import { layerRuntimeGeneratedContextRefreshService } from "./runtime-generated-context-refresh-service";
 import { layerRuntimeGeneratedPackageRefreshService } from "./runtime-generated-package-refresh-service";
 import { layerRuntimeExtensionStartupReconcileService } from "./runtime-extension-startup-reconcile-service";
@@ -627,6 +628,7 @@ export namespace Runtime {
     | RuntimeSourceInvalidationScanPort
     | RuntimeLayerCommandStdinPort
     | RuntimeLayerCommandControlPort
+    | RuntimePrimitiveToolHostPort
     | SandboxPolicySource
     | SandboxHelperCandidatesPort
     | HostProcessReferencePort

@@ -525,7 +525,7 @@ function startRuntimePrompt(input: {
   readonly sourceInvalidation: RuntimeSourceInvalidationService["Service"];
   readonly acceptedNativeTools: Pick<
     RuntimeAcceptedNativeToolExecutionService,
-    "runExecuteTypescript" | "runRequestUserInput"
+    "runDirectNativeTool" | "runExecuteTypescript" | "runRequestUserInput"
   >;
   readonly completedPromptResults: Map<string, RuntimePromptExecutionResult>;
   readonly requestedPromptResults: Set<string>;
