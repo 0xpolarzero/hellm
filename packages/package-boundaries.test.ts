@@ -267,6 +267,7 @@ const expectedPublicSymbols = new Map<string, string[]>([
   [
     "@svvy/state",
     [
+      "APP_LOG_DATABASE_FILENAME",
       "AgentActorExtensionDefaultsReadModelRecord",
       "AgentBindingReadModelRecord",
       "AgentProfileStateCommands",
@@ -887,6 +888,7 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "encodeRuntimeLayerErrorExit",
       "layerRuntimeBunPlatform",
       "RuntimeBunPlatformServices",
+      "RuntimeDirectNativeToolHostInput",
       "RuntimeLayerConfig",
       "RuntimePrepareShutdownReason",
       "RuntimePrepareShutdownRequest",
@@ -910,6 +912,8 @@ const expectedPublicSubpathSymbols = new Map<string, string[]>([
       "RuntimeGeneratedPackageRefreshHostPortService",
       "RuntimeLayerModelResolverPortService",
       "RuntimeLayerProviderAuthPortService",
+      "RuntimePrimitiveToolHostPort",
+      "RuntimePrimitiveToolHostPortService",
       "RuntimeExternalInstructionScanInputPortService",
       "RuntimeSourceInvalidationScanPortService",
       "RuntimeGeneratedPackageWorkspaceLinkFileHost",
@@ -1200,6 +1204,7 @@ const runtimeBootstrapSpecApprovedSymbols = [
   "encodeRuntimeLayerErrorExit",
   "layerRuntimeBunPlatform",
   "RuntimeBunPlatformServices",
+  "RuntimeDirectNativeToolHostInput",
   "RuntimeLayerConfig",
   "RuntimePrepareShutdownReason",
   "RuntimePrepareShutdownRequest",
@@ -1223,6 +1228,8 @@ const runtimeBootstrapSpecApprovedSymbols = [
   "RuntimeGeneratedPackageRefreshHostPortService",
   "RuntimeLayerModelResolverPortService",
   "RuntimeLayerProviderAuthPortService",
+  "RuntimePrimitiveToolHostPort",
+  "RuntimePrimitiveToolHostPortService",
   "RuntimeExternalInstructionScanInputPortService",
   "RuntimeSourceInvalidationScanPortService",
   "RuntimeGeneratedPackageWorkspaceLinkFileHost",
@@ -4054,6 +4061,8 @@ describe("package boundaries", () => {
           "packages/runtime/src/runtime-shutdown-admission.ts -> layerRuntimeShutdownAdmission",
           "packages/runtime/src/runtime-prompt-execution-service.ts -> RuntimePromptExecutionService",
           "packages/runtime/src/runtime-prompt-execution-service.ts -> layerRuntimePromptExecutionService",
+          "packages/runtime/src/runtime-queue-wake-broker.ts -> RuntimeQueueWakeBroker",
+          "packages/runtime/src/runtime-queue-wake-broker.ts -> layerRuntimeQueueWakeBroker",
           "packages/runtime/src/runtime-surface-queue-dispatcher-service.ts -> RuntimeSurfaceQueueDispatcherService",
           "packages/runtime/src/runtime-surface-queue-dispatcher-service.ts -> layerRuntimeSurfaceQueueDispatcherService",
           "packages/runtime/src/runtime-surface-event-publisher.ts -> RuntimeSurfaceEventPublisher",
@@ -4107,6 +4116,7 @@ describe("package boundaries", () => {
           "Prompt lock",
           "Active turn fiber",
           "Queue dispatcher and wakeup queue",
+          "Queue wake broker",
           "Recovery coordinator",
           "Source reconcile recovery worker",
           "Title worker",
@@ -4198,6 +4208,7 @@ describe("package boundaries", () => {
       "packages/runtime/src/runtime-layer.ts -> RuntimeGeneratedPackageRefreshHostPort",
       "packages/runtime/src/runtime-layer-provider-ports.ts -> RuntimeLayerModelResolverPort",
       "packages/runtime/src/runtime-layer-provider-ports.ts -> RuntimeLayerProviderAuthPort",
+      "packages/runtime/src/runtime-native-tool-host.ts -> RuntimePrimitiveToolHostPort",
       "packages/runtime/src/runtime-queue-wake-port.ts -> RuntimeQueueWakeService",
       "packages/runtime/src/runtime-queue-wake-service.ts -> layerRuntimeQueueWakeService",
       "packages/runtime/src/runtime-prompt-defaults-service.ts -> RuntimePromptDefaultsService",
@@ -5456,7 +5467,6 @@ describe("package boundaries", () => {
     }).toEqual({
       serviceOptionCalls: [
         "packages/runtime/src/accepted-native-tool-execution-service.ts -> RuntimeHandlerThreadStartPreparationHost",
-        "packages/runtime/src/accepted-native-tool-execution-service.ts -> RuntimeQueueWakeService",
         "packages/runtime/src/runtime-effect-requests.ts -> RuntimeHandlerThreadStartPreparationHost",
       ],
       queueFailCalls: [
@@ -8974,8 +8984,8 @@ describe("package boundaries", () => {
     expect(runtimeLayerSource).toContain('reason: "message-submitted"');
     expect(runtimeLayerSource).toContain('reason: "queue-steered"');
     expect(runtimeLayerSource).not.toContain("wakeSurfaceQueue({");
-    expect(runtimeQueueWakeSource).toContain("RuntimeSurfaceQueueDispatcherService");
-    expect(runtimeQueueWakeSource).toContain("acceptWakeHint({");
+    expect(runtimeQueueWakeSource).toContain("RuntimeQueueWakeBroker");
+    expect(runtimeQueueWakeSource).toContain("broker.wakeSurface({");
     expect(runtimeLayerSource).not.toContain("RuntimeLayerCatalogPort");
     expect(runtimeLayerSource).not.toContain("afterRuntimeSurfaceMessageQueued");
     expect(runtimeLayerSource).not.toContain("afterRuntimeSurfaceMessageSteered");
